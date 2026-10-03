@@ -552,7 +552,6 @@
   "onboarding.continue": "Continuar",
   "onboarding.maybeLater": "Quizá más tarde",
   "onboarding.engines.title": "Tus motores",
-  "onboarding.engines.intro": "Los bots funcionan con herramientas de IA instaladas en este equipo: esto es lo que encontramos.",
   "onboarding.engines.ready": "Listos",
   "onboarding.engines.needsSetup": "Requiere configuración",
   "onboarding.perms.title": "Permisos",

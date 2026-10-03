@@ -554,7 +554,6 @@
   "onboarding.continue": "続ける",
   "onboarding.maybeLater": "あとで",
   "onboarding.engines.title": "エンジン",
-  "onboarding.engines.intro": "ボットはこのコンピューターにインストールされた AI ツールで動きます。見つかったものはこちらです。",
   "onboarding.engines.ready": "利用可能",
   "onboarding.engines.needsSetup": "セットアップが必要",
   "onboarding.perms.title": "アクセス許可",
