@@ -12,6 +12,8 @@ todo.md
 **/.env
 *.local
 *.tsbuildinfo
+# Nested worktrees.
+worktrees/
 .worktrees/
 dist-server
 .omb-scratch
