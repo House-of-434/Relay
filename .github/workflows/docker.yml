@@ -1,0 +1,270 @@
+name: Docker image
+
+on:
+  # release.yml dispatches this on the tag it just published: a tag created
+  # with the workflow token never fires push events on its own.
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - deploy/**
+      - server/**
+      - src/**
+      - scripts/bundle-server.mjs
+      - package.json
+      - pnpm-lock.yaml
+      - .github/workflows/docker.yml
+  pull_request:
+    paths:
+      - Dockerfile
+      - .dockerignore
+      - deploy/**
+      - .github/workflows/docker.yml
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: build image + boot smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build image
+        run: docker build -t openmausbot:ci .
+      - name: Boot the container and prove the server + UI answer
+        run: |
+          set -euo pipefail
+          docker run -d --name omb openmausbot:ci
+          for i in $(seq 1 40); do
+            if docker exec omb curl -sf http://127.0.0.1:8799/api/health | grep -q openmausbot; then break; fi
+            sleep 2
+            if [ "$i" = "40" ]; then docker logs omb; echo "server never became healthy"; exit 1; fi
+          done
+          # the renderer is served by the server itself (OMB_STATIC_DIR)
+          docker exec omb curl -sf http://127.0.0.1:8799/ | grep -qi "<html" || { docker logs omb; echo "UI not served"; exit 1; }
+          docker logs omb | tail -5
+      - name: Prove the non-root user can browse with the baked-in Chrome
+        run: |
+          set -euo pipefail
+          test "$(docker exec omb id -un)" = maus
+          timeout 45 docker exec omb agent-browser --session ci-browser open 'data:text/html,<title>OMB browser smoke</title><h1>Browser ready</h1>'
+          timeout 15 docker exec omb agent-browser --session ci-browser get title | grep -Fx 'OMB browser smoke'
+          timeout 15 docker exec omb agent-browser --session ci-browser close
+      - name: Prove the server never binds a public interface
+        # The loopback-trust model is the auth model, so the image must keep
+        # the server unreachable from the container's own network. Probe from a
+        # sibling container on the same bridge; a positive control first proves
+        # the probe can see a socket that does bind 0.0.0.0.
+        run: |
+          set -euo pipefail
+          probe() { docker run --rm --network bridge curlimages/curl:8.14.1 -s --max-time 3 "http://$1:$2/" >/dev/null; }
+          docker run -d --name leaky --entrypoint node openmausbot:ci -e "require('http').createServer((q,s)=>s.end('leak')).listen(8799,'0.0.0.0')"
+          sleep 2
+          leaky_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' leaky)
+          test -n "$leaky_ip"
+          probe "$leaky_ip" 8799 || { echo "probe cannot see a 0.0.0.0 listener; the check would be vacuous"; exit 1; }
+          docker rm -f leaky >/dev/null
+          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' omb)
+          test -n "$ip"
+          if probe "$ip" 8799 || probe "$ip" 8800; then
+            echo "server answered on $ip — it must only bind 127.0.0.1"; exit 1
+          fi
+          echo "unreachable on $ip: loopback-only holds"
+      - name: Run the tenant stack (server + Caddy) and pair like a browser would
+        # deploy/docker-compose.yml is the product here: through TLS, prove that
+        # nothing but the descriptor and the UI shell is served before pairing,
+        # that a code minted inside the container turns into a Secure cookie
+        # session, that the cookie is same-origin only, that the event stream is
+        # unbuffered, and that hooks stay reachable without a session.
+        run: |
+          set -euo pipefail
+          docker rm -f omb >/dev/null
+          docker tag openmausbot:ci ghcr.io/milind-soni/openmausbot:latest
+          printf 'DOMAIN=localhost\nENGINES=\n' > deploy/.env
+          docker compose -f deploy/docker-compose.yml up -d --no-build
+          for i in $(seq 1 45); do
+            curl -sk -o /dev/null --max-time 2 https://localhost/.well-known/openmausbot/environment && break
+            sleep 2
+            if [ "$i" = "45" ]; then docker compose -f deploy/docker-compose.yml logs; echo "caddy never answered"; exit 1; fi
+          done
+          code() { curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "$@"; }
+          body() { curl -sk --max-time 10 "$@"; }
+          H=https://localhost
+          grep -q '"environmentId"' <<<"$(body $H/.well-known/openmausbot/environment)"   # descriptor is public
+          grep -q '^{"app":"openmausbot"}$' <<<"$(body $H/api/health)"             # the probe is public, and says only the app name
+          test "$(code $H/api/bots)" = 403                                        # nothing else before pairing
+          grep -q 'pair this device' <<<"$(body $H/api/bots)"
+          grep -qi '<html' <<<"$(body $H/pair)"                                    # the UI shell is served so /pair can load
+          test "$(code http://localhost/)" = 308                                   # HTTP redirects to HTTPS
+          pairing=$(docker compose -f deploy/docker-compose.yml exec -T omb node dist-server/pair-cli.js --label ci)
+          echo "$pairing"
+          pcode=$(grep -o 'code=[A-Z2-9-]*' <<<"$pairing" | head -1 | cut -d= -f2)
+          test -n "$pcode"
+          jar=$(mktemp)
+          paired=$(curl -sk --max-time 10 -c "$jar" -D - -X POST $H/api/auth/pair -H 'content-type: application/json' -d "{\"code\":\"$pcode\",\"cookie\":true}")
+          grep -qi 'set-cookie: omb_session_' <<<"$paired"                        # cookie session
+          grep -qi 'Secure' <<<"$paired"                                          # over TLS the cookie is Secure
+          grep -qi 'HttpOnly' <<<"$paired"
+          test "$(code -b "$jar" $H/api/health)" = 200                              # paired: the API answers
+          grep -q openmausbot <<<"$(body -b "$jar" $H/api/health)"
+          test "$(code -b "$jar" -H 'Origin: https://evil.example' -X POST -d '{}' $H/api/bots)" = 403   # cookie is same-origin only
+          test "$(code -b "$jar" -H 'Origin: https://localhost' $H/api/auth/session)" = 200
+          grep -q '"via":"cookie"' <<<"$(body -b "$jar" $H/api/auth/session)"
+          grep -q '"label":"ci"' <<<"$(body -b "$jar" $H/api/auth/sessions)"        # listed for revocation
+          grep -q error <<<"$(body -X POST $H/hooks/wh_nope)"                      # hook path reaches the receiver without a session
+          # The event stream never ends, so curl's own --max-time exit (28) is expected;
+          # the proof is that bytes arrived within the window (a buffering proxy sends none).
+          sse=$( (curl -sk -b "$jar" -N --max-time 4 $H/api/events || true) | head -c 64 )
+          test -n "$sse"                                                           # SSE streams, not buffered
+          grep -q '"baseUrl":"https://localhost"' <<<"$(body -b "$jar" $H/api/webhooks)"   # OMB_WEBHOOK_PUBLIC_URL is advertised
+          test "$(code $H/api/bots)" = 403                                        # and without the cookie it is still closed
+          docker compose -f deploy/docker-compose.yml down -v
+      - name: Cloud Pro home image (deploy/fly) boots, stays private and pairs on a signed request
+        # The Fly home machine built on the image above, with the environment
+        # openmaus-cloud's provisioner writes (docs/cloud-pro.md): Caddy on
+        # :8080 is the only listener, a forwarded request is never the
+        # loopback owner, a bad boot contract never serves, everything runs as
+        # maus, and only an HMAC-signed, fresh, unreplayed request opens a
+        # single-use pairing window, also after a restart. Cloud Pro includes
+        # no AI: the machine boots without any model gateway, serves no
+        # included models, and tells the paired app to open its engine sign-in.
+        run: |
+          set -euo pipefail
+          docker build -f deploy/fly/Dockerfile --build-arg BASE_IMAGE=openmausbot:ci --build-arg ENGINES= -t omb-cloud-home:ci .
+          rand43() { openssl rand -base64 32 | tr '+/' '-_' | tr -d '=\n'; }
+          b64url() { base64 | tr '+/' '-_' | tr -d '=\n'; }
+          secret=$(rand43)
+          test "${#secret}" = 43
+          host=omb-t-0123456789ab.fly.dev
+          contract=(-e OMB_CLOUD_ROLE=home -e OMB_CLOUD_MACHINE_ID=3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93 -e OMB_CLOUD_ADMIN_URL=https://cloud.example.test
+            -e "OMB_PUBLIC_URL=https://$host" -e "OMB_CLOUD_BOOTSTRAP_SECRET=$secret")
+          # An incomplete contract exits instead of serving.
+          if timeout 60 docker run --name home-bad -e OMB_CLOUD_ROLE=home omb-cloud-home:ci; then echo "an incomplete contract served"; exit 1; fi
+          grep -q "Cloud home configuration is invalid" <<<"$(docker logs home-bad 2>&1)"
+          docker rm -f home-bad >/dev/null
+          docker run -d --name home -p 127.0.0.1:18080:8080 -v omb-home-ci:/data "${contract[@]}" omb-cloud-home:ci
+          E=http://127.0.0.1:18080
+          healthy() {
+            for i in $(seq 1 45); do
+              curl -sf --max-time 2 "$E/api/health" | grep -q openmausbot && return 0
+              sleep 2
+            done
+            docker logs home; echo "the cloud home never became healthy"; return 1
+          }
+          healthy
+          logs=$(docker logs home 2>&1)
+          grep -qF "bots run on the engines the person signs in to here" <<<"$logs"
+          if grep -qF "ignoring OMB_HOSTED" <<<"$logs"; then echo "a model gateway reached the boot contract"; exit 1; fi
+          if grep -qF "$secret" <<<"$logs"; then echo "the bootstrap secret reached the log"; exit 1; fi
+          # The launcher, the server and the edge all run as maus.
+          # comm and the /proc/<pid> owner are readable without CAP_SYS_PTRACE; readlink of another user's exe is not.
+          owners=$(docker exec home sh -c 'for p in /proc/[0-9]*; do case "$(cat "$p/comm" 2>/dev/null)" in node|caddy) stat -c %U "$p";; esac; done' | sort -u)
+          echo "process owners: $owners"; test "$owners" = maus
+          code() { curl -s -o /dev/null -w '%{http_code}' --max-time 5 "$@"; }
+          H=(-H "Host: $host")
+          test "$(code "${H[@]}" $E/api/bots)" = 403                       # through the edge: never the owner
+          test "$(code -H 'Host: localhost' $E/api/bots)" = 403            # another name is refused at the edge
+          # The Admin's request (openmaus-cloud cloudPairingSignature).
+          pair() { # body key timestamp nonce -> prints the HTTP status, keeps the reply in $reply
+            local body=$1 key=$2 ts=$3 nonce=$4 bh sig
+            bh=$(printf %s "$body" | openssl dgst -sha256 -binary | b64url)
+            sig=$(printf 'v1\n%s\n%s\nPOST\n/api/cloud/pairing\n%s' "$ts" "$nonce" "$bh" | openssl dgst -sha256 -hmac "$key" -binary | b64url)
+            curl -s -o /tmp/pair-reply -w '%{http_code}' --max-time 5 "${H[@]}" -X POST -H 'content-type: application/json' \
+              -H "x-omb-cloud-timestamp: $ts" -H "x-omb-cloud-nonce: $nonce" -H "x-omb-cloud-signature: v1=$sig" --data-binary "$body" $E/api/cloud/pairing
+          }
+          body='{"label":"OpenMausBot app (Cloud)","ttlSeconds":300}'
+          test "$(pair "$body" "$(rand43)" "$(date +%s)" "$(rand43)")" = 401                 # wrong key
+          test "$(pair "$body" "$secret" "$(( $(date +%s) - 400 ))" "$(rand43)")" = 401      # stale
+          nonce=$(rand43); now=$(date +%s)
+          test "$(pair "$body" "$secret" "$now" "$nonce")" = 200
+          test "$(jq -r 'keys | join(",")' /tmp/pair-reply)" = "code,credential,expiresAt"
+          pcode=$(jq -r .code /tmp/pair-reply)
+          test "$(pair "$body" "$secret" "$now" "$nonce")" = 401                            # replayed
+          session=$(curl -sf "${H[@]}" -X POST -H 'content-type: application/json' -d "{\"code\":\"$pcode\"}" $E/api/auth/pair | jq -r .token)
+          test "$(code "${H[@]}" -H "Authorization: Bearer $session" $E/api/bots)" = 200
+          test "$(code "${H[@]}" -X POST -H 'content-type: application/json' -d "{\"code\":\"$pcode\"}" $E/api/auth/pair)" = 401   # single use
+          # No included models: only the person's own engines, and the app opens its engine sign-in.
+          curl -sf "${H[@]}" -H "Authorization: Bearer $session" $E/api/instances \
+            | jq -e '(.instances | length) > 0 and ([.instances[] | select((.instanceId | startswith("included.")) or has("included") or .readOnly == true)] | length == 0)'
+          curl -sf "${H[@]}" -H "Authorization: Bearer $session" $E/api/auth/session | jq -e '.cloudHome == true and (has("hosted") | not)'
+          # Only the edge is reachable from the network, never the server itself.
+          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' home)
+          probe() { docker run --rm --network bridge curlimages/curl:8.14.1 -s -o /dev/null --max-time 3 "http://$1:$2/api/health"; }
+          probe "$ip" 8080 || { echo "the edge is not reachable on $ip; the check below would be vacuous"; exit 1; }
+          if probe "$ip" 8799 || probe "$ip" 8800; then echo "the server answered on $ip"; exit 1; fi
+          # After a restart the volume is recognised, the session survives and pairing still needs a signature.
+          docker restart home >/dev/null
+          healthy
+          test "$(code "${H[@]}" -H "Authorization: Bearer $session" $E/api/bots)" = 200
+          test "$(pair "$body" "$(rand43)" "$(date +%s)" "$(rand43)")" = 401
+          test "$(pair "$body" "$secret" "$(date +%s)" "$(rand43)")" = 200
+          docker rm -f home >/dev/null
+          docker volume rm omb-home-ci >/dev/null
+
+  publish:
+    name: publish to GHCR
+    needs: build-and-smoke
+    # Release dispatches on its published tag because GITHUB_TOKEN-created
+    # tags do not start another workflow. A manual branch run is smoke-only.
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && startsWith(github.ref, 'refs/tags/v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=ref,event=tag
+      - uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      # The Cloud Pro home machine (deploy/fly/Dockerfile) on top of the server image just
+      # pushed, with Claude Code and Codex baked in. The Admin pins it by digest
+      # (OMB_CLOUD_HOME_IMAGE=ghcr.io/milind-soni/openmausbot-cloud-home@sha256:...).
+      - id: repo
+        # Image references must be lowercase; the repository name is not.
+        run: echo "name=${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - id: home-meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/${{ steps.repo.outputs.name }}-cloud-home
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=sha,format=long
+            type=ref,event=tag
+      - id: home
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/fly/Dockerfile
+          build-args: BASE_IMAGE=ghcr.io/${{ steps.repo.outputs.name }}:sha-${{ github.sha }}
+          push: true
+          tags: ${{ steps.home-meta.outputs.tags }}
+          labels: ${{ steps.home-meta.outputs.labels }}
+      - name: Cloud home image digest
+        env:
+          DIGEST: ${{ steps.home.outputs.digest }}
+          IMAGE: ghcr.io/${{ steps.repo.outputs.name }}-cloud-home
+        run: echo "OMB_CLOUD_HOME_IMAGE=${IMAGE}@${DIGEST}" | tee -a "$GITHUB_STEP_SUMMARY"

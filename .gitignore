@@ -1,0 +1,42 @@
+# Shared internal service secrets.
+#
+# Only values that every trusted internal Relay process needs belong here: the
+# harness, the BFF, and the Tool Layer. Per-service secrets stay in that
+# service's own .env so a process never reads a secret it does not need.
+#
+# Values are compared across services, so never copy one into both files.
+.env.secrets
+
+# Private notes live inside the checkout but are never committed.
+Relay-notes/
+docs/
+todo.md
+
+# Database migrations are applied; the repo does not own them.
+supabase/
+
+# Local artifacts and secrets.
+.DS_Store
+.lavish/
+**/node_modules/
+**/dist/
+**/.env
+*.local
+*.tsbuildinfo
+.worktrees/
+dist-server
+.omb-scratch
+.wrangler/
+.dev.vars
+.dev.vars.*
+.claude/worktrees/
+.vercel/
+.pi/
+
+# Release signing material never enters this repository.
+*.jks
+*.keystore
+*.p12
+
+# Local app environment.
+/.env

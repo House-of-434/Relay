@@ -1,0 +1,5 @@
+# Relay product repository: hosted browser app at root plus services.
+packages:
+  - "."
+  - "services/*"
+  - "packages/*"
