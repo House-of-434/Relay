@@ -43,6 +43,9 @@ export function ConnectedWorkspacesSettings() {
   const [address, setAddress] = useState("");
   const [name, setName] = useState("");
   const [busy, setBusy] = useState(false);
+  // Two failures, never one: the list the card renders and the action the
+  // form submits are separate problems with separate sentences.
+  const [loadFailed, setLoadFailed] = useState(false);
   const [error, setError] = useState("");
   const [computerId, setComputerId] = useState<string | null>(() => new URLSearchParams(window.location?.search ?? "").get("share-computer"));
   const pending = useRef(false);
@@ -50,7 +53,7 @@ export function ConnectedWorkspacesSettings() {
   useEffect(() => {
     const current = ++generation.current;
     void bridge?.state().then((state) => { if (generation.current === current) setSaved(state); })
-      .catch(() => { if (generation.current === current) setError("Could not load saved servers. Please reopen this page."); });
+      .catch(() => { if (generation.current === current) setLoadFailed(true); });
     return () => { generation.current++; };
   }, [bridge]);
   useEffect(() => {
@@ -70,9 +73,17 @@ export function ConnectedWorkspacesSettings() {
     try {
       // A successful switch/connect unloads this local renderer. Do not ask
       // for its privileged saved list again after the active origin changes.
-      if (await action() === true) return;
-      const state = await bridge.state();
-      if (generation.current === current) setSaved(state);
+      if (await action() !== true) {
+        // Reading the list back is a load of its own, never the action's
+        // own failure: a broken read says the list is unavailable and
+        // leaves the action's message to say what the action hit.
+        try {
+          const state = await bridge.state();
+          if (generation.current === current) { setSaved(state); setLoadFailed(false); }
+        } catch {
+          if (generation.current === current) setLoadFailed(true);
+        }
+      }
     } catch (nextError) {
       if (generation.current === current) setError(String((nextError as Error)?.message ?? nextError)
         .replace(/^Error invoking remote method '[^']*':\s*(?:Error:\s*)?/, ""));
@@ -87,7 +98,7 @@ export function ConnectedWorkspacesSettings() {
     <p className="text-[13px] leading-relaxed text-ink-secondary">One desktop app, wherever your bots live. Switching servers does not move or replace your bots, conversations, or provider accounts.</p>
     <Card title="Your servers" subtitle="Saved on this computer. Your hosted bots keep running when you switch away.">
       {!saved
-        ? error
+        ? loadFailed
           ? <div className="flex flex-wrap items-center gap-3 rounded-lg bg-danger/10 px-3 py-2">
               <p role="alert" className="min-w-0 flex-1 text-[12px] text-danger">Saved servers could not be loaded.</p>
               <button type="button" disabled={busy} onClick={() => void perform(() => Promise.resolve())}
@@ -139,7 +150,7 @@ export function ConnectedWorkspacesSettings() {
           <p className="mt-2">Run this on the server and copy the link it prints:</p>
           <code className="mt-1 block select-all break-words rounded-md bg-inset px-2 py-2 text-ink">npx relay pair --label "My desktop"</code>
         </details>
-        {error && saved && <p role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</p>}
+        {error && <p role="alert" className="rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error}</p>}
         <button type="submit" disabled={busy || !address.trim()} className="flex w-fit items-center gap-2 rounded-lg bg-accent px-3 py-2 text-[13px] font-medium text-accent-ink disabled:opacity-50">
           {busy && <Loader2 size={14} className="animate-spin" />}Connect
         </button>

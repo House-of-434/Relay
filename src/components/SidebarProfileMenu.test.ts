@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   profileInitials,
   profileLabel,
+  sessionIdentity,
   sidebarIdentity,
   updateBusy,
   updateNoteworthy,
@@ -10,6 +11,7 @@ import {
   updatePhase,
 } from "./SidebarProfileMenu";
 import { DOCS_URL, FEEDBACK_URL, HELP_CENTER_URL, platformLabel } from "@/lib/app-links";
+import type { SessionState } from "@/lib/session";
 import type { UpdaterState } from "@/lib/updater";
 
 const state = (patch: Partial<UpdaterState>): UpdaterState => ({ status: "idle", ...patch }) as UpdaterState;
@@ -51,6 +53,34 @@ describe("sidebarIdentity", () => {
       .toEqual({ name: "Ada Lovelace", avatarUrl: photo });
     expect(sidebarIdentity({ email: "b@x.dev" }, null)).toEqual({ name: "b@x.dev" });
     expect(sidebarIdentity(undefined, null)).toEqual({ name: "You" });
+  });
+});
+
+describe("sessionIdentity", () => {
+  const photo = "https://lh3.googleusercontent.com/a";
+  const session = (claims: { displayName?: string; avatarUrl?: string }): SessionState =>
+    ({ kind: "session", id: "s1", label: "Mac", scopes: ["client"], expiresAt: 1, ...claims }) as SessionState;
+
+  // what the sidebar renders comes from the read main.tsx already made
+  it("carries the login's claims out of a signed-in session", () => {
+    expect(sessionIdentity(session({ displayName: "  Ada Lovelace  ", avatarUrl: photo })))
+      .toEqual({ displayName: "Ada Lovelace", avatarUrl: photo });
+  });
+
+  it("keeps whichever claim the login did give", () => {
+    expect(sessionIdentity(session({ avatarUrl: photo }))).toEqual({ avatarUrl: photo });
+    expect(sessionIdentity(session({ displayName: "Ada Lovelace" }))).toEqual({ displayName: "Ada Lovelace" });
+  });
+
+  // an owner on their own machine, a claim-less session and an unanswered
+  // server all leave the row on the typed name and initials
+  it("has nothing to show without a signed-in Google session", () => {
+    expect(sessionIdentity(session({}))).toBeNull();
+    expect(sessionIdentity({ kind: "loopback" })).toBeNull();
+    expect(sessionIdentity({ kind: "loopback", trust: "service" })).toBeNull();
+    expect(sessionIdentity({ kind: "unreachable", error: "500" })).toBeNull();
+    expect(sessionIdentity(null)).toBeNull();
+    expect(sessionIdentity(undefined)).toBeNull();
   });
 });
 

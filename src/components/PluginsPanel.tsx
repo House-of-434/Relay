@@ -8,9 +8,9 @@
 // team who runs the workspace.
 //
 // Two views, the pair this panel has always had: what you can connect
-// (Available) and what you have connected (Connected). Each connected account
-// disconnects on its own, because a teammate may have more than one Google
-// account and may want exactly one of them to keep access.
+// (Available) and what you have connected (Connected). Connectors are for a
+// single Google account: a connected service is one row whose action
+// disconnects it, never a list of accounts to choose between.
 import { type ReactNode, useEffect, useState } from "react";
 import { Loader2, Search, X } from "lucide-react";
 
@@ -79,7 +79,6 @@ export function connectionViews(
     accountsByService,
     connected: connected.filter(matches),
     available: services.filter((service) => !accountsByService.get(service.id)?.length && matches(service)),
-    connectedCount: connected.length,
   };
 }
 
@@ -128,8 +127,8 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
     }
   };
 
-  // One Google account per service: the backend rejects a second grant, so a
-  // connected service offers only Disconnect — never another account slot.
+  // Connectors are for one Google account per service, so a connected service
+  // is a single row with a single Disconnect — never a second account slot.
   const disconnect = async (account: ConnectionAccount) => {
     if (pending) return;
     const service = CONNECTION_SERVICES.find((candidate) => candidate.id === account.service);

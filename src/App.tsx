@@ -31,6 +31,8 @@ import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { setLocale } from "@/lib/i18n";
 import { shouldOpenKeyboardShortcuts } from "@/lib/keyboard-shortcuts";
 import { effectiveLanguage, useLanguageChoice } from "@/lib/language-preference";
+import type { SessionState } from "@/lib/session";
+import { SessionIdentityProvider } from "@/components/SidebarProfileMenu";
 import {
   GOOGLE_CALENDAR_CONNECTIONS_CHANGED_EVENT,
   type GoogleCalendarAccountSnapshot,
@@ -415,25 +417,27 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   );
 }
 
-function Application() {
+function Application({ session }: { session?: SessionState | null }) {
   useEffect(() => {
     initAnalytics();
   }, []);
   const viewer = useWelcomeViewer();
   return (
-    <DesktopCapabilitiesProvider>
-      <StoreProvider>
-        <ThreadRefsProvider>
-          <Shell viewer={viewer} />
-        </ThreadRefsProvider>
-        <WelcomeGate viewer={viewer} />
-        <GuidedTour />
-        <FirstConversationTour quiet={spotlightsQuiet(viewer)} />
-      </StoreProvider>
-    </DesktopCapabilitiesProvider>
+    <SessionIdentityProvider session={session}>
+      <DesktopCapabilitiesProvider>
+        <StoreProvider>
+          <ThreadRefsProvider>
+            <Shell viewer={viewer} />
+          </ThreadRefsProvider>
+          <WelcomeGate viewer={viewer} />
+          <GuidedTour />
+          <FirstConversationTour quiet={spotlightsQuiet(viewer)} />
+        </StoreProvider>
+      </DesktopCapabilitiesProvider>
+    </SessionIdentityProvider>
   );
 }
 
-export default function App() {
-  return <WorkspaceBackupRecovery><Application /></WorkspaceBackupRecovery>;
+export default function App({ session }: { session?: SessionState | null }) {
+  return <WorkspaceBackupRecovery><Application session={session} /></WorkspaceBackupRecovery>;
 }

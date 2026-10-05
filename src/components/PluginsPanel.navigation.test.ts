@@ -77,23 +77,20 @@ describe("connectionViews", () => {
     const views = connectionViews(CONNECTION_SERVICES, []);
     expect(views.available.map((service) => service.id)).toEqual(["gmail", "google-calendar"]);
     expect(views.connected).toEqual([]);
-    expect(views.connectedCount).toBe(0);
   });
 
   it("moves a service to Connected once it has an account", () => {
     const views = connectionViews(CONNECTION_SERVICES, [gmail]);
     expect(views.available.map((service) => service.id)).toEqual(["google-calendar"]);
     expect(views.connected.map((service) => service.id)).toEqual(["gmail"]);
-    expect(views.connectedCount).toBe(1);
     expect(views.accountsByService.get("gmail")).toEqual([gmail]);
   });
 
-  it("keeps several accounts on one service together for individual disconnect", () => {
+  it("keeps every account on a service grouped under that one service", () => {
     const second: ConnectionAccount = { service: "gmail", id: "ca_3", email: "other@houseof434.com" };
     const views = connectionViews(CONNECTION_SERVICES, [gmail, second, calendar]);
     expect(views.connected.map((service) => service.id)).toEqual(["gmail", "google-calendar"]);
     // One row per service, not per account.
-    expect(views.connectedCount).toBe(2);
     expect(views.accountsByService.get("gmail")?.map((account) => account.email))
       .toEqual(["me@houseof434.com", "other@houseof434.com"]);
   });
