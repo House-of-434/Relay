@@ -229,7 +229,6 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
             ? <EmptyState connected />
             : connected.map((service) => {
                 const accounts = accountsByService.get(service.id) ?? [];
-                if (accounts.length === 0) return null;
                 return (
                   <ServiceRow key={service.id} service={service} action={
                     <button
@@ -250,10 +249,9 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
   );
 }
 
-function ServiceRow({ service, action, children }: {
+function ServiceRow({ service, action }: {
   service: ConnectionService;
   action: ReactNode;
-  children?: ReactNode;
 }) {
   return (
     <section className="border-b border-hairline/35 py-4 last:border-b-0">
@@ -267,7 +265,6 @@ function ServiceRow({ service, action, children }: {
         </div>
         {action}
       </div>
-      {children}
     </section>
   );
 }
