@@ -88,7 +88,7 @@ import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
-import { SidebarIdentityAvatar, SidebarProfileMenu } from "./SidebarProfileMenu";
+import { appSettingsLabels, IdentityAvatar, SidebarProfileMenu, useSidebarIdentity } from "./SidebarProfileMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ShortcutHint } from "./ShortcutHint";
 
@@ -1311,6 +1311,8 @@ export function TeamMenuItems({ onAddBots, onRename, onShare, onDelete }: {
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const cloudOwner = useCloudOwner(state.config?.cloudHome === true);
+  const identity = useSidebarIdentity();
+  const identityLabels = appSettingsLabels(identity);
   const remoteClient = window.ogb?.remoteClient?.active === true;
   const { capabilities } = useDesktopCapabilities();
   const importReturnRef = useRef<HTMLButtonElement>(null);
@@ -2011,10 +2013,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <button
               onClick={() => dispatch({ type: "toggleAppSettings" })}
               className="flex min-w-0 items-center justify-center rounded-xl px-2 py-2 text-left hover:bg-raised/50"
-              aria-label={t("sidebar.appSettings")}
-              title={state.config?.profile?.name?.trim() || t("sidebar.appSettings")}
+              aria-label={identityLabels.ariaLabel}
+              title={identityLabels.title}
             >
-              <SidebarIdentityAvatar size={28} />
+              <IdentityAvatar identity={identity} size={28} />
             </button>
           </div>
         ) : (

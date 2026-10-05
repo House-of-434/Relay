@@ -763,6 +763,8 @@
   "sidebar.nav.automations": "Automations",
   "sidebar.nav.connectedApps": "Connected apps",
   "sidebar.appSettings": "App settings",
+  "sidebar.appSettingsNamed": "{name} — App settings",
+  "sidebar.appSettingsFor": "App settings for {name}",
   "sidebar.tools": "Tools",
   "sidebar.section.expand": "Expand {name}",
   "sidebar.section.collapse": "Collapse {name}",

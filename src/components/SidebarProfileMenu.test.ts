@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appSettingsLabels,
   profileInitials,
   profileLabel,
   sessionIdentity,
@@ -45,14 +46,30 @@ describe("sidebarIdentity", () => {
   const photo = "https://lh3.googleusercontent.com/a";
   it("keeps an intentional Relay name ahead of the login name", () => {
     expect(sidebarIdentity({ name: "Bubbles", email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo }))
-      .toEqual({ name: "Bubbles", avatarUrl: photo });
+      .toEqual({ name: "Bubbles", person: "Bubbles", avatarUrl: photo });
   });
 
   it("falls back to the login name, then email, then You", () => {
     expect(sidebarIdentity({ email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo }))
-      .toEqual({ name: "Ada Lovelace", avatarUrl: photo });
-    expect(sidebarIdentity({ email: "b@x.dev" }, null)).toEqual({ name: "b@x.dev" });
-    expect(sidebarIdentity(undefined, null)).toEqual({ name: "You" });
+      .toEqual({ name: "Ada Lovelace", person: "Ada Lovelace", avatarUrl: photo });
+    expect(sidebarIdentity({ email: "b@x.dev" }, null)).toEqual({ name: "b@x.dev", person: "b@x.dev" });
+    expect(sidebarIdentity(undefined, null)).toEqual({ name: "You", person: null });
+  });
+});
+
+// the icons-density tile shows the photo but no name, so its labels are the
+// only place the person is said out loud — and they say who and what together
+describe("appSettingsLabels", () => {
+  const photo = "https://lh3.googleusercontent.com/a";
+
+  it("names the signed-in person and the action they get", () => {
+    expect(appSettingsLabels(sidebarIdentity({ email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo })))
+      .toEqual({ title: "Ada Lovelace — App settings", ariaLabel: "App settings for Ada Lovelace" });
+  });
+
+  it("still announces the action when nobody is signed in", () => {
+    expect(appSettingsLabels(sidebarIdentity(undefined, null)))
+      .toEqual({ title: "App settings", ariaLabel: "App settings" });
   });
 });
 

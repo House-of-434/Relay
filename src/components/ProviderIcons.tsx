@@ -167,9 +167,8 @@ export function ProviderMark({ driverKind, size, className }: IconProps & { driv
 
 /** Built-in provider identities for an instance override. Existing driver
  * marks remain the source of truth whenever no override is configured.
- * Paths for Gemini, Azure, AWS, DeepSeek, Meta, Mistral, Gmail, Google
- * Calendar, and OpenRouter are from Simple Icons (CC0 1.0). The Cohere path
- * is from Lobe Icons (MIT). */
+ * Paths for Gemini, Azure, AWS, DeepSeek, Meta, Mistral, and OpenRouter are
+ * from Simple Icons (CC0 1.0). The Cohere path is from Lobe Icons (MIT). */
 export function PresetProviderMark({ preset, size = 16, className }: IconProps & { preset: ProviderIconPreset }) {
   switch (preset) {
     case "openai": return <CodexMark size={size} className={className} />;
