@@ -48,7 +48,8 @@ export function profileInitials(profile?: { name?: string; email?: string }): st
   return email ? email[0]!.toUpperCase() : "?";
 }
 
-/** The name shown on the row: the profile name, else the email, else "You". */
+/** The typed-name, email and "You" rungs only. The row's own name is
+ *  `sidebarIdentity`, which falls back through here and adds the login name. */
 export function profileLabel(profile?: { name?: string; email?: string }): string {
   return profile?.name?.trim() || profile?.email?.trim() || t("sidebar.profile.you");
 }
