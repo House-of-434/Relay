@@ -8,7 +8,7 @@
 //
 // The update entry is the one item that reports progress in place, so it
 // keeps the menu open and re-labels itself as it works.
-import { useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
 import {
   ArrowDownToLine,
   Check,
@@ -28,7 +28,7 @@ import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
 import { ShortcutHint } from "./ShortcutHint";
 import { phoneSettingsAction, useSidebarPhoneStatus } from "./SidebarPhoneButton";
 import { useStore } from "@/state/store";
-import { readSessionState } from "@/lib/session";
+import type { SessionState } from "@/lib/session";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -59,24 +59,27 @@ export interface SessionIdentity {
   avatarUrl?: string;
 }
 
-/** One fetch of who signed in, for identity display only. Loops back to
- * null off-machine; failures stay null so the row falls back to initials. */
+/** The login's display claims, or null when the session carries none — the
+ * owner on their own machine, or a server that never answered. */
+export function sessionIdentity(state: SessionState | null | undefined): SessionIdentity | null {
+  if (state?.kind !== "session") return null;
+  const displayName = state.displayName?.trim();
+  const avatarUrl = state.avatarUrl;
+  if (!displayName && !avatarUrl) return null;
+  return { ...(displayName ? { displayName } : {}), ...(avatarUrl ? { avatarUrl } : {}) };
+}
+
+const SessionIdentityContext = createContext<SessionIdentity | null>(null);
+
+/** Whoever signed in, as main.tsx already read it before the app rendered.
+ * The row is handed what the boot already knows, so the login's name and
+ * photo cost no second request and no store of their own. */
+export function SessionIdentityProvider({ session, children }: { session: SessionState | null | undefined; children: ReactNode }) {
+  return <SessionIdentityContext.Provider value={sessionIdentity(session)}>{children}</SessionIdentityContext.Provider>;
+}
+
 function useSessionIdentity(): SessionIdentity | null {
-  const [identity, setIdentity] = useState<SessionIdentity | null>(null);
-  useEffect(() => {
-    let alive = true;
-    void readSessionState()
-      .then((state) => {
-        if (!alive || state.kind !== "session") return;
-        const next: SessionIdentity = {};
-        if (state.displayName?.trim()) next.displayName = state.displayName.trim();
-        if (state.avatarUrl) next.avatarUrl = state.avatarUrl;
-        if (alive && (next.displayName || next.avatarUrl)) setIdentity(next);
-      })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
-  return identity;
+  return useContext(SessionIdentityContext);
 }
 
 /** The row's display identity. An explicitly typed Relay name always wins;
@@ -127,7 +130,7 @@ export function IdentityAvatar({ profile, session, size = 28 }: {
 }
 
 /** The identity tile for surfaces that show no name (icons-density sidebar):
- * same photo-or-initials, same fallback, fetching its own session. */
+ * same photo-or-initials, same fallback, same one session read. */
 export function SidebarIdentityAvatar({ size = 28 }: { size?: number }) {
   const { state } = useStore();
   const session = useSessionIdentity();
