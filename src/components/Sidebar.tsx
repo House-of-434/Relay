@@ -34,7 +34,7 @@ import {
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 import { peerLine } from "@/lib/peer-message";
 
-import { BotAvatar, InitialsAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { cn } from "@/lib/cn";
 import { useHeldMenuMotion, useMenuMotion } from "./MenuMotion";
@@ -88,7 +88,7 @@ import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
-import { profileInitials, SidebarProfileMenu } from "./SidebarProfileMenu";
+import { SidebarIdentityAvatar, SidebarProfileMenu } from "./SidebarProfileMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ShortcutHint } from "./ShortcutHint";
 
@@ -2014,7 +2014,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               aria-label={t("sidebar.appSettings")}
               title={state.config?.profile?.name?.trim() || t("sidebar.appSettings")}
             >
-              <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
+              <SidebarIdentityAvatar size={28} />
             </button>
           </div>
         ) : (

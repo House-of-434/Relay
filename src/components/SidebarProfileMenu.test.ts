@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   profileInitials,
   profileLabel,
+  sidebarIdentity,
   updateBusy,
   updateNoteworthy,
   updateLabel,
@@ -35,6 +36,21 @@ describe("profileLabel", () => {
     expect(profileLabel({ name: "Omkar", email: "o@x.dev" })).toBe("Omkar");
     expect(profileLabel({ email: "o@x.dev" })).toBe("o@x.dev");
     expect(profileLabel(undefined)).toBe("You");
+  });
+});
+
+describe("sidebarIdentity", () => {
+  const photo = "https://lh3.googleusercontent.com/a";
+  it("keeps an intentional Relay name ahead of the login name", () => {
+    expect(sidebarIdentity({ name: "Bubbles", email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo }))
+      .toEqual({ name: "Bubbles", avatarUrl: photo });
+  });
+
+  it("falls back to the login name, then email, then You", () => {
+    expect(sidebarIdentity({ email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo }))
+      .toEqual({ name: "Ada Lovelace", avatarUrl: photo });
+    expect(sidebarIdentity({ email: "b@x.dev" }, null)).toEqual({ name: "b@x.dev" });
+    expect(sidebarIdentity(undefined, null)).toEqual({ name: "You" });
   });
 });
 

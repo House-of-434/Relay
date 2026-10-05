@@ -14,6 +14,18 @@ const issueSchema = z.object({
   userId: z.string().uuid(),
   email: z.string().email().max(320),
   scopes: z.array(scopeSchema).min(1).max(2),
+  /** Login-time display claims. Shape-checked here; the BFF already
+   * allowlisted the photo host where the provider data enters. */
+  displayName: z.string().trim().min(1).max(120).optional(),
+  avatarUrl: z.string().max(2048).refine((value) => {
+    let url: URL;
+    try {
+      url = new URL(value);
+    } catch {
+      return false;
+    }
+    return url.protocol === "https:" && /(^|\.)googleusercontent\.com$/i.test(url.hostname);
+  }).optional(),
 }).strict();
 const revokeSchema = z.union([
   z.object({ token: z.string().regex(/^relay_sess_[A-Za-z0-9_-]{43}$/) }).strict(),

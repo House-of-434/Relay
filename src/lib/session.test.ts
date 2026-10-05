@@ -116,3 +116,15 @@ describe("an SSH tunnel to a server that treats local requests as a service", ()
     expect(reasonWorthShowing(SERVICE_TRUST_REASON)).toBe(SERVICE_TRUST_REASON);
   });
 });
+
+describe("login-derived display claims on a session", () => {
+  const answer = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  const base = { kind: "session", id: "s", label: "l", scopes: ["client"], expiresAt: 1 };
+  it("carries the provider name and photo through, and drops malformed ones", async () => {
+    expect(await readSessionState(answer({ ...base, displayName: "Ada", avatarUrl: "https://lh3.googleusercontent.com/a" })))
+      .toMatchObject({ displayName: "Ada", avatarUrl: "https://lh3.googleusercontent.com/a" });
+    // Display-only: absent or malformed claims leave a plain session behind.
+    expect(await readSessionState(answer(base))).not.toHaveProperty("displayName");
+    expect(await readSessionState(answer({ ...base, displayName: "  ", avatarUrl: 7 }))).not.toHaveProperty("avatarUrl");
+  });
+});

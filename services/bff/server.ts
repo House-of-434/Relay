@@ -67,6 +67,10 @@ export interface RelayBffConfig {
 export interface VerifiedSupabaseIdentity {
   subject: string;
   email: string;
+  /** Login-time display claims from the provider metadata. Display-only:
+   * never part of any authentication or authorization decision. */
+  displayName?: string;
+  avatarUrl?: string;
 }
 
 interface BffSession extends VerifiedSupabaseIdentity {
@@ -203,7 +207,46 @@ function asVerifiedIdentity(jwtIdentity: VerifiedSupabaseIdentity, profile: unkn
     email.toLowerCase() !== jwtIdentity.email.toLowerCase() ||
     !/^[^\s@]+@houseof434\.com$/i.test(email) || !hasCanonicalConfirmation
   ) throw new Error("Invalid Supabase identity");
-  return { subject: jwtIdentity.subject, email };
+  return { subject: jwtIdentity.subject, email, ...supabaseDisplayClaims(profile) };
+}
+
+/** Optional display claims from the provider metadata Supabase maintains.
+ * Extracted from the user lookup the login already performs — never a new
+ * request. Anything missing or malformed is omitted, never fatal: a sign-in
+ * must not fail over a display name or photo. */
+export function supabaseDisplayClaims(profile: unknown): Pick<VerifiedSupabaseIdentity, "displayName" | "avatarUrl"> {
+  const metadata = profile && typeof profile === "object" ? Reflect.get(profile, "user_metadata") : undefined;
+  const record = metadata && typeof metadata === "object" ? metadata as Record<string, unknown> : undefined;
+  const firstString = (...keys: string[]): string | undefined => {
+    for (const key of keys) {
+      const value = record?.[key];
+      if (typeof value === "string" && value.trim()) return value.trim();
+    }
+    return undefined;
+  };
+  const claims: Pick<VerifiedSupabaseIdentity, "displayName" | "avatarUrl"> = {};
+  const displayName = firstString("full_name", "name");
+  if (displayName && displayName.length <= 120) claims.displayName = displayName;
+  const avatarUrl = firstString("avatar_url", "picture");
+  if (avatarUrl && isPermittedAvatarUrl(avatarUrl)) claims.avatarUrl = avatarUrl;
+  return claims;
+}
+
+/** Provider photos are untrusted display data even though Supabase vouched
+ * for the login: allow only Google's image hosts over HTTPS, bounded length,
+ * so a compromised metadata value cannot point the UI at an arbitrary host. */
+const GOOGLE_AVATAR_HOST = /(^|\.)googleusercontent\.com$/i;
+const MAX_AVATAR_URL_LENGTH = 2048;
+
+export function isPermittedAvatarUrl(value: string): boolean {
+  if (!value || value.length > MAX_AVATAR_URL_LENGTH) return false;
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return false;
+  }
+  return url.protocol === "https:" && GOOGLE_AVATAR_HOST.test(url.hostname);
 }
 
 export function createSupabaseJwtVerifier(options: {
@@ -1030,7 +1073,13 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
             authorization: `Bearer ${config.relayBffCapability}`,
             "content-type": "application/json",
           },
-          body: JSON.stringify({ userId: identity.subject, email: identity.email, scopes: ["client"] }),
+          body: JSON.stringify({
+            userId: identity.subject,
+            email: identity.email,
+            scopes: ["client"],
+            ...(identity.displayName ? { displayName: identity.displayName } : {}),
+            ...(identity.avatarUrl ? { avatarUrl: identity.avatarUrl } : {}),
+          }),
           redirect: "error",
         });
         if (!bridgeResponse.ok) throw new Error("Session issuance failed");

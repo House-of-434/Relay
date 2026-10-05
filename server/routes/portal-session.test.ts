@@ -179,6 +179,29 @@ describe("internal portal session routes", () => {
     expect(sessions.list()).toEqual([]);
   });
 
+  it("carries optional login display claims onto the public session", async () => {
+    const photo = "https://lh3.googleusercontent.com/a-";
+    const response = await call(
+      ISSUE_PATH,
+      identity({ displayName: "Ada Lovelace", avatarUrl: photo }),
+      { capability: CAPABILITY },
+    );
+    expect(response.status).toBe(200);
+    expect(response.body.session).toMatchObject({ displayName: "Ada Lovelace", avatarUrl: photo });
+    expect(sessions.authenticate(String(response.body.token))).toMatchObject({ displayName: "Ada Lovelace", avatarUrl: photo });
+  });
+
+  it("rejects display claims outside the login-photo contract", async () => {
+    for (const body of [
+      identity({ avatarUrl: "http://lh3.googleusercontent.com/a" }),
+      identity({ avatarUrl: "https://attacker.example.test/a.png" }),
+      identity({ displayName: "x".repeat(121) }),
+    ]) {
+      expect((await call(ISSUE_PATH, body, { capability: CAPABILITY })).status).toBe(400);
+    }
+    expect(sessions.list()).toEqual([]);
+  });
+
   it("validates JSON content type and syntax", async () => {
     expect((await call(ISSUE_PATH, identity(), { capability: CAPABILITY, contentType: "text/plain" })).status).toBe(415);
     expect((await call(ISSUE_PATH, undefined, { capability: CAPABILITY, contentType: "application/json", rawBody: "{" })).status).toBe(400);
