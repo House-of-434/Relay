@@ -6,7 +6,7 @@ import { useStore } from "@/state/store";
 import { sharedComputersEnabled } from "@/lib/feature-flags";
 
 type SavedWorkspaces = Awaited<ReturnType<NonNullable<NonNullable<Window["ogb"]>["environments"]>["state"]>>;
-type SavedEntry = { id: string; name: string; origin: string };
+type SavedEntry = NonNullable<SavedWorkspaces>["environments"][number];
 
 /** Logo tile for a server row, marketplace-style. The local row shows this
  * app's icon; a saved server shows its own icon with a letter fallback, so a
