@@ -1179,7 +1179,6 @@
   "connectors.card.connectSecurely": "Conectar de forma segura",
   "connectors.card.continueTask": "Continuar la tarea",
   "connectors.card.continuing": "Continuando",
-  "connectors.disconnectConfirm": "¿Desconectar {identity} de {service}? Solo se revocará esta cuenta de {service}. Tus otras cuentas de {service} seguirán conectadas.",
   "connectors.action.included": "Incluido",
   "connectors.action.checking": "Comprobando…",
   "connectors.action.unavailable": "No disponible",

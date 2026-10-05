@@ -68,6 +68,10 @@ const portalIssueSchema = z.object({
   userId: z.string().uuid(),
   email: z.string().email().max(320),
   scopes: z.array(scopeSchema).min(1).max(SCOPES.length),
+  /** Login-time display claims: what the provider said at sign-in, shown
+   * in the UI and never used for access decisions. */
+  displayName: z.string().trim().min(1).max(120).optional(),
+  avatarUrl: z.string().url().max(2048).optional(),
 }).strict();
 
 const sessionSchema = z.object({
@@ -81,6 +85,10 @@ const sessionSchema = z.object({
   /** Set when the session came from an account sign-in rather than a code. */
   userId: z.string().max(256).optional(),
   email: z.string().max(320).optional(),
+  /** Login-time display claims from the identity provider. Shown in the UI;
+   * never used for access decisions and never edited through profile saves. */
+  displayName: z.string().max(120).optional(),
+  avatarUrl: z.string().max(2048).optional(),
   /** Set only by the internal verified-portal issuance path, never by email or pairing input. */
   membershipAuthority: z.literal("portal").optional(),
   /** A browser sign-in (PairingCode `browser`): accepted only as its browser's cookie, never as a bearer token. */
@@ -103,6 +111,9 @@ export interface PublicSession {
   expiresAt: number;
   /** The account that signed in, when it was an account and not a code. */
   email?: string;
+  /** What the identity provider said at sign-in. Display-only. */
+  displayName?: string;
+  avatarUrl?: string;
   /** Whose OMB Cloud a browser sign-in signed in to. */
   owner?: string;
 }
@@ -219,6 +230,8 @@ function publicSession(record: SessionRecord): PublicSession {
     expiresAt: record.expiresAt,
   };
   if (record.email) view.email = record.email;
+  if (record.displayName) view.displayName = record.displayName;
+  if (record.avatarUrl) view.avatarUrl = record.avatarUrl;
   if (record.owner) view.owner = record.owner;
   return view;
 }
@@ -478,13 +491,20 @@ export class SessionRegistry {
   /** Internal hosted-workspace seam. The caller has already verified the
    * identity; email is metadata and never substitutes for its stable user id.
    * Requested scopes are validated, then narrowed to the server-owned default. */
-  issuePortal(input: { userId: string; email: string; scopes: Scope[] }): { token: string; session: PublicSession } {
+  issuePortal(input: { userId: string; email: string; scopes: Scope[]; displayName?: string; avatarUrl?: string }): { token: string; session: PublicSession } {
     const parsed = portalIssueSchema.safeParse(input);
     if (!parsed.success) throw new Error("A verified portal identity is required");
-    return this.issueAccount({ label: "Hosted workspace", email: parsed.data.email, userId: parsed.data.userId, scopes: ["client"] }, "portal");
+    return this.issueAccount({
+      label: "Hosted workspace",
+      email: parsed.data.email,
+      userId: parsed.data.userId,
+      scopes: ["client"],
+      ...(parsed.data.displayName ? { displayName: parsed.data.displayName } : {}),
+      ...(parsed.data.avatarUrl ? { avatarUrl: parsed.data.avatarUrl } : {}),
+    }, "portal");
   }
 
-  private issueAccount(input: { label: string; scopes: Scope[]; userId?: string; email?: string }, membershipAuthority?: "portal"): { token: string; session: PublicSession } {
+  private issueAccount(input: { label: string; scopes: Scope[]; userId?: string; email?: string; displayName?: string; avatarUrl?: string }, membershipAuthority?: "portal"): { token: string; session: PublicSession } {
     this.prune();
     const now = this.now();
     const token = `relay_sess_${randomBytes(32).toString("base64url")}`;
@@ -499,6 +519,8 @@ export class SessionRegistry {
     };
     if (input.userId) record.userId = input.userId;
     if (input.email) record.email = input.email;
+    if (input.displayName) record.displayName = input.displayName;
+    if (input.avatarUrl) record.avatarUrl = input.avatarUrl;
     if (membershipAuthority) record.membershipAuthority = membershipAuthority;
     this.sessions.push(record);
     this.lastSeenWrites.set(record.id, now);

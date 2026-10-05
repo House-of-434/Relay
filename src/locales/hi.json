@@ -1179,7 +1179,6 @@
   "connectors.card.connectSecurely": "सुरक्षित रूप से जोड़ें",
   "connectors.card.continueTask": "काम जारी रखें",
   "connectors.card.continuing": "जारी है",
-  "connectors.disconnectConfirm": "{identity} को {service} से अलग करें? सिर्फ़ इस {service} खाते की कनेक्शन अनुमति रद्द होगी। आपके बाकी {service} खाते जुड़े रहेंगे।",
   "connectors.action.included": "शामिल",
   "connectors.action.checking": "जाँच हो रही है…",
   "connectors.action.unavailable": "उपलब्ध नहीं",

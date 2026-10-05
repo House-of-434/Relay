@@ -2394,7 +2394,7 @@
   "connectors.card.connectSecurely": "Connect securely",
   "connectors.card.continueTask": "Continue task",
   "connectors.card.continuing": "Continuing",
-  "connectors.disconnectConfirm": "Disconnect {identity} from {service}? Only this {service} account will be revoked. Your other {service} accounts will stay connected.",
+  "connectors.disconnectConfirm": "Disconnect {service}? Relay will lose access to your {service} data until you connect again.",
   "connectors.action.included": "Included",
   "connectors.action.checking": "Checking…",
   "connectors.action.unavailable": "Unavailable",

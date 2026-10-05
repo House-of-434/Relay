@@ -47,17 +47,22 @@ describe("Connections marketplace", () => {
     expect(html).toContain('data-tour="apps-close"');
   });
 
-  it("shows both views and counts what is connected", () => {
+  it("shows both views without a connected count", () => {
     const html = render({ accounts: [gmail] });
     expect(html).toContain("Available");
-    expect(html).toContain("Connected 1");
+    expect(html).toContain("Connected");
+    expect(html).not.toContain("Connected 1");
   });
 
   it("returns from Google authorization directly to the Connected view", () => {
     const html = render({ accounts: [gmail] }, "?connections=connected");
-    expect(html).toContain("me@houseof434.com");
     expect(html).toContain("Disconnect");
-    expect(html).toContain('aria-selected="true" class="rounded-lg px-4 py-2 text-[13.5px] transition-colors bg-card text-ink shadow-sm">Connected 1');
+    // One account per service: no second-account slot, and no token or
+    // identity line — the row action disconnects the grant.
+    expect(html).not.toContain("Add account");
+    expect(html).not.toContain("ca_1");
+    expect(html).toContain('aria-label="Disconnect me@houseof434.com from Gmail"');
+    expect(html).toContain('aria-selected="true" class="rounded-lg px-4 py-2 text-[13.5px] transition-colors bg-card text-ink shadow-sm">Connected');
   });
 
   it("cannot connect while Google's authorization is unconfigured", () => {

@@ -1179,7 +1179,6 @@
   "connectors.card.connectSecurely": "Se connecter en sécurité",
   "connectors.card.continueTask": "Reprendre la tâche",
   "connectors.card.continuing": "Reprise en cours",
-  "connectors.disconnectConfirm": "Déconnecter {identity} de {service} ? Seul ce compte {service} sera révoqué. Vos autres comptes {service} resteront connectés.",
   "connectors.action.included": "Inclus",
   "connectors.action.checking": "Vérification…",
   "connectors.action.unavailable": "Indisponible",

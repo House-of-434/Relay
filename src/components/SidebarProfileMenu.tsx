@@ -28,6 +28,7 @@ import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
 import { ShortcutHint } from "./ShortcutHint";
 import { phoneSettingsAction, useSidebarPhoneStatus } from "./SidebarPhoneButton";
 import { useStore } from "@/state/store";
+import { readSessionState } from "@/lib/session";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -50,6 +51,87 @@ export function profileInitials(profile?: { name?: string; email?: string }): st
 /** The name shown on the row: the profile name, else the email, else "You". */
 export function profileLabel(profile?: { name?: string; email?: string }): string {
   return profile?.name?.trim() || profile?.email?.trim() || t("sidebar.profile.you");
+}
+
+/** Login-derived display claims, as the session response carries them. */
+export interface SessionIdentity {
+  displayName?: string;
+  avatarUrl?: string;
+}
+
+/** One fetch of who signed in, for identity display only. Loops back to
+ * null off-machine; failures stay null so the row falls back to initials. */
+function useSessionIdentity(): SessionIdentity | null {
+  const [identity, setIdentity] = useState<SessionIdentity | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void readSessionState()
+      .then((state) => {
+        if (!alive || state.kind !== "session") return;
+        const next: SessionIdentity = {};
+        if (state.displayName?.trim()) next.displayName = state.displayName.trim();
+        if (state.avatarUrl) next.avatarUrl = state.avatarUrl;
+        if (alive && (next.displayName || next.avatarUrl)) setIdentity(next);
+      })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, []);
+  return identity;
+}
+
+/** The row's display identity. An explicitly typed Relay name always wins;
+ * the Google name is the fallback for accounts that never set one — never
+ * an override of an intentional custom name. The photo has no typed
+ * equivalent, so the login photo is the default whenever one exists. */
+export function sidebarIdentity(
+  profile?: { name?: string; email?: string },
+  session?: SessionIdentity | null,
+): { name: string; avatarUrl?: string } {
+  const typed = profile?.name?.trim();
+  const login = session?.displayName?.trim();
+  return {
+    // profileLabel covers the typed-name, email and "You" rungs; the login
+    // name slots in only where no intentional name exists.
+    name: typed || login || profileLabel(profile),
+    ...(session?.avatarUrl ? { avatarUrl: session.avatarUrl } : {}),
+  };
+}
+
+/** Photo when the login provided one, initials otherwise. A failed photo
+ * unmounts into initials; the image never remounts on its own, so a bad
+ * URL cannot error-loop. */
+export function IdentityAvatar({ profile, session, size = 28 }: {
+  profile?: { name?: string; email?: string };
+  session?: SessionIdentity | null;
+  size?: number;
+}) {
+  const [failed, setFailed] = useState(false);
+  const avatarUrl = session?.avatarUrl;
+  useEffect(() => setFailed(false), [avatarUrl]);
+  if (avatarUrl && !failed) {
+    return (
+      <img
+        src={avatarUrl}
+        alt=""
+        width={size}
+        height={size}
+        referrerPolicy="no-referrer"
+        onError={() => setFailed(true)}
+        className="shrink-0 rounded-full object-cover"
+        style={{ width: size, height: size }}
+      />
+    );
+  }
+  const source = profile?.name?.trim() ? profile : session?.displayName ? { name: session.displayName } : profile;
+  return <InitialsAvatar initials={profileInitials(source)} size={size} />;
+}
+
+/** The identity tile for surfaces that show no name (icons-density sidebar):
+ * same photo-or-initials, same fallback, fetching its own session. */
+export function SidebarIdentityAvatar({ size = 28 }: { size?: number }) {
+  const { state } = useStore();
+  const session = useSessionIdentity();
+  return <IdentityAvatar profile={state.config?.profile} session={session} size={size} />;
 }
 
 export type UpdatePhase =
@@ -195,7 +277,9 @@ export function SidebarProfileMenu() {
   const triggerRef = useRef<HTMLSpanElement>(null);
 
   const profile = state.config?.profile;
-  const name = profileLabel(profile);
+  const session = useSessionIdentity();
+  const identity = sidebarIdentity(profile, session);
+  const name = identity.name;
 
   const items: SidebarMenuItem[] = [
     {
@@ -260,7 +344,7 @@ export function SidebarProfileMenu() {
               open ? "bg-raised" : "hover:bg-raised/50",
             )}
           >
-            <InitialsAvatar initials={profileInitials(profile)} size={28} />
+            <IdentityAvatar profile={profile} session={session} size={28} />
             <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{name}</span>
             {/* an update is the one thing worth interrupting the name for, so
               * it sits on the row rather than waiting to be found in the menu */}

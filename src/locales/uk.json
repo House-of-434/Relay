@@ -1599,7 +1599,6 @@
   "connectors.card.connectSecurely": "Підключити безпечно",
   "connectors.card.continueTask": "Продовжити завдання",
   "connectors.card.continuing": "Продовжуємо",
-  "connectors.disconnectConfirm": "Відключити {identity} від {service}? Відкликано буде лише цей акаунт {service}. Ваші інші акаунти {service} залишаться підключеними.",
   "connectors.action.included": "Включено",
   "connectors.action.checking": "Перевіряємо…",
   "connectors.action.unavailable": "Недоступно",

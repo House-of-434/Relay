@@ -14017,6 +14017,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               environmentId: ENVIRONMENT_ID,
               // the account behind the session, when it came from a sign-in
               ...(auth.session.email ? { email: auth.session.email } : {}),
+              // what the identity provider said at sign-in: display-only
+              ...(auth.session.displayName ? { displayName: auth.session.displayName } : {}),
+              ...(auth.session.avatarUrl ? { avatarUrl: auth.session.avatarUrl } : {}),
               // whose OMB Cloud a browser sign-in signed in to
               ...(auth.session.owner ? { owner: auth.session.owner } : {}),
               // a hosted team workspace: the web UI's first run skips the

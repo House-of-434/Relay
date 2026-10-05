@@ -1186,7 +1186,6 @@
   "connectors.card.connectSecurely": "Sicher verbinden",
   "connectors.card.continueTask": "Aufgabe fortsetzen",
   "connectors.card.continuing": "Wird fortgesetzt",
-  "connectors.disconnectConfirm": "{identity} von {service} trennen? Nur dieses {service}-Konto wird widerrufen. Deine anderen {service}-Konten bleiben verbunden.",
   "connectors.action.included": "Enthalten",
   "connectors.action.checking": "Wird geprüft…",
   "connectors.action.unavailable": "Nicht verfügbar",

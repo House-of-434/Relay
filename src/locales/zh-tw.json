@@ -1563,7 +1563,6 @@
   "connectors.card.connectSecurely": "安全連線",
   "connectors.card.continueTask": "繼續工作",
   "connectors.card.continuing": "繼續中",
-  "connectors.disconnectConfirm": "要中斷 {identity} 與 {service} 的連線嗎？系統只會撤銷這個 {service} 帳戶，你其他的 {service} 帳戶仍會保持連線。",
   "connectors.action.included": "已包含",
   "connectors.action.checking": "檢查中…",
   "connectors.action.unavailable": "無法使用",

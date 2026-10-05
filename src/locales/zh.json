@@ -1179,7 +1179,6 @@
   "connectors.card.connectSecurely": "安全连接",
   "connectors.card.continueTask": "继续任务",
   "connectors.card.continuing": "继续中",
-  "connectors.disconnectConfirm": "断开 {identity} 与 {service} 的连接？只会撤销这个 {service} 账号，你的其他 {service} 账号仍保持连接。",
   "connectors.action.included": "已包含",
   "connectors.action.checking": "正在检查…",
   "connectors.action.unavailable": "不可用",
