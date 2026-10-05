@@ -35,13 +35,13 @@ export const CONNECTION_SERVICES: readonly ConnectionService[] = [
   {
     id: "gmail",
     label: "Gmail",
-    detail: "Relay can read your mail and prepare drafts on your behalf. Nothing is ever sent without your confirmation.",
+    detail: "Relay can read and search your mail, and send email for you. Sending asks for confirmation first.",
     icon: <GmailMark size={22} />,
   },
   {
     id: "google-calendar",
     label: "Google Calendar",
-    detail: "Relay can read your calendars and manage events on your behalf — creating, rescheduling, or cancelling when you ask.",
+    detail: "Relay can read your primary calendar and manage its events — creating, rescheduling, or cancelling when you ask.",
     icon: <GoogleCalendarMark size={22} />,
   },
 ];
@@ -90,7 +90,9 @@ export interface PluginsPanelProps {
   loading?: boolean;
   error?: string | null;
   onConnect: (service: ConnectionService["id"]) => void | Promise<void>;
-  onDisconnect: (account: ConnectionAccount) => void | Promise<void>;
+  /** Revokes every grant held on one service: the panel's rows are services,
+   *  so its Disconnect is service-scoped too. */
+  onDisconnect: (accounts: readonly ConnectionAccount[]) => void | Promise<void>;
 }
 
 export function PluginsPanel({ accounts, configured, loading = false, error, onConnect, onDisconnect }: PluginsPanelProps) {
@@ -128,15 +130,16 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
   };
 
   // Connectors are for one Google account per service, so a connected service
-  // is a single row with a single Disconnect — never a second account slot.
-  const disconnect = async (account: ConnectionAccount) => {
+  // is a single row whose Disconnect removes the service from Relay — every
+  // grant held on it, so a leftover second account cannot keep serving mail
+  // behind a confirmation that says access ends.
+  const disconnect = async (service: ConnectionService, accounts: readonly ConnectionAccount[]) => {
     if (pending) return;
-    const service = CONNECTION_SERVICES.find((candidate) => candidate.id === account.service);
-    if (!service || !window.confirm(t("connectors.disconnectConfirm", { service: service.label }))) return;
-    setPending(account.id);
+    if (!window.confirm(t("connectors.disconnectConfirm", { service: service.label }))) return;
+    setPending(service.id);
     setActionError(null);
     try {
-      await onDisconnect(account);
+      await onDisconnect(accounts);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : t("connectors.action.failed"));
     } finally {
@@ -225,19 +228,18 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
           {!loading && view === "connected" && (connected.length === 0
             ? <EmptyState connected />
             : connected.map((service) => {
-                const account = accountsByService.get(service.id)?.[0];
-                if (!account) return null;
-                const busy = pending === account.id;
+                const accounts = accountsByService.get(service.id) ?? [];
+                if (accounts.length === 0) return null;
                 return (
                   <ServiceRow key={service.id} service={service} action={
                     <button
                       type="button"
                       disabled={pending !== null}
-                      onClick={() => void disconnect(account)}
-                      aria-label={t("connectors.disconnectAria", { account: account.email, service: service.label })}
+                      onClick={() => void disconnect(service, accounts)}
+                      aria-label={t("connectors.disconnectAria", { service: service.label })}
                       className="flex min-w-[112px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
                     >
-                      {busy ? <Loader2 size={14} className="animate-spin" /> : t("connectors.disconnect")}
+                      {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : t("connectors.disconnect")}
                     </button>
                   } />
                 );
