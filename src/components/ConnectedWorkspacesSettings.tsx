@@ -75,13 +75,15 @@ export function ConnectedWorkspacesSettings() {
       // for its privileged saved list again after the active origin changes.
       if (await action() !== true) {
         // Reading the list back is a load of its own, never the action's
-        // own failure: a broken read says the list is unavailable and
-        // leaves the action's message to say what the action hit.
+        // own failure: a broken read reports itself so it cannot overwrite
+        // or be mistaken for what the action hit.
         try {
           const state = await bridge.state();
           if (generation.current === current) { setSaved(state); setLoadFailed(false); }
         } catch {
-          if (generation.current === current) setLoadFailed(true);
+          // Reported through the visible error: the list on screen may now be
+          // stale, so a failed read is never silent.
+          if (generation.current === current) setError("Saved servers could not be refreshed.");
         }
       }
     } catch (nextError) {

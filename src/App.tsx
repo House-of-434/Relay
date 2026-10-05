@@ -94,13 +94,24 @@ function GoogleConnectionsDialog() {
     window.location.assign(authorizationUrl.toString());
   };
 
-  const disconnect = async (account: ConnectionAccount) => {
-    const response = await fetch(`/api/google/connections/${encodeURIComponent(account.service)}/${encodeURIComponent(account.id)}`, {
-      method: "DELETE",
-      credentials: "same-origin",
-    });
-    if (!response.ok) throw new Error(response.status === 404 ? "That Google account is no longer connected." : "Could not disconnect the Google account.");
+  // One row per service, so Disconnect means the service: every grant held on
+  // it is revoked. A grant that is already gone is the outcome we wanted, and
+  // the list is read back either way so a partial failure cannot leave a
+  // surviving account hidden behind a service the user believes is gone.
+  const disconnect = async (accounts: readonly ConnectionAccount[]) => {
+    const revoked = await Promise.all(accounts.map(async (account) => {
+      try {
+        const response = await fetch(`/api/google/connections/${encodeURIComponent(account.service)}/${encodeURIComponent(account.id)}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        return response.ok || response.status === 404;
+      } catch {
+        return false;
+      }
+    }));
     await refresh();
+    if (revoked.includes(false)) throw new Error("Could not disconnect every Google account for this service.");
   };
 
   return state.pluginsOpen ? (
