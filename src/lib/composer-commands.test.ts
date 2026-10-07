@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   composerSlashTrigger,
   goalTextFromComposer,
-  planTextFromComposer,
   replaceComposerSlashTrigger,
   type ComposerSlashCommandId,
 } from "./composer-commands";
@@ -33,16 +32,6 @@ describe("composer slash commands", () => {
     expect(goalTextFromComposer("discuss /goal later")).toBeNull();
   });
 
-  it("reads a typed /plan as the deep-research brief, or nothing when absent", () => {
-    expect(planTextFromComposer("/plan compare the two filings")).toBe(
-      "compare the two filings",
-    );
-    expect(planTextFromComposer("/PLAN\n  check the market")).toBe("check the market");
-    expect(planTextFromComposer("/plan")).toBe("");
-    // A longer word that merely starts with "plan" is ordinary chat text.
-    expect(planTextFromComposer("/planet sizes")).toBeNull();
-    expect(planTextFromComposer("use /plan now")).toBeNull();
-  });
 
   it("offers setup as a slash command id and keeps the typed token", () => {
     const id: ComposerSlashCommandId = "setup";

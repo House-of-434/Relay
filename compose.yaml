@@ -50,7 +50,7 @@ services:
       # real boundary (default loopback is for bare processes, not compose).
       RELAY_TOOL_HOST: "0.0.0.0"
       RELAY_TOOL_PORT: "8787"
-      BLADE_HOME: /data/blade
+      RELAY_BLADE_ROOT: /data/blade
     expose:
       - "8787"
     healthcheck:
@@ -58,7 +58,7 @@ services:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:8799/api/health', { signal: AbortSignal.timeout(4000) }).then(async r => { if (!r.ok || !(await r.text()).includes('openmausbot')) process.exit(1); }).catch(() => process.exit(1))"
+        - "fetch('http://127.0.0.1:8787/healthz', { signal: AbortSignal.timeout(4000) }).then(async r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"
       interval: 15s
       timeout: 5s
       start_period: 30s

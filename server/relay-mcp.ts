@@ -54,15 +54,16 @@ export function relayAgentBotIds(
 }
 
 /** Construct the private Tool Layer route; users do not configure Relay MCP
- * servers in the Plugins UI. The server itself remains loopback-only. */
+ * servers in the Plugins UI. The harness connects either to a loopback
+ * child process or to the compose-network Tool Layer service; authentication
+ * is the HMAC actor assertion, never the URL. */
 export function relayToolMcpServer(agent: RelayAgent, baseUrl: string): RemoteMcpSpec {
   let url: URL;
   try { url = new URL(baseUrl); }
-  catch { throw new Error("RELAY_TOOL_URL must be a loopback HTTP origin on port 8787"); }
-  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
-  if (url.protocol !== "http:" || !loopback || url.port !== "8787" ||
+  catch { throw new Error("RELAY_TOOL_URL must be an http origin"); }
+  if ((url.protocol !== "http:" && url.protocol !== "https:") ||
       (url.pathname !== "/" && url.pathname !== "") || url.username || url.password || url.search || url.hash) {
-    throw new Error("RELAY_TOOL_URL must be a loopback HTTP origin on port 8787");
+    throw new Error("RELAY_TOOL_URL must be an http(s) origin with no path, credentials, query, or hash");
   }
   return { type: "http", url: `${url.origin}/mcp/${agent}`, headers: {} };
 }
@@ -70,10 +71,10 @@ export function relayToolMcpServer(agent: RelayAgent, baseUrl: string): RemoteMc
 function relayRoute(urlText: string): RelayAgent | "invalid" | null {
   let url: URL;
   try { url = new URL(urlText); } catch { return null; }
-  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname);
-  if (!loopback || url.port !== "8787" || !url.pathname.startsWith("/mcp/")) return null;
+  if (!url.pathname.startsWith("/mcp/")) return null;
   const route = url.pathname.slice("/mcp/".length);
-  if (url.protocol !== "http:" || url.username || url.password || url.search || url.hash || !AGENTS.has(route as RelayAgent)) {
+  if ((url.protocol !== "http:" && url.protocol !== "https:") ||
+      url.username || url.password || url.search || url.hash || !AGENTS.has(route as RelayAgent)) {
     return "invalid";
   }
   return route as RelayAgent;

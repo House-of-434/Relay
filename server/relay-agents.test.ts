@@ -19,8 +19,7 @@ describe("scout capability manifest", () => {
     }
   });
 
-  it("defines the deep-research protocol: tag, plan preview, confirmed one-shot", () => {
-    expect(scout.profile.soul).toContain("[deep research]");
+  it("defines the deep-research protocol: plan preview, confirmed one-shot", () => {
     expect(scout.profile.soul).toMatch(/plan preview/i);
     // Confirmation is the existing request card, so the plan is proposed
     // through propose_routine rather than a conversational go-ahead.

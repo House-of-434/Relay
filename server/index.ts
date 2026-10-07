@@ -7402,6 +7402,7 @@ bus.subscribe((event: RuntimeEvent) => {
           ]).then((frame) => {
             if (frame && isCurrent()) {
               store.insertMessageAfter(event.threadId, researchLeafId, { role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+              settledScreenHashes.set(event.threadId, screenFrameHash(frame.png));
             }
           }).catch(() => {}).finally(() => {
             clearTimeout(researchTimeout);
