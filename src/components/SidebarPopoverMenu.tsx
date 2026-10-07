@@ -143,7 +143,13 @@ export function SidebarPopoverMenu({
             setOpen(true);
           }
         }}
-        className="w-full"
+        // The trigger's own hover pill is a little narrower than the menu that
+        // opens above it. The menu is `left-0 right-0` of this button, so
+        // without this padding the two were exactly the same rectangle — the
+        // hover fill ran flush to the menu's edges and the row read as one
+        // block with the popover rather than a row that opens one. The button
+        // keeps the full width, so the click and hover target is unchanged.
+        className="w-full px-1"
       >
         {renderTrigger({ open, attention, attentionTone })}
       </button>
