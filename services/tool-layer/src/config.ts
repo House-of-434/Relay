@@ -8,6 +8,14 @@ export function toolPort(env: NodeJS.ProcessEnv = process.env): number {
   return Number(env.RELAY_TOOL_PORT ?? "8787");
 }
 
+/** Bind host for the Tool Layer HTTP server. Loopback by default, so a bare
+ * process stays single-host. A compose deployment overrides it to listen on
+ * the container's interface while the HMAC actor assertion remains the real
+ * boundary. */
+export function toolHost(env: NodeJS.ProcessEnv = process.env): string {
+  return env.RELAY_TOOL_HOST ?? "127.0.0.1";
+}
+
 export function assertValidPort(port: number): void {
   if (!Number.isInteger(port) || port < 0 || port > 65535) {
     throw new Error("RELAY_TOOL_PORT must be a valid TCP port");

@@ -8,7 +8,7 @@ import { RelayCalendarClient } from "../infra/calendar.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
-import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolPort } from "../config.js";
+import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolHost, toolPort } from "../config.js";
 
 function bearerToken(request: IncomingMessage): string | null {
   const authorization = request.headers.authorization;
@@ -167,7 +167,7 @@ export async function createRelayToolServer(
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once("error", reject);
-    httpServer.listen(requestedPort, "127.0.0.1", () => {
+    httpServer.listen(requestedPort, toolHost(), () => {
       httpServer.off("error", reject);
       resolve();
     });
