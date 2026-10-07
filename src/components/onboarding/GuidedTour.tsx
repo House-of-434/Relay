@@ -3,13 +3,17 @@
 // controls itself (the Tools menu, its items, the Computer button), so it
 // never waits on the user and the app reacts exactly as it would for them.
 // Clicking the pointed-at control counts as Next too. Every advance is
-// written to the server's hint list first, so a reload lands on the same
-// step.
-import { useCallback, useEffect, useRef, useState } from "react";
+// recorded before the step moves, so a reload lands on the same step: in the
+// workspace's onboarding record when the session may write it, and in this
+// browser's own list when it may not (see lib/first-run). A write that is
+// refused is not a dead end — the tour still advances.
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ANCHOR_EFFECTS, currentStep, stepNumber, TOUR_STEPS, withTourFinished, type TourEffect, type TourStep } from "@/lib/guided-tour";
 import { t } from "@/lib/i18n";
+import { emailGateDone } from "@/lib/analytics";
 import type { MausState } from "@/lib/mascot";
-import { hintSeenPatch } from "@/lib/onboarding";
+import { EMPTY_ONBOARDING, hintSeenPatch, type OnboardingStatus } from "@/lib/onboarding";
+import { readTourSeen, tourStorage, writeTourSeen } from "@/lib/first-run";
 import type { LocaleKey } from "@/locales";
 import { api, useStore } from "@/state/store";
 import { Spotlight } from "./Spotlight";
@@ -46,14 +50,27 @@ function press(anchor: string): boolean {
 export function GuidedTour() {
   const { state, dispatch } = useStore();
   const record = state.config?.onboarding;
-  const step = currentStep(record);
+  // Steps this browser has been shown. The server record is authoritative and
+  // is written whenever the session may; a session that cannot write it (a
+  // member of Relay's shared workspace signs in with client scope, and
+  // `PUT /api/config` is admin-only) keeps them here instead, so the tour
+  // still completes once rather than restarting on every reload. The union is
+  // what "already seen" means: a local id never cancels a server one.
+  //
+  // State, not a ref: a refused server write must still move the tour on, and
+  // only a re-render does that.
+  const [localSeen, setLocalSeen] = useState<string[]>(() => readTourSeen(tourStorage()));
+  const merged = useMemo<OnboardingStatus>(
+    () => ({ ...(record ?? EMPTY_ONBOARDING), hintsSeen: [...new Set([...(record?.hintsSeen ?? []), ...localSeen])] }),
+    [record, localSeen],
+  );
+  const step = currentStep(merged);
   const saving = useRef(false);
   const pending = useRef<Promise<unknown>>(Promise.resolve());
-  const latestRecord = useRef(record);
-  latestRecord.current = record;
+  const latestRecord = useRef(merged);
+  latestRecord.current = merged;
   const closed = useRef(false);
   const [dismissed, setDismissed] = useState(false);
-  const [failed, setFailed] = useState(false);
   const entered = useRef<string | null>(null);
   const [fallback, setFallback] = useState<string | null>(null);
 
@@ -61,7 +78,6 @@ export function GuidedTour() {
     if (!state.tourOpen) return;
     closed.current = false;
     setDismissed(false);
-    setFailed(false);
   }, [state.tourOpen]);
 
   const run = useCallback(
@@ -100,7 +116,16 @@ export function GuidedTour() {
           ? { onboarding: { hintsSeen: withTourFinished(latestRecord.current) } }
           : id ? hintSeenPatch(latestRecord.current, id) : null;
         if (!patch) return;
-        const config = await api("/api/config", { method: "PUT", body: JSON.stringify(patch), signal: AbortSignal.timeout(10_000) });
+        // The browser has it first: a refused or slow write must not lose the
+        // step, because this record is the only way the tour stays finished.
+        // Union, not replace — the patch is computed from the merged record,
+        // and the server half of it knows nothing about ids this browser held.
+        const hints = patch.onboarding.hintsSeen;
+        const ids = [...new Set([...latestRecord.current.hintsSeen, ...hints])];
+        const storage = tourStorage();
+        for (const hint of hints) writeTourSeen(storage, hint);
+        setLocalSeen((previous) => [...new Set([...previous, ...hints])]);
+        const config = await api("/api/config", { method: "PUT", body: JSON.stringify({ onboarding: { hintsSeen: ids } }), signal: AbortSignal.timeout(10_000) });
         latestRecord.current = config.onboarding;
         dispatch({ type: "configStatus", config });
       });
@@ -114,12 +139,14 @@ export function GuidedTour() {
     (fromAnchor = false) => {
       if (!step || saving.current || closed.current) return;
       saving.current = true;
-      setFailed(false);
-      void save(false, step.id).then(() => {
+      // Best-effort: a session that cannot write the workspace config still
+      // walks the tour, on the browser's record alone. It used to freeze here
+      // with an error, because only a successful save moved the step on.
+      void save(false, step.id).catch(() => {}).then(() => {
         // Only move the interface after progress was saved. A queued skip
         // owns cleanup and must not have its panels reopened by this request.
         if (!closed.current && !(fromAnchor && step.onExit && ANCHOR_EFFECTS.has(step.onExit))) run(step.onExit);
-      }).catch(() => setFailed(true)).finally(() => { saving.current = false; });
+      }).finally(() => { saving.current = false; });
     },
     [step, run, save],
   );
@@ -135,7 +162,12 @@ export function GuidedTour() {
     dispatch({ type: "toggleTour", open: false });
   }, [state.pluginsOpen, run, save, dispatch]);
 
-  const active = !dismissed && Boolean(record?.completedAt) && !state.welcomeOpen && step !== null;
+  // The welcome flow finishing is what opens the tour. It marks the workspace
+  // record when the session may write it, and always marks the browser's own
+  // one-time gate (`setEmailGateDone`), which is the whole record for a member
+  // of the shared workspace — so either signal means "the welcome is done".
+  const welcomeDone = Boolean(record?.completedAt) || emailGateDone();
+  const active = !dismissed && welcomeDone && !state.welcomeOpen && step !== null;
 
   // entering a step runs its effect once per step
   useEffect(() => {
@@ -195,7 +227,6 @@ export function GuidedTour() {
       onDone={finish}
     >
       {copy(step.id)}
-      {failed && <p role="alert" className="mt-2 text-danger">{t("onboarding.tour.error")}</p>}
     </Spotlight>
   );
 }

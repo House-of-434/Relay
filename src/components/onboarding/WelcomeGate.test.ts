@@ -138,6 +138,18 @@ describe("who gets the welcome flow", () => {
     expect(store.dispatch).toHaveBeenCalledWith({ type: "toggleWelcome", open: false });
   });
 
+  it("opens the flow for a shared workspace's member, who signs in with client scope", () => {
+    store.state = { ...store.state, config: { ...fresh, sharedWorkspace: true } };
+    const { tree } = gate({ hosted: false, canSave: false });
+    expect(tree?.type).toBe(WelcomeFlow);
+    expect(tree?.props).toMatchObject({ hosted: false, sharedWorkspace: true });
+  });
+
+  it("adds nothing for a member of a server that is neither hosted nor shared", () => {
+    store.state = { ...store.state, config: { ...fresh, sharedWorkspace: false } };
+    expect(gate({ hosted: false, canSave: false }).tree).toBeNull();
+  });
+
   it("adds nothing for a member of a server that is not hosted, such as the owner's own paired browser", () => {
     // no note: the team copy would be false there, and it would be new UI
     const { tree, html } = gate({ hosted: false, canSave: false });
