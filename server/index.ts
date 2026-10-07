@@ -340,6 +340,7 @@ import {
   type TaskRecord,
   toWireTask,
 } from "./store.ts";
+import { inheritThreadOwner, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
 import * as tts from "./tts/index.ts";
 import { createDecider, deciderIncludedHere, deciderReady, deciderSavePatch, describeDecider } from "./decider/index.ts";
 import { decideRoomResponder, type RoomRoutingInput } from "./decider/room-routing.ts";
@@ -819,6 +820,10 @@ function messageSender(auth: RequestAuth): ResolvedSender | undefined {
 }
 
 function threadActorContext(threadId: string): { userId?: string; email?: string } | undefined {
+  // The recorded owner is server truth: stamped from verified session
+  // identity at send time, never derived from conversation contents.
+  const owner = recordedThreadOwner(DATA_DIR, threadId);
+  if (owner) return { userId: owner.userId, email: owner.email };
   const sender = store.messagesFor(threadId).findLast((message) => message.role === "user")?.sender;
   if (sender) return { userId: sender.actorUserId, email: sender.email };
   // Unattended threads have no user sender: a routine execution (or a peer
@@ -8542,6 +8547,11 @@ async function startTurn(
   const profile = store.bot(botId);
   if (!profile) throw Object.assign(new Error("no such bot"), { status: 404 });
   const threadId = opts?.threadId ?? profile.threadId;
+  // Stamp ownership from the verified sender, once. Continuations and
+  // delegated turns carry no sender and can neither create nor steal it.
+  if (opts?.sender?.actorUserId) {
+    recordThreadOwner(DATA_DIR, threadId, opts.sender.actorUserId, opts.sender.email);
+  }
   const continuingRoutine = opts?.cardContinuation ? activeRoutineRunForThread(threadId) : null;
   if (continuingRoutine) {
     const onDispatchError = opts?.onDispatchError;
@@ -12454,6 +12464,11 @@ function startGroupTurn(
   // Capture the chosen thread once. Manual sends use the active task; a
   // scheduled team goal supplies its detached background task explicitly.
   const threadId = options.threadId ?? group.threadId;
+  // Same ownership stamp as 1:1 sends. Goal machinery carries no sender and
+  // can neither create nor steal ownership.
+  if (options.sender?.actorUserId) {
+    recordThreadOwner(DATA_DIR, threadId, options.sender.actorUserId, options.sender.email);
+  }
   const ownsThread = group.dm
     ? group.threadId === threadId
     : Boolean(store.groupTaskByThread(group.id, threadId));
@@ -16643,6 +16658,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const task = store.createTask(from.id, title, false, projectId, { botId: from.id, name: from.name, at: Date.now() });
           if (!task) return json(res, 500, { error: "couldn't create that thread" });
           threadStarters.set(task.threadId, threadPersonKey(fromThreadId));
+          // A self-opened child inherits its parent's recorded owner, when
+          // the parent has one. No parent owner means no child owner.
+          inheritThreadOwner(DATA_DIR, fromThreadId, task.threadId);
           internalCapability.openedThreads += 1;
           const chip: Omit<Message, "id" | "at"> = {
             role: "bot",
@@ -16705,6 +16723,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 200, { error: said[queued.result === "ok" ? "no_target" : queued.result] });
         }
         store.setTaskOpenedBy(target.id, task.threadId, { botId: from.id, name: from.name, delegationId: queued.id, at: task.openedBy?.at ?? Date.now() });
+        // Same inheritance as the self branch, placed after the queue
+        // succeeded: the failure path above deletes the thread, and a
+        // deleted child must never keep an owner row.
+        inheritThreadOwner(DATA_DIR, fromThreadId, task.threadId);
         internalCapability.openedThreads += 1;
         // An honest forecast, not a promise: the handoff starts when this
         // turn ends, and by then the target's slots are taken by whatever is
