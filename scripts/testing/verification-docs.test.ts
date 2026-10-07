@@ -10,7 +10,10 @@ import { HELP } from "../control-omb.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const DOCS = join(ROOT, "docs", "verification");
-const recipes = readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort();
+// Verification recipes are local-only (docs/ is gitignored): a fresh
+// checkout has none, and there is nothing to verify. Guard the read so the
+// suite passes vacuously instead of crashing on a missing directory.
+const recipes = existsSync(DOCS) ? readdirSync(DOCS).filter((name) => name.endsWith(".md")).sort() : [];
 const text = (recipe: string) => readFileSync(join(DOCS, recipe), "utf8");
 // Paths inside external links belong to other repositories.
 const withoutUrls = (markdown: string) => markdown.replace(/https?:\/\/\S+/g, " ");
@@ -43,6 +46,12 @@ const PLACEHOLDER = /^(ID|:[\w-]+|<[^>]+>|\{[^}]+\})$/;
 const slug = (heading: string) => heading.trim().toLowerCase().replace(/[^\w\- ]/g, "").replace(/\s+/g, "-");
 
 describe("docs/verification recipes cite things that exist", () => {
+  if (recipes.length === 0) {
+    it("passes vacuously when no local verification recipes exist", () => {
+      expect(recipes).toEqual([]);
+    });
+    return;
+  }
   it("use control:omb verbs that help lists", () => {
     const used = cited(/pnpm control:omb ([a-z][\w-]*)/g);
     expect(used.length).toBeGreaterThan(0);

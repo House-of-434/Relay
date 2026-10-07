@@ -7,7 +7,9 @@ import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
 import { ensureDirs } from "./config.ts";
 import { BoatAgentDriver } from "./drivers/boatagent.ts";
 import {
+  cleanRoutineOwner,
   nextOccurrence,
+  resolveRoutineOwner,
   RoutineManager,
   RoutineScheduleError,
   type RoutineManagerOptions,
@@ -2987,5 +2989,91 @@ describe("routine runs × turn-held BoatAgent asks", () => {
       await instance.dispose();
       restoreFetch();
     }
+  });
+});
+
+describe("routine owner identity", () => {
+  const start = Date.parse("2026-09-13T08:00:00Z");
+  const input = () => ({ name: "Morning brief", prompt: "Brief the user", botId: "curator-1",
+    schedule: { type: "once" as const, at: start + 60_000 } });
+  const OWNER = { userId: "123e4567-e89b-42d3-a456-426614174000", email: "Owner@Example.test" };
+
+  it("stores a validated owner set only as a server-side argument", () => {
+    const h = harness(start);
+    const routine = h.manager.create(input(), undefined, OWNER);
+    expect(routine.ownerUserId).toBe("123e4567-e89b-42d3-a456-426614174000");
+    expect(routine.ownerEmail).toBe("owner@example.test");
+  });
+
+  it("leaves pre-owner records ownerless", () => {
+    const h = harness(start);
+    const routine = h.manager.create(input());
+    expect(routine.ownerUserId).toBeUndefined();
+    expect(routine.ownerEmail).toBeUndefined();
+  });
+
+  it("drops partial or malformed owners instead of inventing one", () => {
+    const h = harness(start);
+    for (const bad of [
+      undefined,
+      null,
+      { userId: OWNER.userId },
+      { email: OWNER.email },
+      { userId: "not-a-uuid", email: OWNER.email },
+      { userId: OWNER.userId, email: "not-an-email" },
+    ]) {
+      const routine = h.manager.create({ ...input(), name: `R ${String(bad)}` }, undefined, bad);
+      expect(routine.ownerUserId).toBeUndefined();
+      expect(routine.ownerEmail).toBeUndefined();
+    }
+  });
+
+  it("never takes the owner from model-influenced input", () => {
+    const h = harness(start);
+    const routine = h.manager.create({ ...input(), ownerUserId: "223e4567-e89b-42d3-a456-426614174001", ownerEmail: "mallory@example.test" } as never);
+    expect(routine.ownerUserId).toBeUndefined();
+    expect(routine.ownerEmail).toBeUndefined();
+  });
+
+  it("preserves the owner across updates and ignores patch owners", () => {
+    const h = harness(start);
+    const routine = h.manager.create(input(), undefined, OWNER);
+    const updated = h.manager.update(routine.id, { name: "Evening brief", ownerUserId: "mallory" } as never);
+    expect(updated?.ownerUserId).toBe("123e4567-e89b-42d3-a456-426614174000");
+  });
+
+  it("canonicalizes owner identity both-or-nothing", () => {
+    expect(cleanRoutineOwner(OWNER)).toEqual({ userId: OWNER.userId, email: "owner@example.test" });
+    expect(cleanRoutineOwner(undefined)).toBeUndefined();
+    expect(cleanRoutineOwner({ userId: OWNER.userId })).toBeUndefined();
+    expect(cleanRoutineOwner({ userId: "nope", email: OWNER.email })).toBeUndefined();
+  });
+
+  it("resolves owners directly and one delegation hop away", () => {
+    const deps = {
+      runForThread: (threadId: string) => (threadId === "exec-1" ? { routineId: "r-1" } : null),
+      routineOwner: (routineId: string) =>
+        routineId === "r-1" ? { ownerUserId: OWNER.userId, ownerEmail: OWNER.email } : undefined,
+      delegationSource: (threadId: string) => (threadId === "peer-1" ? "exec-1" : undefined),
+    };
+    expect(resolveRoutineOwner(deps, "exec-1")).toEqual({ userId: OWNER.userId, email: "owner@example.test" });
+    expect(resolveRoutineOwner(deps, "peer-1")).toEqual({ userId: OWNER.userId, email: "owner@example.test" });
+    expect(resolveRoutineOwner(deps, "stranger")).toBeUndefined();
+  });
+
+  it("stops delegation walks at cycles and depth", () => {
+    const loopy = {
+      runForThread: () => null,
+      routineOwner: () => undefined,
+      delegationSource: (threadId: string) => (threadId === "a" ? "b" : "a"),
+    };
+    expect(resolveRoutineOwner(loopy, "a")).toBeUndefined();
+    const chain: Record<string, string | undefined> = { t0: "t1", t1: "t2", t2: "t3", t3: "t4", t4: undefined };
+    const deep = {
+      runForThread: () => null,
+      routineOwner: () => undefined,
+      delegationSource: (threadId: string) => chain[threadId],
+    };
+    expect(resolveRoutineOwner(deep, "t0")).toBeUndefined();
   });
 });

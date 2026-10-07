@@ -65,6 +65,8 @@ jobs:
       - name: Validate locale catalogs
         run: pnpm i18n:check
       - run: pnpm typecheck
+      - name: Tool Layer typecheck + tests (workspace identity, lifecycle policy)
+        run: pnpm --filter @relay/tool-layer typecheck && pnpm --filter @relay/tool-layer test
       - run: pnpm lint
       - run: pnpm check:electron
       - name: production UI build
@@ -120,12 +122,12 @@ jobs:
   behavior-evals:
     needs: static
     if: needs.static.outputs.runtime == 'true'
-    # The offline behavior-eval tiers (#1503): the evals' own vitest gate
-    # (redaction, trace, golden replay), the tier-1 scenario runner, and the
-    # tier-2 golden replay through the same entrypoint developers use. Tier
-    # 3's live models stay opt-in: CI never sets OMB_EVAL_LIVE or any live
-    # env, and the last step proves the offline gate holds by asserting the
-    # skip line is what CI gets.
+    # The research-eval tiers (plans/scout-research.md): the evals' own
+    # vitest gate (offline contract tests), the offline check runner, and
+    # the golden replay through the same entrypoint developers use
+    # (`pnpm eval`). The live tier stays opt-in: CI never sets
+    # BLADEBRO_LIVE, and the last step proves the offline gate holds by
+    # asserting the skip line is what CI gets.
     name: behavior evals (offline tiers 1-3)
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -142,15 +144,15 @@ jobs:
         # own tsconfig, so its type gate runs here with the rest of the
         # eval surfaces.
         run: pnpm exec tsc -p evals/tsconfig.json
-      - name: Eval vitest gate (redaction, trace, golden replay)
+      - name: Eval offline contract tests
         # Same reporter pair as the vitest shards, so a failure annotates
         # the PR with the failing test and assertion.
         run: pnpm exec vitest run --config evals/vitest.config.ts --reporter=default --reporter=github-actions
-      - name: Tier 1 scenarios (scripted harness, no models)
+      - name: Offline research checks (no network, no browser, no models)
         run: pnpm eval
-      - name: Tier 2 golden replay against committed baselines
+      - name: Golden replay against committed baselines
         run: pnpm eval --golden
-      - name: Tier 3 stays offline in CI (the skip is the pass condition)
+      - name: Live tier stays offline in CI (the skip is the pass condition)
         run: |
           output="$(pnpm eval --live 2>&1)"
           printf '%s\n' "$output"

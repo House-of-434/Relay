@@ -438,7 +438,7 @@ import { LocalVmSeatPool, type LocalVmSeatHolder } from "./local-vm-seat-pool.ts
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
-import { RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime } from "./browser-runtime.ts";
@@ -458,6 +458,7 @@ import {
 } from "./browser-engine.ts";
 import { createScreenFrameSource, type ScreenCapture } from "./screen-frame-source.ts";
 import { screenFrameHash, screenSurfaceForTool, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
+import { researchFramesActive, settleResearchFrame, startResearchFrames, stopResearchFrames } from "./research-frames.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createOptionsCard } from "./options-card.ts";
 import { buildBotOverview, type BotOverview, connectedAppsFacts } from "./bot-overview.ts";
@@ -819,7 +820,20 @@ function messageSender(auth: RequestAuth): ResolvedSender | undefined {
 
 function threadActorContext(threadId: string): { userId?: string; email?: string } | undefined {
   const sender = store.messagesFor(threadId).findLast((message) => message.role === "user")?.sender;
-  return sender ? { userId: sender.actorUserId, email: sender.email } : undefined;
+  if (sender) return { userId: sender.actorUserId, email: sender.email };
+  // Unattended threads have no user sender: a routine execution (or a peer
+  // turn delegated from one) runs in its owner's workspace instead. The
+  // owner's own chat lines always win because they return first.
+  return (
+    resolveRoutineOwner(
+      {
+        runForThread: (id) => routines?.runForThread(id) ?? null,
+        routineOwner: (id) => routines?.listRoutines().find((routine) => routine.id === id),
+        delegationSource: (id) => delegationWatch.get(id)?.sourceThreadId,
+      },
+      threadId,
+    ) ?? undefined
+  );
 }
 
 /** More than one person uses this workspace: portal membership, or an email
@@ -5499,6 +5513,7 @@ const watchdog = new TurnWatchdog({
       const currentBot = store.bot(turn.botId);
       if (currentBot?.busy) {
         stopScreenPoller(currentBot.id, turn.threadId);
+        stopResearchFrames(turn.threadId);
         vpsThreadEnded(currentBot.id, turn.threadId);
         if (store.taskByThread(currentBot.id, turn.threadId)) store.setTaskActivity(currentBot.id, turn.threadId, "idle");
         else store.setActivity(currentBot.id, "idle");
@@ -6868,6 +6883,18 @@ bus.subscribe((event: RuntimeEvent) => {
           if (touches || /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for|browser_/i.test(toolName)) {
             pokeScreenPoller(event.threadId, touches, surface);
           }
+          // Scout's research browser lives in the Tool Layer, outside the
+          // computer screen pollers' ownership model: a dedicated research
+          // poller shows what the turn is reading, live and at settle. The
+          // actor binds now (routine owner included) so later ticks do not
+          // depend on delegation state that may already be gone.
+          if (touches && surface === "browser" && bot.relayAgent === "scout") {
+            const researcher = threadActorContext(event.threadId);
+            if (researcher?.userId && researcher.email) {
+              const bound = { userId: researcher.userId, email: researcher.email };
+              startResearchFrames(bot.id, event.threadId, () => fetchResearchFrameFor(bound), broadcast);
+            }
+          }
           // A completed screen-touching computer tool is real screen
           // activity (#1653): it restarts the idle clock on that turn's
           // computer claim. The poller's own frames never arrive here, so
@@ -7358,6 +7385,23 @@ bus.subscribe((event: RuntimeEvent) => {
             clearTimeout(timeout);
           });
           void Promise.all([screenSettled, digestSettled]).finally(() => settleDirectTurn(true));
+        } else if (researchFramesActive(event.threadId)) {
+          // Scout research turns settle their last live frame the same way —
+          // one fresh capture, kept only when the reader cannot already see
+          // it — without involving the computer pollers' ownership leases.
+          const researchLeafId = store.activePath(event.threadId).at(-1)?.id;
+          let researchTimeout: ReturnType<typeof setTimeout>;
+          const researchSettled = Promise.race([
+            settleResearchFrame(event.threadId, shownScreenHash(event.threadId)),
+            new Promise<null>((resolve) => { researchTimeout = setTimeout(() => resolve(null), SCREEN_SETTLE_TIMEOUT_MS); }),
+          ]).then((frame) => {
+            if (frame && isCurrent()) {
+              store.insertMessageAfter(event.threadId, researchLeafId, { role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
+            }
+          }).catch(() => {}).finally(() => {
+            clearTimeout(researchTimeout);
+          });
+          void Promise.all([researchSettled, digestSettled]).finally(() => settleDirectTurn(true));
         } else {
           void digestSettled.finally(() => settleDirectTurn(true));
         }
@@ -8267,6 +8311,30 @@ const SCREEN_SETTLE_TIMEOUT_MS = 10_000;
  * boxAgent's whole session runs ON the boat, so every tool it calls acts on
  * that screen even though none of them is named like a computer tool. Its
  * shell-only turns are kept honest by the settle-time hash gate instead. */
+/** Screenshot fetcher for research turns: the thread owner's Tool Layer
+ * workspace, authenticated exactly like the MCP routes (same signed
+ * assertion, same user). The actor is bound once when polling starts: the
+ * delegation watch entry that identified the owner may be gone by settle
+ * time. Throws when there is no page to picture, so the poller treats it
+ * as "try later" and the settle treats it as "no frame". */
+async function fetchResearchFrameFor(actor: { userId: string; email: string }): Promise<{ png: string; mime: string }> {
+  if (!actor?.userId || !actor.email) throw new Error("no research workspace for this thread");
+  const base = (RELAY_TOOL_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+  const response = await fetch(`${base}/workspace/vision`, {
+    headers: {
+      "x-relay-actor-user": signedActorContext(
+        { userId: actor.userId, email: actor.email },
+        process.env.RELAY_TOOL_ACTOR_SECRET,
+      ),
+    },
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!response.ok) throw new Error(`research frame unavailable (${response.status})`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  if (bytes.length === 0) throw new Error("research frame is empty");
+  return { png: bytes.toString("base64"), mime: "image/png" };
+}
+
 function startScreenPoller(
   botId: string,
   threadId: string,
@@ -10211,6 +10279,10 @@ const routineRequests = new RoutineRequestService({
   autoApply: fullAccessForSource,
   cloudReady: cloudRoutineReadiness,
   canPersist: proposalPersistence,
+  // Ownership follows the confirming conversation's user, resolved live:
+  // proposal text never supplies it. Routines created any other way get
+  // their owner from their own creation path, or none at all.
+  ownerForThread: (threadId) => threadActorContext(threadId) ?? undefined,
   // Cross-bot routines: the confirmation card can sit open indefinitely, so
   // the target is re-authorized when the user confirms, not just at proposal.
   validateTarget: (proposerBotId, target) => {
@@ -13976,7 +14048,7 @@ async function stopCompanyInstances(ids: string[]) {
     // Another member of this cancellation batch can settle slowly while a
     // completed thread starts a personal turn. Never clear that new owner.
     if (directTurnGenerationByThread.get(threadId) !== generation) continue;
-    stopScreenPoller(botId, threadId); releaseLocalVmThread(threadId);
+    stopScreenPoller(botId, threadId); stopResearchFrames(threadId); releaseLocalVmThread(threadId);
     watchdog.settle(threadId); closeOpenApprovals(threadId); directTurnBots.delete(threadId);
     finalizeDelegationWatch(threadId, false, "", "Company connection changed");
     routines?.failThread(threadId, "Company connection changed while this thread was running");
@@ -14058,6 +14130,7 @@ async function reloadProviders() {
     // Teardown can swallow terminal events; no task may remain busy forever.
     for (const { botId, threadId, owner } of direct) {
       stopScreenPoller(botId, threadId);
+      stopResearchFrames(threadId);
       releaseLocalVmThread(threadId);
       releaseTurnResources(owner);
       endForeignTurns(threadId);
@@ -17129,7 +17202,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const notYours = routineResultsRefusal(body);
       if (notYours) return json(res, 403, { error: notYours });
       const writer = auth.kind === "session" ? actorKey(auth) : CLOUD_NOBODY_KEY;
-      const routine = withRoutineWriter(writer, () => routines!.create(body));
+      // Owner is the creating session's verified user, never request text.
+      const owner =
+        auth.kind === "session" && typeof auth.session.userId === "string" && typeof auth.session.email === "string"
+          ? { userId: auth.session.userId, email: auth.session.email }
+          : undefined;
+      const routine = withRoutineWriter(writer, () => routines!.create(body, undefined, owner));
       // On a Cloud home, a routine the owner writes from their own device may
       // use their lent Mac when it runs (server/cloud-lending.ts).
       if (cloudRoutineAuthors && cloudOwnerSession(auth)) cloudRoutineAuthors.record(routine.id, routine);

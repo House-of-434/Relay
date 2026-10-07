@@ -19,6 +19,9 @@ export const SCREEN_TOUCHING_TOOLS: ReadonlySet<string> = new Set([
   "agent_browser_select", "agent_browser_check", "agent_browser_screenshot",
   // Cua Driver (local Mac, Local VM, VPS)
   "double_click", "right_click", "drag", "hotkey", "move_cursor", "launch_app", "bring_to_front", "zoom",
+  // Relay research browser (Tool Layer): navigations and extractions change
+  // the page; reads only observe it, like snapshot/read/get_text above.
+  "browser_open", "browser_extract",
 ]);
 
 // Keep legacy MCP namespaces accepted; desktop server__tool names follow

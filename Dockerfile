@@ -52,18 +52,17 @@ COPY --from=build --chown=maus:maus /src/dist ./dist
 # Optional engine CLIs baked into the image (space-separated npm packages).
 ARG ENGINES=""
 RUN if [ -n "$ENGINES" ]; then npm install -g $ENGINES; fi
-# The bots' browser (docs/plans/browser-engine.md): the pinned agent-browser
-# and a Chrome for Testing with its libraries, so a server bot can browse.
-# Pin here and in server/browser-engine-release.ts together.
-ARG AGENT_BROWSER_VERSION=0.37.0
-RUN npm install -g agent-browser@${AGENT_BROWSER_VERSION} \
-  && HOME=/opt/openmausbot-browser agent-browser install \
-  && ln -s /opt/openmausbot-browser/.agent-browser/browsers/chrome-*/chrome /opt/openmausbot-browser/chrome \
-  && agent-browser --version
+# Research browser (plans/scout-research.md): Bladebro ships as a static
+# binary with no runtime. Chrome itself is pinned with the Phase 2 adapter
+# (services/tool-layer/src/infra/browser-lifecycle.ts) via CHROME_PATH;
+# until then this image carries no browser. The Chrome system libraries
+# above stay: Chrome needs them when it lands.
+ARG BLADEBRO_VERSION=4.0.3
+RUN npm install -g bladebro@${BLADEBRO_VERSION} \
+  && bladebro --version
 # Keep the baked-in browser outside both root's private home and /data,
 # which may be an existing mounted volume. Session state still lives in HOME.
 ENV HOME=/data \
-    AGENT_BROWSER_EXECUTABLE_PATH=/opt/openmausbot-browser/chrome \
     OMB_DATA_DIR=/data/.openmausbot \
     OMB_STATIC_DIR=/app/dist \
     OMB_PORT=8799 \

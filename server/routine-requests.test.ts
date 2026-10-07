@@ -1858,6 +1858,57 @@ describe("cross-bot routine targeting", () => {
   });
 });
 
+describe("routine ownership", () => {
+  const OWNER = { userId: "123e4567-e89b-42d3-a456-426614174000", email: "Owner@Example.test" };
+
+  function ownedService(ownerForThread?: (threadId: string) => { userId?: string; email?: string } | undefined) {
+    const dir = mkdtempSync(join(tmpdir(), "omb-routine-owner-"));
+    tempDirs.push(dir);
+    const routines = new RoutineManager({
+      file: join(dir, "routines.json"),
+      now: () => Date.parse("2026-08-28T10:00:00Z"),
+      botState: () => "busy" as const,
+      goalState: () => "busy" as const,
+      createTask: () => null,
+      startTurn: async () => {},
+    });
+    const store = new MemoryStore();
+    const service = new RoutineRequestService({ store, routines, ownerForThread });
+    return { routines, service };
+  }
+
+  async function confirmFirst(service: RoutineRequestService, threadId: string): Promise<string> {
+    const proposed = await service.propose({ botId: "bot-a", threadId, proposal: createProposal() });
+    const result = service.resolve({ botId: "bot-a", threadId, requestId: proposed.requestId, behavior: "allow" });
+    expect(result).toMatchObject({ claimed: true, state: "applied" });
+    return (result as { resultId: string }).resultId;
+  }
+
+  it("stores the confirming conversation's user as owner", async () => {
+    const { routines, service } = ownedService(() => OWNER);
+    const id = await confirmFirst(service, "owner-thread");
+    expect(routines.listRoutines().find((routine) => routine.id === id)).toMatchObject({
+      ownerUserId: "123e4567-e89b-42d3-a456-426614174000",
+      ownerEmail: "owner@example.test",
+    });
+  });
+
+  it("leaves routines ownerless without the hook", async () => {
+    const { routines, service } = ownedService();
+    const id = await confirmFirst(service, "plain-thread");
+    const routine = routines.listRoutines().find((r) => r.id === id);
+    expect(routine?.ownerUserId).toBeUndefined();
+    expect(routine?.ownerEmail).toBeUndefined();
+  });
+
+  it("never takes the owner from proposal text", async () => {
+    const { routines, service } = ownedService(() => undefined);
+    const id = await confirmFirst(service, "text-thread");
+    const routine = routines.listRoutines().find((r) => r.id === id);
+    expect(routine?.ownerUserId).toBeUndefined();
+  });
+});
+
 describe("consequenceLine", () => {
   it("uses singular wording for one run a day and one day a week", () => {
     expect(consequenceLine({ type: "interval", everyMinutes: 1440 })).toBe(

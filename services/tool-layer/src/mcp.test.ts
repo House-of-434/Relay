@@ -113,8 +113,15 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
 
   // Scout and Curator hold no Gmail or calendar capability, so those tools must
   // not be advertised at all rather than offered and refused.
-  for (const agent of ["scout", "curator"]) {
-    const listed = await names(agent);
-    assert.deepEqual(listed, ["relay_read", "relay_write"], agent);
-  }
+  // Scout additionally holds the research capabilities, visible only to an
+  // authenticated caller; Curator holds none.
+  assert.deepEqual(await names("scout"), [
+    "browser_extract",
+    "browser_open",
+    "browser_read",
+    "relay_read",
+    "relay_write",
+    "web_search",
+  ]);
+  assert.deepEqual(await names("curator"), ["relay_read", "relay_write"], "curator");
 });
