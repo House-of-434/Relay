@@ -5,8 +5,9 @@
 // bridge) asks its server who it is first. A hosted workspace's admin gets
 // the hosted beats and a hosted member a quiet note. A Cloud home opens on
 // its engine sign-in (CloudEngineSignIn) rather than this flow. A session
-// that cannot save the workspace config is never shown a tour it could not
-// finish.
+// that cannot save the workspace config is not shown a tour it could not
+// finish, except in Relay's shared workspace, whose members all sign in with
+// client scope and keep their first-run state in the browser instead.
 import { useEffect, useState } from "react";
 import { emailGateDone } from "@/lib/analytics";
 import { hostedMember, LOCAL_VIEWER, welcomeDue, welcomeViewer, type BeatId, type WelcomeViewer } from "@/lib/onboarding";
@@ -57,10 +58,11 @@ export function WelcomeGate({ viewer }: { viewer: WelcomeViewer | null }) {
   const remoteClient = window.ogb?.remoteClient?.active === true;
   const sharedWorkspace = state.config?.sharedWorkspace === true;
   if (!viewer) return null;
-  // Only a hosted workspace is a team's by definition. Elsewhere a session
-  // without admin scope is often the owner's own phone or browser, so it
-  // gets no new note: the tour it cannot save simply does not open itself.
-  if (hostedMember(viewer) || (sharedWorkspace && !viewer.canSave)) {
+  // OMB hosted membership is a team's by definition, and its members cannot
+  // write the config that would close the tour. Relay's shared workspace is
+  // not that: its members are colleagues who sign in with Google and get the
+  // flow below, closed per browser by the legacyDone gate.
+  if (hostedMember(viewer)) {
     return remoteClient ? null : (
       <SharedWorkspaceHint
         replay={state.welcomeOpen}
@@ -78,6 +80,7 @@ export function WelcomeGate({ viewer }: { viewer: WelcomeViewer | null }) {
       hosted: viewer.hosted,
       canSave: viewer.canSave,
       cloudHome: viewer.cloudHome,
+      sharedWorkspace,
     });
   // Explicit desktop connection Settings need no local provider onboarding.
   // Organisation remains optional; closing Settings resumes the normal tour.

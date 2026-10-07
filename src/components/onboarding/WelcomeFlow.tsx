@@ -34,6 +34,7 @@ import { HelloBeat } from "./beats/HelloBeat";
 import { MeetYourBotBeat } from "./beats/MeetYourBotBeat";
 import { PermissionsBeat } from "./beats/PermissionsBeat";
 import { PhoneBeat } from "./beats/PhoneBeat";
+import { TeamBeat } from "./beats/TeamBeat";
 import { QuietButton } from "./beats/shared";
 import { withViewTransition } from "./view-transition";
 import { ProgressDots } from "./ProgressDots";
@@ -43,6 +44,7 @@ import { FeatureReel } from "./reel/FeatureReel";
  * more (the engines beat looks proud or curious once the harness answers). */
 const MASCOT_FOR_BEAT: Record<BeatId, MausState> = {
   hello: "happy",
+  team: "proud",
   reel: "curious",
   engines: "searching",
   permissions: "listening",
@@ -54,6 +56,8 @@ function beatTitle(beat: BeatId): string | null {
   switch (beat) {
     case "hello":
       return t("onboarding.welcome", { app: brand().name });
+    case "team":
+      return t("onboarding.team.title");
     case "engines":
       return t("onboarding.engines.title");
     case "permissions":
@@ -258,7 +262,8 @@ export function WelcomeFlow({
 
         {/* keyed so a beat's rise-in plays once per visit, never on re-render */}
         <div key={beat} className="flex shrink-0 flex-col">
-          {beat === "hello" && <HelloBeat {...beatProps} hosted={hosted || sharedWorkspace} />}
+          {beat === "hello" && <HelloBeat {...beatProps} hosted={hosted} sharedWorkspace={sharedWorkspace} />}
+          {beat === "team" && <TeamBeat {...beatProps} />}
           {beat === "reel" && <FeatureReel {...beatProps} />}
           {beat === "engines" && <EnginesBeat {...beatProps} hosted={hosted} />}
           {beat === "permissions" && <PermissionsBeat {...beatProps} />}
