@@ -18,6 +18,7 @@ import type { TurnDigest } from "../../shared/digest";
 import type { ModelVariantOption, RuntimeEvent } from "../../shared/runtime-events";
 import type { MausColor, MausMotion } from "@/lib/mascot";
 import type { BotAvatarCrop } from "../../shared/bot-avatar";
+import type { RelayAgentRole } from "../../packages/relay-shared/relay-agent";
 import { approvalModeFor, type ApprovalMode } from "../../shared/approval-mode";
 import type { MascotBodyId } from "../../shared/mascot-bodies";
 import type { QuestionRequestCardData } from "../../shared/ask-question";
@@ -367,6 +368,9 @@ export interface Bot {
   name: string;
   title: string;
   description: string;
+  /** Which built-in Relay role seeded this bot. Drives role-specific affordances
+   * (Scout gets the deep-research plan) without the UI matching on name/title. */
+  relayAgent?: RelayAgentRole;
   /** Standing instructions (SOUL.md). Canonical on the server; the file is a mirror. */
   soul?: string;
   /** The SOUL.md mirror on disk differs from the record; the Soul editor offers apply/discard. */

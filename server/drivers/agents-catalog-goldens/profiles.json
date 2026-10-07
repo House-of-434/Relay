@@ -1,7 +1,7 @@
 {
   "direct": {
-    "bytes": 44292,
-    "sha256": "a1d1f085d12f7b3ceafa021267319c1b6c14ccfa1c00980521a20e992e58d330",
+    "bytes": 48525,
+    "sha256": "07669a9fcb19d9881b02176c0a024b4a217528f777f41363733267d20f4d6b49",
     "tools": [
       "tool_result_read",
       "list_bots",
@@ -33,12 +33,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "direct+voice": {
-    "bytes": 45033,
-    "sha256": "dcc49bf608a41d2561826e14e65acbe37e545b39c5f768665ccaac3982cdebb0",
+    "bytes": 49266,
+    "sha256": "d5124566a0f1d13e65ebae3231b22541a2a0955a992e1f7b506fa7e0c7267de6",
     "tools": [
       "tool_result_read",
       "list_bots",
@@ -71,12 +73,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "direct+shared": {
-    "bytes": 46037,
-    "sha256": "9c763ce87e94fc1a910f5fcd08e34ff37d9fe21d039c6cc1ad204742d5e3689b",
+    "bytes": 50270,
+    "sha256": "7bbebac450561a358f31b9078ec91caddf5fa1e70a1dd2ed002db5b433b188c2",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -110,12 +114,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "direct+shared+voice": {
-    "bytes": 46778,
-    "sha256": "04aafeda7edd8f2beb73a27e32505887ed8597c3862a3924be23b3178b27be19",
+    "bytes": 51011,
+    "sha256": "a22a64eda249298b9de3195d3d4bc7dffa1b7770e9f70628ff894f93235e7b93",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -150,12 +156,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "direct+skills": {
-    "bytes": 46218,
-    "sha256": "3bb263e7ef2349bbee522d0ef7e924df227ecbd28abb45da59a9d88d8882ce7e",
+    "bytes": 50451,
+    "sha256": "05449234dd7c5e2b4ff79223b704021783d84f88c5f377fd36130776eae5598b",
     "tools": [
       "tool_result_read",
       "list_bots",
@@ -187,14 +195,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "direct+skills+voice": {
-    "bytes": 46959,
-    "sha256": "7a7b78e41079bcc7ed5fe99cfa38168b10da461ae3b91f41ca3f0cbfe1d091e4",
+    "bytes": 51192,
+    "sha256": "2005ef1ea94e4e3c0125855ecaaeaa23d24cd5d21350bfd16877c6386aacc129",
     "tools": [
       "tool_result_read",
       "list_bots",
@@ -227,14 +237,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "direct+skills+shared": {
-    "bytes": 47963,
-    "sha256": "59e28a2ca5f71f7c4dd5bb7744a51ab84b6c3cabcdc3078548718fdc12b16f8b",
+    "bytes": 52196,
+    "sha256": "39c773a79a70079af0ed26877aa60423c9a7662cd6f11aba2293c4fd93af1774",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -268,14 +280,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "direct+skills+shared+voice": {
-    "bytes": 48704,
-    "sha256": "328583d62eadc3f54e88300a1ad4d8b1d385249db97e201def9f3b8eadc1bf53",
+    "bytes": 52937,
+    "sha256": "28b3a4e0e06cf0d6c60a256798020b07c3422f0c68db6f8aee8e5ab394e0a074",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -310,14 +324,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room": {
-    "bytes": 42310,
-    "sha256": "50db0ea310f42392fe22100250c12300c9ba3fee949add11dc8db9402cb4f7c8",
+    "bytes": 46543,
+    "sha256": "376015be071c4f94c145d45bc78ebd97cf077b3fb4de9b20d00c7c62bb0caad0",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -346,12 +362,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+voice": {
-    "bytes": 43051,
-    "sha256": "6439ec217b51a4d8c1da8d8b8b6fabee0890620f1f5ba93e49abf961f1e85506",
+    "bytes": 47284,
+    "sha256": "b88d97a45408d2cd8daf69ad15982e8f6f667f94f6f008e74a9e5f8b2962a628",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -381,12 +399,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+shared": {
-    "bytes": 44055,
-    "sha256": "61b0d6908c45f035bbcc3c453f715102a46fdd6b76c7e0dacd4c8be00ffe7e58",
+    "bytes": 48288,
+    "sha256": "811114280e23632055efe3775eb13393de0800b3940aeb51009d64d112322e2a",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -417,12 +437,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+shared+voice": {
-    "bytes": 44796,
-    "sha256": "f449b7b50106fa04ee3d855370598bd0ae49045476794858a53ef14f6e72cbb1",
+    "bytes": 49029,
+    "sha256": "fa5b18dda67383c9556102e1c97eb5d9df51b5e8d84d1ef50ac846002ac43db9",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -454,12 +476,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+skills": {
-    "bytes": 44236,
-    "sha256": "1a7e9ee43a997920c589625ef2a87279d978e66deef54bf16a270a030a6778c9",
+    "bytes": 48469,
+    "sha256": "ae783bbe02dd1be6c6992d90803cf999075e255b677d789844a389900753638d",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -488,14 +512,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+skills+voice": {
-    "bytes": 44977,
-    "sha256": "8b1dafdb9afcac14d01d530f3daaf2dd10eddca98f37d7113f10f46551c8a66a",
+    "bytes": 49210,
+    "sha256": "df33f7e893f29a2fca6a67392a26fbf0b4ad5f1698c34072fcbb0ecc73277d68",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -525,14 +551,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+skills+shared": {
-    "bytes": 45981,
-    "sha256": "eb2e5844c69dea1e37d07a09528f2747f0eeca9978a0797b1048ffcfb651e27e",
+    "bytes": 50214,
+    "sha256": "229b0db4e1593975a1f9d13615f6a6921a13414b04603b8284a072bed1d54ad8",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -563,14 +591,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+skills+shared+voice": {
-    "bytes": 46722,
-    "sha256": "1f8457e0d666f5f2eac3d12b9a8de244f6004eea0cd509ffb26449692f3451a4",
+    "bytes": 50955,
+    "sha256": "37b894079045e99d0652aed85ce246d7147bf69d04feeadd0ca2c5ff4599865a",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -602,14 +632,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+own-thread": {
-    "bytes": 43597,
-    "sha256": "3a450afe6a4a0c0acc2e600e35c56aa96ee84750601e9b9eb4d529db3bf08279",
+    "bytes": 47830,
+    "sha256": "27e16ea20ba05128e5ff74fe2d5d9afcca369605775c08097f94aef12b36f665",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -639,12 +671,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+own-thread+voice": {
-    "bytes": 44338,
-    "sha256": "abcc1d52566a16e6ae82a374c3aef1f827aa247cc3f4a27ceff7d64b848aedd0",
+    "bytes": 48571,
+    "sha256": "5460ca53f734229162e30dd063f3214d4e13e0cec0cadcca5978afb44a664e52",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -675,12 +709,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+own-thread+shared": {
-    "bytes": 45342,
-    "sha256": "3ee9529407b44b3d9e8ca01483282b9f8d1aafcc88d816e27f5665de81beb31e",
+    "bytes": 49575,
+    "sha256": "a7d3f42fe94b45d22c598796592ba9f9035fd99766f5c434b6d8edbdb611c33a",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -712,12 +748,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+own-thread+shared+voice": {
-    "bytes": 46083,
-    "sha256": "ff21277a5716977d68c073e8baf88a96e1845b2c9b428f01e9b0cf067b935faa",
+    "bytes": 50316,
+    "sha256": "83da84ab8c5b4f176860e3510ebee891b1f0d6e6434a16d673e44ce2db38307a",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -750,12 +788,14 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model"
     ]
   },
   "room+own-thread+skills": {
-    "bytes": 45523,
-    "sha256": "595c25f0f85ab9f6387bcac4cd481f1b6894ca8ea85f194ff1449a4b92addc96",
+    "bytes": 49756,
+    "sha256": "ce32007405d19cb4cf7cd0304e57967b1b67aa763c9102b39da1dd7358cf4903",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -785,14 +825,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+own-thread+skills+voice": {
-    "bytes": 46264,
-    "sha256": "15bc59a90a99cffbfdb4bbe8166d274c56c5926956817051535d71caa6f81482",
+    "bytes": 50497,
+    "sha256": "db20971dd9b0e256f5e760282d33d51ee2700ac8bcc90b6fbd10508bd9115181",
     "tools": [
       "tool_result_read",
       "list_room_targets",
@@ -823,14 +865,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+own-thread+skills+shared": {
-    "bytes": 47268,
-    "sha256": "9389d4f287e2e0aeb0d46af370a3e7d52a36ffce8e43a7906164e385f2e12c3f",
+    "bytes": 51501,
+    "sha256": "19509247690de09aa41a74acbd9e4ef3ed294c7cc0f61fb3dda586107faed14f",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -862,14 +906,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+own-thread+skills+shared+voice": {
-    "bytes": 48009,
-    "sha256": "21b385f0083028dff9bab2ee787608303d527e5ae5db9cb7d74475c227698585",
+    "bytes": 52242,
+    "sha256": "25e5a677a2be51c0b55ba0cd05e3e48a366e92779cf7e7a15940783143523710",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -902,14 +948,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "direct+skills+shared+voice+cloud-home": {
-    "bytes": 47778,
-    "sha256": "8c2feb41da76f03b14e54b84d1c6cf08d83fd37092f4506be00468367ae87db5",
+    "bytes": 52011,
+    "sha256": "f7510613e03765d5515d05923f4f74dac02a9336c42b393b93f277f03c4ee214",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -943,14 +991,16 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"
     ]
   },
   "room+own-thread+skills+shared+voice+cloud-home": {
-    "bytes": 47083,
-    "sha256": "b2deb3eb52a8a955a8fb9b66bfb9bf408b90644b9b947b2a168f008d9ec828b4",
+    "bytes": 51316,
+    "sha256": "09af86a9853970bcdf0c15f8db4cd9d5d4b3955e106caea9b5ec2191e34d9fd8",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -982,6 +1032,8 @@
       "propose_routine",
       "propose_routine_action",
       "propose_profile",
+      "propose_calendar_invite",
+      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage"

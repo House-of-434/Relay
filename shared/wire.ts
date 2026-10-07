@@ -23,6 +23,7 @@ import type { SkillRequestCardData } from "./skill-request.ts";
 import type { QuestionRequestCardData } from "./ask-question.ts";
 import type { RoutineRunCardData } from "./routine-run.ts";
 import type { GroupGoalRunCardData } from "./group-goal-run.ts";
+import type { RelayAgentRole } from "../packages/relay-shared/relay-agent.ts";
 import type { RuntimeEvent } from "./runtime-events.ts";
 import type { Notification } from "./notification.ts";
 import type { Routine, RoutineRun } from "./routines.ts";
@@ -237,6 +238,10 @@ export interface WireBot {
   name: string;
   title: string;
   description: string;
+  /** The built-in Relay role that seeded this bot, when it came from a role
+   * seed. Lets the UI offer role affordances (Scout's research plan) from
+   * server truth rather than matching on the editable name or title. */
+  relayAgent?: RelayAgentRole;
   /** Standing instructions — the persona body. */
   soul?: string;
   /** sha256 of soul, for spotting a SOUL.md edited outside the app. */

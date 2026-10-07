@@ -1,6 +1,6 @@
 import { track } from "@/lib/analytics";
 import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
-import { ArrowUp, BookOpen, Clock, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
+import { ArrowUp, BookOpen, Brain, Clock, Mic, Paperclip, Square, Target, Users, X } from "lucide-react";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
@@ -25,6 +25,7 @@ import {
   type FailedComposerSend,
 } from "@/lib/drafts";
 import { BotAvatar } from "./Avatar";
+import { withDeepResearchTag } from "@/lib/deep-research";
 import { MentionTextarea } from "./MentionTextarea";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
@@ -69,6 +70,7 @@ import { serializeThreadRefs, threadTokenFromPaste, threadTokenSpacing } from "@
 import {
   composerSlashTrigger,
   goalTextFromComposer,
+  planTextFromComposer,
   replaceComposerSlashTrigger,
   type ComposerSlashCommand,
 } from "@/lib/composer-commands";
@@ -164,6 +166,10 @@ export function Composer({
   // Goal mode is opt-in and one-shot so the next ordinary channel message
   // cannot accidentally start another multi-turn team run.
   const [channelMode, setChannelMode] = useComposerChannelMode(draftId);
+  // Deep research is opt-in and one-shot: the toggle prefixes the next
+  // message with the tag Scout's soul recognizes, then resets so a
+  // following ordinary message cannot accidentally start another job.
+  const [deepResearch, setDeepResearch] = useState(false);
   const editText = useCallback(
     (next: string) => {
       markDraftEdited(draftId);
@@ -293,7 +299,11 @@ export function Composer({
     return responders.length > 0 && responders.every(botSupportsImages);
   };
   const typedGoalText = group && !group.dm ? goalTextFromComposer(text) : null;
-  const effectiveText = typedGoalText ?? text;
+  // A typed `/plan …` is the Deep chip in text form: the prefix is stripped
+  // and the mode armed, so both entry points produce one tagged send.
+  const typedPlanText = !group && bot?.relayAgent === "scout" ? planTextFromComposer(text) : null;
+  const effectiveText = typedGoalText ?? typedPlanText ?? text;
+  const planArmed = typedPlanText !== null || deepResearch;
   const effectiveChannelMode = typedGoalText !== null ? "goal" : channelMode;
   const engineSupportsImages = imageTargetsSupport(effectiveText, effectiveChannelMode);
 
@@ -331,6 +341,12 @@ export function Composer({
       id: "setup",
       label: "/setup",
       description: t("composer.command.setupDesc"),
+    });
+    // Research planning is Scout's surface, offered wherever its chip is.
+    if (!group && bot?.relayAgent === "scout") available.push({
+      id: "plan",
+      label: "/plan",
+      description: t("composer.command.planDesc"),
     });
     const query = slash.query.toLowerCase();
     return available.filter(
@@ -395,6 +411,9 @@ export function Composer({
     setCaret(next.caret);
     setDismissedSlashAt(slash.start);
     setChannelMode(command.id === "goal" ? "goal" : "chat");
+    // /plan is the Deep chip by another name: it arms the mode and the typed
+    // brief stays in the draft, so the chip shows the armed state as well.
+    if (command.id === "plan") setDeepResearch(true);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(next.caret, next.caret);
@@ -605,7 +624,8 @@ export function Composer({
     // named `body`, not `t` — that name belongs to the catalog lookup now
     // resolvable "#Title" runs leave as canonical links, so the thread id
     // stays machine-readable in the stored send and the model's context
-    const body = composeMessage(serializeThreadRefs(effectiveText, threads, currentBotId), attachments);
+    const composed = composeMessage(serializeThreadRefs(effectiveText, threads, currentBotId), attachments);
+    const body = withDeepResearchTag(composed, planArmed && !group);
     if (!body) return;
     const sentDraft: ComposerDraftSnapshot = {
       draftId,
@@ -647,6 +667,7 @@ export function Composer({
     setAttachments([]);
     onConsumeReply?.();
     if (group) setChannelMode("chat");
+    setDeepResearch(false);
   };
 
   /**
@@ -1171,6 +1192,28 @@ export function Composer({
             title={recording ? t("composer.dictation.stopHint") : t("composer.dictation.hint")}
           >
             <Mic size={18} />
+          </button>
+        )}
+        {/* Research planning sits with send, on the same edge the message
+            leaves from. Scout-only, keyed off the server's role field. */}
+        {!group && bot?.relayAgent === "scout" && (
+          <button
+            type="button"
+            aria-pressed={planArmed}
+            aria-label={t("composer.deep.aria")}
+            onClick={() => {
+              markDraftEdited(draftId);
+              setDeepResearch((current) => !current);
+            }}
+            className={cn(
+              "flex h-8 shrink-0 items-center gap-1.5 whitespace-nowrap rounded-full border px-3 text-[13px] transition-colors",
+              planArmed
+                ? "border-accent/35 bg-accent/10 text-accent"
+                : "border-hairline/20 bg-transparent text-ink-secondary hover:bg-raised hover:text-ink",
+            )}
+          >
+            <Brain size={14} aria-hidden="true" />
+            {t("composer.deep.chip")}
           </button>
         )}
         {hasContent && !locked && (

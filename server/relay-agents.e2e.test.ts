@@ -18,7 +18,9 @@ it("boots an idempotent Scout, Mercury, Curator roster using the current default
     expect(new Set(bots.map((bot) => bot.id)).size).toBe(3);
     expect(bots.every((bot) => bot.computer === "off" && bot.browser === false && bot.composio === false)).toBe(true);
     expect(new Set(bots.map((bot) => `${bot.modelSelection.instanceId}:${bot.modelSelection.model}`)).size).toBe(1);
-    expect(bots.every((bot) => bot.relayAgent === undefined)).toBe(true);
+    // The role reaches the wire so the UI can offer Scout-only affordances
+    // from server truth; it stays a role name, never the editable persona.
+    expect(bots.map((bot) => bot.relayAgent).sort()).toEqual(["curator", "mercury", "scout"]);
 
     const saved = JSON.parse(readFileSync(join(fixture.info.dataDir, "bots.json"), "utf8")) as Array<{ relayAgent?: string }>;
     expect(saved.map((bot) => bot.relayAgent).sort()).toEqual(["curator", "mercury", "scout"]);

@@ -1,4 +1,4 @@
-export type ComposerSlashCommandId = "goal" | "learn" | "setup";
+export type ComposerSlashCommandId = "goal" | "plan" | "learn" | "setup";
 
 export interface ComposerSlashCommand {
   id: ComposerSlashCommandId;
@@ -27,6 +27,14 @@ export function composerSlashTrigger(text: string, caretInput: number): Composer
  * command is present but still needs a goal description or attachment. */
 export function goalTextFromComposer(text: string): string | null {
   const match = /^\/goal(?:\s+([\s\S]*))?$/i.exec(text);
+  return match ? (match[1] ?? "").trimStart() : null;
+}
+
+/** A typed `/plan …` arms research planning for this message, the same
+ * affordance as the Deep chip. null means an ordinary chat message; an
+ * empty string means the command is present but still needs a brief. */
+export function planTextFromComposer(text: string): string | null {
+  const match = /^\/plan(?:\s+([\s\S]*))?$/i.exec(text);
   return match ? (match[1] ?? "").trimStart() : null;
 }
 
