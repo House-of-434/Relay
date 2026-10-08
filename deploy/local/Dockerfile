@@ -90,10 +90,10 @@ ENV HOME=/data \
 VOLUME ["/data"]
 # The relay service runs harness+BFF via start.sh; the tools service overrides
 # the command to run the Tool Layer instead.
-COPY deploy/local/start-relay.sh /usr/local/bin/start-relay.sh
+COPY deploy/local/start-app.sh /usr/local/bin/start-app.sh
 COPY deploy/local/start-tools.sh /usr/local/bin/start-tools.sh
-RUN chmod +x /usr/local/bin/start-relay.sh /usr/local/bin/start-tools.sh
+RUN chmod +x /usr/local/bin/start-app.sh /usr/local/bin/start-tools.sh
 USER maus
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -sf http://127.0.0.1:8799/api/health | grep -q relay || exit 1
-CMD ["/usr/local/bin/start-relay.sh"]
+CMD ["/usr/local/bin/start-app.sh"]
