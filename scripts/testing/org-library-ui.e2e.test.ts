@@ -4,20 +4,19 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { canonicalJson, parsePackageDocument } from "../../shared/package-format.ts";
 import { runControlOmb } from "../control-omb.ts";
 import { request } from "../mcp-server.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const FIXTURES = join(ROOT, "shared", "package-fixtures");
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
 const forced = process.env.OMB_UI_E2E === "1";
-const enabled = forced || Boolean(binary);
-const launchTimeout = forced && !binary ? 600_000 : 180_000;
-if (!enabled) console.log("skipping org-library UI e2e: set OMB_UI_E2E=1 to install the pinned browser");
+const enabled = forced || Boolean(resolveUiChrome(process.env));
+const chrome = resolveUiChrome(process.env);
+const launchTimeout = forced && !chrome ? 600_000 : 180_000;
+if (!enabled) console.log("skipping org-library UI e2e: set OMB_UI_E2E=1 to require system Chrome");
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const ORG = "11111111-1111-4111-8111-111111111111";

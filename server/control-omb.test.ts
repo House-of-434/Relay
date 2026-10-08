@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -12,7 +12,7 @@ import {
   launchVerificationServer,
   runControlOmb,
 } from "../scripts/control-omb.ts";
-import { installedChrome, UI_MUTATING } from "../scripts/testing/control-omb-ui.ts";
+import { resolveUiChrome, UI_MUTATING } from "../scripts/testing/control-omb-ui.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 describe("control-omb command mapping", () => {
@@ -50,8 +50,9 @@ describe("control-omb command mapping", () => {
     try {
       const handle = join(dir, "ui.json");
       writeFileSync(handle, JSON.stringify({
-        url: "http://127.0.0.1:19999", previewUrl: "http://127.0.0.1:5199/__threads.html", session: "omb-ui-19999",
-        binary: "/fixture/agent-browser", home: join(dir, "gone"), botId: "bot-1", logPath: "/fixture/server.log", chrome: null,
+        url: "http://127.0.0.1:19999", previewUrl: "http://127.0.0.1:5199/__threads.html",
+        home: join(dir, "gone"), botId: "bot-1", logPath: "/fixture/server.log", chrome: "/fixture/chrome",
+        driverUrl: "http://127.0.0.1:19998",
       }));
       await expect(runControlOmb(["ui", "snapshot", "--ui", handle])).rejects.toMatchObject({
         message: expect.stringContaining("data directory is gone"),
@@ -64,21 +65,14 @@ describe("control-omb command mapping", () => {
     }
   });
 
-  it("finds the newest Chrome for Testing that agent-browser install unpacked", () => {
+  it("resolves system Chrome from the environment before well-known locations", () => {
     const dir = mkdtempSync(join(tmpdir(), "omb-ui-tools-"));
     try {
-      expect(installedChrome(dir, "linux")).toBeNull();
-      const browsers = join(dir, ".agent-browser", "browsers");
-      for (const version of ["chrome-9.0.100.1", "chrome-153.0.8010.36"]) {
-        mkdirSync(join(browsers, version), { recursive: true });
-        writeFileSync(join(browsers, version, "chrome"), "");
-      }
-      expect(installedChrome(dir, "linux")).toBe(join(browsers, "chrome-153.0.8010.36", "chrome"));
-      expect(installedChrome(dir, "darwin")).toBeNull();
-      const app = join(browsers, "chrome-153.0.8010.36", "Google Chrome for Testing.app", "Contents", "MacOS");
-      mkdirSync(app, { recursive: true });
-      writeFileSync(join(app, "Google Chrome for Testing"), "");
-      expect(installedChrome(dir, "darwin")).toBe(join(app, "Google Chrome for Testing"));
+      const fake = join(dir, "chrome-for-test");
+      writeFileSync(fake, "");
+      expect(resolveUiChrome({ CHROME_PATH: fake })).toBe(fake);
+      expect(resolveUiChrome({ CHROME_PATH: join(dir, "missing") })).not.toBe(join(dir, "missing"));
+      expect(resolveUiChrome({}) === null || typeof resolveUiChrome({}) === "string").toBe(true);
     } finally {
       // synchronous removal is fine here: nothing spawned inside the directory
       void removeTempDir(dir);

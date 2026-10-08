@@ -394,7 +394,6 @@ export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
   localVm?: { binDir: string; host: string; sshKey: string; staticDir: string },
-  browser?: { binaryPath: string; executablePath: string },
   /** A stand-in enterprise layer (the folder shape core loads) and the key
    * it should accept, so a recipe can prove entitled behaviour offline. */
   enterprise?: { dir: string; licenseKey: string },
@@ -420,9 +419,8 @@ export async function launchVerificationServer(
   const port = await freePortBlock([0, 1]);
   if (signal?.aborted) throw new ControlOmbError("verification launch cancelled");
   const url = `http://127.0.0.1:${port}`;
-  // Native browser daemons use UNIX sockets; a macOS temp home can exceed
-  // their path limit. This is still an owned, randomly named fixture only.
-  const dataDir = mkdtempSync(join(browser && process.platform !== "win32" ? "/tmp" : tmpdir(), "openmausbot-verify-data-"));
+  // This is an owned, randomly named fixture only.
+  const dataDir = mkdtempSync(join(tmpdir(), "openmausbot-verify-data-"));
   const fixtureTemp = join(dataDir, "tmp");
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   mkdirSync(fixtureTemp, { recursive: true });
@@ -458,10 +456,6 @@ export async function launchVerificationServer(
     OMB_STATIC_DIR: localVm.staticDir,
   });
   if (enterprise) Object.assign(childEnv, { OMB_ENTERPRISE_DIR: enterprise.dir, OMB_LICENSE_KEY: enterprise.licenseKey });
-  if (browser) Object.assign(childEnv, {
-    OMB_AGENT_BROWSER_PATH: browser.binaryPath,
-    AGENT_BROWSER_EXECUTABLE_PATH: browser.executablePath,
-  });
   if (boatFixtureApi) childEnv.OMB_BOX_API = boatFixtureApi;
   const serverArgs = ["--experimental-strip-types"];
   if (childEnv.OMB_TEST_FAIL_AUDIO_APPEND_ONCE === "1") {

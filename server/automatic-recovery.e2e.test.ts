@@ -23,7 +23,7 @@ async function withRecoveryFixture(
     dataDir: string; failureFile: string; gateFile: string; evidence: unknown[];
   }) => Promise<void>,
 ) {
-  const fixture = await launchVerificationServer({}, undefined, undefined, undefined, undefined,
+  const fixture = await launchVerificationServer({}, undefined, undefined, undefined,
     options.scripted ? { scripted: true } : undefined);
   const { dataDir, url, logPath } = fixture.info;
   const failureFile = join(dataDir, "startup-failure.json");

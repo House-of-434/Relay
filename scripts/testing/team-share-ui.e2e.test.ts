@@ -2,18 +2,17 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-omb.ts";
 import { request } from "../mcp-server.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
 const forced = process.env.OMB_UI_E2E === "1";
-const enabled = forced || Boolean(binary);
-const launchTimeout = forced && !binary ? 600_000 : 180_000;
-if (!enabled) console.log("skipping share-team UI e2e: set OMB_UI_E2E=1 to install the pinned browser");
+const enabled = forced || Boolean(resolveUiChrome(process.env));
+const chrome = resolveUiChrome(process.env);
+const launchTimeout = forced && !chrome ? 600_000 : 180_000;
+if (!enabled) console.log("skipping share-team UI e2e: set OMB_UI_E2E=1 to require system Chrome");
 
 describe("Share team in the real renderer", () => {
   let child: ChildProcess | undefined;

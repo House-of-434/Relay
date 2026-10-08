@@ -3,14 +3,13 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import type { Routine } from "../../src/lib/routines.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env }));
+const enabled = process.env.OMB_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
 let child: ChildProcess | undefined;
 afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
 

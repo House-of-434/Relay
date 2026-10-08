@@ -57,7 +57,7 @@ it("keeps the selected API model for direct, group and scheduled Boat turns and 
   const address = upstream.address();
   if (!address || typeof address === "string") throw new Error("fixture failed to bind");
   const origin = `http://127.0.0.1:${address.port}`;
-  const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, undefined, undefined, [], origin).catch(async error => {
+  const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, undefined, [], origin).catch(async error => {
     upstream.closeAllConnections(); await new Promise<void>(resolve => upstream.close(() => resolve())); throw error;
   });
   const api = async (method: string, path: string, body?: unknown) => {

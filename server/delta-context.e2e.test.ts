@@ -20,7 +20,7 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
   // The fixture's Claude is a CLI new enough to refresh a resumed session's
   // recorded system prompt; a test that wants an older one overrides it.
   const parentEnv = { ...process.env, FAKE_CLAUDE_VERSION: "2.1.270", ...options.env };
-  const session = await launchVerificationServer(parentEnv, undefined, undefined, undefined, undefined,
+  const session = await launchVerificationServer(parentEnv, undefined, undefined, undefined,
     { scripted: true }, options.codex ? ["codex"] : []);
   const cli = (...args: string[]) => runControlOmb(args, { env: { OPENMAUSBOT_URL: session.info.url } }) as Promise<any>;
   const api = (path: string, body?: unknown, method = "POST") =>

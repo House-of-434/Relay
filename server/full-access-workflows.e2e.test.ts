@@ -10,7 +10,7 @@ import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.
 import { waitForExit } from "./testing/cleanup.ts";
 
 it("applies requested Full Access workflows through MCP without duplicate approvals, while exact Ask tasks still wait", async () => {
-  const fixture = await launchVerificationServer({}, undefined, undefined, undefined, undefined, { scripted: true });
+  const fixture = await launchVerificationServer({}, undefined, undefined, undefined, { scripted: true });
   const { url, dataDir, logPath } = fixture.info;
   const planPath = join(dataDir, "room-plan.json");
   const plans: Record<string, { turns: any[] }> = {};

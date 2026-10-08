@@ -31,7 +31,7 @@ describe("spend cap inside a team goal run", () => {
       FAKE_CLAUDE_REPLIES: JSON.stringify([
         'The plan is ready.\n<openmaus-goal>{"status":"continue","next":"Worker","instruction":"Do the thing","detail":"Plan ready"}</openmaus-goal>',
       ]),
-    }, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    }, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
   }, 60_000);
 
   afterEach(async () => {

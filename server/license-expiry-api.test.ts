@@ -33,7 +33,7 @@ describe("license expiry through the running server", () => {
     mkdirSync(join(layerDir, "server"));
     writeFileSync(join(layerDir, "server", "index.js"),
       `export async function register() { return { customer: "Fixture Co", features: ["budgets"], expiresAt: ${JSON.stringify(expiresAt)} }; }\n`);
-    session = await launchVerificationServer(process.env, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    session = await launchVerificationServer(process.env, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
     const api = (path: string, init: RequestInit = {}) => fetch(`${session!.info.url}${path}`, init);
     const opened = (await (await api("/api/auth/pairing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scopes: ["client"] }) })).json()) as { code: string };
     const member = ((await (await api("/api/auth/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: opened.code, label: "Member phone" }) })).json()) as { token: string }).token;

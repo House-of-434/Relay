@@ -240,7 +240,7 @@ describe("guarded external messages through an isolated runtime", () => {
 });
 
 it("refuses a parked conversation after its own provider settles while its teammate is still working", async () => {
-  const fixture = await launchVerificationServer({}, undefined, undefined, undefined, undefined, { scripted: true });
+  const fixture = await launchVerificationServer({}, undefined, undefined, undefined, { scripted: true });
   const evidence: unknown[] = [];
   const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(`${fixture.info.url}${path}`, {

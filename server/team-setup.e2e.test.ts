@@ -9,7 +9,7 @@ import { removeTempDir } from "./testing/cleanup.ts";
 it("Clive reviews multi-provider teams once, continues after each decision, and preserves existing threads through setup and deletion", async () => {
   const gates = mkdtempSync(join(tmpdir(), "omb-team-setup-gates-"));
   const gate = join(gates, "finish");
-  const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, undefined, undefined, undefined, undefined, undefined, ["codex"]);
+  const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, undefined, undefined, undefined, undefined, ["codex"]);
   const evidence: unknown[] = [{ fixture: fixture.info }];
   const api = async (method: string, path: string, body?: unknown, expected = 200, token?: string, fromApp = true) => {
     const response = await fetch(fixture.info.url + path, { method, headers: { "content-type": "application/json",

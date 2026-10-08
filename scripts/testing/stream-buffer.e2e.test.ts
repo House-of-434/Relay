@@ -1,28 +1,27 @@
-import { execFile } from "node:child_process";
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { promisify } from "node:util";
 import { expect, it } from "vitest";
 import type { WireMessage } from "../../shared/wire.ts";
-import { closeBrowserSession, resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { launchVerificationServer, runControlOmb } from "../control-omb.ts";
-import { ensureUiBrowser, sessionEnv, UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { driverCall, ensureUiChrome, resolveUiChrome, startUiDriver } from "./control-omb-ui.ts";
 import { fixtureApi, mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
-const enabled = process.env.OMB_UI_E2E === "1" || !!resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-if (!enabled) console.info("skipping stream-buffer e2e: no agent-browser resolves; set OMB_UI_E2E=1 to install the pinned tools");
-const execFileAsync = promisify(execFile);
+const enabled = process.env.OMB_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+if (!enabled) console.info("skipping stream-buffer e2e: no system Chrome resolves; set OMB_UI_E2E=1 to require it");
 
 it.skipIf(!enabled)("drains pending text and reasoning with rAF paused, then settles without duplicated output", async () => {
-  const { binary, chrome } = await ensureUiBrowser();
-  const fixture = await launchVerificationServer(process.env, undefined, undefined, { binaryPath: binary, executablePath: chrome ?? "" });
-  const env = sessionEnv({ home: fixture.info.dataDir, session: `omb-stream-${new URL(fixture.info.url).port}`, chrome });
+  const chrome = ensureUiChrome(process.env);
+  const fixture = await launchVerificationServer(process.env);
+  const driver = await startUiDriver({ chrome, home: fixture.info.dataDir });
   const browser = async (...args: string[]) => {
-    const { stdout } = await execFileAsync(binary, [...args, "--json"], { env, timeout: 30_000, killSignal: "SIGKILL", maxBuffer: 1_048_576 });
-    const result = JSON.parse(stdout);
-    expect(result.success).toBe(true);
-    return result.data;
+    const [verb, ...rest] = args;
+    if (verb === "open") return driverCall(driver.url, "open", { url: rest[0]! });
+    if (verb === "wait" && rest[0] === "--fn") return driverCall(driver.url, "wait-fn", { js: rest[1]! });
+    if (verb === "wait") return driverCall(driver.url, "wait-load", {});
+    if (verb === "eval") return driverCall(driver.url, "eval", { js: rest[0]! });
+    if (verb === "console") return driverCall(driver.url, "console", {});
+    throw new Error(`unsupported browser verb: ${verb}`);
   };
   const control = (...args: string[]) => runControlOmb([...args, "--url", fixture.info.url]) as Promise<any>;
   const evidence: unknown[] = [{ fixture: fixture.info }];
@@ -98,7 +97,7 @@ it.skipIf(!enabled)("drains pending text and reasoning with rAF paused, then set
         messages: target && await control("messages", ...target, "--limit", "10").catch(error => ({ error: String(error) })),
       });
     } finally {
-      try { browserClosed = await closeBrowserSession(binary, env); }
+      try { await driver.stop(); browserClosed = true; } catch { browserClosed = false; }
       finally {
         try { await preview?.close(); }
         finally {

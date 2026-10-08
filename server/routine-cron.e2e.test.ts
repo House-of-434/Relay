@@ -7,7 +7,7 @@ import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.
 import { nextCronRuns } from "../shared/routine-schedule.ts";
 
 it("takes cron through the real routine tools and confirmation, preserving its zone and rejecting invalid API input", async () => {
-  const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, undefined, { scripted: true });
+  const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, { scripted: true });
   const evidence: unknown[] = [{ fixture: fixture.info }];
   const planPath = join(fixture.info.dataDir, "room-plan.json");
   const providerEvidence = () => existsSync(`${planPath}.evidence.jsonl`)

@@ -14,7 +14,7 @@ async function fixture(test: (f: Awaited<ReturnType<typeof setup>>) => Promise<v
 
 async function setup(hang: boolean, fakeEnv: NodeJS.ProcessEnv) {
   const env = { ...process.env, ...fakeEnv, FAKE_CLAUDE_VERSION: "2.1.270", ...(hang ? { FAKE_CLAUDE_TEXT_HANG: "1" } : {}) };
-  const session = await launchVerificationServer(env, undefined, undefined, undefined, undefined, { scripted: true });
+  const session = await launchVerificationServer(env, undefined, undefined, undefined, { scripted: true });
   let ready = false;
   try {
     let restarted: ChildProcess | undefined;
