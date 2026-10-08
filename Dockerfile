@@ -32,9 +32,8 @@ COPY . .
 RUN pnpm build:server && pnpm exec vite build
 
 FROM node:24-bookworm-slim
-# Install Chrome's Bookworm libraries directly: agent-browser --with-deps
-# invokes sudo even as root, and this image deliberately does not ship sudo.
-# git + curl: agent CLIs shell out to git; curl backs the healthcheck
+# Install Chrome's Bookworm libraries directly. git + curl: agent CLIs
+# shell out to git; curl backs the healthcheck
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git \
     libxcb-shm0 libx11-xcb1 libx11-6 libxcb1 libxext6 libxrandr2 \
