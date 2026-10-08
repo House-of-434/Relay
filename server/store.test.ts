@@ -854,79 +854,29 @@ describe("Store", () => {
     expect(saved.find((bot) => bot.id === absent.id)).not.toHaveProperty("cloudBackend");
   });
 
-  it("migrates legacy browser profile references without collapsing case-distinct accounts", () => {
+  it("drops legacy browser fields on load: no stored browser destination or profile survives", () => {
     const store = new Store(selection);
     const first = store.createBot();
-    const duplicate = store.createBot();
-    const caseVariant = store.createBot();
-    const configFile = join(DATA_DIR, "config.json");
+    const second = store.createBot();
     const botsFile = join(DATA_DIR, "bots.json");
-    writeFileSync(configFile, JSON.stringify({
-      browserProfiles: [
-        { id: "Work", name: "Primary" },
-        { id: "Work", name: "Duplicate" },
-        { id: "work", name: "Lowercase variant" },
-      ],
-    }));
-    const bots: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
+    const bots: Array<Record<string, unknown>> = JSON.parse(readFileSync(botsFile, "utf8"));
+    bots.find((bot) => bot.id === first.id)!.computer = "browser";
+    bots.find((bot) => bot.id === first.id)!.browser = true;
     bots.find((bot) => bot.id === first.id)!.browserProfile = "Work";
-    bots.find((bot) => bot.id === duplicate.id)!.browserProfile = "Work";
-    bots.find((bot) => bot.id === caseVariant.id)!.browserProfile = "work";
+    bots.find((bot) => bot.id === second.id)!.browserProfile = "work";
     writeFileSync(botsFile, JSON.stringify(bots));
 
     const reloaded = new Store(selection);
-    expect(reloaded.bot(first.id)?.browserProfile).toBe("work-2");
-    expect(reloaded.bot(duplicate.id)?.browserProfile).toBe("work-2");
-    expect(reloaded.bot(caseVariant.id)?.browserProfile).toBe("work");
+    expect(reloaded.bot(first.id)?.computer).toBeUndefined();
+    expect(reloaded.bot(first.id)).not.toHaveProperty("browser");
+    expect(reloaded.bot(first.id)).not.toHaveProperty("browserProfile");
+    expect(reloaded.bot(second.id)).not.toHaveProperty("browserProfile");
 
-    const persisted: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
-    expect(persisted.find((bot) => bot.id === first.id)?.browserProfile).toBe("work-2");
-    expect(persisted.find((bot) => bot.id === duplicate.id)?.browserProfile).toBe("work-2");
-    expect(persisted.find((bot) => bot.id === caseVariant.id)?.browserProfile).toBe("work");
-
-    // config.json may remain legacy until the next settings save. Repeated
-    // hydration must not reinterpret the already-canonical first id.
-    const reloadedAgain = new Store(selection);
-    expect(reloadedAgain.bot(first.id)?.browserProfile).toBe("work-2");
-    expect(reloadedAgain.bot(duplicate.id)?.browserProfile).toBe("work-2");
-    expect(reloadedAgain.bot(caseVariant.id)?.browserProfile).toBe("work");
+    const persisted: Array<Record<string, unknown>> = JSON.parse(readFileSync(botsFile, "utf8"));
+    expect(persisted.find((bot) => bot.id === first.id)?.computer).toBeUndefined();
+    expect(persisted.find((bot) => bot.id === first.id)).not.toHaveProperty("browserProfile");
   });
 
-  it("keeps explicit suffix browser references stable across legacy migration", () => {
-    const store = new Store(selection);
-    const upper = store.createBot();
-    const canonical = store.createBot();
-    const suffixed = store.createBot();
-    const configFile = join(DATA_DIR, "config.json");
-    const botsFile = join(DATA_DIR, "bots.json");
-    writeFileSync(configFile, JSON.stringify({
-      browserProfiles: [
-        { id: "Work", name: "Uppercase" },
-        { id: "work", name: "Canonical" },
-        { id: "work-2", name: "Explicit suffix" },
-      ],
-    }));
-    const bots: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
-    bots.find((bot) => bot.id === upper.id)!.browserProfile = "Work";
-    bots.find((bot) => bot.id === canonical.id)!.browserProfile = "work";
-    bots.find((bot) => bot.id === suffixed.id)!.browserProfile = "work-2";
-    writeFileSync(botsFile, JSON.stringify(bots));
-
-    const reloaded = new Store(selection);
-    expect(reloaded.bot(upper.id)?.browserProfile).toBe("work-3");
-    expect(reloaded.bot(canonical.id)?.browserProfile).toBe("work");
-    expect(reloaded.bot(suffixed.id)?.browserProfile).toBe("work-2");
-
-    const persisted: BotRecord[] = JSON.parse(readFileSync(botsFile, "utf8"));
-    expect(persisted.find((bot) => bot.id === upper.id)?.browserProfile).toBe("work-3");
-    expect(persisted.find((bot) => bot.id === canonical.id)?.browserProfile).toBe("work");
-    expect(persisted.find((bot) => bot.id === suffixed.id)?.browserProfile).toBe("work-2");
-
-    const reloadedAgain = new Store(selection);
-    expect(reloadedAgain.bot(upper.id)?.browserProfile).toBe("work-3");
-    expect(reloadedAgain.bot(canonical.id)?.browserProfile).toBe("work");
-    expect(reloadedAgain.bot(suffixed.id)?.browserProfile).toBe("work-2");
-  });
 
   it("migrates unambiguous legacy peer grants without guessing duplicate names", () => {
     const store = new Store(selection);
@@ -1298,7 +1248,7 @@ describe("Store", () => {
     // no sidebar section of their own.
     expect(created.every((bot) => bot.section === undefined)).toBe(true);
     expect(created.every((bot) => bot.modelSelection.instanceId === selection().instanceId && bot.modelSelection.model === selection().model)).toBe(true);
-    expect(created.every((bot) => bot.computer === "off" && bot.browser === false && bot.composio === false)).toBe(true);
+    expect(created.every((bot) => bot.computer === "off" && bot.composio === false)).toBe(true);
 
     expect(store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS)).toEqual([]);
     const reloaded = new Store(selection);
@@ -2345,11 +2295,11 @@ describe("soul", () => {
   it("keeps runtime revocations effective in memory even when persistence fails", () => {
     const store = new Store(selection);
     const bot = store.createBot();
-    store.patchBot(bot.id, { browser: true });
+    store.patchBot(bot.id, { composio: true });
     const save = vi.spyOn(store as unknown as { saveBots(bots: BotRecord[]): void }, "saveBots")
       .mockImplementationOnce(() => { throw new Error("disk full"); });
-    expect(() => store.patchBot(bot.id, { browser: false })).toThrow("disk full");
-    expect(bot.browser).toBe(false);
+    expect(() => store.patchBot(bot.id, { composio: false })).toThrow("disk full");
+    expect(bot.composio).toBe(false);
     save.mockRestore();
   });
 

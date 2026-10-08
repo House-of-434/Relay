@@ -256,8 +256,8 @@ describe("sharing my New bot defaults as a preset", () => {
       name: "Sky", title: "Support", description: "Answers customers.", soul: "Be kind.\n", color: "blue", mascotExpression: "happy",
       // Everything below grants reach or is personal: none of it may travel.
       modelSelection: { instanceId: "claude", model: "opus" }, computer: "local", cwd: "/Users/me/secret", approvalMode: "full",
-      alwaysAllow: ["Bash(*)"], chiefOfStaff: true, managedSections: ["Ops"], peers: ["x"], composio: true, browser: true,
-      browserProfile: "work", mcpServers: ["crm"], section: "Support", approvePeerComms: true, parkDirectMessages: true, avatarCrop: "rounded",
+      alwaysAllow: ["Bash(*)"], chiefOfStaff: true, managedSections: ["Ops"], peers: ["x"], composio: true,
+      mcpServers: ["crm"], section: "Support", approvePeerComms: true, parkDirectMessages: true, avatarCrop: "rounded",
     },
     memory: { "MEMORY.md": "- Customers first.\n", "memory/tone.md": "Warm.\n" },
     skills: [{ name: "follow-up", description: "follow-up steps.", source: "https://github.com/acme/skills", text: skillText("follow-up"), enabled: true, warnings: [] }],

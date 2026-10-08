@@ -8,10 +8,10 @@ export function relayComputerDisabled(env: NodeJS.ProcessEnv = process.env): boo
 }
 
 const DISABLED_COMPUTER_ROUTES = [
-  /^\/api\/(?:computers|local-computer|local-vm|team-computers|shared-computers|browser-engine)(?:\/|$)/,
+  /^\/api\/(?:computers|local-computer|local-vm|team-computers|shared-computers)(?:\/|$)/,
   /^\/api\/bots\/[^/]+\/(?:computer|local-computer)(?:\/|$)/,
   /^\/api\/bots\/[^/]+\/secret-cards\/[^/]+\/provide$/,
-  /^\/api\/internal\/(?:browser|computer(?:-[^/]+)?|phone|voice(?:-[^/]+)?|vm-exec|shared-computers)(?:\/|$)/,
+  /^\/api\/internal\/(?:computer(?:-[^/]+)?|phone|voice(?:-[^/]+)?|vm-exec|shared-computers)(?:\/|$)/,
   /^\/api\/desktop\/shared-computer-control$/,
   /^\/api\/(?:tts|calls?|calendar-calls|voice|phone)(?:\/|$)/,
 ];
@@ -32,12 +32,9 @@ export function relayComputerSettingsRefusal(value: unknown): string | null {
   if (settings.computer !== undefined && settings.computer !== "off") {
     return "computer access is disabled by RELAY_DISABLE_COMPUTER";
   }
-  if (settings.browser === true || settings.autoStartVps === true || settings.voiceNotes === true ||
+  if (settings.autoStartVps === true || settings.voiceNotes === true ||
     (typeof settings.voice === "string" && settings.voice.trim() !== "")) {
     return "computer and voice features are disabled by RELAY_DISABLE_COMPUTER";
-  }
-  if (typeof settings.browserProfile === "string" && settings.browserProfile.length > 0) {
-    return "browser access is disabled by RELAY_DISABLE_COMPUTER";
   }
   return null;
 }
@@ -46,7 +43,6 @@ export function relayComputerConfigRefusal(value: unknown): string | null {
   const patch = record(value);
   if (!patch) return null;
   const features = record(patch.features);
-  if (features?.browser === true) return "browser access is disabled by RELAY_DISABLE_COMPUTER";
   if (features?.sharedComputers === true) return "shared computer access is disabled by RELAY_DISABLE_COMPUTER";
 
   const defaults = record(patch.newBotDefaults);

@@ -16,7 +16,6 @@ function baseFacts(overrides: Partial<OverviewFacts> = {}): OverviewFacts {
       approvePeerComms: false,
       peers: [],
       composio: undefined,
-      browser: undefined,
       chiefOfStaff: undefined,
     },
     routines: [],
@@ -81,14 +80,9 @@ describe("buildBotOverview", () => {
       .toContain("Cannot initiate contact with other bots.");
   });
 
-  it("does not advertise a browser disabled globally or unsupported by the engine", () => {
-    const facts = baseFacts({ bot: { ...baseFacts().bot, computer: "browser" }, browserEnabled: true, engine: { browserMcp: false } });
-    expect(buildBotOverview(facts).reaches).not.toContain("Has the built-in browser.");
-    facts.engine = { browserMcp: true };
-    facts.browserEnabled = false;
-    expect(buildBotOverview(facts).reaches).not.toContain("Has the built-in browser.");
-    facts.browserEnabled = true;
-    expect(buildBotOverview(facts).reaches).toContain("Has the built-in browser.");
+  it("does not mention a built-in browser anymore", () => {
+    const facts = baseFacts({ bot: { ...baseFacts().bot, computer: "cloud" }, engine: { computerMcp: true } });
+    expect(buildBotOverview(facts).reaches.join(" ")).not.toContain("browser");
   });
 
   it("renders an enabled interval routine with its last completed run", () => {
@@ -245,7 +239,6 @@ describe("buildBotOverview", () => {
     expect(reach("local", true)).toBe("Computer preference: this computer, which isn't available on OMB Cloud.");
     expect(reach("vm", true)).toBe("Computer preference: Local VM, which isn't available on OMB Cloud.");
     expect(reach("cloud", true)).toBe("Computer preference: cloud computer.");
-    expect(reach("browser", true)).toBe("Computer preference: browser only.");
     expect(reach(undefined, true)).toBe("Computer preference: Auto; availability is checked when a task starts.");
     for (const cloudHome of [undefined, false]) {
       expect(reach("local", cloudHome)).toBe("Computer preference: this computer.");

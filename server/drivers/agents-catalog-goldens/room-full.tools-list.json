@@ -198,10 +198,9 @@
               "auto",
               "cloud",
               "vm",
-              "local",
-              "browser"
+              "local"
             ],
-            "description": "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop, browser = built-in browser. Omit to list."
+            "description": "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop. Omit to list."
           }
         }
       }

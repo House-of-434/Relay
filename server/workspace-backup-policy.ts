@@ -5,7 +5,7 @@ import { parseStoredConfig } from "./config.ts";
 // Allowlisting ordinary settings also keeps future/unknown auth fields out.
 const PORTABLE_CONFIG_KEYS = [
   "profile", "language", "budgets", "billing", "rooms", "threads",
-  "localVm", "features", "browserProfiles",
+  "localVm", "features",
 ] as const;
 
 export function portableWorkspaceConfig(value: unknown): Record<string, unknown> {
@@ -40,6 +40,8 @@ export function excludedWorkspaceAuthPath(path: string): boolean {
   // Machine/provider-specific execution grants are not portable template data.
   if (/^command-allowlist\.json(?:$|\.\d+\.[0-9a-f-]+\.tmp$)/.test(path)) return true;
   if (/^google-connections\.json(?:\.\d+\.[0-9a-f-]{36}\.tmp)?$/.test(path)) return true;
+  // Legacy browser paths (pre-removal installs): their saved logins must
+  // never ride a backup even though nothing creates them anymore.
   return /^(?:(?:providers|caddy|chrome-profile|\.agent-browser)(?:\/|$)|workspace-credentials\.json$|external-runtimes\.json$|browser-engine-key$)/.test(path) ||
     /^(?:config\.json|webhooks\.json|workspace-credentials\.json|external-runtimes\.json|browser-engine-key|sessions\.json|tunnel-account\.json)\.\d+(?:\.[0-9a-f-]+)?\.tmp$/.test(path) ||
     /^(?:vm-home|vm-homes\/[^/]+)\/\.browser-profiles(?:\/|$)/.test(path);

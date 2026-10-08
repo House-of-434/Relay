@@ -754,9 +754,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           // Driver stdio MCP server. Codex sees the same computer tool surface.
           mountMcpServer(appServerArgs, env, "computer", turn.integrations.localComputer);
         }
-        if (turn.integrations?.browser) {
-          mountMcpServer(appServerArgs, env, "browser", turn.integrations.browser);
-        }
         // A custom server named like one in the user's own config.toml would
         // be merged with it by the `-c` override — a stdio command over a
         // remote url is "invalid configuration" and kills the turn before the
@@ -1780,7 +1777,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         agentsMcp: true,
       customMcp: true,
         phoneMcp: true,
-        browserMcp: true,
         images: true,
         nativeImageInput: true,
         effortLevels: ["low", "medium", "high", "xhigh", "max"],

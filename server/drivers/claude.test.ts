@@ -1130,17 +1130,17 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await instance.adapter.sendTurn({
       threadId: "t-surface-resume", text: "Open the test page.",
       resumeCursor: "previous-host-computer-session",
-      system: "Everything you do on screen happens in the built-in browser tab; no host computer tools are mounted.",
+      system: "Everything you do on screen happens on the cloud computer.",
       refreshSystemPrompt: true,
-      integrations: { browser: { command: process.execPath, args: ["fixture-browser"], env: {} } },
+      integrations: { localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "linux" } },
     });
     await recorder.until((event) => event.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv[seen.argv.indexOf("--system-prompt-snapshot") + 1]).toBe("off");
     expect(seen.argv[seen.argv.indexOf("--resume") + 1]).toBe("previous-host-computer-session");
-    expect(seen.systemPrompt).toContain("no host computer tools are mounted");
-    expect(seen.mcpConfig.mcpServers.browser).toBeTruthy();
-    expect(seen.mcpConfig.mcpServers.computer).toBeUndefined();
+    expect(seen.systemPrompt).toContain("Everything you do on screen happens on the cloud computer.");
+    expect(seen.mcpConfig.mcpServers.computer).toBeTruthy();
+    expect(seen.mcpConfig.mcpServers.browser).toBeUndefined();
   });
 
   it.each([["2.1.232", false], ["2.1.267", true]] as const)(

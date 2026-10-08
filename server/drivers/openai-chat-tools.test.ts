@@ -254,8 +254,8 @@ describe("optional built-in question compatibility", () => {
 
 describe("OpenAI-compatible computer images", () => {
   const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBv0AAAAASUVORK5CYII=";
-  it.each(["localComputer", "browser"] as const)("delivers %s screenshots after tool results and preserves approval", async (source) => {
-    const prefix = source === "browser" ? "browser" : "computer";
+  it("delivers localComputer screenshots after tool results and preserves approval", async () => {
+    const prefix = "computer";
     const f = await fixture((_body, response, round) => {
       if (round === 1) sse(response, [chunk({ tool_calls: [{ ...toolCall(), function: { ...toolCall().function, name: `${prefix}_write` } }] }, "tool_calls")]);
       else answer(response, "Inspected the fixture screenshot.");
@@ -266,7 +266,7 @@ describe("OpenAI-compatible computer images", () => {
     ));
     const imagePath = join(f.directory, "input.png");
     writeFileSync(imagePath, Buffer.from(png, "base64"));
-    await f.start({ integrations: { [source]: f.integrations!.custom!.audit }, images: [{ path: imagePath, mime: "image/png", bytes: Buffer.from(png, "base64").length }] });
+    await f.start({ integrations: { localComputer: f.integrations!.custom!.audit as NonNullable<SendTurnInput["integrations"]>["localComputer"] }, images: [{ path: imagePath, mime: "image/png", bytes: Buffer.from(png, "base64").length }] });
     await f.decide();
     expect(await f.completed()).toMatchObject({ ok: true });
     expect(f.effects()).toHaveLength(1);
@@ -280,7 +280,7 @@ describe("OpenAI-compatible computer images", () => {
       { type: "text", text: "Screenshot result from tool call call_write:" },
       { type: "image_url", image_url: { url: `data:image/png;base64,${png}` } },
     ] });
-    expect(f.instance.adapter.capabilities).toMatchObject({ computerMcp: true, localComputerMcp: true, browserMcp: true, nativeImageInput: true });
+    expect(f.instance.adapter.capabilities).toMatchObject({ computerMcp: true, localComputerMcp: true, nativeImageInput: true });
   });
 
   it("keeps every tool response ahead of screenshots in a multiple-call batch", async () => {

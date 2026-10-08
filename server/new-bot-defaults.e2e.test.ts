@@ -63,11 +63,9 @@ it("applies independent creation templates through the real isolated HTTP routes
     for (const body of [null, [], {}, { profile: {}, prompt: 42 }]) {
       await api("POST", "/api/bot-defaults/avatar", body, 400);
     }
-    await api("PATCH", "/api/config", { browserProfiles: [{ id: "fixture-profile", name: "Fixture profile" }] });
-    await api("PATCH", "/api/config", { newBotDefaults: { profile: { browserProfile: "fixture-profile" } } });
-    await api("PATCH", "/api/config", { browserProfiles: [] });
-    expect((await api("GET", "/api/bot-defaults")).defaults.profile.browserProfile).toBeUndefined();
-    expect((await api("POST", "/api/bots", { name: "After profile removal" }, 201)).bot.browserProfile).toBeUndefined();
+    // The removed browser profile default is rejected, not silently kept.
+    await api("PATCH", "/api/config", { newBotDefaults: { profile: { browserProfile: "fixture-profile" } } }, 400);
+    expect((await api("GET", "/api/bot-defaults")).defaults.profile).not.toHaveProperty("browserProfile");
     for (const mode of ["full", "custom"]) {
       await api("PATCH", "/api/config", { newBotDefaults: { profile: { approvalMode: mode } } });
       const count = (await api("GET", "/api/bots")).bots.length;

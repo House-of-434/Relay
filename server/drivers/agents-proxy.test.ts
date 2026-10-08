@@ -669,7 +669,7 @@ describe("agents-proxy MCP surface", () => {
     const list = await rpc("tools/list");
     const tool = list.result.tools.find((entry: { name: string }) => entry.name === "select_computer");
     expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false,
-      properties: { surface: { type: "string", enum: ["auto", "cloud", "vm", "local", "browser"] } } });
+      properties: { surface: { type: "string", enum: ["auto", "cloud", "vm", "local"] } } });
     expect(tool.inputSchema.required ?? []).not.toContain("surface");
     expect(tool.description).toContain("end this turn immediately");
     expect(tool.description).toContain("with a configured provider it can start or provision one when needed");
@@ -677,7 +677,7 @@ describe("agents-proxy MCP surface", () => {
     expect(tool.annotations?.readOnlyHint).not.toBe(true);
   });
 
-  it.each(["auto", "cloud", "vm", "local", "browser"])("select_computer posts the requested %s target without inventing success", async (surface) => {
+  it.each(["auto", "cloud", "vm", "local"])("select_computer posts the requested %s target without inventing success", async (surface) => {
     computerResponse = { state: "pending", surface: surface === "auto" ? "vm" : surface, instruction: "End this turn; the original request will resume." };
     const response = await callTool("select_computer", { surface });
     expect(response.result.isError).toBeFalsy();
@@ -689,7 +689,7 @@ describe("agents-proxy MCP surface", () => {
   it.each(["other", "off", " VM ", 42, null, {}, ["vm"]].map((surface) => ({ surface })))("select_computer rejects invalid target $surface before contacting the server", async ({ surface }) => {
     const response = await callTool("select_computer", { surface });
     expect(response.result.isError).toBe(true);
-    expect(response.result.content[0].text).toContain("Choose auto, cloud, vm, local or browser");
+    expect(response.result.content[0].text).toContain("Choose auto, cloud, vm or local");
     expect(computerRequests).toEqual([]);
   });
 

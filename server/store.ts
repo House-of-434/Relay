@@ -12,7 +12,7 @@ import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
 import type { BotProfilePatch } from "./bot-profile.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
-import { DATA_DIR, EVENTS_DIR, NATIVE_DIR, loadBrowserProfileIdAliases } from "./config.ts";
+import { DATA_DIR, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import * as mdb from "./message-db.ts";
 import { runCommand, type Command } from "./commands.ts";
 import { workspaceDir } from "./workspace.ts";
@@ -632,7 +632,6 @@ export class Store {
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
-    const browserProfileAliases = loadBrowserProfileIdAliases();
     const chiefSectionsSeen = new Set<string>();
     const relayAgentRolesSeen = new Set<RelayAgentRole>();
     let groupsMigrated = false;
@@ -666,12 +665,16 @@ export class Store {
           console.warn(`[bot-folder] could not create SOUL.md for ${b.id}: ${(e as Error).message}`);
         }
       }
-      if (b.browserProfile) {
-        const browserProfile = browserProfileAliases.get(b.browserProfile);
-        if (browserProfile && browserProfile !== b.browserProfile) {
-          b.browserProfile = browserProfile;
-          botsMigrated = true;
-        }
+      // The built-in browser is gone: a stored "browser" destination falls
+      // back to Auto, and the per-bot browser switch/profile are dropped.
+      if ((b as { computer?: unknown }).computer === "browser") {
+        delete b.computer;
+        botsMigrated = true;
+      }
+      if ("browser" in b || "browserProfile" in b) {
+        delete (b as { browser?: unknown }).browser;
+        delete (b as { browserProfile?: unknown }).browserProfile;
+        botsMigrated = true;
       }
       if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
@@ -2700,7 +2703,6 @@ export class Store {
       const bot = this.createBot({ ...seed.profile, name }, { relayAgent: seed.role });
       this.patchBot(bot.id, {
         computer: "off",
-        browser: false,
         autoStartVps: false,
         voiceNotes: false,
         composio: false,

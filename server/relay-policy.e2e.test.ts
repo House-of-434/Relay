@@ -1,7 +1,7 @@
 import { expect, it } from "vitest";
 import { launchVerificationServer } from "../scripts/control-omb.ts";
 
-it("keeps computer, browser, phone, and voice features disabled across the HTTP API", async () => {
+it("keeps computer, phone, and voice features disabled across the HTTP API", async () => {
   const fixture = await launchVerificationServer({ ...process.env, RELAY_DISABLE_COMPUTER: "1" });
   const api = async (method: string, path: string, body?: unknown) => {
     const response = await fetch(`${fixture.info.url}${path}`, {
@@ -17,20 +17,18 @@ it("keeps computer, browser, phone, and voice features disabled across the HTTP 
     expect(config.status).toBe(200);
     expect(config.body).toMatchObject({
       computerDisabled: true,
-      features: { browser: false, sharedComputers: false },
+      features: { sharedComputers: false },
       tts: { configured: false, ready: false },
-      browserEngine: { kind: "unavailable", reason: "disabled by RELAY_DISABLE_COMPUTER" },
     });
 
     const created = await api("POST", "/api/bots", { name: "Safety fixture" });
     expect(created.status).toBe(201);
     const botId = created.body.bot.id as string;
-    expect(created.body.bot).toMatchObject({ computer: "off", browser: false, autoStartVps: false, voiceNotes: false });
+    expect(created.body.bot).toMatchObject({ computer: "off", autoStartVps: false, voiceNotes: false });
 
     for (const patch of [
       { computer: "cloud" },
       { computer: null },
-      { browser: true },
       { voiceNotes: true },
       { autoStartVps: true },
     ]) {
@@ -39,7 +37,6 @@ it("keeps computer, browser, phone, and voice features disabled across the HTTP 
     expect((await api("PATCH", `/api/bots/${botId}`, { description: "Still editable" })).status).toBe(200);
     expect((await api("POST", "/api/bots", { name: "Unsafe fixture", settings: { computer: "cloud" } })).status).toBe(403);
 
-    expect((await api("PATCH", "/api/config", { features: { browser: true } })).status).toBe(403);
     expect((await api("PATCH", "/api/config", { tts: { provider: "system", voice: "fixture" } })).status).toBe(403);
     expect((await api("PATCH", "/api/config", { profile: { name: "Relay" } })).status).toBe(200);
 

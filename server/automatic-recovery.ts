@@ -12,7 +12,7 @@ export function recoveryCapabilityError(from: Engine, to: Engine): string | unde
     return "The backup cannot use the same workspace.";
   }
   const tools = ["agentsMcp", "computerMcp", "cloudComputerMcp", "composioMcp",
-    "phoneMcp", "browserMcp", "localComputerMcp", "customMcp", "images"] as const;
+    "phoneMcp", "localComputerMcp", "customMcp", "images"] as const;
   if (tools.some(key => from.capabilities[key] === true && to.capabilities[key] !== true)) {
     return "The backup does not support all of this engine's tools and attachments.";
   }

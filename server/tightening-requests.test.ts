@@ -107,8 +107,8 @@ describe("tightening direction (schema-level)", () => {
       [{ approvalMode: "full" }, "approvalMode", /may only be proposed as "ask", "edits", or "auto"/],
       [{ approvalMode: "custom" }, "approvalMode", /may only be proposed as "ask", "edits", or "auto"/],
       [{ composio: true }, "composio", /composio may only be turned off/],
-      [{ browser: true }, "browser", /browser may only be turned off/],
       [{ approvePeerComms: false }, "approvePeerComms", /approvePeerComms may only be turned on/],
+      [{ browser: true }, "browser", /unsupported tightening field: browser/],
       [{ notifications: true }, "notifications", /unsupported tightening field: notifications/],
     ];
     for (const [intents, field, pattern] of cases) {
@@ -147,9 +147,8 @@ describe("tightening direction (state-level)", () => {
   });
 
   it("rejects booleans already in the tightened state", () => {
-    const { propose } = harness({ composio: false, browser: false, approvePeerComms: true });
+    const { propose } = harness({ composio: false, approvePeerComms: true });
     expect(() => propose({ composio: false })).toThrow(/composio is already off; it may only be turned off/);
-    expect(() => propose({ browser: false })).toThrow(/browser is already off; it may only be turned off/);
     expect(() => propose({ approvePeerComms: true })).toThrow(/approvePeerComms is already on; it may only be turned on/);
   });
 
@@ -200,7 +199,6 @@ describe("allowed transitions", () => {
     });
     const card = propose({
       composio: false,
-      browser: false,
       approvePeerComms: true,
       alwaysAllow: ["Bash", "Edit"],
       mcpServers: ["linear"],
@@ -209,10 +207,9 @@ describe("allowed transitions", () => {
     const applied = service.resolve({ botId: bot.id, threadId: bot.threadId, requestId: card.requestId, behavior: "allow" });
     expect(applied).toMatchObject({
       claimed: true, state: "applied",
-      fields: ["composio", "browser", "approvePeerComms", "alwaysAllow", "mcpServers", "skills"],
+      fields: ["composio", "approvePeerComms", "alwaysAllow", "mcpServers", "skills"],
     });
     expect(bot.composio).toBe(false);
-    expect(bot.browser).toBe(false);
     expect(bot.approvePeerComms).toBe(true);
     expect(bot.alwaysAllow).toEqual(["Read"]);
     expect(bot.mcpServers).toEqual(["notes"]);
@@ -220,12 +217,11 @@ describe("allowed transitions", () => {
     expect(bot.lastTighteningRequestId).toBe(card.requestId);
   });
 
-  it("treats undefined composio/browser as on and undefined approvePeerComms as off", () => {
+  it("treats undefined composio as on and undefined approvePeerComms as off", () => {
     const { service, bot, propose } = harness({});
-    const card = propose({ composio: false, browser: false, approvePeerComms: true });
+    const card = propose({ composio: false, approvePeerComms: true });
     service.resolve({ botId: bot.id, threadId: bot.threadId, requestId: card.requestId, behavior: "allow" });
     expect(bot.composio).toBe(false);
-    expect(bot.browser).toBe(false);
     expect(bot.approvePeerComms).toBe(true);
   });
 
@@ -457,14 +453,13 @@ describe("tightening card copy", () => {
     const copy = tighteningCardCopy(
       { name: "Scout", crossBot: false },
       before,
-      { approvalMode: "ask", composio: false, browser: false, approvePeerComms: true, alwaysAllow: ["Bash", "WebSearch"], mcpServers: ["fs"], skills: ["pdf"] },
+      { approvalMode: "ask", composio: false, approvePeerComms: true, alwaysAllow: ["Bash", "WebSearch"], mcpServers: ["fs"], skills: ["pdf"] },
       "incident lockdown",
     );
     expect(copy.detail).toBe([
       "Why: incident lockdown",
       "Approvals: full → ask",
       "Connected apps: on → off",
-      "Browser: on → off",
       "Peer contact: no approval → ask first",
       "Always-allow grants: 3 → 1 — removed: Bash, WebSearch",
       "MCP servers: 2 → 1 — unmounted: fs",
@@ -477,7 +472,7 @@ describe("tightening card copy", () => {
     const grants = ["a", "b", "c", "d", "e", "f", "g"];
     const copy = tighteningCardCopy(
       { name: "Scout", crossBot: true },
-      { approvalMode: "auto" as const, composio: false, browser: false, approvePeerComms: false, alwaysAllow: grants, mcpServers: [], skills: [] },
+      { approvalMode: "auto" as const, composio: false, approvePeerComms: false, alwaysAllow: grants, mcpServers: [], skills: [] },
       { alwaysAllow: grants },
       "r",
     );

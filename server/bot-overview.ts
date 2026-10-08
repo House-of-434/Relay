@@ -61,7 +61,6 @@ export interface OverviewFacts {
     | "peers"
     | "composio"
     | "connectorTools"
-    | "browser"
     | "chiefOfStaff"
     | "managedSections"
   >;
@@ -75,8 +74,7 @@ export interface OverviewFacts {
   runs: Array<{ routineId: string; status: string; finishedAt?: number; startedAt?: number; scheduledFor: number }>;
   webhooks: Array<{ name: string; enabled: boolean }>;
   skills: Array<{ name: string; description: string; enabled: boolean }>;
-  engine: { agentsMcp?: boolean; composioMcp?: boolean; browserMcp?: boolean; computerMcp?: boolean } | null;
-  browserEnabled?: boolean;
+  engine: { agentsMcp?: boolean; composioMcp?: boolean; computerMcp?: boolean } | null;
   /** This server is a Cloud home (cloud-home.ts): it has no "this computer"
    * of the person's and no Local VM. */
   cloudHome?: boolean;
@@ -241,8 +239,6 @@ function computerReach(computer: BotRecord["computer"], cloudHome = false): stri
       return `Computer preference: Local VM${unavailable}.`;
     case "local":
       return `Computer preference: this computer${unavailable}.`;
-    case "browser":
-      return "Computer preference: browser only.";
     case "off":
       return null;
     default:
@@ -265,7 +261,6 @@ function reachesLines(facts: OverviewFacts): string[] {
   } else if (couldUseApps(facts) && !apps.authoritative) {
     lines.push("Connected apps could not be checked.");
   }
-  if (facts.browserEnabled && facts.engine?.browserMcp && facts.bot.browser !== false && facts.bot.computer !== "off") lines.push("Has the built-in browser.");
   if (facts.engine?.agentsMcp && facts.sectionPeers > 0 && facts.bot.peers?.length !== 0) {
     const scope = facts.bot.chiefOfStaff && facts.bot.managedSections?.length ? "its allowed teams" : "its section";
     lines.push(`Can talk to ${facts.sectionPeers} other bot${facts.sectionPeers === 1 ? "" : "s"} in ${scope}.`);
