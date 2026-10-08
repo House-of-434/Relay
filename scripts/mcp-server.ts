@@ -675,7 +675,6 @@ function projectMessage(message: Record<string, any>) {
     ...(card ? { card } : {}),
     ...(connector ? { connector } : {}),
     ...(secret ? { secret } : {}),
-    ...(message.kind === "screen" ? { hasImage: Boolean(message.hasImage || message.png) } : {}),
   };
 }
 

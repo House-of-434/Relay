@@ -48,9 +48,9 @@ test("an empty child frame never inherits the native main frame's local origin",
 
 test("localOnly answers the local page and refuses a remote one by name", async () => {
   lo.setLocalOrigin("http://127.0.0.1:8799");
-  const handler = lo.localOnly("screen:frame", async (_event, x) => `frame:${x}`);
+  const handler = lo.localOnly("perm:open-settings", async (_event, x) => `frame:${x}`);
   assert.equal(await handler(from("http://127.0.0.1:8799/"), 1), "frame:1");
-  assert.throws(() => handler(from("https://mini.example/"), 1), /screen:frame is only available while using the local server/);
+  assert.throws(() => handler(from("https://mini.example/"), 1), /perm:open-settings is only available while using the local server/);
   const sync = lo.localOnlySync("screen:preview-intent", (event) => { event.returnValue = "ok"; });
   const remote = from("https://mini.example/");
   sync(remote);

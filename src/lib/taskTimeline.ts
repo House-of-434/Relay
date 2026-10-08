@@ -5,10 +5,9 @@ import { redactSecretsInText } from "../../shared/redact.js";
 export interface TimelineMessage {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
+  kind: "text" | "options" | "activity" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
   text?: string;
   tool?: { name: string; summary?: string; ok?: boolean };
-  png?: string;
   at: number;
 }
 
@@ -17,7 +16,7 @@ export interface TimelineEvent {
   at: number;
   label: string;
   state: "running" | "complete" | "failed" | "observed";
-  kind: "task" | "tool" | "screen" | "result";
+  kind: "task" | "tool" | "result";
   /** Recorded command preview, not reconstructed input or tool output. */
   command?: string;
 }
@@ -50,8 +49,6 @@ export function timelineEvents(messages: TimelineMessage[]): TimelineEvent[] {
         state: failed ? "failed" : message.tool.ok === true ? "complete" : "running",
         kind: "tool",
       });
-    } else if (message.kind === "screen") {
-      events.push({ id: message.id, at: message.at, label: "Screen observed", state: "observed", kind: "screen" });
     } else if (message.kind === "text" && message.role === "bot" && message.text?.trim()) {
       events.push({ id: message.id, at: message.at, label: "Response recorded", state: "complete", kind: "result" });
     }

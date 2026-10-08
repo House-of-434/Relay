@@ -53,40 +53,6 @@ export async function createRelayToolServer(
         return;
       }
 
-      // Live research frame: the calling user's workspace screenshot for
-      // the harness live view. Same actor authentication as the MCP
-      // routes, so a caller can only ever see their own workspace.
-      if (request.method === "GET" && url.pathname === "/workspace/vision") {
-        let actor: { userId: string | null; actorAssertion: string | undefined };
-        try {
-          actor = await mcpActor(request, database);
-        } catch (error) {
-          sendJson(response, 401, { error: error instanceof Error ? error.message : "invalid actor context" });
-          return;
-        }
-        if (!actor.userId) {
-          sendJson(response, 401, { error: "research view requires an authenticated actor" });
-          return;
-        }
-        const blade = bladeConfig();
-        sharedBladePool ??= new BladeBrowserPool({
-          dataRoot: blade.dataRoot,
-          binary: blade.binary,
-          chromePath: blade.chromePath,
-          proxy: blade.proxy,
-          timezone: blade.timezone,
-          locale: blade.locale,
-        });
-        try {
-          const png = await sharedBladePool.vision(actor.userId);
-          response.writeHead(200, { "content-type": "image/png", "content-length": png.length });
-          response.end(png);
-        } catch (error) {
-          sendJson(response, 502, { error: error instanceof Error ? error.message.slice(0, 300) : "vision failed" });
-        }
-        return;
-      }
-
       const match = /^\/mcp\/(scout|mercury|curator)$/.exec(url.pathname);
       if (request.method !== "POST" || !match) {
         sendJson(response, 404, { error: "not found" });

@@ -18,12 +18,6 @@ writeFileSync(
     "#!/bin/sh",
     'if [ "$1" = "--version" ]; then echo "bladebro v9.9.9-test"; exit 0; fi',
     'if [ "$1" = "stop" ]; then exit 0; fi',
-    'if [ "$1" = "vision" ]; then',
-    '  mkdir -p "$BLADE_HOME/artifacts"',
-    '  printf "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQSAhE1gYQAAAABJRU5ErkJggg==" | base64 -d > "$BLADE_HOME/artifacts/vision-test.png"',
-    '  echo "{\\"ok\\":true,\\"is_error\\":false,\\"text\\":\\"screenshot\\",\\"image_path\\":\\"$BLADE_HOME/artifacts/vision-test.png\\"}"',
-    "  exit 0",
-    "fi",
     'case "$*" in *fixture-fail*) echo \'{"ok":false,"is_error":true,"text":"blocked: fixture"}\'; exit 1;; esac',
     'echo "{\\"ok\\":true,\\"is_error\\":false,\\"text\\":\\"fixture page text for testing home=$BLADE_HOME\\"}"',
     "exit 0",
@@ -158,39 +152,6 @@ test("invalid URLs and page failures refuse clearly", async () => {
   const bad = await callTool("scout", assertionFor(ALICE), "browser_open", { url: "ftp://example.com/x" });
   assert.equal(bad.isError, true);
   assert.match(bad.text, /http\(s\)/);
-});
-
-async function visionStatus(assertion?: string): Promise<{ status: number; contentType: string | null; bytes: Buffer }> {
-  const server = await createRelayToolServer(database, 0);
-  const address = server.address();
-  assert.ok(address && typeof address === "object");
-  try {
-    const response = await fetch(`http://127.0.0.1:${address.port}/workspace/vision`, {
-      headers: assertion ? { "x-relay-actor-user": assertion } : {},
-    });
-    return {
-      status: response.status,
-      contentType: response.headers.get("content-type"),
-      bytes: Buffer.from(await response.arrayBuffer()),
-    };
-  } finally {
-    await new Promise<void>((resolve) => server.close(() => resolve()));
-  }
-}
-
-test("workspace vision serves the caller's screenshot, nobody else's", async () => {
-  useBladeEnv();
-  const alice = await visionStatus(assertionFor(ALICE));
-  assert.equal(alice.status, 200);
-  assert.equal(alice.contentType, "image/png");
-  assert.equal(alice.bytes[0], 0x89);
-  assert.equal(alice.bytes.subarray(1, 4).toString(), "PNG");
-
-  const bob = await visionStatus(assertionFor(BOB));
-  assert.equal(bob.status, 200);
-
-  const anon = await visionStatus(undefined);
-  assert.equal(anon.status, 401);
 });
 
 test("page-level failure surfaces the verdict instead of fabricating", async () => {

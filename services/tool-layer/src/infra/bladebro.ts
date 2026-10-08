@@ -15,7 +15,7 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
@@ -37,8 +37,6 @@ export const BROWSER_RESULT_BUDGET = 32_000;
 /** Hard cap on one bladebro response body. */
 export const BLADE_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 export const BLADE_URL_MAX_LENGTH = 2048;
-const BLADE_VISION_TIMEOUT_MS = 30_000;
-const BLADE_VISION_MAX_BYTES = 32 * 1024 * 1024;
 const BLADE_PROBE_TIMEOUT_MS = 15_000;
 const BLADE_ARTIFACT_PAGE_LIMIT = 8_000;
 
@@ -264,51 +262,6 @@ export class BladeBrowserPool {
       throw new Error("artifact not found in this workspace");
     });
     return full.slice(start, start + page);
-  }
-
-  /** Screenshot of the workspace's current page for live research view.
-   * Runs `vision` on demand (no timers, no stored files here): the caller
-   * polls. The PNG file Bladebro writes is read and removed, so repeated
-   * polling cannot fill the workspace. Throws honestly when no page is
-   * open or the daemon is down — the poller treats that as "try later". */
-  async vision(userId: unknown): Promise<Buffer> {
-    const root = this.trackWorkspace(userId).root;
-    const result = await this.spawn(this.binary, ["vision", "--json"], {
-      env: this.buildEnv(root, false),
-      timeoutMs: BLADE_VISION_TIMEOUT_MS,
-      maxBufferBytes: 65536,
-    });
-    if (result.exitCode !== 0) {
-      throw new Error(boundText(extractErrorText(result), 500));
-    }
-    let imagePath: string;
-    try {
-      const json = JSON.parse(result.stdout) as { image_path?: unknown };
-      if (typeof json.image_path !== "string" || json.image_path.length === 0) {
-        throw new Error("vision returned no image path");
-      }
-      imagePath = json.image_path;
-    } catch (error) {
-      throw new Error(
-        error instanceof Error ? error.message : "vision returned an unreadable response",
-      );
-    }
-    const resolved = resolve(root, imagePath);
-    const rel = relative(root, resolved);
-    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) {
-      throw new Error("vision image path escapes the workspace");
-    }
-    let bytes: Buffer;
-    try {
-      bytes = await readFile(resolved);
-    } catch {
-      throw new Error("vision image is missing");
-    }
-    await rm(resolved, { force: true }).catch(() => {});
-    if (bytes.length === 0 || bytes.length > BLADE_VISION_MAX_BYTES) {
-      throw new Error("vision image has an impossible size");
-    }
-    return bytes;
   }
 
   /** Best-effort graceful shutdown for reclaim: flushes logins and

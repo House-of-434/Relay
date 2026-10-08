@@ -131,7 +131,6 @@ function preview(bot: Bot): string {
     return (last.card.requestId && last.card.tool && !last.card.questionRequest && approvalCardOutcome(last.card)) || last.card.title;
   }
   if (last.kind === "activity" && last.tool) return last.tool.name;
-  if (last.kind === "screen") return t("sidebar.preview.screenFrame");
   const peer = peerLine(last);
   if (peer) return `${peer.name}: ${peer.body}`;
   return last.text ?? "";

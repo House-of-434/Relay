@@ -16,7 +16,7 @@ separate orchestrator service, no permanent monitoring pool.
 | Search | TinyFish adapter behind a provider interface |
 | Reddit OAuth | Deferred (see deferred.md) |
 | Residential proxy | Deferred (see deferred.md) |
-| Live view | In MVP (poll `bladebro vision`; CDP screencast later) |
+| Live view | Dropped — Scout research is content-first (sources → synthesis → answer), no research frames or screen events in the thread |
 | Claude tool restriction | Dropped — prompt only |
 | Subagents | No — parallel MCP calls cover search fan-out |
 | Connectors | Bladebro only for MVP (Reddit/X via saved logins) |
@@ -119,9 +119,9 @@ At run time, `threadActorContext` falls back to the routine owner when a
 thread has no user sender: directly for routine execution/results threads,
 or one delegation hop away (`resolveRoutineOwner`, cycle-safe, depth-capped).
 So Curator 8 AM → `delegate_bot` Scout → Scout's `browser_*` calls land in
-the routine owner's workspace, and the live-frame poller follows the same
-actor. `RoutineTarget = "bot"` + `delegate_bot` remain the only execution
-mechanism; path proven by `routine-delegation.e2e.test.ts`.
+the routine owner's workspace. `RoutineTarget = "bot"` + `delegate_bot`
+remain the only execution mechanism; path proven by
+`routine-delegation.e2e.test.ts`.
 
 ## Phase status
 
@@ -131,7 +131,7 @@ mechanism; path proven by `routine-delegation.e2e.test.ts`.
 | 2 — Bladebro adapter + `browser_*` MCP tools | done |
 | 4 — `web_search` provider interface + TinyFish adapter | done |
 | 5 — Scout workflow (soul manifest, quick/deep) | done |
-| 3 — Live browser view | done |
+| 3 — Live browser view | removed (research frames, screen pollers, settled screenshots, vision) |
 | 6 — Curator owner routing | **done (this change)** |
 | 3 — Live view (`vision` polling) | after 2 |
 | 4 — `web_search` provider interface + TinyFish adapter | after 2 |
@@ -150,8 +150,7 @@ Automated (CI green is the gate):
    (`web_search` → `browser_open` → `browser_read`/`extract`).
 4. Honest failure — `blocked:` verdict surfaces, never fabricates
    (adapter + HTTP tests); `source_url`/`confidence` enforced on write.
-5. No stale loops — poller self-stop unit-tested; idle reclaim + ceiling
-   unit-tested; interrupt stops wired.
+5. No stale loops — idle reclaim + ceiling unit-tested; interrupt stops wired.
 6. Tool surface — Scout lists 6 tools, Mercury/Curator see no
    search/browser; `authorize()` semantics unchanged.
 7. Typecheck, lint, evals (offline + golden + live-skip) green.
@@ -164,10 +163,11 @@ Manual (host with Chrome + network):
    `browser_open`, confirm records land with the owner's `actor_user`).
 10. Deep Research toggle → plan preview → confirm → background job →
     cited report; cancel path respected.
-11. Normal research freely uses search/browser/link traversal inline.
+11. Normal research freely uses search/browser/link traversal inline, with
+    no frames or screenshots in the thread.
 12. Reddit `see extract=auto` returns the available comment tree with
     `fuzzed_score` where exposed; blocks report honestly.
-13. No stray `bladebro daemon`/Chrome processes or polling after teardown
+13. No stray `bladebro daemon`/Chrome processes after teardown
     (`ps`, idle reclaim).
 
 ## Risks

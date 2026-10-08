@@ -101,6 +101,7 @@ import { RoomTurnDeadline, RoomTurnStallRegistry, roomTurnTimeoutMessage } from 
 import * as boat from "./boat.ts";
 import { TeamComputers, teamComputerAssignment, teamComputerCreate, teamComputerOwner, type TeamComputerRecord } from "./team-computers.ts";
 import { isEffortLevel, type BotVisibility, type CardAnswerer, type ResolvedSender, type WireBot, type WireGroup, type WireTask } from "../shared/wire.ts";
+import { toolSurfaceKind } from "../shared/tool-surface.ts";
 import type { TeamComputersPayload } from "../shared/team-computer.ts";
 import { boatCreateRecoverySnapshot, retireDeletedBoatCreate } from "./boat-create-idempotency.ts";
 import { boatDeletionSnapshot } from "./boat-delete-journal.ts";
@@ -120,7 +121,6 @@ import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
 import {
   containerComputerAction,
   containerComputerExists,
-  containerComputerFrame,
   containerComputerMcp,
   containerComputerScreenshot,
   containerComputerStatus,
@@ -445,7 +445,6 @@ import { BUILT_IN_BROWSER_SYSTEM_PROMPT } from "./browser-engine.ts";
 import { BrowserRuntime } from "./browser-runtime.ts";
 import { BrowserLive } from "./browser-live.ts";
 import {
-  agentBrowserFrame,
   agentBrowserIntegration,
   browserEngineEncryptionKey,
   prepareBrowserSessionState,
@@ -457,9 +456,6 @@ import {
   browserSessionId,
   describeBrowserEngine,
 } from "./browser-engine.ts";
-import { createScreenFrameSource, type ScreenCapture } from "./screen-frame-source.ts";
-import { screenFrameHash, screenSurfaceForTool, screenTouchingTool, settledFrameIsNews } from "./screen-frame-gate.ts";
-import { researchFramesActive, settleResearchFrame, startResearchFrames, stopResearchFrames } from "./research-frames.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createOptionsCard } from "./options-card.ts";
 import { buildBotOverview, type BotOverview, connectedAppsFacts } from "./bot-overview.ts";
@@ -2396,7 +2392,6 @@ function releaseTurnResources(owner: TurnOwner | undefined): void {
   if (turnComputerResources.get(owner.threadId)?.owner.generation === owner.generation) turnComputerResources.delete(owner.threadId);
   const teamTurn = teamComputerTurns.get(owner.threadId);
   if (teamTurn?.owner.generation === owner.generation) {
-    stopScreenPoller(teamTurn.botId, owner.threadId);
     teamComputerTurns.delete(owner.threadId);
   }
 }
@@ -4977,14 +4972,6 @@ function pageSize(raw: string | null): number | null | undefined {
   return Math.min(size, MESSAGE_PAGE_MAX);
 }
 
-/** A screen message without its pixels. The client fetches those from
- * `/api/threads/:threadId/messages/:id/image` when it actually shows one. */
-function slimMessage(message: Message): Message | Record<string, unknown> {
-  if (message.kind !== "screen" || !message.png) return message;
-  const { png: _png, mime: _mime, ...rest } = message;
-  return { ...rest, hasImage: true };
-}
-
 /** `limit === undefined` is the original, unpaginated shape. A bounded,
  * cursor-less request (the common case: startup hydrate, a fresh
  * scrollback view) goes through messagesTail(), which can read just the
@@ -4997,14 +4984,14 @@ function messagePage(threadId: string, limit: number | undefined, before?: strin
   }
   if (!before) {
     const tail = store.messagesTail(threadId, limit);
-    return { messages: tail.messages.map(slimMessage), hasMore: tail.hasMore, activeLeafId: tail.activeLeafId };
+    return { messages: tail.messages, hasMore: tail.hasMore, activeLeafId: tail.activeLeafId };
   }
   const all = store.messagesFor(threadId);
   const end = all.findIndex((msg) => msg.id === before);
   const stop = end === -1 ? all.length : end;
   const start = Math.max(0, stop - limit);
   return {
-    messages: all.slice(start, stop).map(slimMessage),
+    messages: all.slice(start, stop),
     hasMore: start > 0,
     activeLeafId: store.activeLeaf(threadId),
   };
@@ -5034,7 +5021,7 @@ function guardedRequestSnapshot(botId: string, threadId: string, sendId: string)
     phase: untracked ? "untracked" : waiting ? "waiting" : busy ? "working" : "settled",
     activeTurnId: busy ? owner?.turnId ?? null : null,
     executionId: owner?.generation ?? null,
-    messages: messages.map(slimMessage),
+    messages,
   };
   if (Buffer.byteLength(JSON.stringify(snapshot), "utf8") > 1024 * 1024) {
     throw Object.assign(new Error("Open this request in the workspace; its transcript exceeds the response limit"), { status: 413 });
@@ -5073,7 +5060,7 @@ function messageWindow(threadId: string, messageId: string, limit: number) {
   const before = Math.floor((limit - 1) / 2);
   const start = Math.max(0, Math.min(index - before, all.length - limit));
   const stop = Math.min(all.length, start + limit);
-  return { messages: all.slice(start, stop).map(slimMessage), hasMore: start > 0 };
+  return { messages: all.slice(start, stop), hasMore: start > 0 };
 }
 
 // ── SSE fan-out to clients ─────────────────────────────────────────────
@@ -5081,17 +5068,9 @@ function messageWindow(threadId: string, messageId: string, limit: number) {
 interface SseClient {
   res: ServerResponse;
   admin: boolean;
-  /** Live screen frames carry a base64 desktop capture every few seconds
-   * while a bot works. A client that isn't showing the computer panel —
-   * a phone on cellular, most of all — should not pay for them. */
-  screens: boolean;
   /** The paired session behind this stream, when there is one: revoking or
    * expiring it must end the stream, not just future requests. */
   sessionId?: string;
-  /** Set once this client's socket has signalled it can't keep up (write()
-   * returned false); cleared implicitly once it's disconnected. See
-   * ./sse-fanout.ts for what this does to fan-out. */
-  backpressured: boolean;
   /** Who is watching, for bot visibility; a member's stream is narrowed to
    * what that person may see once any bot is restricted. */
   viewer: Viewer;
@@ -5179,9 +5158,6 @@ const SSE_HEARTBEAT_MS =
 let lastSeq = 0;
 const replayBuffer: Array<{ seq: number; kind: string; frame: string | null; clientFrame: string | null; payload: Record<string, unknown> | null }> = [];
 
-/** Screen frames are the only kind a client can decline. */
-const wants = (client: SseClient, kind: string) => kind !== "screen" || client.screens;
-
 /** `<streamId>:<seq>` — opaque to clients, and the only thing they need to
  * remember to resume. Returns null when it belongs to another run. */
 function cursorSeq(raw: string | string[] | undefined): number | null {
@@ -5209,19 +5185,14 @@ function broadcast(payload: Record<string, unknown>, options: { adminOnly?: bool
     : kind === "config"
       ? `id: ${STREAM_ID}:${seq}\ndata: ${JSON.stringify({ ...configForAccess(payload as ReturnType<typeof configStatus>, false), seq })}\n\n`
       : frame;
-  // Live desktop captures can each be hundreds of kilobytes and become stale
-  // as soon as the next one arrives. Keep their sequence slots so resume-gap
-  // detection stays honest, but never retain their base64 payloads.
-  replayBuffer.push({ seq, kind, frame: kind === "screen" ? null : frame, clientFrame: kind === "screen" ? null : clientFrame, payload: kind === "screen" ? null : payload });
+  replayBuffer.push({ seq, kind, frame, clientFrame, payload });
   if (replayBuffer.length > REPLAY_MAX) replayBuffer.shift();
   for (const client of Array.from(sseClients)) {
-    if (!wants(client, kind)) continue;
     // Admin-only frames (clientFrame null) never reach members, and a member never falls back to the admin frame.
     const out = client.admin ? frame : clientFrame === null ? null : memberFrame(client, seq, payload, clientFrame);
     if (out === null) continue;
-    // Screen frames are replaceable and durable events are not: see
-    // ./sse-fanout.ts for the backpressure/bound decision this makes.
-    if (deliverSseFrame(client, kind, out) === "disconnected") {
+    // See ./sse-fanout.ts for the write-bound decision this makes.
+    if (deliverSseFrame(client, out) === "disconnected") {
       sseClients.delete(client);
     }
   }
@@ -5517,8 +5488,6 @@ const watchdog = new TurnWatchdog({
       releaseTurnResources(stalledResourceOwner);
       const currentBot = store.bot(turn.botId);
       if (currentBot?.busy) {
-        stopScreenPoller(currentBot.id, turn.threadId);
-        stopResearchFrames(turn.threadId);
         vpsThreadEnded(currentBot.id, turn.threadId);
         if (store.taskByThread(currentBot.id, turn.threadId)) store.setTaskActivity(currentBot.id, turn.threadId, "idle");
         else store.setActivity(currentBot.id, "idle");
@@ -6168,7 +6137,6 @@ async function attachTeamBoat(computer: TeamComputerRecord, botId: string, owner
       !turnResources.owns(`computer:box:${machine.id}`, owner)) throw new Error("This computer turn ended while its machine was starting");
   return {
     integration: { kind: "box" as const, boxId: machine.id, token: boat.boatAccount(cfg)?.token ?? "", control: controlIntegration(botId, owner.threadId, owner.generation) },
-    capture: () => boat.screenshotBoat(cfg, ownerId, machine!.id),
   };
 }
 
@@ -6202,7 +6170,7 @@ async function mountHostComputer(owner: TurnOwner, botId: string, providerSuppor
 async function mountBotVps(
   bot: BotRecord,
   owner: TurnOwner,
-  opts: { start: boolean; onClaimed: (capture: () => Promise<{ png: string; format: string }>) => void; onRejected?: (failure: string) => void },
+  opts: { start: boolean; onClaimed?: () => void; onRejected?: (failure: string) => void },
 ) {
   const vpsResource = `computer:vps:${vpsSshAlias(cfg)}:${bot.id}`;
   const remote = opts.start
@@ -6212,9 +6180,6 @@ async function mountBotVps(
   const targetCfg = { ...cfg, vps: { sshAlias: remote.sshAlias } };
   const vpsMcp = vps.vpsComputerMcp(targetCfg, bot.id, remote.container_id ?? undefined);
   const vpsControl = controlIntegration(bot.id, owner.threadId, owner.generation);
-  // Live frames only once this turn holds the desktop: a poller on a desktop
-  // another turn is driving would publish that turn's screen as this one's.
-  const vpsCapture = () => vps.vpsComputerScreenshot(targetCfg, bot.id);
   autoVmClaims.set(owner.threadId, {
     owner,
     lazy: true,
@@ -6222,7 +6187,7 @@ async function mountBotVps(
     onRejected: opts.onRejected,
     claim: async () => {
       await bindTurnComputer(owner, vpsResource, true);
-      opts.onClaimed(vpsCapture);
+      opts.onClaimed?.();
     },
   });
   return {
@@ -6277,7 +6242,6 @@ async function attachBotBoat(
   const machine = b;
   await bindTurnComputer(owner, `computer:box:${machine.id}`, opts.remoteAgent);
   return {
-    capture: () => boat.screenshotBoat(cfg, bot.id, machine.id),
     integration: opts.canMount
       ? { kind: "box" as const, boxId: machine.id, token: boat.boatAccount(cfg)?.token ?? "", control: controlIntegration(bot.id, owner.threadId, owner.generation) }
       : null,
@@ -6875,45 +6839,16 @@ bus.subscribe((event: RuntimeEvent) => {
           });
           toolMessageByItem.delete(itemKey);
         }
-        // the bot just acted ON ITS SCREEN — refresh the preview now. Only
-        // computer tools can change the screen, and each capture competes
-        // with the agent for the boat's command endpoint, so a bot grinding
-        // through file edits must not trigger one per tool. The refresh is
-        // deliberately broad (a computer_exec may well have launched a
-        // window); whether the turn has EARNED a settled screenshot is the
-        // narrower question, and only the allow-list answers it.
-        if (bot) {
-          const touches = screenTouchingTool(toolName);
-          const surface = screenSurfaceForTool(toolName);
-          if (touches || /computer|screenshot|click|type_text|press_key|scroll|open_url|wait_for|browser_/i.test(toolName)) {
-            pokeScreenPoller(event.threadId, touches, surface);
-          }
-          // Scout's research browser lives in the Tool Layer, outside the
-          // computer screen pollers' ownership model: a dedicated research
-          // poller shows what the turn is reading, live and at settle. The
-          // actor binds now (routine owner included) so later ticks do not
-          // depend on delegation state that may already be gone.
-          if (touches && surface === "browser" && bot.relayAgent === "scout") {
-            const researcher = threadActorContext(event.threadId);
-            if (researcher?.userId && researcher.email) {
-              const bound = { userId: researcher.userId, email: researcher.email };
-              startResearchFrames(bot.id, event.threadId, () => fetchResearchFrameFor(bound), broadcast);
-            }
-          }
-          // A completed screen-touching computer tool is real screen
-          // activity (#1653): it restarts the idle clock on that turn's
-          // computer claim. The poller's own frames never arrive here, so
-          // they cannot keep a quiet seat held.
-          if (touches && surface === "computer") {
-            const computer = turnComputerResources.get(event.threadId);
-            if (computer) turnResources.activity(computer.resource, computer.owner);
-            // Real cloud-screen work refreshes the #1655 idle stop for
-            // that seat; the poller's own frames never arrive here, so
-            // preview traffic cannot keep a paid machine awake.
-            if (computer?.resource.startsWith("computer:box:")) {
-              const seatBot = store.botByThread(event.threadId);
-              if (seatBot) cloudSeatLeases.get(seatBot.id)?.touch();
-            }
+        // A completed computer tool is real activity on that turn's
+        // computer (#1653): it restarts the idle clock on the turn's
+        // computer claim, and real cloud-screen work refreshes the #1655
+        // idle stop for a box seat.
+        if (bot && toolSurfaceKind(toolName) === "computer") {
+          const computer = turnComputerResources.get(event.threadId);
+          if (computer) turnResources.activity(computer.resource, computer.owner);
+          if (computer?.resource.startsWith("computer:box:")) {
+            const seatBot = store.botByThread(event.threadId);
+            if (seatBot) cloudSeatLeases.get(seatBot.id)?.touch();
           }
         }
       }
@@ -7368,49 +7303,7 @@ bus.subscribe((event: RuntimeEvent) => {
           const notificationBot = (routineRun && routineSourceOwner(routineRun)?.bot) || bot;
           notify(buildNotification("done", notificationBot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: notificationBot.avatarUrl }));
         }
-        if (screenPollers.has(event.threadId)) {
-          // the last live frame becomes a settled inline screen message —
-          // the screenshot-in-chat moment. One fresh capture first, so the
-          // frame shows the turn's END state (the final tool's poke may
-          // still be in flight).
-          //
-          // Keep the thread busy until its bounded final capture releases
-          // the screen AND workspace. Otherwise an accepted follow-up races
-          // these claims and fails as though another thread owned its folder.
-          const settleLeafId = store.activePath(event.threadId).at(-1)?.id;
-          let timeout: ReturnType<typeof setTimeout>;
-          const screenSettled = Promise.race([
-            finalScreenFrame(bot.id, event.threadId),
-            new Promise<null>((resolve) => { timeout = setTimeout(() => resolve(null), SCREEN_SETTLE_TIMEOUT_MS); }),
-          ]).then((frame) => {
-            if (frame && isCurrent()) {
-              store.insertMessageAfter(event.threadId, settleLeafId, { role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
-            }
-          }).catch(() => {}).finally(() => {
-            clearTimeout(timeout);
-          });
-          void Promise.all([screenSettled, digestSettled]).finally(() => settleDirectTurn(true));
-        } else if (researchFramesActive(event.threadId)) {
-          // Scout research turns settle their last live frame the same way —
-          // one fresh capture, kept only when the reader cannot already see
-          // it — without involving the computer pollers' ownership leases.
-          const researchLeafId = store.activePath(event.threadId).at(-1)?.id;
-          let researchTimeout: ReturnType<typeof setTimeout>;
-          const researchSettled = Promise.race([
-            settleResearchFrame(event.threadId, shownScreenHash(event.threadId)),
-            new Promise<null>((resolve) => { researchTimeout = setTimeout(() => resolve(null), SCREEN_SETTLE_TIMEOUT_MS); }),
-          ]).then((frame) => {
-            if (frame && isCurrent()) {
-              store.insertMessageAfter(event.threadId, researchLeafId, { role: "bot", kind: "screen", png: frame.png, mime: frame.mime });
-              settledScreenHashes.set(event.threadId, screenFrameHash(frame.png));
-            }
-          }).catch(() => {}).finally(() => {
-            clearTimeout(researchTimeout);
-          });
-          void Promise.all([researchSettled, digestSettled]).finally(() => settleDirectTurn(true));
-        } else {
-          void digestSettled.finally(() => settleDirectTurn(true));
-        }
+        void digestSettled.finally(() => settleDirectTurn(true));
       } else if (group && speaker) {
         // Room/goal turns run on a shared thread, but their spend still counts
         // against the workspace cap and the ledger. Book it under the speaker.
@@ -8282,176 +8175,10 @@ async function startOrQueueOpenedThread(
   }
 }
 
-// ── live screen: poll the bot's computer while it works ───────────────
-// Frames stream to clients as SSE {kind:'screen'} (the "Bot's screen"
-// panel); the final frame is folded into the transcript on turn end.
-type Frame = { png: string; mime: string };
-const screenPollers = new Map<
-  string,
-  {
-    botId: string;
-    timer: ReturnType<typeof setInterval> | null;
-    capture: (fresh?: boolean) => Promise<void>;
-    /** Which surface the last screen-touching tool acted on. A bot with both
-     * a computer and a browser must be pictured on the one it just used. */
-    surface: "browser" | "computer";
-    last: Frame | null;
-    /** Did this turn actually reach for the screen? A bot that merely HAS
-     * a computer would otherwise end every reply — a one-word "yes"
-     * included — with the same picture of an idle desktop. The flag lives
-     * on the poller entry, which is created and dropped per turn, so it
-     * cannot leak into a later one. */
-    touched: boolean;
-  }
->();
-
-/** The preview shares the boat's single command endpoint with the agent's
- * own actions, so every frame we take is latency stolen from the work the
- * user is waiting on. Hence: a slow interval, a floor between captures,
- * and never two in flight. */
-const SCREEN_POLL_MS = 6000;
-const SCREEN_MIN_GAP_MS = 3000;
-const SCREEN_SETTLE_TIMEOUT_MS = 10_000;
-
-/** `screenIsTheWork` starts the turn already counting as screen usage: a
- * boxAgent's whole session runs ON the boat, so every tool it calls acts on
- * that screen even though none of them is named like a computer tool. Its
- * shell-only turns are kept honest by the settle-time hash gate instead. */
-/** Screenshot fetcher for research turns: the thread owner's Tool Layer
- * workspace, authenticated exactly like the MCP routes (same signed
- * assertion, same user). The actor is bound once when polling starts: the
- * delegation watch entry that identified the owner may be gone by settle
- * time. Throws when there is no page to picture, so the poller treats it
- * as "try later" and the settle treats it as "no frame". */
-async function fetchResearchFrameFor(actor: { userId: string; email: string }): Promise<{ png: string; mime: string }> {
-  if (!actor?.userId || !actor.email) throw new Error("no research workspace for this thread");
-  const base = (RELAY_TOOL_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
-  const response = await fetch(`${base}/workspace/vision`, {
-    headers: {
-      "x-relay-actor-user": signedActorContext(
-        { userId: actor.userId, email: actor.email },
-        process.env.RELAY_TOOL_ACTOR_SECRET,
-      ),
-    },
-    signal: AbortSignal.timeout(30_000),
-  });
-  if (!response.ok) throw new Error(`research frame unavailable (${response.status})`);
-  const bytes = Buffer.from(await response.arrayBuffer());
-  if (bytes.length === 0) throw new Error("research frame is empty");
-  return { png: bytes.toString("base64"), mime: "image/png" };
-}
-
-function startScreenPoller(
-  botId: string,
-  threadId: string,
-  captures: { computer?: ScreenCapture; browser?: ScreenCapture },
-  { screenIsTheWork = false } = {},
-) {
-  if (!captures.computer && !captures.browser) return;
-  if (screenPollers.has(threadId)) return;
-  const owner = turnResourceOwners.get(threadId);
-  const computer = turnComputerResources.get(threadId);
-  const browserSession = currentBrowserSession(botId, botForThread(botId, threadId)?.browserProfile);
-  const guarded = (capture: ScreenCapture | undefined, resource: string | undefined): ScreenCapture | undefined =>
-    capture && owner && resource ? async () => {
-      const isCurrent = () => turnResourceOwners.get(threadId)?.generation === owner.generation &&
-        turnResources.owns(resource, owner) && Boolean(store.taskByThread(botId, threadId) || store.groupByThread(threadId));
-      if (!isCurrent()) throw new Error("this thread does not own that screen");
-      const frame = await capture();
-      if (!isCurrent()) throw new Error("this thread no longer owns that screen");
-      return frame;
-    } : undefined;
-  // Assign rather than spread: the source's last-frame getter deliberately
-  // hides a stale frame as soon as the selected surface changes.
-  const entry = Object.assign(createScreenFrameSource({
-    captures: {
-      computer: guarded(captures.computer, computer?.resource),
-      browser: guarded(captures.browser, browserSession ? `browser:${browserSession}` : undefined),
-    },
-    control: () => ({
-      held: botComputerControlSnapshot(botId, teamComputerTurns.get(threadId)?.computerId).held,
-      revision: computerControlRevision.get(botId) ?? 0,
-    }),
-    onFrame: (frame) => broadcast({ kind: "screen", botId, threadId, ...frame }),
-    minGapMs: SCREEN_MIN_GAP_MS,
-  }), {
-    timer: null as ReturnType<typeof setInterval> | null,
-    botId,
-    touched: screenIsTheWork,
-  });
-  entry.timer = setInterval(() => void entry.capture(), SCREEN_POLL_MS);
-  screenPollers.set(threadId, entry);
-}
-
-/** Event-driven refresh: capture NOW (the bot just acted on its screen)
- * instead of waiting for the next interval tick. Rate-limited inside
- * capture() — a tool-heavy turn used to fire one full REST chain per
- * completed tool, competing with the agent for the same endpoint. */
-function pokeScreenPoller(threadId: string, touches: boolean, surface?: "browser" | "computer") {
-  const entry = screenPollers.get(threadId);
-  if (!entry) return;
-  // the same signal, read twice: a completed computer tool is both the
-  // reason to refresh the preview NOW and — when it acted on or looked at
-  // the screen — the proof that this turn's final frame is worth settling
-  // into the transcript. A shell command or a status read earns only the
-  // refresh: under the Claude driver every tool of the computer server is
-  // named mcp__computer__*, and matching that alone used to append an
-  // untouched desktop to every curl-and-answer reply.
-  if (touches) entry.touched = true;
-  // Picture the surface the tool acted on. Only a touching tool moves this:
-  // a status read on the computer must not redirect the picture away from a
-  // page the browser is still showing.
-  if (touches && surface) entry.surface = surface;
-  void entry.capture();
-}
-
-function stopScreenPoller(botId: string, threadId?: string) {
-  for (const [id, entry] of screenPollers) {
-    if (entry.botId !== botId || (threadId && id !== threadId)) continue;
-    if (entry.timer) clearInterval(entry.timer);
-    screenPollers.delete(id);
-  }
-}
-
-/** sha256 of the frame each bot last settled into a transcript — the
- * comparison the hash gate needs is "this turn's end state against what
- * the reader can already see". Keyed per bot (one physical screen, however
- * many threads it reports into); a cold entry is seeded from the thread's
- * newest screen message so a restart does not re-picture the same idle
- * desktop either. */
-const settledScreenHashes = new Map<string, string>();
-
-function shownScreenHash(threadId: string): string | undefined {
-  const known = settledScreenHashes.get(threadId);
-  if (known) return known;
-  const shown = store.messagesFor(threadId).findLast((m) => m.kind === "screen" && Boolean(m.png));
-  return shown?.png ? screenFrameHash(shown.png) : undefined;
-}
-
-/** Turn end: stop polling, then take ONE last fresh frame (awaiting any
- * in-flight poke first) so the settled screenshot shows the screen's actual
- * end state, not the previous action's. A turn that never touched the
- * screen settles nothing — and skips the capture, which is one less
- * command on the boat's single endpoint. A frame the reader can already see
- * settles nothing either: the boxAgent pre-touch counts every turn as
- * screen work, so without this its shell-only replies would all end in the
- * same idle desktop. Either way the poller is torn down here, so no
- * per-turn state survives the turn. */
-async function finalScreenFrame(_botId: string, threadId: string): Promise<Frame | null> {
-  const entry = screenPollers.get(threadId);
-  const owner = turnResourceOwners.get(threadId);
-  if (!entry) return null;
-  if (entry.timer) clearInterval(entry.timer);
-  screenPollers.delete(threadId);
-  if (!entry.touched) return null;
-  await entry.capture(true);
-  if (!owner || turnResourceOwners.get(threadId)?.generation !== owner.generation ||
-      !store.taskByThread(_botId, threadId)) return null;
-  const frame = entry.last;
-  if (!frame || !settledFrameIsNews(shownScreenHash(threadId), frame.png)) return null;
-  settledScreenHashes.set(threadId, screenFrameHash(frame.png));
-  return frame;
-}
+// Live screen viewing was removed: no SSE frame streaming, no settled
+// transcript screenshots, no research-frame polling. Bots (including Scout's
+// Tool Layer browser) still act on computers and pages headlessly; turns
+// report text, tool chips, and attached files instead.
 
 /** A short title for a fresh thread, from the provider's cheap one-shot
  * (generateText — Haiku on Claude, the chat completion endpoint's text
@@ -9051,23 +8778,8 @@ async function startTurn(
         : wants === "cloud" ? (cloudBackend === "vps" ? "vps" : "box") : undefined;
       const placeRefusal = wantedKind && computerPlaceRefusal(wantedKind);
       if (placeRefusal) throw Object.assign(new Error(placeRefusal.message), { status: 409, code: placeRefusal.code });
-      let previewCapture: (() => Promise<{ png: string; format: string }>) | null = null;
-      let browserCapture: (() => Promise<{ png: string; format: string }>) | null = null;
       let computerKind: "box" | "vps" | "vm" | "local" | null = null;
       let autoVpsProblem: string | null = null;
-      /** The Local VM frame capture for the poller and the settled transcript
-       * screenshot. The shared desktop outlives the turn: once another thread
-       * owns it, a capture still in flight would picture ITS work under this
-       * bot's name — live and in the settled frame, which is taken after the
-       * lease is already released. No owner means the desktop is simply
-       * idle: that final frame is ours to keep. */
-      const localVmPreviewFor = (localVmTarget: LocalVmTarget, claimThreadId: string) => () => {
-        const owner = localVmLeaseFor(localVmTarget).current(localVmOwnerBusy);
-        if (owner && owner.threadId !== claimThreadId) {
-          throw new Error("the Local VM moved on to another turn");
-        }
-        return containerComputerFrame(undefined, undefined, localVmTarget);
-      };
       /** Pin the conversation at the moment its seat is actually claimed
        * (issue #1650): the same guards as the dispatch-time pin below, so
        * a claim landing later in the turn records exactly what a mount-time
@@ -9148,12 +8860,6 @@ async function startTurn(
           dropLease();
           throw new Error("the Local VM lease expired while preparing the turn");
         }
-        // Same contract as the Boat and VPS branches below: without this the
-        // poller never starts, so the Local VM publishes no `screen` events
-        // and every client that only has the stream (the phone) waits
-        // forever. The web panel hid the gap by polling the screenshot
-        // route itself.
-        previewCapture = localVmPreviewFor(localVmTarget, claimThreadId);
         // Pin on use: this runs for the dispatch-time claim of a VM created
         // for the turn and for the gate-fired claim of a lazily mounted one
         // alike — either way the conversation remembers the desktop this
@@ -9241,24 +8947,6 @@ async function startTurn(
               onRejected: surfaceLazyClaimRejection("the Local VM"),
               claim: async () => {
                 await claimAutoLocalVm(threadId, localVmTarget);
-                // The dispatch-site poller start saw a null previewCapture
-                // (this lazy mount runs before any claim exists), so this
-                // turn would publish no live `screen` events and settle no
-                // final computer frame. Restart the poller with the now-live
-                // computer capture, keeping any browser capture and whether
-                // this turn already touched its screen. Same still-running
-                // guard as dispatch: a poller started after its own
-                // turn.completed would never be torn down.
-                if (previewCapture && threadBusy(bot.id, threadId)) {
-                  const touched = screenPollers.get(threadId)?.touched ?? instance.adapter.capabilities.remoteAgent === true;
-                  stopScreenPoller(bot.id, threadId);
-                  startScreenPoller(
-                    bot.id,
-                    threadId,
-                    { computer: previewCapture, ...(browserCapture ? { browser: browserCapture } : {}) },
-                    { screenIsTheWork: touched },
-                  );
-                }
               },
             });
             return true;
@@ -9311,21 +8999,8 @@ async function startTurn(
           vpsThreadStarted(bot.id, threadId);
           const mounted = await mountBotVps(bot, resourceOwner, {
             start: vps.vpsStartsForTurn({ wants, autoStartVps: bot.autoStartVps, automationSource: opts?.automationSource }),
-            // The claim restarts the poller with the capture, the way the
-            // Local VM's lazy claim does.
-            onClaimed: (vpsCapture) => {
+            onClaimed: () => {
               pinAutoSurface("cloud");
-              previewCapture = vpsCapture;
-              if (threadBusy(bot.id, threadId)) {
-                const touched = screenPollers.get(threadId)?.touched ?? false;
-                stopScreenPoller(bot.id, threadId);
-                startScreenPoller(
-                  bot.id,
-                  threadId,
-                  { computer: vpsCapture, ...(browserCapture ? { browser: browserCapture } : {}) },
-                  { screenIsTheWork: touched },
-                );
-              }
             },
             onRejected: surfaceLazyClaimRejection("the VPS computer"),
           });
@@ -9348,7 +9023,6 @@ async function startTurn(
         const attached = await attachTeamBoat(teamComputer, bot.id, resourceOwner,
           instance.adapter.capabilities.usesCloudComputer === true, instance.adapter.capabilities.remoteAgent === true);
         integrations.computer = attached.integration;
-        previewCapture = attached.capture;
         computerKind = "box";
       }
       if (!teamComputer && instance.adapter.capabilities.usesCloudComputer === true && (wants === "cloud" || wants === undefined) && cloudBackend === "box" && boat.boatConfigured(cfg)) {
@@ -9358,7 +9032,6 @@ async function startTurn(
           remoteAgent: instance.adapter.capabilities.remoteAgent === true,
         });
         if (attached) {
-          previewCapture = attached.capture;
           if (attached.integration) {
             integrations.computer = attached.integration;
             computerKind = "box";
@@ -9533,24 +9206,6 @@ async function startTurn(
         const selectedProfile = liveBot.browserProfile;
         browser = await browserIntegration(bot.id, selectedProfile, { threadId, generation: dispatchClaimId });
         if (browser) integrations.browser = browser.integration;
-        // The browser lost its frame source when the Electron surface was
-        // removed: previewCapture is set by the computer branches above, and
-        // nothing replaced it here. A bot with only a browser was pictured
-        // not at all; a bot with both was pictured on its desktop even while
-        // the work was a web page, because agent-browser runs its own headless
-        // Chrome on the host rather than inside that desktop.
-        if (browser) {
-          const frame = { binaryPath: browser.spec.command, env: browser.spec.env };
-          const session = browser.session;
-          // The preview shares the profile with tool calls: claim the same
-          // exclusive browser:<session> resource the tools/call path claims,
-          // and skip the frame while another thread holds it.
-          browserCapture = async () => {
-            const owner = turnResourceOwners.get(threadId);
-            if (!owner || !claimTurnResource(owner, `browser:${session}`)) throw new Error("another thread is using this browser");
-            return browserRuntime.withAgentAction(session, () => agentBrowserFrame(frame));
-          };
-        }
       }
       // An Auto conversation remembers where its first turn landed, so later
       // turns stay there and the composer can show it. Explicit settings are
@@ -9712,18 +9367,6 @@ async function startTurn(
       // differs and must survive so the next turn also receives that update.
       if (!isExternalContextMarker(task.lastInstanceId) || task.lastInstanceId === externalContextMarker) {
         store.markTaskDispatched(bot.id, threadId, instanceId);
-      }
-      // a turn can settle before dispatch returns, and a poller started
-      // after its own turn.completed would never be torn down — it would
-      // keep polling the boat forever, carrying dead per-turn state. busy
-      // is flipped false in the fold, so it is the honest "still running".
-      if ((previewCapture || browserCapture) && threadBusy(bot.id, threadId)) {
-        startScreenPoller(
-          bot.id,
-          threadId,
-          { ...(previewCapture ? { computer: previewCapture } : {}), ...(browserCapture ? { browser: browserCapture } : {}) },
-          { screenIsTheWork: instance.adapter.capabilities.remoteAgent === true },
-        );
       }
       // An adapter may publish completion synchronously just before its
       // dispatch promise resolves. The event could not use the turn-id map
@@ -10471,7 +10114,6 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
             directTurnGenerationByThread.delete(task.threadId);
             directTurnBots.delete(task.threadId);
           }
-          stopScreenPoller(bot.id);
           activeVpsThreads.delete(bot.id);
           lastReply.delete(bot.threadId);
           // a peer approval naming this bot can never be meaningfully answered
@@ -11233,18 +10875,15 @@ async function runGroupMemberTurn(
   // The speaker's own This computer / Cloud mount, and what it must give back.
   let roomComputerKind: "local" | "vps" | "box" | null = null;
   let roomVpsBotId: string | null = null;
-  let roomScreenBotId: string | null = null;
   const releaseRoomVmLease = () => {
     if (roomVmTarget && localVmThreadTargets.get(threadId) === roomVmTarget) releaseLocalVmThread(threadId);
     roomVmTarget = null;
     // Only while this turn still owns the thread: a replacement speaker's
-    // poller and VPS record are its own to end.
+    // VPS record is its own to end.
     const currentOwner = turnResourceOwners.get(threadId);
     if (!currentOwner || currentOwner.generation === resourceOwner.generation) {
-      if (roomScreenBotId) stopScreenPoller(roomScreenBotId, threadId);
       if (roomVpsBotId) vpsThreadEnded(roomVpsBotId, threadId);
     }
-    roomScreenBotId = null;
     roomVpsBotId = null;
     releaseTurnResources(resourceOwner);
   };
@@ -11524,7 +11163,6 @@ async function runGroupMemberTurn(
     if (isCancelled?.() || groupSpeakers.get(threadId) !== roomSpeaker ||
         activeInternalGenerationByThread.get(threadId) !== internalGeneration) return false;
     integrations.computer = attached.integration;
-    startScreenPoller(readyBot.id, threadId, { computer: attached.capture }, { screenIsTheWork: instance.adapter.capabilities.remoteAgent === true });
   }
 
   // The speaker's own explicit place, mounted exactly as its bot thread
@@ -11547,12 +11185,6 @@ async function runGroupMemberTurn(
       roomVpsBotId = readyBot.id;
       const mounted = await mountBotVps(readyBot, resourceOwner, {
         start: true,
-        onClaimed: (capture) => {
-          if (roomSetupIsCurrent() && store.group(readyGroup.id)?.busyBotId === readyBot.id) {
-            roomScreenBotId = readyBot.id;
-            startScreenPoller(readyBot.id, threadId, { computer: capture });
-          }
-        },
       });
       if (!roomSetupIsCurrent()) return false;
       if (!("integration" in mounted)) throw new Error(mounted.problem ?? "the VPS computer could not be created or reached");
@@ -11566,8 +11198,6 @@ async function runGroupMemberTurn(
       if (!roomSetupIsCurrent()) return false;
       if (!attached?.integration) throw new Error("the cloud computer could not be created or reached");
       integrations.computer = attached.integration;
-      roomScreenBotId = readyBot.id;
-      startScreenPoller(readyBot.id, threadId, { computer: attached.capture }, { screenIsTheWork: remoteAgent });
       roomComputerKind = "box";
     }
   }
@@ -14064,7 +13694,7 @@ async function stopCompanyInstances(ids: string[]) {
     // Another member of this cancellation batch can settle slowly while a
     // completed thread starts a personal turn. Never clear that new owner.
     if (directTurnGenerationByThread.get(threadId) !== generation) continue;
-    stopScreenPoller(botId, threadId); stopResearchFrames(threadId); releaseLocalVmThread(threadId);
+    releaseLocalVmThread(threadId);
     watchdog.settle(threadId); closeOpenApprovals(threadId); directTurnBots.delete(threadId);
     finalizeDelegationWatch(threadId, false, "", "Company connection changed");
     routines?.failThread(threadId, "Company connection changed while this thread was running");
@@ -14145,8 +13775,6 @@ async function reloadProviders() {
     // Settle every exact conversation, not whichever one is selected now.
     // Teardown can swallow terminal events; no task may remain busy forever.
     for (const { botId, threadId, owner } of direct) {
-      stopScreenPoller(botId, threadId);
-      stopResearchFrames(threadId);
       releaseLocalVmThread(threadId);
       releaseTurnResources(owner);
       endForeignTurns(threadId);
@@ -17432,8 +17060,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const client: SseClient = {
         res,
         admin: auth.scopes.includes("admin"),
-        screens: url.searchParams.get("screens") !== "off",
-        backpressured: false,
         viewer,
         // What this person's hydration (GET /api/bots, narrowed the same way) showed them.
         seen: viewer.kind === "all" ? { bots: new Set(), groups: new Set() } : {
@@ -17484,12 +17110,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       );
       if (resumed) {
         for (const buffered of replayBuffer) {
-          if (buffered.seq <= since || !wants(client, buffered.kind)) continue;
+          if (buffered.seq <= since) continue;
           const frame = client.admin
             ? buffered.frame
-            : buffered.payload
+            : buffered.payload && buffered.clientFrame !== null
               ? memberFrame(client, buffered.seq, buffered.payload, buffered.clientFrame)
-              : buffered.clientFrame;
+              : null;
           if (frame) res.write(frame);
         }
       }
@@ -17623,29 +17249,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         return json(res, 404, { error: "no such message" });
       }
       return json(res, 200, { ...messagePage(threadId, limit ?? DEFAULT_PAGE, before), activeLeafId: store.activeLeaf(threadId) });
-    }
-
-    // the pixels of one screen message, fetched only when something shows it
-    m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/image$/);
-    if (m && method === "GET") {
-      // Same guard as the page route above, and for the same reason twice
-      // over: an unknown id should 404 deliberately rather than by accident,
-      // and `messagesFor` materialises and caches a ThreadState for whatever
-      // it is handed. Without this, a client asking for images on ids that
-      // do not exist grows the thread map for as long as it keeps asking.
-      if (!store.botByThread(m[1]) && !store.groupByThread(m[1])) {
-        return json(res, 404, { error: "no such conversation" });
-      }
-      const message = store.messagesFor(m[1]).find((msg) => msg.id === m![2]);
-      if (!message?.png) return json(res, 404, { error: "no image on that message" });
-      const bytes = Buffer.from(message.png, "base64");
-      res.writeHead(200, {
-        "content-type": message.mime ?? "image/png",
-        "content-length": String(bytes.byteLength),
-        // a settled message's image never changes
-        "cache-control": "private, max-age=31536000, immutable",
-      });
-      return res.end(bytes);
     }
 
     // Download one local file only when this exact stored message grants it:
@@ -17976,14 +17579,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const filename = (title.replace(/[^\w\- ]+/g, "").trim() || "conversation").slice(0, 60);
       const messages = store.activePath(threadId);
       if (format === "json") {
-        // pixels stripped — an export is for reading and archiving, and a
-        // base64 desktop frame is neither
-        const slim = messages.map(({ png: _png, mime: _mime, ...rest }) => rest);
         res.writeHead(200, {
           "content-type": "application/json",
           "content-disposition": `attachment; filename="${filename}.json"`,
         });
-        return res.end(JSON.stringify({ name: title, threadId, messages: slim }, null, 2));
+        return res.end(JSON.stringify({ name: title, threadId, messages }, null, 2));
       }
       const userName = cfg.profile?.name?.trim() || "User";
       const lines: string[] = [`# ${title}`, ""];
@@ -17994,7 +17594,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           : (msg.from?.name ?? bot?.name ?? "Bot");
         if (msg.kind === "text" && msg.text) lines.push(`**${who}:**`, "", msg.text, "");
         else if (msg.kind === "activity" && msg.tool) lines.push(`> ${msg.tool.name}`, "");
-        else if (msg.kind === "screen") lines.push("> [screen capture]", "");
         else if (msg.kind === "options" && msg.card) {
           lines.push(`> ${msg.card.title}${msg.card.answered ? ` — answered: ${msg.card.answered}` : ""}`, "");
         }

@@ -178,8 +178,7 @@ export function surfacePrompt(
   return text + (opts.note ?? "");
 }
 
-/** Tool names that touch a screen, for engines that report bare names.
- * Mirrors the screen-poller regex in the harness. */
+/** Tool names that act on a screen, for engines that report bare names. */
 const SCREEN_TOOL = /^(?:screenshot|click|type_text|press_key|scroll|open_url|wait_for|computer_|browser_)/i;
 
 /** Which surface a completed tool call landed on, or null when it cannot

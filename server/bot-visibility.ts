@@ -315,7 +315,7 @@ export function notFoundFor(subject: PathSubject): string {
   }
 }
 
-// ── live frames ─────────────────────────────────────────────────────────
+// ── live event frames ───────────────────────────────────────────────────
 // One SSE broadcast goes to every client. For a member on a workspace with a
 // restricted bot, each frame is checked against what that member may see,
 // and the few frames that list several things are narrowed. `seen` tracks
@@ -450,8 +450,6 @@ export function frameForMember(payload: Record<string, unknown>, ctx: FrameConte
     }
     case "runtime":
       return visible.thread(str(field("event").threadId)) ? payload : undefined;
-    case "screen":
-      return visible.bot(str(payload.botId)) && visible.thread(str(payload.threadId)) ? payload : undefined;
     case "computer":
     case "computer-control":
       return visible.bot(str(payload.botId)) ? payload : undefined;

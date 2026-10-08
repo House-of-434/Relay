@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -173,60 +173,6 @@ test("oversized results spill to the user's artifacts dir and page back", async 
   await assert.rejects(pool.readArtifact(ALICE, "../../escape"), /workspace-relative|escapes/);
   await assert.rejects(pool.readArtifact(ALICE, "/abs/path"), /workspace-relative/);
   await assert.rejects(pool.readArtifact(ALICE, "missing.md"), /not found/);
-});
-
-test("vision returns workspace PNG bytes and removes the file", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "blade-vision-test-"));
-  const pngPath = join(dir, ALICE, "artifacts", "shot.png");
-  mkdirSync(join(dir, ALICE, "artifacts"), { recursive: true });
-  writeFileSync(pngPath, Buffer.from("fakepng-bytes"));
-  const spawn = failingProbe((call) => {
-    if (call.args[0] === "vision") {
-      return { exitCode: 0, stdout: JSON.stringify({ ok: true, text: "screenshot", image_path: pngPath }), stderr: "" };
-    }
-    return okJson("x");
-  });
-  const pool = new BladeBrowserPool({ dataRoot: dir, binary: "bladebro-test", spawn });
-  const bytes = await pool.vision(ALICE);
-  assert.equal(bytes.toString(), "fakepng-bytes");
-  assert.equal(existsSync(pngPath), false);
-  rmSync(dir, { recursive: true, force: true });
-});
-
-test("vision refuses missing, escaping, and failed screenshots", async () => {
-  const dir = mkdtempSync(join(tmpdir(), "blade-vision-fail-"));
-  try {
-    const missing = new BladeBrowserPool({
-      dataRoot: dir,
-      binary: "x",
-      spawn: failingProbe(() => ({
-        exitCode: 0,
-        stdout: JSON.stringify({ ok: true, text: "screenshot", image_path: join(dir, ALICE, "artifacts", "nope.png") }),
-        stderr: "",
-      })),
-    });
-    await assert.rejects(missing.vision(ALICE), /missing/);
-
-    const escaping = new BladeBrowserPool({
-      dataRoot: dir,
-      binary: "x",
-      spawn: failingProbe(() => ({
-        exitCode: 0,
-        stdout: JSON.stringify({ ok: true, text: "screenshot", image_path: "/etc/hosts" }),
-        stderr: "",
-      })),
-    });
-    await assert.rejects(escaping.vision(ALICE), /escapes the workspace/);
-
-    const failed = new BladeBrowserPool({
-      dataRoot: dir,
-      binary: "x",
-      spawn: failingProbe(() => ({ exitCode: 1, stdout: JSON.stringify({ text: "no page open" }), stderr: "" })),
-    });
-    await assert.rejects(failed.vision(ALICE), /no page open/);
-  } finally {
-    rmSync(dir, { recursive: true, force: true });
-  }
 });
 
 test("daemon ceiling refuses new workspaces instead of exhausting the host", async () => {

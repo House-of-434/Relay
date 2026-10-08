@@ -53,16 +53,14 @@ export interface LiveEventsHandlers {
   onSnapshotRequired: () => Promise<boolean>;
   onOpen?: () => void;
   onError?: () => void;
-  screens?: boolean;
   staleMs?: number;
   retryMinMs?: number;
   retryMaxMs?: number;
 }
 
-export function liveEventsUrl(options?: { since?: string | null; screens?: boolean }): string {
+export function liveEventsUrl(options?: { since?: string | null }): string {
   const params = new URLSearchParams();
   if (options?.since) params.set("since", options.since);
-  if (options?.screens === false) params.set("screens", "off");
   const query = params.toString();
   return query ? `${LIVE_EVENTS_PATH}?${query}` : LIVE_EVENTS_PATH;
 }
@@ -234,7 +232,7 @@ export function openLiveEvents(
     let current: LiveEventSourceLike;
     try {
       current = platform.createEventSource(
-        liveEventsUrl({ since: cursor, screens: handlers.screens }),
+        liveEventsUrl({ since: cursor }),
       );
     } catch {
       handlers.onError?.();

@@ -9,7 +9,7 @@ to revisit. Nothing here is forgotten; everything here has a condition.
 | Reddit OAuth connector | Bladebro covers MVP; API is a throughput optimization | Browser fetches become the throughput bottleneck |
 | Evidence table (`app.evidence`) | Audit existing `app.*` persistence first | `source_url`-only provenance produces unresolvable citations |
 | Embeddings (`companies.embedding`) | One-line enable + migration, but recall UX undecided | Scout visibly re-researches known companies |
-| CDP screencast live view | `vision` polling covers MVP cheaper | Someone asks for live view during research |
+| Live browser/research visualization | Removed (research frames, screen pollers, vision) — research is content-first | Users need to intervene in browser sessions |
 | Deployment packaging (compose, Tool Layer/BFF containers, `deploy/`) | Dev-only scope; own project | Moving beyond dev-only |
 | Full agent-browser excision (`server/browser-*.ts`, UI, packaging) | 45+ files incl. CI fixtures and starter mode; policy-disable holds | Bladebro adapter proven; dedicated removal pass |
 | `allowedDomains` egress allowlist | Never implemented; blocks unknown targets (most of research) | Threat model requires it |

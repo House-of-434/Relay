@@ -201,7 +201,6 @@ const __APP_VERSION__: string;
       };
       /** Arms one user-initiated display capture request from this frame. */
       beginScreenPreviewIntent(): boolean;
-      screenFrame(): Promise<string | null>;
       androidDevice?: {
         status(): Promise<AndroidDeviceStatus>;
         frame(serial: string): Promise<{ serial: string; dataUrl: string }>;

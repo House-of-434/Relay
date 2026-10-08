@@ -2387,17 +2387,6 @@ function createWindow({ deferNavigation = false } = {}) {
   return win;
 }
 
-// Local-control screen preview — served from the main process so the Screen
-// Recording permission prompt attributes to the app, never the server
-ipcMain.handle("screen:frame", localOnly("screen:frame", async () => {
-  if (process.platform !== "darwin") return null;
-  const sources = await desktopCapturer.getSources({
-    types: ["screen"],
-    thumbnailSize: { width: 1280, height: 800 },
-  });
-  return sources[0]?.thumbnail.toDataURL() ?? null;
-}));
-
 // Onboarding permission checks. Status reads are free; the mic request
 // pops the real TCC prompt attributed to the app.
 //
@@ -2409,8 +2398,8 @@ ipcMain.handle("screen:frame", localOnly("screen:frame", async () => {
 // plain executables no longer appear in the Settings pane at all; and
 // Sequoia+ re-prompts periodically regardless, so a pre-grant expires.
 // The one reliable path is the first real in-process capture
-// (screen:frame above / getDisplayMedia via the handler below) — macOS
-// prompts then, attributed correctly, at the moment of actual use. The
+// (getDisplayMedia via the handler below) — macOS prompts then, attributed
+// correctly, at the moment of actual use. The
 // perm:open-settings deep link stays as the repair path for denials.
 // Copy the engine command, then open a blank terminal. Renderer-controlled
 // text must never become a process argument: the user reviews and pastes it.

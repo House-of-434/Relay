@@ -11540,15 +11540,14 @@ describe("message pages", () => {
     )).status).toBe(403);
   });
 
-  it("404s an image on a conversation that does not exist, without inventing one", async () => {
-    // `messagesFor` materialises and caches a ThreadState for any id it is
-    // given, so an unguarded route lets a client grow that map by asking
-    // for threads that were never real. The 404 is the visible half; not
-    // creating the thread is the half worth having.
+  it("answers the removed per-message image route as unknown, without inventing a conversation", async () => {
+    // The settled-screenshot image route is gone: a probe must get the
+    // generic unknown-route answer, and `messagesFor` must not materialise
+    // and cache a ThreadState for an id that was never real.
     const before = (await api("GET", "/api/bots")).body.bots.length;
     const res = await fetch(`${BASE}/api/threads/not-a-thread/messages/not-a-message/image`);
     expect(res.status).toBe(404);
-    expect(((await res.json()) as { error: string }).error).toBe("no such conversation");
+    expect(((await res.json()) as { error: string }).error).toMatch(/^no route: /);
     // and the phantom thread is not now answerable as an empty conversation
     expect((await api("GET", "/api/threads/not-a-thread/messages")).status).toBe(404);
     expect((await api("GET", "/api/bots")).body.bots.length).toBe(before);
@@ -11686,23 +11685,6 @@ describe("resumable event stream", () => {
       expect(replayed.map((frame) => frame.seq)).toEqual([seen.seq + 1]);
     } finally {
       resumed.close();
-    }
-  });
-
-  it("keeps delivering everything else when a client declines screen frames", async () => {
-    const { body } = await api("GET", "/api/bots");
-    const botId = body.bots[0].id;
-
-    // a phone on cellular opts out of the live desktop captures; nothing
-    // else about its stream changes
-    const stream = await openSse(`${BASE}/api/events?screens=off`);
-    try {
-      expect((await stream.until((f) => f.kind === "hello")).resumed).toBe(false);
-      await nudge(botId);
-      await stream.until((f) => f.kind === "bot");
-      expect(stream.frames.some((f) => f.kind === "screen")).toBe(false);
-    } finally {
-      stream.close();
     }
   });
 

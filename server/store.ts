@@ -1542,47 +1542,12 @@ export class Store {
     // the in-memory branch and subscribers unchanged, just like SQLite.
     t.messages.push(full);
     t.activeLeafId = full.id;
-    if (full.kind === "screen") {
-      for (const pruned of this.pruneScreenFrames(t)) {
-        mdb.updateMessage(threadId, pruned);
-        this.emit({ type: "message.patch", threadId, message: pruned });
-      }
-    }
     this.noteThreadActivity(threadId, full.at);
     this.emit({ type: "message", threadId, message: full });
     // The first-run quiz is not a live ask. Talking past it hides it so the
     // transcript is just the greeting plus what they said. Cards with a
     // requestId are permission/question prompts and stay until answered.
     if (full.role === "user" && full.kind === "text") this.dismissOnboardingCard(threadId);
-    return full;
-  }
-
-  /** Insert a message into the active chain directly after `anchorId` — the
-   * home for turn artifacts that finish AFTER the world moved on (the
-   * settle-time screen capture races a fast follow-up send, which used to
-   * leave the user's message stranded above the screenshot). When the anchor
-   * is still the leaf this is a plain append; otherwise the anchor's
-   * children are re-parented onto the inserted message, so the transcript
-   * reads turn → artifact → follow-up and the leaf stays where it was. */
-  insertMessageAfter(threadId: string, anchorId: string | undefined, message: Omit<Message, "id" | "at">): Message {
-    const t = this.thread(threadId);
-    const anchorExists = anchorId !== undefined && t.messages.some((m) => m.id === anchorId);
-    if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
-    const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
-    const children = t.messages.filter((m) => m.parentId === anchorId);
-    t.messages.push(full);
-    mdb.appendMessage(threadId, full);
-    if (full.kind === "screen") {
-      for (const pruned of this.pruneScreenFrames(t)) {
-        mdb.updateMessage(threadId, pruned);
-        this.emit({ type: "message.patch", threadId, message: pruned });
-      }
-    }
-    this.noteThreadActivity(threadId, full.at);
-    this.emit({ type: "message", threadId, message: full });
-    // announced after the insert so no client ever sees two siblings
-    // claiming the same parent
-    for (const child of children) this.patchMessage(threadId, child.id, { parentId: full.id });
     return full;
   }
 
@@ -1594,27 +1559,6 @@ export class Store {
     );
     if (!card?.card) return null;
     return this.patchMessage(threadId, card.id, { card: { ...card.card, dismissed: true } });
-  }
-
-  /** Screen frames are ~100-500KB of base64 each; keeping every frame of a
-   * long computer session bloats the transcript for nothing the client
-   * would ever show. The newest few keep their pixels; older ones stay in
-   * the transcript as placeholders. Mirrors the client's own frame cap.
-   * Returns the messages whose pixels were dropped so the caller can
-   * persist exactly those. */
-  private pruneScreenFrames(t: { messages: Message[] }, keep = 4): Message[] {
-    const pruned: Message[] = [];
-    let seen = 0;
-    for (let i = t.messages.length - 1; i >= 0 && seen < t.messages.length; i--) {
-      const m = t.messages[i];
-      if (m.kind !== "screen" || !m.png) continue;
-      seen += 1;
-      if (seen > keep) {
-        m.png = undefined;
-        pruned.push(m);
-      }
-    }
-    return pruned;
   }
 
   /** Fork the conversation: a new user message that replaces `sourceId`

@@ -47,8 +47,7 @@ export function RunLog({ events }: { events: TimelineEvent[] }) {
           {recent.map((event) => {
             const Icon = event.state === "failed" ? XCircle : event.state === "complete" ? CheckCircle2 : event.state === "running" ? Loader2 : Circle;
             const label = event.kind === "task" ? t("inspector.run.userInput")
-              : event.kind === "screen" ? t("inspector.run.screen")
-                : event.kind === "result" ? t("inspector.run.response") : event.label;
+              : event.kind === "result" ? t("inspector.run.response") : event.label;
             return <li key={event.id} className="border-t border-hairline/30 py-3">
               <div className="flex items-start gap-2 text-[12px]">
                 <Icon size={14} aria-hidden="true" className={cn("mt-0.5 shrink-0", event.state === "failed" ? "text-danger" : event.state === "running" ? "animate-spin text-accent" : "text-ink-secondary")} />

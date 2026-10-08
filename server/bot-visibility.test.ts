@@ -196,7 +196,6 @@ describe("live frames for a member", () => {
       { kind: "group.deleted", groupId: "room-mixed" },
       { kind: "notify", notification: { botId: "hr", threadId: "t-hr" } },
       { kind: "runtime", event: { type: "content.delta", threadId: "t-hr" } },
-      { kind: "screen", botId: "hr", threadId: "t-hr", png: "…" },
       { kind: "computer", botId: "adm", state: "waking" },
       { kind: "computer-control", botId: "adm", held: true },
       { kind: "routine", routine: { id: "r", botId: "hr" } },

@@ -69,7 +69,6 @@ import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachmentGallery, collectMessageFiles, splitMessageAttachments } from "./AttachmentGallery";
-import { ScreenFrame } from "./ScreenFrame";
 import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { ModelPicker } from "./ModelPicker";
@@ -851,8 +850,6 @@ const MessagesList = memo(function MessagesList({
               return showToolCalls ? <DigestChip message={m} /> : null;
             case "compaction":
               return <CompactionChip message={m} />;
-            case "screen":
-              return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
             default:
               return (
                 <Bubble

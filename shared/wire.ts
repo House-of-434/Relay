@@ -376,7 +376,7 @@ export interface WireMessage {
   roomRequest?: { id: string; phase: "request" | "result" };
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
+  kind: "text" | "options" | "activity" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
   text?: string;
   digest?: TurnDigest;
   compaction?: {
@@ -445,9 +445,6 @@ export interface WireMessage {
   requestPending?: boolean;
   /** The last assistant text item from a settled provider turn. */
   turnTerminal?: boolean;
-  /** screen messages: a frame of the bot's computer (base64 image) */
-  png?: string;
-  mime?: string;
   at: number;
   /** the message this one follows; null = thread root. */
   parentId?: string | null;
@@ -661,7 +658,6 @@ export type ServerFrame =
   | { kind: "webhook.attempt"; attempt: WebhookAttempt }
   | { kind: "webhook.deleted"; webhookId: string }
   | { kind: "runtime"; event: RuntimeEvent }
-  | { kind: "screen"; botId: string; threadId: string; png: string; mime?: string }
   | { kind: "computer"; botId: string; state: "provisioning" | "waking" }
   | { kind: "computer-control"; botId: string; held: boolean; helpReason: string | null }
   | { kind: "bot.deleted"; botId: string }

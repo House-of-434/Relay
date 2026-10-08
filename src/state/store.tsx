@@ -148,7 +148,7 @@ export interface SecretRequestCardData {
 export interface Message {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
+  kind: "text" | "options" | "activity" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
   text?: string;
   /** digest messages: what the turn did, rendered in `text` and structured here. */
   digest?: TurnDigest;
@@ -178,9 +178,6 @@ export interface Message {
   turnId?: string;
   /** Last assistant text item from a settled provider turn. */
   turnTerminal?: boolean;
-  /** screen messages: a frame of the bot's computer (base64) */
-  png?: string;
-  mime?: string;
   at: number;
   /** the message this one follows; null = thread root. Edited messages
    * share a parentId with the version they replace — that's a fork. */
@@ -923,8 +920,6 @@ export interface AppState {
   botSettingsSection: BotSettingsSection;
   /** True only when the open action named a section — accordion expands that row. */
   botSettingsExpandAccordion: boolean;
-  /** latest live frame of a bot's computer, per botId */
-  screens: Record<string, { png: string; mime: string; threadId?: string }>;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** Bot removals waiting for the server to verify that no persistent
@@ -1171,7 +1166,6 @@ export type Action =
   /** `restoreLeafId` puts back the branch an optimistic edit replaced; a
    * plain send falls back to the removed row's parent. */
   | { type: "optimisticMessageRemoved"; threadId: string; sendId: string; restoreLeafId?: string | null }
-  | { type: "screenFrame"; botId: string; threadId?: string; png: string; mime: string }
   | { type: "provisioning"; botId: string; on: boolean }
   | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "modelVariantRuntime"; event: RuntimeEvent }
@@ -1774,21 +1768,10 @@ export function reducer(state: AppState, action: Action): AppState {
       const next = updateBot(stamped, bot.id, (b) => {
         // A message chains onto the leaf → it becomes the leaf (the normal
         // append). A message parented elsewhere is a chain-insert of a late
-        // turn artifact (settle-time screenshot) — the leaf must stay put,
-        // or the follow-up send it raced would fall off the active branch.
+        // turn artifact — the leaf must stay put, or the follow-up send it
+        // raced would fall off the active branch.
         const adoptsLeaf = (action.message.parentId ?? null) === (b.activeLeafId ?? null);
-        let messages = [...b.messages, action.message];
-        // base64 screen frames are big; a long computer-use session would
-        // grow memory without bound. Keep the newest few frames' pixels and
-        // strip the rest (the message row survives as a placeholder).
-        if (action.message.kind === "screen") {
-          const withPng = messages.filter((m) => m.kind === "screen" && m.png);
-          const excess = withPng.length - MAX_KEPT_SCREEN_FRAMES;
-          if (excess > 0) {
-            const dropIds = new Set(withPng.slice(0, excess).map((m) => m.id));
-            messages = messages.map((m) => (dropIds.has(m.id) ? { ...m, png: undefined } : m));
-          }
-        }
+        const messages = [...b.messages, action.message];
         return { ...b, messages, activeLeafId: adoptsLeaf ? action.message.id : b.activeLeafId };
       });
       const motion =
@@ -1865,12 +1848,6 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
       }));
     }
-    case "screenFrame":
-      return {
-        ...withMascotMotion(state, action.botId, "success"),
-        screens: { ...state.screens, [action.botId]: { png: action.png, mime: action.mime, threadId: action.threadId } },
-        provisioning: { ...state.provisioning, [action.botId]: false },
-      };
     case "provisioning":
       return {
         ...(action.on ? withMascotMotion(state, action.botId, "launch") : state),
@@ -2311,9 +2288,6 @@ export function reducer(state: AppState, action: Action): AppState {
   }
 }
 
-/** Newest screen frames whose pixels stay in memory per thread. */
-const MAX_KEPT_SCREEN_FRAMES = 8;
-
 export const initialState: AppState = {
   modelVariantSessions: {},
   backgroundThreadEvents: {},
@@ -2347,7 +2321,6 @@ export const initialState: AppState = {
   tourOpen: false,
   botSettingsSection: "overview",
   botSettingsExpandAccordion: false,
-  screens: {},
   provisioning: {},
   deletingBots: {},
   computerControl: {},
@@ -3830,9 +3803,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           break;
         }
-        case "screen":
-          rawDispatch({ type: "screenFrame", botId: frame.botId, threadId: frame.threadId, png: frame.png, mime: frame.mime ?? "image/png" });
-          break;
         case "computer":
           rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });
           break;
