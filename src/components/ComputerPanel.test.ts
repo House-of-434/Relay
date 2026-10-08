@@ -4,7 +4,7 @@ import { transitionComputerControlLease } from "../lib/computer-control";
 
 const snap = (held: boolean) => ({ held, helpReason: null });
 
-describe("computer/browser control transition ordering", () => {
+describe("computer control transition ordering", () => {
   it("gates Electron before taking the server lease", async () => {
     const calls: string[] = [];
     await transitionComputerControlLease({
@@ -49,7 +49,7 @@ describe("computer/browser control transition ordering", () => {
     expect(requestControl).not.toHaveBeenCalled();
   });
 
-  it("leaves BrowserPanel to perform its own native choreography", async () => {
+  it("skips native sync when the caller opts out", async () => {
     const setNativeBrowserControl = vi.fn(async () => true);
     await transitionComputerControlLease({
       action: "take",

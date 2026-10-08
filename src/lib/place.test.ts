@@ -4,19 +4,18 @@ import { toolSurfaceKind } from "../../shared/tool-surface";
 
 describe("where a conversation works", () => {
   it("lets the conversation's pin win over the bot's Works on, except Off", () => {
-    expect(effectivePlace({ computer: "cloud" }, { surface: "browser" })).toBe("browser");
     expect(effectivePlace({ computer: undefined }, { surface: "vm" })).toBe("vm");
-    expect(effectivePlace({ computer: "browser" }, { surface: "local" })).toBe("local");
-    expect(effectivePlace({ computer: "off" }, { surface: "browser" })).toBe("off");
+    expect(effectivePlace({ computer: "local" }, { surface: "cloud" })).toBe("cloud");
+    expect(effectivePlace({ computer: "off" }, { surface: "vm" })).toBe("off");
     expect(effectivePlace({ computer: "cloud" }, null)).toBe("cloud");
     expect(effectivePlace({ computer: undefined }, undefined)).toBe("auto");
   });
 
-  it("offers every place on a desktop or self-hosted server, and no this computer or Local VM on an OMB Cloud home", () => {
+  it("offers every destination on a desktop or self-hosted server, and no this computer or Local VM on an OMB Cloud home", () => {
     for (const config of [null, undefined, {}, { cloudHome: false }]) {
-      expect(PLACES.filter((place) => placeOffered(place, config))).toEqual(["cloud", "vm", "local", "browser"]);
+      expect(PLACES.filter((place) => placeOffered(place, config))).toEqual(["cloud", "vm", "local"]);
     }
-    expect(PLACES.filter((place) => placeOffered(place, { cloudHome: true }))).toEqual(["cloud", "browser"]);
+    expect(PLACES.filter((place) => placeOffered(place, { cloudHome: true }))).toEqual(["cloud"]);
   });
 
   it("names places with one label key each", () => {

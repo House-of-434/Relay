@@ -69,21 +69,6 @@ const __APP_VERSION__: string;
     height: number;
   }
 
-  interface BrowserSurfaceState {
-    botId: string;
-    open: boolean;
-    url: string;
-    title: string;
-    loading: boolean;
-    canGoBack: boolean;
-    canGoForward?: boolean;
-    visible: boolean;
-    partition?: string | null;
-    profile?: string | null;
-    mode?: "compact" | "expanded" | null;
-    code?: "renderer-gone" | "profile-deleted" | "evicted";
-  }
-
   interface DesktopWorkspaceState {
     contextId: string;
     open: boolean;

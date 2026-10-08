@@ -56,7 +56,7 @@ export type CloudBackend = "box" | "vps";
 
 /** A place a bot can act. cloud covers both cloud backends — from the
  * person's seat they are the same "cloud computer" panel. */
-export type Surface = "cloud" | "vm" | "local" | "browser";
+export type Surface = "cloud" | "vm" | "local";
 
 export type MausColor =
   | "green" | "blue" | "red" | "orange" | "purple" | "cyan" | "pink"
@@ -313,8 +313,6 @@ export interface WireBot {
    * false = none); an explicit `{}` grants no tools. Grants never travel in
    * shareable exports and imported bots always land with none. */
   connectorTools?: Record<string, ConnectorToolGrant>;
-  /** Whether this bot gets the app's built-in browser. */
-  browser?: boolean;
   /** Memory upkeep: the harness captures facts from finished chats into
    * MEMORY.md and topic files, adds facts about the person to About me and
    * tidies nightly. On unless explicitly false; every change is journaled
@@ -322,8 +320,6 @@ export interface WireBot {
   memoryUpkeep?: boolean;
   /** Which of the app-wide MCP servers this bot mounts, by name. */
   mcpServers?: string[];
-  /** Id of a named browser profile; absent = the bot's own private session. */
-  browserProfile?: string;
   /** Public, package-authored playbooks installed for this bot. */
   playbooks?: InstalledPlaybook[];
   /** Listing provenance for package details and future re-export. */

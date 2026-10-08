@@ -7,15 +7,18 @@ import { toolSurfaceKind } from "../../shared/tool-surface";
 import type { Bot, Task } from "@/state/store";
 import type { LocaleKey } from "@/locales";
 
+/** A place a tool chip can name. "browser" survives only there: no
+ * destination picker offers it anymore. */
 export type Place = "cloud" | "vm" | "local" | "browser";
-export const PLACES: readonly Place[] = ["cloud", "vm", "local", "browser"];
+/** Destinations a picker may offer. */
+export const PLACES: ReadonlyArray<Exclude<Place, "browser">> = ["cloud", "vm", "local"];
 /** What the chip shows: a place, the bot's Auto, or Off. */
 export type EffectivePlace = Place | "auto" | "off";
 
-/** Whether this server offers a place at all. An OMB Cloud home offers no
- * "this computer" and no Local VM (shared/cloud-home.ts), so the pickers do
- * not list them there; every other server offers all four. */
-export function placeOffered(place: Place, config: { cloudHome?: boolean } | null | undefined): boolean {
+/** Whether this server offers a destination at all. An OMB Cloud home offers
+ * no "this computer" and no Local VM (shared/cloud-home.ts), so the pickers
+ * do not list them there; every other server offers all three. */
+export function placeOffered(place: Exclude<Place, "browser">, config: { cloudHome?: boolean } | null | undefined): boolean {
   return !config?.cloudHome || cloudHomeOffersPlace(place);
 }
 

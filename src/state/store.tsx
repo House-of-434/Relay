@@ -306,7 +306,7 @@ export interface Task {
   /** where this conversation works, when pinned: by the person from the
    * composer, or by its first Auto turn to the place it reached. Wins over
    * the bot's Works on (except Off); absent = follows the bot. */
-  surface?: "cloud" | "vm" | "local" | "browser";
+  surface?: "cloud" | "vm" | "local";
   /** set when a bot (not the person) started this thread — its own or a
    * teammate's; the sidebar shows a quiet "opened by <name>" under the title */
   openedBy?: ThreadOpener;
@@ -395,9 +395,9 @@ export interface Bot {
    * fed to the Thinking timer so elapsed time survives thread switches. */
   turnStartedAt?: number | null;
   modelSelection: ModelSelection;
-  /** Where this bot works: a computer, only the built-in browser tab, or
-   * nowhere; unset = auto (cloud boat if one exists, else local). */
-  computer?: "cloud" | "vm" | "local" | "browser" | "off";
+  /** Where this bot works: a computer, or nowhere; unset = auto (cloud boat
+   * if one exists, else local). */
+  computer?: "cloud" | "vm" | "local" | "off";
   /** Which cloud computer backs `computer: "cloud"`; absent means Boat. */
   cloudBackend?: CloudBackend;
   /** Allow Auto to prepare/start the managed VPS container. Off by default. */
@@ -440,17 +440,12 @@ export interface Bot {
    * defers to the composio boolean (unset/true = every tool, false = none);
    * an explicit {} grants no tools. Edited from bot settings → Access. */
   connectorTools?: Record<string, ConnectorToolGrant>;
-  /** Whether this bot gets the app's built-in browser (Browser tab). On unless switched off. */
-  browser?: boolean;
   /** Memory upkeep (Bot settings → Memory): background capture and the
    * nightly tidy-up. On unless explicitly false. */
   memoryUpkeep?: boolean;
   /** Which app-wide MCP servers (Plugins → MCP servers) this bot mounts, by
    * name. Absent = every enabled server; [] = none (null clears over PATCH). */
   mcpServers?: string[] | null;
-  /** Named browser profile id (config.browserProfiles); absent/null = the
-   * bot's own session (null is how a clear travels over PATCH). */
-  browserProfile?: string | null;
   /** Who may see this bot on a shared workspace; only admins receive it. */
   visibility?: BotVisibility;
   /** Where a shared or organization package put this bot (its provenance line). */
@@ -660,15 +655,10 @@ export interface ConfigStatus {
   /** UI language override; "" (or absent) follows the system language. */
   language?: string;
   /** Opt-in flags. Absent means off. */
-  features?: { skillAuthoring: boolean; showToolCalls?: boolean; browser?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean };
+  features?: { skillAuthoring: boolean; showToolCalls?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean };
   /** First-run progress: whether the welcome tour was finished and which
    * one-time hints were dismissed. Server-owned so it follows the workspace. */
   onboarding?: OnboardingStatus;
-  /** Which browser this server can give bots: the desktop app's surface, the
-   * agent-browser engine, or nothing yet (with the reason). */
-  browserEngine?: BrowserEngineSummary;
-  /** Named browser sessions any bot can be pointed at. */
-  browserProfiles?: BrowserProfile[];
   /** The enrolled organisation's read-only desktop policy; null when this
    * desktop is not enrolled or its Admin sends no policy. */
   managedPolicy?: ManagedPolicySummary | null;
@@ -691,30 +681,13 @@ export interface ManagedPolicySummary {
   remoteAccess: boolean;
 }
 
-export interface BrowserEngineSummary {
-  kind: "engine" | "unavailable";
-  reason?: string;
-  installable?: boolean;
-  version?: string;
-  installing?: boolean;
-  installError?: string;
-}
-
-export interface BrowserProfile {
-  id: string;
-  name: string;
-  /** Read-only durable Electron routing inherited from legacy profiles.
-   * Config PATCH payloads must omit it. */
-  partitionId?: string;
-}
-
 // Every section the server's config frame carries. A section left out here
 // is wiped from state.config whenever a live frame lands, so whichever of a
 // save's own response and its broadcast frame arrives last decides what
 // Settings shows (a saved key's Test button used to vanish that way).
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "mistral" | "anthropic" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "threads" | "automaticRecovery" | "localVm" | "opencodeGo" | "tts" | "decider" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "browserEngine" | "browserProfiles" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "sharedWorkspace" | "computerDisabled"
+  "xai" | "mistral" | "anthropic" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "threads" | "automaticRecovery" | "localVm" | "opencodeGo" | "tts" | "decider" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "sharedWorkspace" | "computerDisabled"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -739,8 +712,6 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     language: frame.language,
     features: frame.features,
     onboarding: frame.onboarding,
-    browserEngine: frame.browserEngine,
-    browserProfiles: frame.browserProfiles,
     edition: frame.edition,
     budgets: frame.budgets,
     billing: frame.billing,
@@ -1685,7 +1656,7 @@ export function reducer(state: AppState, action: Action): AppState {
         // The slim deletion broadcast can arrive before the full snapshot.
         // Finish that switch once, replaying any events received in between.
         // Later duplicate HTTP snapshots must not overwrite newer messages.
-        return reducer(switching, { type: "taskSwitched", bot: { ...before, ...action.bot, computer: action.bot.computer, section: action.bot.section, messages: action.bot.messages, browserProfile: action.bot.browserProfile } });
+        return reducer(switching, { type: "taskSwitched", bot: { ...before, ...action.bot, computer: action.bot.computer, section: action.bot.section, messages: action.bot.messages } });
       }
       const patched = updateBot(switching, action.bot.id, (b) => ({
         ...b,
@@ -1693,10 +1664,6 @@ export function reducer(state: AppState, action: Action): AppState {
         threadId: switchedThread ? action.bot.threadId : b.threadId,
         activeLeafId: switchedThread ? null : b.activeLeafId,
         awaitingThreadSnapshot: switchedThread || b.awaitingThreadSnapshot,
-        // Complete bot frames omit this optional field after switching back
-        // to Own browser (or deleting a shared profile). Do not retain the
-        // previous profile's name and selection in another window.
-        browserProfile: action.bot.browserProfile,
         // Resetting Works on to Auto removes the field from the complete
         // server frame; merging alone would keep the old target highlighted.
         computer: action.bot.computer,

@@ -1382,7 +1382,7 @@ describe("computer destination announcements", () => {
     const bot: Bot = {
       id: "computer-bot", threadId: "computer-thread", name: "Ziggy", title: "", description: "",
       notifications: true, color: "green", unread: false,
-      modelSelection: { instanceId: "codex", model: "default" }, computer: "browser",
+      modelSelection: { instanceId: "codex", model: "default" }, computer: "cloud",
       messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
     };
     const { computer: _oldComputer, ...announcement } = bot;
@@ -1424,23 +1424,6 @@ describe("teammate wait announcements", () => {
     const { messages, ...rest } = waiting;
     const next = reducer({ ...initialState, bots: [waiting] }, { type: "botPatched", bot: rest });
     expect(next.bots[0]?.waitingForTeammates).toBe(true);
-    expect(next.bots[0]?.messages).toBe(messages);
-  });
-});
-
-describe("browser profile announcements", () => {
-  it.each([undefined, null, "guest", "another-profile"])("replaces an old shared profile with %s without losing chat", (profile) => {
-    const bot: Bot = {
-      id: "browser-bot", threadId: "browser-thread", name: "Pepper", title: "", description: "",
-      notifications: true, color: "green", unread: false,
-      modelSelection: { instanceId: "codex", model: "default" }, browserProfile: "old-profile",
-      messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
-    };
-    const { messages, browserProfile: _oldProfile, ...announcement } = bot;
-    const next = reducer({ ...initialState, bots: [bot] }, {
-      type: "botPatched", bot: { ...announcement, ...(profile === undefined ? {} : { browserProfile: profile }) },
-    });
-    expect(next.bots[0]?.browserProfile).toBe(profile);
     expect(next.bots[0]?.messages).toBe(messages);
   });
 });

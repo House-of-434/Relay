@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "react";
 import { Archive, Coins, FlaskConical, KeyRound, Monitor, Palette, ScrollText, Search, TabletSmartphone, Terminal, User, Users, X, Building2, Zap } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
-import { browserAvailable, browserUnavailableReason, builtInBrowserEnabled, routinesInConversationEnabled, showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
+import { routinesInConversationEnabled, showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
 import { localeChoices, type LocaleKey } from "@/locales";
 import { t } from "@/lib/i18n";
 import { withTourReset } from "@/lib/guided-tour";
@@ -22,7 +22,6 @@ import { PeopleSection } from "./PeopleSection";
 import { ActivitySection } from "./ActivitySection";
 import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 import { CustomDomainSettings } from "./CustomDomainSettings";
-import { BrowserProfilesManager } from "./BrowserProfilesManager";
 import { RemoteComputerSection } from "./RemoteComputerSection";
 import { ConnectedWorkspacesSettings } from "./ConnectedWorkspacesSettings";
 import { Card, SettingRow, Switch } from "./SettingsPrimitives";
@@ -58,7 +57,7 @@ export const SECTIONS: Array<{
   { id: "general", labelKey: "settings.section.general", icon: User, keywords: ["profile", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "analytics", "updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule"] },
   { id: "desktopWorkspaces", labelKey: "settings.section.desktopWorkspaces", icon: Building2, keywords: ["workspace", "cloud", "hosted", "vps", "server", "servers", "connect", "pair", "switch", "local"] },
   { id: "appearance", labelKey: "settings.section.appearance", icon: Palette, keywords: ["skin", "theme", "appearance", "tools", "tool calls", "sidebar", "display", "notifications", "sound", "sounds", "mute", "silent", "chime"] },
-  { id: "experimental", labelKey: "settings.section.experimental", icon: FlaskConical, keywords: ["early", "preview", "learn", "skill", "authoring", "browser", "profiles"] },
+  { id: "experimental", labelKey: "settings.section.experimental", icon: FlaskConical, keywords: ["early", "preview", "learn", "skill", "authoring"] },
   { id: "connections", labelKey: "settings.section.connections", icon: KeyRound, keywords: ["keys", "api", "composio", "box", "xai", "mistral", "vps"] },
   { id: "decisionModel", labelKey: "settings.section.decisionModel", icon: Zap, keywords: ["decision", "jev", "typesafe", "routing", "auto", "rooms", "who answers"] },
   { id: "engines", labelKey: "settings.section.engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
@@ -453,14 +452,10 @@ function ToolCallsRow() {
 function ExperimentalFeaturesRow() {
   const { state, dispatch } = useStore();
   const skillAuthoring = skillAuthoringEnabled(state.config);
-  const browser = builtInBrowserEnabled(state.config);
-  const desktopBrowser = browserAvailable(state.config);
-  const browserInstallable = state.config?.browserEngine?.installable === true;
-  const browserBlockedOnWindows = window.ogb?.platform === "win32" && !desktopBrowser && !browserInstallable;
-  const [saving, setSaving] = useState<"skillAuthoring" | "browser" | null>(null);
+  const [saving, setSaving] = useState<"skillAuthoring" | null>(null);
   const [error, setError] = useState("");
 
-  const toggle = async (feature: "skillAuthoring" | "browser", next: boolean) => {
+  const toggle = async (feature: "skillAuthoring", next: boolean) => {
     if (saving) return;
     setSaving(feature);
     setError("");
@@ -494,39 +489,7 @@ function ExperimentalFeaturesRow() {
           className="disabled:cursor-wait disabled:opacity-50"
         />
       </div>
-      <div className="mt-4 flex items-center justify-between gap-4 border-t border-hairline/30 pt-4">
-        <div className="min-w-0">
-          <div className="text-[14px] font-medium text-ink">{t("settings.experimental.browser")}</div>
-          <div className="mt-0.5 text-[12px] leading-relaxed text-ink-secondary">
-            {desktopBrowser
-              ? browser
-                ? t("settings.experimental.browserOn")
-                : t("settings.experimental.browserOff")
-              : browserBlockedOnWindows
-                ? t("settings.experimental.browserWindows")
-                : browserUnavailableReason(state.config)}
-          </div>
-        </div>
-        <Switch
-          checked={browser}
-          aria-label={t("settings.experimental.browserAria")}
-          disabled={saving !== null || (!browser && !desktopBrowser && !browserInstallable)}
-          onClick={() => void toggle("browser", !browser)}
-          className="disabled:cursor-wait disabled:opacity-50"
-        />
-      </div>
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
-    </Card>
-  );
-}
-
-function BrowserProfilesRow() {
-  const { state } = useStore();
-  const profiles = state.config?.browserProfiles ?? [];
-  if (!builtInBrowserEnabled(state.config) && profiles.length === 0) return null;
-  return (
-    <Card title={t("settings.profiles.title")} subtitle={t("settings.profiles.sharedSubtitle")}>
-      <BrowserProfilesManager />
     </Card>
   );
 }
@@ -784,7 +747,6 @@ export function SettingsModal() {
             {section === "experimental" && (
               <>
                 <ExperimentalFeaturesRow />
-                <BrowserProfilesRow />
               </>
             )}
 

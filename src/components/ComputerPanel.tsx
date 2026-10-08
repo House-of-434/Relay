@@ -18,7 +18,6 @@ import {
   Check,
   Cloud,
   Sparkles,
-  Globe,
   Hand,
   Loader2,
   Monitor,
@@ -40,8 +39,6 @@ import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutinesSection } from "./bot-settings/RoutinesSection";
 import { routineRunLabel, routineRunTone } from "@/lib/routine-display";
 import { AndroidDevicePanel, useAndroidUsbDevices } from "./AndroidDevicePanel";
-import { BrowserPanel } from "./BrowserPanel";
-import { browserAvailable, browserUnavailableReason, builtInBrowserEnabled } from "@/lib/feature-flags";
 import { transitionComputerControlLease, type ComputerControlAction } from "@/lib/computer-control";
 import { LocalScreenPreview } from "./LocalScreenPreview";
 import { LinuxLocalControl } from "./LinuxLocalControl";
@@ -110,7 +107,6 @@ type Phase =
   | "show-ready-boat"
   | "show-sleeping-boat"
   | "show-pending-boat"
-  | "browser"
   | "off"
   | "error";
 
@@ -228,8 +224,10 @@ export function ComputerPanel({
   const surfaceReady = livePlace !== "auto" || autoSurfaceCurrent;
   // Profile defaults still belong to the Works on picker below. The screen
   // and capability checks belong to the selected conversation, not that default.
+  // A legacy "browser" pin no longer resolves to a destination: read it as Auto.
   const bot = { ...threadBot, computer: livePlace === "auto"
-    ? autoSurfaceCurrent ? autoSurface.surface : undefined : livePlace };
+    ? autoSurfaceCurrent ? autoSurface.surface : undefined
+    : livePlace === "browser" ? undefined : livePlace };
   const viewerConnectionKey = `${bot.id}:${bot.threadId}:${bot.computer}:${bot.cloudBackend ?? "box"}`;
   const viewerConnection = useRef(viewerConnectionKey);
   viewerConnection.current = viewerConnectionKey;
@@ -295,7 +293,6 @@ export function ComputerPanel({
   const updateComputerSelection = useCallback((patch: {
     computer?: Bot["computer"] | null;
     cloudBackend?: CloudBackend;
-    browser?: boolean;
     acknowledgeLocalAuto?: boolean;
   }) => {
     // Clear old-provider UI in the same render as the optimistic profile
@@ -342,11 +339,6 @@ export function ComputerPanel({
   const [panelView, setPanelView] = useState<ComputerPanelView>(() => readComputerPanelView(bot.id));
   const androidStatus = useAndroidUsbDevices();
   const androidConnected = androidStatus.devices.length > 0;
-  // Keep installation reachable before the engine is ready. Actual browser
-  // operations below still require browserAvailableHere.
-  const browserAvailableHere = browserAvailable(state.config);
-  const browserEnabled = builtInBrowserEnabled(state.config) && bot.browser !== false
-    && (browserAvailableHere || state.config?.browserEngine?.installable === true);
   // bumped when a Boat API key is saved inline, to re-run the spin-up flow
   const [retry, setRetry] = useState(0);
   // Auto is a server decision (including an existing Local VM). Do not guess
@@ -359,7 +351,7 @@ export function ComputerPanel({
       if (controller.signal.aborted) return;
       const surface = status.surface;
       setAutoSurface({ key: connectionKey, surface:
-        surface === "cloud" || surface === "vm" || surface === "local" || surface === "browser" || surface === "off"
+        surface === "cloud" || surface === "vm" || surface === "local" || surface === "off"
           ? surface : undefined });
     }).catch((cause) => {
       if (controller.signal.aborted) return;
@@ -372,20 +364,6 @@ export function ComputerPanel({
   const selectedInstance = state.instances.find(
     (instance) => instance.instanceId === bot.modelSelection.instanceId,
   );
-  // "Works on: Browser" needs the same things as the browser switch minus
-  // the switch itself — picking it turns the switch on. The boat-native
-  // Computer engine runs inside the boat, so it has no browser-only mode.
-  const browserSelectable =
-    builtInBrowserEnabled(state.config) &&
-    browserAvailableHere &&
-    selectedInstance?.capabilities?.browserMcp === true &&
-    selectedInstance.driverKind !== "boxAgent";
-  const browserDisabledReason = !browserAvailableHere
-    ? browserUnavailableReason(state.config)
-    : !builtInBrowserEnabled(state.config)
-      ? t("computer.err.browserOff")
-      : t("computer.err.browserEngine");
-
   const selectPanelView = (view: ComputerPanelView) => {
     setPanelView(view);
     writeComputerPanelView(bot.id, view);
@@ -396,18 +374,17 @@ export function ComputerPanel({
     // Restore a manually chosen tab on reopen. After a real thread/place
     // change, follow that target once; busy/tool events never steal the tab.
     const previous = previousPanelTarget.current;
-    if (previous === viewerConnectionKey && !(bot.computer === "browser" && browserEnabled)) return;
+    if (previous === viewerConnectionKey) return;
     previousPanelTarget.current = viewerConnectionKey;
-    setPanelView(bot.computer === "browser" && browserEnabled ? "browser"
-      : previous === null ? readComputerPanelView(bot.id) : "computer");
-  }, [viewerConnectionKey, bot.id, bot.computer, browserEnabled]);
+    setPanelView(previous === null ? readComputerPanelView(bot.id) : "computer");
+  }, [viewerConnectionKey, bot.id, bot.computer]);
 
   useEffect(() => {
-    if ((!androidConnected && panelView === "android") || (!browserEnabled && panelView === "browser")) {
+    if (!androidConnected && panelView === "android") {
       setPanelView("computer");
       writeComputerPanelView(bot.id, "computer");
     }
-  }, [androidConnected, bot.id, browserEnabled, panelView]);
+  }, [androidConnected, bot.id, panelView]);
   useEffect(() => {
     vmReadinessAttempts.current = 0;
   }, [bot.id, bot.computer]);
@@ -456,12 +433,6 @@ export function ComputerPanel({
 
     if (bot.computer === "off") {
       setPhase("off");
-      return;
-    }
-    // Browser-only bots own no desktop: the Browser tab is their whole
-    // screen, so this tab must not wake a boat or start host capture.
-    if (bot.computer === "browser") {
-      setPhase("browser");
       return;
     }
     if (bot.computer === "local") {
@@ -789,17 +760,16 @@ export function ComputerPanel({
   const setNativeBrowserControl = useCallback(async (): Promise<boolean> => true, []);
 
   const transitionControl = useCallback(async (action: ComputerControlAction) => {
-    // BrowserPanel performs the same two-phase transition itself. Every
-    // other computer surface must also gate Electron's direct browser host:
-    // the server hold is bot-wide, and a shell-capable agent can otherwise
-    // bypass the server proxy while the person drives Local VM/Box/VPS.
+    // Every computer surface must gate Electron's direct browser host: the
+    // server hold is bot-wide, and a shell-capable agent can otherwise bypass
+    // the server proxy while the person drives Local VM/Box/VPS.
     return transitionComputerControlLease({
       action,
-      syncNativeBrowser: panelView !== "browser",
+      syncNativeBrowser: true,
       requestControl,
       setNativeBrowserControl,
     });
-  }, [panelView, requestControl, setNativeBrowserControl]);
+  }, [requestControl, setNativeBrowserControl]);
 
   const controlAction = useCallback(async (action: ComputerControlAction): Promise<boolean> => {
     setControlPending(true);
@@ -998,7 +968,6 @@ export function ComputerPanel({
     "vps-stopped": t("computer.phase.vpsStopped"),
     "local-unavailable": localDisabledReason ?? t("computer.phase.localUnavailable"),
     "vm-unavailable": t("computer.phase.vmUnavailable"),
-    browser: t("computer.phase.browser"),
     off: t("computer.phase.off"),
     error: t("computer.phase.error"),
   } satisfies Record<Exclude<Phase, "ready" | "local" | "vm">, string>;
@@ -1078,23 +1047,6 @@ export function ComputerPanel({
               <Smartphone size={13} /> {t("computer.tab.android")}
             </button>
             )}
-            {browserEnabled && (
-            <button
-              data-tour="computer-browser"
-              onClick={() => {
-                setError(null);
-                selectPanelView("browser");
-              }}
-              aria-pressed={panelView === "browser"}
-              className={cn(
-                "flex items-center gap-1.5 border-l border-hairline/40 px-2.5 py-1 text-[12.5px]",
-                panelView === "browser" ? "bg-control text-ink" : "text-ink-secondary hover:text-ink",
-              )}
-            >
-              <Globe size={13} /> {t("computer.tab.browser")}
-              {placeLive && livePlace === "browser" && <span className="size-1.5 animate-pulse rounded-full bg-success" role="img" aria-label={t("place.live")} data-testid="browser-tab-live" />}
-            </button>
-            )}
           </div>
         )}
         <button
@@ -1108,15 +1060,6 @@ export function ComputerPanel({
       {panelView === "routines" ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4">
           <RoutinesSection key={bot.id} bot={bot} routines={botRoutines} runs={state.routineRuns} defaultRunOn={cloudRoutineReady ? "cloud" : "maus"} />
-        </div>
-      ) : panelView === "browser" && browserEnabled ? (
-        <div className="flex min-h-0 flex-1 flex-col px-4 pb-4">
-          <BrowserPanel bot={bot} />
-          {errorText && (
-            <div role="alert" className="mt-2 rounded-lg border border-danger/30 bg-danger/10 px-3 py-2 text-[12px] text-danger">
-              {errorText}
-            </div>
-          )}
         </div>
       ) : panelView === "android" && androidConnected ? (
         <div className="flex-1 overflow-y-auto px-4 pt-2">
@@ -1159,14 +1102,6 @@ export function ComputerPanel({
               <button type="button" onClick={() => setRetry(n => n + 1)}
                 className="text-[11px] text-ink-secondary hover:text-ink">Refresh shared computer status</button>
             </>}
-            {phase === "browser" && browserEnabled && (
-              <button
-                onClick={() => selectPanelView("browser")}
-                className="mt-1 rounded-lg bg-control px-3 py-1.5 text-[12px] text-ink hover:bg-raised-hover"
-              >
-                {t("computer.openBrowserTab")}
-              </button>
-            )}
             {(phase === "show-ready-boat" || phase === "show-sleeping-boat" || phase === "show-pending-boat") && (
               <button
                 type="button"
@@ -1420,7 +1355,6 @@ export function ComputerPanel({
               ["cloud", "vm.dest.cloud", "computer.dest.cloudDesc", Cloud],
               ["vm", "vm.dest.vm", "computer.dest.vmDesc", Box],
               ["local", "vm.dest.local", "computer.dest.localDesc", Monitor],
-              ["browser", "vm.dest.browser", "computer.dest.browserDesc", Globe],
               ["off", "vm.dest.off", "computer.dest.offDesc", Power],
             ] as const).filter(([mode]) => mode === null || mode === "off" || placeOffered(mode, state.config)).map(([mode, labelKey, descriptionKey, Icon]) => {
                 const selected = mode === null ? !profileBot.computer : profileBot.computer === mode;
@@ -1431,8 +1365,7 @@ export function ComputerPanel({
                 const disabled = Boolean(managedBy) ||
                   (mode === "cloud" && !cloudSupported) ||
                   (mode === "vm" && !vmSupported) ||
-                  (mode === "local" && !localSelectable) ||
-                  (mode === "browser" && !browserSelectable);
+                  (mode === "local" && !localSelectable);
                 const unavailableTitle = managedBy ?? (
                   mode === "vm" && !vmSupported
                     ? t("computer.unavailableVm")
@@ -1440,9 +1373,7 @@ export function ComputerPanel({
                       ? t("computer.unavailableCloud")
                       : mode === "local" && !localSelectable
                         ? localDisabledReason ?? t("computer.unavailableLocal")
-                        : mode === "browser"
-                          ? browserSelectable ? t("computer.browserOnlyTitle") : browserDisabledReason
-                          : undefined);
+                        : undefined);
                 return (
               <button
                 key={mode ?? "auto"}
@@ -1453,9 +1384,6 @@ export function ComputerPanel({
                   if (mode === "local" && approvalModeFor(profileBot) === "auto") {
                     setLocalAutoWarningTarget(bot.id);
                   }
-                  // a browser-only bot must actually have its browser: flip
-                  // the per-bot switch on with the destination
-                  else if (mode === "browser") updateComputerSelection({ computer: mode, browser: true });
                   else updateComputerSelection({ computer: mode });
                 }}
                 type="button"
@@ -1515,8 +1443,6 @@ export function ComputerPanel({
                 </>
               ) : profileBot.computer === "local" ? (
                 t("computer.hint.local")
-              ) : profileBot.computer === "browser" ? (
-                t("computer.hint.browser")
               ) : (
                 t("computer.hint.off")
               )}
