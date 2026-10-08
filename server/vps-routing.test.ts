@@ -127,11 +127,6 @@ case "$*" in
   *" container inspect "*) name=$(cat "$FAKE_DOCKER_DIR/container.name"); sed "s|__NAME__|$name|g" "$FAKE_DOCKER_DIR/container.json.tpl" ;;
   *" image inspect "*) cat "$FAKE_DOCKER_DIR/image.json" ;;
   *" exec "*"--version"*) echo "cua-driver ${CUA_DRIVER_VERSION}" ;;
-  *" exec "*"--screenshot-out-file"*)
-    : > "$FAKE_DOCKER_DIR/capture-started"
-    while [ -f "$FAKE_DOCKER_DIR/hold-capture" ]; do sleep 0.05; done
-    if [ -f "$FAKE_DOCKER_DIR/fail-capture" ]; then echo "fixture capture failed" >&2; exit 1; fi
-    echo "{}" ;;
   *" exec "*"health_report"*) echo '{"schema_version":"1","overall":"ok","checks":[]}' ;;
   *" exec "*"get_desktop_state"*) echo "{}" ;;
   *" exec "*"base64"*) cat "$FAKE_DOCKER_DIR/screenshot.b64" ;;
@@ -252,108 +247,6 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
     await removeTempDir(home);
   });
 
-  it("shares a canceled preview with retries and opens control without racing destructive actions", async () => {
-    expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
-    const bot = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud", cloudBackend: "vps" });
-    const fixtureDir = dirname(dockerLog);
-    const hold = join(fixtureDir, "hold-capture");
-    const started = join(fixtureDir, "capture-started");
-    const failed = join(fixtureDir, "fail-capture");
-    const captures = () => readFileSync(dockerLog, "utf8").split("\n").filter(line => line.includes("--screenshot-out-file")).length;
-    const path = `/api/bots/${bot.id}/computer`;
-    let retries: Array<Promise<{ status: number; body: any }>> = [];
-    try {
-      writeFileSync(hold, "hold");
-      rmSync(started, { force: true });
-      const before = captures();
-      const cancel = new AbortController();
-      const first = fetch(`${BASE}${path}/screenshot`, {
-        method: "POST", headers: { "content-type": "application/json" }, body: "{}", signal: cancel.signal,
-      });
-      await until(async () => existsSync(started), "the pending preview");
-      cancel.abort();
-      await expect(first).rejects.toThrow();
-      retries = [api("POST", `${path}/screenshot`, {}), api("POST", `${path}/screenshot`, {})];
-
-      // These must still exclude the capture even after its HTTP client left.
-      for (const action of ["provision", "sleep", "remove"]) {
-        const blocked = await api("POST", `${path}/${action}`, {});
-        expect(blocked.status, action).toBe(409);
-        expect(blocked.body.error).toMatch(/preview.*refreshing/);
-      }
-      expect((await api("DELETE", `/api/bots/${bot.id}`)).status).toBe(409);
-      expect((await api("PUT", "/api/config", { vps: { sshAlias: "other-vps" } })).status).toBe(409);
-
-      // A preview is not a computer change: opening the existing viewer is
-      // safe, and cannot be rejected merely because a frame is slow.
-      expect((await api("POST", `${path}/control`, { action: "take" })).status).toBe(200);
-      const joined = await api("POST", `${path}/join`, {});
-      expect(joined.status, JSON.stringify(joined.body)).toBe(200);
-      expect(joined.body.joinUrl).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/vnc\.html#/);
-      expect(captures() - before).toBe(1);
-      rmSync(hold, { force: true });
-      for (const result of await Promise.all(retries)) {
-        expect(result.status).toBe(200);
-        expect(result.body).toMatchObject({ format: "png", png: expect.any(String) });
-      }
-      expect(captures() - before).toBe(1);
-
-      // A failed capture must also release its reservation for later retries.
-      writeFileSync(failed, "fail");
-      const failure = await api("POST", `${path}/screenshot`, {});
-      expect(failure.status).toBe(500);
-      expect(failure.body.error).toMatch(/fixture capture failed/);
-      rmSync(failed, { force: true });
-      expect((await api("POST", `${path}/screenshot`, {})).status).toBe(200);
-    } finally {
-      rmSync(hold, { force: true });
-      rmSync(failed, { force: true });
-      await Promise.allSettled(retries);
-      await api("POST", `${path}/viewer-close`, {});
-      await api("POST", `${path}/control`, { action: "release" });
-    }
-  }, 30_000);
-
-  it.each(["cloud", null] as const)("starts a %s turn after a slow preview without reporting preparation failure", async computer => {
-    expect((await api("PUT", "/api/config", { vps: { sshAlias: "production-vps" } })).status).toBe(200);
-    const bot = (await api("POST", "/api/bots")).body.bot;
-    await api("PATCH", `/api/bots/${bot.id}`, {
-      computer, cloudBackend: "vps", modelSelection: { instanceId: "vps", model: "fake-model" },
-    });
-    const fixtureDir = dirname(dockerLog);
-    const hold = join(fixtureDir, "hold-capture");
-    const started = join(fixtureDir, "capture-started");
-    writeFileSync(gateFile, "open");
-    rmSync(`${acpDump}.mcp.json`, { force: true });
-    rmSync(started, { force: true });
-    writeFileSync(hold, "hold");
-    const preview = api("POST", `/api/bots/${bot.id}/computer/screenshot`, {});
-    try {
-      await until(async () => existsSync(started), "the slow preview");
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "Check the VPS after its screen refresh" })).status).toBe(202);
-      await until(async () => (await botById(bot.id))?.busy === true, "turn setup waiting on the preview");
-      // Deliberately cross the old 5s acquisition deadline, not an arbitrary
-      // readiness sleep: a normal screen refresh must not terminate the turn.
-      await new Promise(resolve => setTimeout(resolve, 6_000));
-      const waiting = await botById(bot.id);
-      expect(waiting.busy, JSON.stringify(waiting.messages)).toBe(true);
-      expect(JSON.stringify(waiting.messages)).not.toContain("the VPS is being prepared");
-      rmSync(hold, { force: true });
-      expect((await preview).status).toBe(200);
-      await until(async () => {
-        const saved = await botById(bot.id);
-        return !saved.busy && saved.messages.some((message: any) => message.text?.startsWith("echo: "));
-      }, "the recovered VPS turn");
-      const mounted = JSON.parse(readFileSync(`${acpDump}.mcp.json`, "utf8"));
-      expect(mounted.find((tool: any) => tool.name === "computer")?.args).toContain(CONTAINER_ID);
-    } finally {
-      rmSync(hold, { force: true });
-      await preview;
-      await api("POST", `/api/bots/${bot.id}/interrupt`, {});
-    }
-  }, 30_000);
-
   it.each(["stopped", "missing", "stopped-during-turn"])(
     "lets Auto discover a %s VPS and start or create it through its chat tool",
     async state => {
@@ -367,7 +260,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
         else if (state === "missing") writeFileSync(missing, "missing");
         writeFileSync(join(dirname(dockerLog), "container.name"), vpsContainerName(bot.id));
         rmSync(gateFile, { force: true }); rmSync(`${acpDump}.mcp.json`, { force: true });
-        await api("PATCH", `/api/bots/${bot.id}`, { browser: false, cloudBackend: "vps", computer: null,
+        await api("PATCH", `/api/bots/${bot.id}`, { cloudBackend: "vps", computer: null,
           modelSelection: { instanceId: "vps", model: "fake-model" } });
         expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on the available remote VM" })).status).toBe(202);
         await until(async () => existsSync(`${acpDump}.mcp.json`), "the discovery turn");

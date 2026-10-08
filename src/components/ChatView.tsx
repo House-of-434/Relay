@@ -1342,8 +1342,8 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
-          {!computerComingSoon && <CallButton bot={bot} />}
-          <button
+          {!remoteClient && !computerComingSoon && <CallButton bot={bot} />}
+          {!remoteClient && <button
             data-tour="computer"
             type="button"
             disabled={computerComingSoon}
@@ -1356,7 +1356,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             title={computerComingSoon ? "Coming soon" : t("chat.computer")}
           >
             <Monitor size={18} />
-          </button>
+          </button>}
           {!remoteClient && <button
             onClick={() => dispatch({ type: "toggleInspector" })}
             aria-label={t("chat.inspector")}

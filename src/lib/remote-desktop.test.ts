@@ -1,10 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { cloudRunner, isActiveTurnRefusal, isRemoteScreenshotContention, remoteScreenshotSource } from "@/lib/remote-desktop";
+import { cloudRunner, isActiveTurnRefusal, isRemoteScreenshotContention } from "@/lib/remote-desktop";
 import type { InstanceInfo } from "@/state/store";
 import { CLOUD_COMPUTER_BUSY_ERROR } from "../../shared/computer-contention";
 
-describe("remote VPS preview", () => {
+describe("remote computer helpers", () => {
   it("uses the selected bot's bridge or the actual Boat fallback, never an unrelated bridge", () => {
     const plain = { instanceId: "plain", driverKind: "claude", snapshot: { state: "available" } } as InstanceInfo;
     const bridge = { ...plain, instanceId: "bridge", driverKind: "openai-compat", capabilities: { cloudComputerMcp: true } } as InstanceInfo;
@@ -35,19 +35,5 @@ describe("remote VPS preview", () => {
     expect(isActiveTurnRefusal({ status: 503, message })).toBe(false);
     expect(isActiveTurnRefusal({ status: 409, message: "this bot's cloud computer is being changed — wait for it to finish" })).toBe(false);
     expect(isActiveTurnRefusal(null)).toBe(false);
-  });
-
-  it("accepts only validated screenshot response shapes", () => {
-    expect(remoteScreenshotSource({ png: "aGVsbG8=", format: "png" }))
-      .toBe("data:image/png;base64,aGVsbG8=");
-    expect(remoteScreenshotSource({ png: "aGVsbG8=", format: "jpeg" }))
-      .toBe("data:image/jpeg;base64,aGVsbG8=");
-  });
-
-  it("rejects malformed formats and payloads", () => {
-    expect(remoteScreenshotSource({ png: "<svg onload=alert(1)>", format: "png" })).toBeNull();
-    expect(remoteScreenshotSource({ png: "aGVsbG8=", format: "image/svg+xml" })).toBeNull();
-    expect(remoteScreenshotSource({ format: "png" })).toBeNull();
-    expect(remoteScreenshotSource(null)).toBeNull();
   });
 });

@@ -40,6 +40,19 @@ Scout holds no Bladebro handle, path, or env var. `browser_*` calls route
 by `actor.userId` from the signed assertion — never from model tool
 arguments, matching the existing `authorize()` discipline.
 
+## Visualization contracts
+
+Three clean contracts replace the old shared "screen" abstraction:
+
+| Contract | Status | Owner |
+|---|---|---|
+| Scout research — content-first | keep | Tool Layer Bladebro/TinyFish; no frames, no UI |
+| Interactive browser visualization | removed | was `BrowserPanel`/`browser-live`/agent-browser engine |
+| Remote-computer visualization | removed | was `RemoteDesktopPanel` + `computer/screenshot`; preview-only, no agent-use dependency. `/computer/control`, `/computer/join`, `/computer/viewer-close` and the `desktopViewer` bridge stay for the local `ComputerPanel`. |
+
+There are no Scout research frames or screen events in the thread: research
+reports sources, synthesis, and answers as text, tool chips, and attached files.
+
 ## Workspace isolation (tightening 1)
 
 - `actor.userId` is the **sole** source of workspace identity.

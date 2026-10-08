@@ -68,7 +68,6 @@ describe("what the app may do", () => {
     ["POST", "/api/bots/bot_123/computer/join"],
     ["POST", "/api/bots/bot_123/secret-cards/message_1/provide"],
     ["POST", "/api/bots/bot_123/computer/control"],
-    ["POST", "/api/bots/bot_123/computer/screenshot"],
     ["POST", "/api/bots/bot_123/computer/viewer-close"],
     ["POST", "/api/groups/room-1/messages"],
     ["POST", "/api/groups/room-1/interrupt"],
@@ -79,7 +78,6 @@ describe("what the app may do", () => {
     ["PATCH", "/api/groups/room-1/tasks/th_1"],
     ["DELETE", "/api/groups/room-1/tasks/th_1"],
     ["GET", "/api/threads/th_1/messages"],
-    ["GET", "/api/threads/th_1/messages/msg_2/image"],
     ["POST", "/api/threads/th_1/messages/msg_2/file"],
     ["POST", "/api/threads/th_1/messages/msg_2/reactions"],
     ["GET", "/api/threads/th_1/export"],
@@ -180,7 +178,9 @@ describe("what it may not", () => {
   it("opens and previews only an explicitly granted cloud viewer", () => {
     expect(allowed("POST", "/api/bots/bot_123/computer/join")).toBe(true);
     expect(allowed("POST", "/api/bots/bot_123/computer/control")).toBe(true);
-    expect(allowed("POST", "/api/bots/bot_123/computer/screenshot")).toBe(true);
+    // The screen preview endpoint is gone: the phone opens the live viewer
+    // instead of polling screenshots.
+    expect(allowed("POST", "/api/bots/bot_123/computer/screenshot")).toBe(false);
     expect(allowed("POST", "/api/bots/bot_123/computer/viewer-close")).toBe(true);
     expect(allowed("GET", "/api/bots/bot_123/computer")).toBe(false);
     expect(allowed("GET", "/api/bots/bot_123/computer/control")).toBe(false);
@@ -250,7 +250,7 @@ describe("what it may not", () => {
     expect(allowed("GET", "/api/bots/bot_123/computer")).toBe(false);
     expect(allowed("GET", "/api/botsandthensome")).toBe(false);
     expect(allowed("GET", "/api/events/all")).toBe(false);
-    expect(allowed("GET", "/api/threads/th_1/messages/msg_2/image/../../../config")).toBe(false);
+    expect(allowed("GET", "/api/threads/th_1/messages/msg_2/file/../../../config")).toBe(false);
     expect(allowed("GET", "/api/bots%2f..%2fwebhooks")).toBe(false);
   });
 

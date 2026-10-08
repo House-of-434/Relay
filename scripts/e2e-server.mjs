@@ -247,9 +247,6 @@ async function main() {
       }
       if (!boatSaid) fail("box agent answered on no catalog model");
 
-      const shot = await api(`/api/bots/${boatBot.id}/computer/screenshot`, { method: "POST" });
-      if (!shot.png || shot.png.length < 10_000) fail("box screenshot came back empty");
-      log(`  ✓ box screenshot (${Math.round(shot.png.length / 1024)} KB base64)`);
       await api(`/api/bots/${boatBot.id}/computer/sleep`, { method: "POST" }).catch(() => {});
       log("  ✓ box asleep (billing paused)");
 
