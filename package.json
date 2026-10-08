@@ -32,7 +32,8 @@
     "preview": "vite preview",
     "gen:bodies": "node --experimental-strip-types scripts/gen-mascot-bodies.ts",
     "build:server": "tsc -p tsconfig.server.build.json && node scripts/bundle-server.mjs",
-    "test:packaged-server": "pnpm build:server && node scripts/smoke-packaged-server.mjs"
+    "test:packaged-server": "pnpm build:server && node scripts/smoke-packaged-server.mjs",
+    "eval": "node --experimental-strip-types evals/run.ts"
   },
   "dependencies": {
     "@clack/prompts": "1.7.0",
@@ -73,6 +74,7 @@
     "@vitejs/plugin-react": "^4.7.0",
     "esbuild": "^0.28.2",
     "oxlint": "1.80.0",
+    "playwright-core": "^1.64.0",
     "tailwindcss": "^4.1.11",
     "typebox": "1.3.7",
     "typescript": "^5.8.3",

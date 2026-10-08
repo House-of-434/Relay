@@ -4,21 +4,20 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { BOT_ROLES, roleProfilePatch } from "../../src/lib/bot-roles.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
 const forced = process.env.OMB_UI_E2E === "1";
-const enabled = forced || Boolean(binary);
-if (!enabled) console.log("skipping bot tools UI e2e: no agent-browser; set OMB_UI_E2E=1 to install the pinned release");
-const LAUNCH_TIMEOUT_MS = forced && !binary ? 600_000 : 180_000;
+const enabled = forced || Boolean(resolveUiChrome(process.env));
+if (!enabled) console.log("skipping bot tools UI e2e: no system Chrome; set OMB_UI_E2E=1 to require it");
+const chrome = resolveUiChrome(process.env);
+const LAUNCH_TIMEOUT_MS = forced && !chrome ? 600_000 : 180_000;
 
 interface FixtureInfo { ui: string; url: string; dataDir: string; logPath: string }
-interface SavedBot { id: string; name: string; soul?: string; mcpServers?: string[]; computer?: string; browser?: boolean }
+interface SavedBot { id: string; name: string; soul?: string; mcpServers?: string[]; computer?: string }
 
 describe("bot setup and tools in the real renderer", () => {
   let child: ChildProcess | undefined;
@@ -115,7 +114,6 @@ describe("bot setup and tools in the real renderer", () => {
     expect(created).toHaveLength(1);
     expect(created[0]).toMatchObject(roleProfilePatch(coder));
     expect(created[0].computer).toBe(original[0].computer);
-    expect(created[0].browser).toBe(original[0].browser);
     await expect.poll(() => evaluate("document.querySelector('[role=dialog]')?.getAttribute('aria-busy')"), { timeout: 10_000 }).toBe("false");
     // The old dialog's callback must not close this newer dialog instance.
     expect(await dialogCount()).toBe(1);

@@ -1,15 +1,17 @@
 // `control-omb ui`: drive the real React renderer headlessly against the
-// isolated fake-engine fixture, through the agent-browser binary the harness
-// already pins (server/browser-engine-release.ts). One launch owns a fixture
-// server, a Vite preview of the full <App/>, and one headless browser session
-// whose HOME is the fixture's disposable data directory; every other verb
+// isolated fake-engine fixture, through a persistent headless Chrome owned
+// by this harness (system Chrome via playwright-core — no downloaded
+// browser, no daemon outside the fixture). One launch owns a fixture
+// server, a Vite preview of the full <App/>, and one headless browser whose
+// profile lives in the fixture's disposable data directory; every other verb
 // attaches to that session through the handle file the launch printed.
 //
 // Imported by scripts/control-omb.ts, which owns HELP and the MUTATING set;
 // this file touches that module's bindings only inside functions so the
 // import cycle is harmless whichever file is loaded first.
-import { spawn, type ChildProcess } from "node:child_process";
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import type { ChildProcess } from "node:child_process";
+import { spawn } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,178 +23,185 @@ import {
   runControlOmb,
   type VerificationServer,
 } from "../control-omb.ts";
-import {
-  closeBrowserSession,
-  ensureChrome,
-  installAgentBrowserBinary,
-  resolveAgentBrowserBinary,
-} from "../../server/browser-engine.ts";
 import { fixtureApi, mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-/** Gitignored, persistent: the binary and its Chrome download once per checkout. */
+/** Gitignored, persistent scratch for the harness. */
 export const UI_TOOLS_DIR = join(ROOT, ".omb-scratch", "verify-tools");
 /** Verbs that change the fixture or the page; they take the explicit handle, never discovery. */
 export const UI_MUTATING = new Set(["click", "type", "press", "flag", "eval"]);
 
 const ENTRIES = {
-  threads: { entry: "/scripts/testing/threads-preview.tsx", route: "/__threads.html", title: "Isolated OpenMaus Chat" },
+  threads: { entry: "/scripts/testing/threads-preview.tsx", route: "/__threads.html", title: "Isolated OpenMausBot Chat" },
 } as const satisfies Record<string, Parameters<typeof mountPreview>[1]>;
 const FAKE_MODES = ["happy", "exit-early", "hang", "malformed", "stream", "not-logged-in", "slow", "background-result"];
 const SEEDED_BOT = "Pepper";
-const PLATFORM_ENV = ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"];
-// Where `agent-browser install` unpacks Chrome for Testing below `$HOME/.agent-browser/browsers/chrome-<version>/`.
-const CHROME_LAYOUTS: Partial<Record<NodeJS.Platform, string[]>> = {
-  darwin: [
-    "Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-    "chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-    "chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing",
-  ],
-  linux: ["chrome", "chrome-linux64/chrome"],
-  win32: ["chrome.exe", "chrome-win64/chrome.exe"],
-};
 const OUTPUT_LIMIT = 16 * 1024 * 1024;
 
 export interface UiHandle {
   url: string;
   previewUrl: string;
-  session: string;
-  binary: string;
   home: string;
   botId: string;
   logPath: string;
-  /** Chrome the session launched with; null when agent-browser located a browser itself. */
-  chrome: string | null;
+  /** System Chrome the driver launched with. */
+  chrome: string;
+  /** The Playwright driver daemon holding this handle's browser session. */
+  driverUrl: string;
 }
 
-type SessionEnv = Pick<UiHandle, "home" | "session" | "chrome">;
+/** System Chrome for the UI driver. `CHROME_PATH` (or `GOOGLE_CHROME`) wins,
+ * then the platform's well-known install locations. Null when nothing
+ * resolves — the UI e2e suite skips, it never downloads a browser. */
+export function resolveUiChrome(parentEnv: NodeJS.ProcessEnv = process.env): string | null {
+  const explicit = parentEnv.CHROME_PATH?.trim() || parentEnv.GOOGLE_CHROME?.trim();
+  if (explicit && existsSync(explicit)) return explicit;
+  const candidates: string[] = process.platform === "darwin"
+    ? ["/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
+    : process.platform === "win32"
+      ? [
+        join(parentEnv["PROGRAMFILES"] ?? "C:\\Program Files", "Google", "Chrome", "Application", "chrome.exe"),
+        join(parentEnv["PROGRAMFILES(X86)"] ?? "C:\\Program Files (x86)", "Google", "Chrome", "Application", "chrome.exe"),
+      ]
+      : ["/usr/bin/google-chrome-stable", "/usr/bin/google-chrome", "/usr/bin/chromium", "/usr/bin/chromium-browser", "/snap/bin/chromium"];
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
 
-/** The exact environment `open` launched with. Later verbs must repeat it:
- * agent-browser relaunches the browser (losing the page) when launch
- * settings drift, and the daemon socket lives under this HOME. */
-export function sessionEnv(handle: SessionEnv, parentEnv: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
-  const temp = join(handle.home, "tmp");
-  const env: NodeJS.ProcessEnv = {
-    HOME: handle.home,
-    USERPROFILE: handle.home,
-    TMPDIR: temp,
-    TEMP: temp,
-    TMP: temp,
-    PATH: parentEnv.PATH ?? "",
-    AGENT_BROWSER_SESSION: handle.session,
-    AGENT_BROWSER_HEADLESS: "1",
-    AGENT_BROWSER_NO_WEBMCP: "1",
-  };
-  for (const [key, value] of Object.entries(parentEnv)) {
-    if (value && PLATFORM_ENV.includes(key.toUpperCase())) env[key.toUpperCase()] = value;
+/** Fail unless system Chrome resolves, with the fix attached. */
+export function ensureUiChrome(parentEnv: NodeJS.ProcessEnv = process.env): string {
+  const chrome = resolveUiChrome(parentEnv);
+  if (!chrome) {
+    throw new ControlOmbError(
+      "ui runs need system Chrome and none resolves",
+      "install Google Chrome, or set CHROME_PATH to its executable",
+    );
   }
-  if (handle.chrome) env.AGENT_BROWSER_EXECUTABLE_PATH = handle.chrome;
-  return env;
+  return chrome;
 }
 
-/** Run one agent-browser verb with --json and return its `data`. The binary's
- * stderr is never surfaced: it can echo paths and environment. */
-function agentBrowser(
-  binary: string,
-  env: NodeJS.ProcessEnv,
-  args: string[],
-  timeoutMs = 30_000,
-): Promise<Record<string, unknown>> {
-  return new Promise((done, fail) => {
-    let child: ChildProcess;
-    try {
-      child = spawn(binary, [...args, "--json"], { env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    } catch (error) {
-      fail(new ControlOmbError(`could not start agent-browser: ${error instanceof Error ? error.message : String(error)}`));
-      return;
-    }
-    let output = "";
-    let timedOut = false;
-    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, timeoutMs);
+interface DriverHandle {
+  url: string;
+  child: ChildProcess;
+  stop: () => Promise<void>;
+}
+
+/** Spawn the Playwright driver daemon holding one persistent browser.
+ * The caller owns the child: stop it (POST /close, then kill) when done. */
+export async function startUiDriver(options: {
+  chrome: string;
+  home: string;
+  url?: string;
+  log?: (line: string) => void;
+}): Promise<DriverHandle> {
+  const { chrome, home } = options;
+  const log = options.log ?? (() => {});
+  mkdirSync(home, { recursive: true, mode: 0o700 });
+  const child = spawn(
+    process.execPath,
+    ["--experimental-strip-types", join(ROOT, "scripts", "testing", "ui-driver-server.ts"),
+      "--chrome", chrome, "--user-data-dir", join(home, ".ui-chrome")],
+    { env: process.env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true },
+  );
+  let output = "";
+  const ready = new Promise<string>((done, fail) => {
+    const timer = setTimeout(() => fail(new ControlOmbError("ui driver did not start", "check that system Chrome launches headlessly on this machine")), 60_000);
     timer.unref?.();
     child.stdout?.on("data", (chunk: Buffer) => {
       output += String(chunk);
-      if (output.length > OUTPUT_LIMIT) { clearTimeout(timer); child.kill("SIGKILL"); }
+      if (output.length > OUTPUT_LIMIT) {
+        clearTimeout(timer);
+        child.kill("SIGKILL");
+        fail(new ControlOmbError("ui driver printed too much before going ready"));
+        return;
+      }
+      const line = output.split("\n").find((candidate) => candidate.trim().startsWith("{"));
+      if (line) {
+        try {
+          const parsed = JSON.parse(line) as { ok?: unknown; url?: unknown };
+          if (parsed.ok === true && typeof parsed.url === "string") {
+            clearTimeout(timer);
+            done(parsed.url);
+          }
+        } catch { /* keep waiting for the ready line */ }
+      }
     });
-    child.stderr?.resume();
-    child.on("error", (error) => { clearTimeout(timer); fail(new ControlOmbError(`could not start agent-browser: ${error.message}`)); });
+    child.stderr?.on("data", (chunk: Buffer) => log(`ui driver: ${String(chunk).trim()}`));
+    child.on("error", (error) => {
+      clearTimeout(timer);
+      fail(new ControlOmbError(`could not start the ui driver: ${error.message}`));
+    });
     child.on("close", (code) => {
       clearTimeout(timer);
-      if (timedOut) {
-        fail(new ControlOmbError(`agent-browser ${args[0]} did not finish within ${timeoutMs}ms`, "check the page with `ui screenshot` or `ui console`"));
-        return;
-      }
-      let result: { success?: unknown; data?: unknown; error?: unknown } | null = null;
-      try { result = JSON.parse(output); } catch { /* not JSON: reported below */ }
-      const data = result?.data;
-      if (code === 0 && result?.success === true && data && typeof data === "object" && !Array.isArray(data)) {
-        done(data as Record<string, unknown>);
-        return;
-      }
-      const reason = typeof result?.error === "string" ? result.error
-        : result?.error && typeof result.error === "object" && typeof (result.error as { message?: unknown }).message === "string"
-          ? (result.error as { message: string }).message
-          : `exit ${code ?? "by signal"}`;
-      fail(new ControlOmbError(`agent-browser ${args[0]} failed: ${reason.slice(0, 300)}`, "take a fresh `ui snapshot`; refs change after the page updates"));
+      fail(new ControlOmbError(`ui driver exited before going ready (code ${code ?? "signal"})`));
     });
   });
+  const url = await ready;
+  if (options.url) {
+    await driverCall(url, "open", { url: options.url }, 120_000);
+  }
+  let stopped = false;
+  return {
+    url,
+    child,
+    stop: async () => {
+      if (stopped) return;
+      stopped = true;
+      try {
+        await driverCall(url, "close", {}, 15_000);
+      } catch { /* kill below covers it */ }
+      child.kill("SIGKILL");
+    },
+  };
 }
 
-/** Chrome for Testing that `agent-browser install` unpacked under the tools
- * directory, newest version first; null when it found a system browser instead. */
-export function installedChrome(toolsDir = UI_TOOLS_DIR, platform: NodeJS.Platform = process.platform): string | null {
-  const browsers = join(toolsDir, ".agent-browser", "browsers");
-  let versions: string[];
+/** One driver verb. Throws ControlOmbError with the driver's message. */
+export async function driverCall(
+  driverUrl: string,
+  verb: "open" | "snapshot" | "click" | "type" | "press" | "eval" | "console" | "screenshot" | "wait-fn" | "wait-load" | "close",
+  body: Record<string, unknown>,
+  timeoutMs = 30_000,
+): Promise<Record<string, unknown>> {
+  let response: Response;
   try {
-    versions = readdirSync(browsers)
-      .filter((name) => name.startsWith("chrome-"))
-      .sort((a, b) => b.localeCompare(a, undefined, { numeric: true }));
+    response = await fetch(`${driverUrl}/${verb}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
   } catch {
-    return null;
+    throw new ControlOmbError(
+      `ui driver ${verb} did not finish within ${timeoutMs}ms`,
+      "check the page with `ui screenshot` or `ui console`",
+    );
   }
-  for (const version of versions) {
-    for (const layout of CHROME_LAYOUTS[platform] ?? []) {
-      const candidate = join(browsers, version, layout);
-      if (existsSync(candidate)) return candidate;
+  if (verb === "screenshot") {
+    if (!response.ok) {
+      const reason = await response.text().catch(() => `status ${response.status}`);
+      throw new ControlOmbError(`ui driver screenshot failed: ${reason.slice(0, 300)}`);
     }
+    return { bytes: Buffer.from(await response.arrayBuffer()) };
   }
-  return null;
-}
-
-/** OMB_AGENT_BROWSER_PATH, then the tools directory, then PATH; otherwise the
- * pinned download, verified by size and SHA-256. Chrome follows the same rule
- * with AGENT_BROWSER_EXECUTABLE_PATH. Both land once under UI_TOOLS_DIR. */
-export async function ensureUiBrowser(
-  parentEnv: NodeJS.ProcessEnv = process.env,
-  log: (line: string) => void = () => {},
-  toolsDir = UI_TOOLS_DIR,
-): Promise<{ binary: string; chrome: string | null }> {
-  mkdirSync(toolsDir, { recursive: true, mode: 0o700 });
-  let binary = resolveAgentBrowserBinary({ dataDir: toolsDir, env: parentEnv });
-  if (!binary) {
-    const started = Date.now();
-    binary = await installAgentBrowserBinary({ dataDir: toolsDir, log });
-    log(`agent-browser installed at ${binary} in ${Date.now() - started}ms`);
+  let result: { ok?: unknown; error?: unknown } & Record<string, unknown>;
+  try {
+    result = (await response.json()) as typeof result;
+  } catch {
+    throw new ControlOmbError(`ui driver ${verb} answered non-JSON (status ${response.status})`);
   }
-  const explicit = parentEnv.AGENT_BROWSER_EXECUTABLE_PATH?.trim();
-  if (explicit) {
-    if (!existsSync(explicit)) throw new ControlOmbError(`AGENT_BROWSER_EXECUTABLE_PATH does not exist: ${explicit}`, "unset it to use the Chrome agent-browser installs");
-    return { binary, chrome: resolve(explicit) };
+  if (!response.ok || result.ok !== true) {
+    const reason = typeof result.error === "string" ? result.error : `status ${response.status}`;
+    throw new ControlOmbError(
+      `ui driver ${verb} failed: ${reason.slice(0, 300)}`,
+      "take a fresh `ui snapshot`; refs change after the page updates",
+    );
   }
-  let chrome = installedChrome(toolsDir);
-  if (!chrome) {
-    const started = Date.now();
-    await ensureChrome(binary, { env: sessionEnv({ home: toolsDir, session: "omb-ui-install", chrome: null }, parentEnv), log });
-    log(`Chrome ready in ${Date.now() - started}ms`);
-    chrome = installedChrome(toolsDir);
-    if (!chrome) log("no Chrome for Testing under the tools directory; the session will use the browser agent-browser finds itself");
-  }
-  return { binary, chrome };
+  const { ok: _ok, ...data } = result;
+  return data;
 }
 
 function loadHandle(raw: unknown, verb: string): UiHandle {
   if (typeof raw !== "string" || !raw.trim()) {
-    throw new ControlOmbError(`ui ${verb} requires --ui HANDLE`, "run `ui launch`; it prints the handle path (ui.json inside its data directory)");
+    throw new ControlOmbError(`ui ${verb} requires --ui HANDLE`, "run `ui launch` again and use the handle it prints");
   }
   const path = resolve(raw.trim());
   let handle: Partial<UiHandle>;
@@ -201,25 +210,27 @@ function loadHandle(raw: unknown, verb: string): UiHandle {
   } catch (error) {
     throw new ControlOmbError(`could not read the ui handle ${path}: ${error instanceof Error ? error.message : String(error)}`, "the launch that wrote it may have stopped; run `ui launch` again");
   }
-  for (const key of ["url", "previewUrl", "session", "binary", "home", "botId", "logPath"] as const) {
+  for (const key of ["url", "previewUrl", "home", "botId", "logPath", "chrome", "driverUrl"] as const) {
     if (typeof handle[key] !== "string" || !handle[key]) throw new ControlOmbError(`the ui handle ${path} lacks ${key}`, "run `ui launch` again and use the handle it prints");
   }
-  if (handle.chrome !== null && typeof handle.chrome !== "string") throw new ControlOmbError(`the ui handle ${path} has an invalid chrome entry`);
   if (!existsSync(handle.home!)) throw new ControlOmbError(`the ui session's data directory is gone: ${handle.home}`, "its launch was stopped; run `ui launch` again");
   return handle as UiHandle;
 }
 
-/** A verb on a dead daemon would launch a fresh blank browser and drive that. */
+/** A verb on a dead driver would launch a fresh blank browser and drive that. */
 async function requireLiveSession(handle: UiHandle): Promise<void> {
-  const data = await agentBrowser(handle.binary, sessionEnv(handle), ["session", "list"], 10_000);
-  const sessions = Array.isArray(data.sessions) ? data.sessions : [];
-  if (!sessions.includes(handle.session)) {
-    throw new ControlOmbError(`the ui session ${handle.session} is not running`, "its launch was stopped or crashed; run `ui launch` again and use the new handle");
+  let alive = false;
+  try {
+    const response = await fetch(`${handle.driverUrl}/health`, { signal: AbortSignal.timeout(10_000) });
+    alive = response.ok;
+  } catch { /* dead below */ }
+  if (!alive) {
+    throw new ControlOmbError(`the ui driver for ${handle.home} is not running`, "its launch was stopped or crashed; run `ui launch` again and use the new handle");
   }
 }
 
-async function snapshot(handle: UiHandle, interactive: boolean): Promise<Record<string, unknown>> {
-  return agentBrowser(handle.binary, sessionEnv(handle), ["snapshot", ...(interactive ? ["-i"] : [])]);
+async function snapshot(handle: UiHandle): Promise<Record<string, unknown>> {
+  return driverCall(handle.driverUrl, "snapshot", {});
 }
 
 /** How long `--name` waits for its element to be rendered before giving up. */
@@ -245,7 +256,7 @@ async function resolveTarget(handle: UiHandle, values: Record<string, unknown>, 
   const deadline = Date.now() + TARGET_WAIT_MS;
   let matches: Array<[string, { name?: unknown; role?: unknown }]> = [];
   for (;;) {
-    const refs = (await snapshot(handle, false)).refs as Record<string, { name?: unknown; role?: unknown }> | undefined;
+    const refs = (await snapshot(handle)).refs as Record<string, { name?: unknown; role?: unknown }> | undefined;
     matches = Object.entries(refs ?? {}).filter(([, element]) => element?.name === name);
     if (matches.length === 1) return { target: `@${matches[0]![0]}`, name };
     if (matches.length > 1 || Date.now() >= deadline) break;
@@ -303,15 +314,17 @@ async function waitSettle(handle: UiHandle, timeoutSeconds: number): Promise<Rec
   // renderer caught up with the server before a snapshot reads it.
   const messages = Array.isArray(wait.messages) ? wait.messages as Array<{ id?: unknown; kind?: unknown }> : [];
   const newest = [...messages].reverse().find((message) => message.kind === "text" && typeof message.id === "string");
-  const env = sessionEnv(handle);
   try {
     if (newest) {
-      await agentBrowser(handle.binary, env, ["wait", "--fn", `!!document.querySelector(${JSON.stringify(`[data-mid=${JSON.stringify(newest.id)}]`)})`], Math.max(1_000, deadline - Date.now()));
+      await driverCall(handle.driverUrl, "wait-fn", {
+        js: `!!document.querySelector(${JSON.stringify(`[data-mid=${JSON.stringify(newest.id)}]`)})`,
+        timeoutMs: Math.max(1_000, deadline - Date.now()),
+      }, Math.max(1_000, deadline - Date.now()) + 5_000);
       renderer = { rendered: true, lastMessageId: newest.id };
     } else {
       renderer = { rendered: true, lastMessageId: null };
     }
-    const idle = await agentBrowser(handle.binary, env, ["wait", "--load", "networkidle"], Math.max(1_000, deadline - Date.now()));
+    const idle = await driverCall(handle.driverUrl, "wait-load", { timeoutMs: Math.max(1_000, deadline - Date.now()) }, Math.max(1_000, deadline - Date.now()) + 5_000);
     browser = { state: idle.state ?? "networkidle" };
   } catch (error) {
     return { ok: false, ...state(), error: error instanceof Error ? error.message : String(error) };
@@ -333,7 +346,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     const values = parse(command, rest, { ...ui, interactive: { type: "boolean", default: false } });
     const handle = loadHandle(values.ui, verb);
     await requireLiveSession(handle);
-    return { ok: true, ...(await snapshot(handle, values.interactive === true)) };
+    return { ok: true, ...(await snapshot(handle)) };
   }
 
   if (verb === "click" || verb === "type") {
@@ -343,7 +356,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     if (verb === "type" && typeof text !== "string") throw new ControlOmbError("ui type requires --text TEXT");
     await requireLiveSession(handle);
     const { target, name } = await resolveTarget(handle, values, verb);
-    const data = await agentBrowser(handle.binary, sessionEnv(handle), verb === "click" ? ["click", target] : ["type", target, text as string]);
+    const data = await driverCall(handle.driverUrl, verb, verb === "click" ? { ref: target } : { ref: target, text: text as string });
     return { ok: true, target, ...(name ? { name } : {}), ...data };
   }
 
@@ -352,7 +365,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     const handle = loadHandle(values.ui, verb);
     if (typeof values.keys !== "string" || !values.keys.trim()) throw new ControlOmbError("ui press requires --keys KEYS", "example: --keys Enter or --keys Meta+k");
     await requireLiveSession(handle);
-    return { ok: true, ...(await agentBrowser(handle.binary, sessionEnv(handle), ["press", values.keys.trim()])) };
+    return { ok: true, ...(await driverCall(handle.driverUrl, "press", { keys: values.keys.trim() })) };
   }
 
   if (verb === "screenshot") {
@@ -362,18 +375,22 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     const out = resolve(values.out);
     mkdirSync(dirname(out), { recursive: true });
     await requireLiveSession(handle);
-    await agentBrowser(handle.binary, sessionEnv(handle), ["screenshot", out], 60_000);
-    let bytes = 0;
-    try { bytes = statSync(out).size; } catch { /* reported as 0 */ }
-    if (!bytes) throw new ControlOmbError(`agent-browser reported a screenshot it did not write: ${out}`);
-    return { ok: true, path: out, bytes };
+    const { bytes } = await driverCall(handle.driverUrl, "screenshot", {}, 60_000);
+    const png = Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes as Uint8Array);
+    writeFileSync(out, png);
+    let size = 0;
+    try {
+      size = statSync(out).size;
+    } catch { /* reported as 0 */ }
+    if (!size) throw new ControlOmbError(`the ui driver wrote no screenshot: ${out}`);
+    return { ok: true, path: out, bytes: size };
   }
 
   if (verb === "console") {
     const values = parse(command, rest, ui);
     const handle = loadHandle(values.ui, verb);
     await requireLiveSession(handle);
-    return { ok: true, ...(await agentBrowser(handle.binary, sessionEnv(handle), ["console"])) };
+    return { ok: true, ...(await driverCall(handle.driverUrl, "console", {})) };
   }
 
   if (verb === "eval") {
@@ -381,7 +398,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     const handle = loadHandle(values.ui, verb);
     if (typeof values.js !== "string" || !values.js.trim()) throw new ControlOmbError("ui eval requires --js CODE");
     await requireLiveSession(handle);
-    return { ok: true, ...(await agentBrowser(handle.binary, sessionEnv(handle), ["eval", values.js])) };
+    return { ok: true, ...(await driverCall(handle.driverUrl, "eval", { js: values.js })) };
   }
 
   if (verb === "flag") {
@@ -463,12 +480,12 @@ export async function launchUi(
 
   let fixture: VerificationServer | undefined;
   let preview: MountedPreview | undefined;
-  let opened: { binary: string; env: NodeJS.ProcessEnv } | undefined;
+  let driver: DriverHandle | undefined;
   try {
-    const { binary, chrome } = await ensureUiBrowser(parentEnv, note);
+    const chrome = ensureUiChrome(parentEnv);
     checkpoint();
     fixture = await launchVerificationServer({ ...parentEnv, ...fakeEnv }, startup.signal, undefined,
-      { binaryPath: binary, executablePath: chrome ?? "" }, undefined, undefined, [], fixtureOptions.boatFixtureApi);
+      undefined, undefined, [], fixtureOptions.boatFixtureApi);
     checkpoint();
     const api = fixtureApi(fixture.info.url);
     await api("PATCH", "/api/config", { language: "en" });
@@ -478,22 +495,19 @@ export async function launchUi(
     // notes would otherwise land there first.
     preview = await mountPreview(fixture, { ...entry, logLevel: "warn" });
     checkpoint();
-    const session: SessionEnv = { home: fixture.info.dataDir, session: `omb-ui-${new URL(fixture.info.url).port}`, chrome };
-    const env = sessionEnv(session, parentEnv);
-    opened = { binary, env };
-    await agentBrowser(binary, env, ["open", preview.previewUrl], 120_000);
+    driver = await startUiDriver({ chrome, home: fixture.info.dataDir, url: preview.previewUrl, log: note });
     checkpoint();
     const handle: UiHandle = {
       url: fixture.info.url,
       previewUrl: preview.previewUrl,
-      session: session.session,
-      binary,
       home: fixture.info.dataDir,
       botId: created.bot.id,
       logPath: fixture.info.logPath,
       chrome,
+      driverUrl: driver.url,
     };
     const handlePath = join(fixture.info.dataDir, "ui.json");
+    const { writeFileSync } = await import("node:fs");
     writeFileSync(handlePath, `${JSON.stringify(handle, null, 2)}\n`, { mode: 0o600 });
     io.stdout.write(`${JSON.stringify({
       ok: true, ui: handlePath, url: handle.url, previewUrl: handle.previewUrl, botId: handle.botId, dataDir: handle.home, logPath: handle.logPath,
@@ -508,13 +522,7 @@ export async function launchUi(
   } finally {
     process.off("SIGINT", requestStop);
     process.off("SIGTERM", requestStop);
-    if (opened) {
-      // closeBrowserSession waits until the daemon is really gone; a plain
-      // `close` only acknowledges. Both are scoped to this fixture's HOME.
-      if (!await closeBrowserSession(opened.binary, opened.env)) {
-        await agentBrowser(opened.binary, opened.env, ["close"], 15_000).catch(() => {});
-      }
-    }
+    await driver?.stop().catch(() => {});
     await preview?.close();
     await fixture?.close();
   }

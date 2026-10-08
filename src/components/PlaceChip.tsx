@@ -2,7 +2,6 @@ import { Check } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
-import { browserAvailable, builtInBrowserEnabled } from "@/lib/feature-flags";
 import { t } from "@/lib/i18n";
 import { instanceSupportsLocalComputer, localComputerSelectable } from "@/lib/local-computer";
 import { effectivePlace, PLACES, placeLabelKey, placeOffered, type Place } from "@/lib/place";
@@ -10,7 +9,7 @@ import { useStore, type Bot, type Task } from "@/state/store";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { PlaceIcon } from "./PlaceIcon";
 
-export type PlaceAvailability = Record<Place, boolean>;
+export type PlaceAvailability = Record<Exclude<Place, "browser">, boolean>;
 
 /** The same reachability the Works on picker applies, so the chip never
  * offers a place the panel would grey out. */
@@ -27,7 +26,6 @@ export function usePlaceAvailability(bot: Bot): PlaceAvailability {
     cloud: (bot.cloudBackend === "vps" ? computerMcp && !boxAgent : computerMcp || boxAgent) && (bot.cloudBackend === "vps" ? allowed.vps : allowed.box),
     vm: Boolean(instance?.snapshot?.state === "available" && computerMcp && !boxAgent) && allowed.localVm && placeOffered("vm", state.config),
     local: localComputerSelectable({ capabilities, providerSupportsLocal: instanceSupportsLocalComputer(state.instances, bot) }) && allowed.thisComputer && placeOffered("local", state.config),
-    browser: builtInBrowserEnabled(state.config) && browserAvailable(state.config) && instance?.capabilities?.browserMcp === true && !boxAgent,
   };
 }
 
@@ -44,7 +42,7 @@ export function PlaceChip({ bot, task, live, disabled = false, onPin }: {
   task?: Pick<Task, "surface"> | null;
   live: boolean;
   disabled?: boolean;
-  onPin: (surface: Place | null) => void;
+  onPin: (surface: Exclude<Place, "browser"> | null) => void;
 }) {
   const [open, setOpen] = useState(false);
   const motion = useMenuMotion(open);
@@ -67,7 +65,7 @@ export function PlaceChip({ bot, task, live, disabled = false, onPin }: {
     return () => { document.removeEventListener("mousedown", outside); document.removeEventListener("keydown", escape); };
   }, [open]);
 
-  const choose = (surface: Place | null) => { setOpen(false); if (surface !== (task?.surface ?? null)) onPin(surface); };
+  const choose = (surface: Exclude<Place, "browser"> | null) => { setOpen(false); if (surface !== (task?.surface ?? null)) onPin(surface); };
   const botDefault = bot.computer ?? "auto";
 
   return (

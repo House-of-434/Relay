@@ -97,16 +97,15 @@ it("never echoes a secret or token in its refusal", () => {
 
 // ── places ──────────────────────────────────────────────────────────────────
 
-it("offers the built-in browser and cloud computers, never this computer or a Local VM", () => {
-  expect((["cloud", "vm", "local", "browser"] as const).filter(cloudHomeOffersPlace)).toEqual(["cloud", "browser"]);
+it("offers cloud computers, never this computer or a Local VM", () => {
+  expect((["cloud", "vm", "local"] as const).filter(cloudHomeOffersPlace)).toEqual(["cloud"]);
   expect(cloudHomePlaceRefusal("cloud")).toBeUndefined();
-  expect(cloudHomePlaceRefusal("browser")).toBeUndefined();
 });
 
 it("refuses the places it never offers with what is true there, not a setup step", () => {
   const local = cloudHomePlaceRefusal("local")!, vm = cloudHomePlaceRefusal("vm")!;
-  expect(local).toBe("This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto, Cloud or Browser, or lend your Mac under Settings → OMB Cloud.");
-  expect(vm).toBe("Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto, Cloud or Browser.");
+  expect(local).toBe("This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto or Cloud, or lend your Mac under Settings → OMB Cloud.");
+  expect(vm).toBe("Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto or Cloud.");
   for (const text of [local, vm]) {
     expect(text).not.toMatch(/configure|Computer panel|install|set (?:it|one) up/i);
     // A failed turn shows the first 160 characters of its error.
@@ -114,8 +113,8 @@ it("refuses the places it never offers with what is true there, not a setup step
   }
 });
 
-it("suggests the browser, not a Local VM, when Cloud has no Boat account on a Cloud home", () => {
-  expect(boatNotConfiguredMessage(true)).toBe("Cloud Boat is not configured — add a Boat API key or choose Browser");
+it("names only a Boat API key when Cloud has no Boat account on a Cloud home", () => {
+  expect(boatNotConfiguredMessage(true)).toBe("Cloud Boat is not configured — add a Boat API key");
   // Every other server keeps its words.
   expect(boatNotConfiguredMessage(false)).toBe("Cloud Boat is not configured — add a Boat API key or choose Local VM");
 });

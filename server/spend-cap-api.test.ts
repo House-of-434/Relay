@@ -25,7 +25,7 @@ describe("spend cap and prices through real turns", () => {
     layerDir = mkdtempSync(join(tmpdir(), "omb-fake-layer-"));
     mkdirSync(join(layerDir, "server"));
     writeFileSync(join(layerDir, "server", "index.js"), 'export async function register() { return { customer: "Fixture Co", features: ["budgets", "billing"], expiresAt: "2099-01-01" }; }\n');
-    session = await launchVerificationServer(process.env, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    session = await launchVerificationServer(process.env, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
   }, 60_000);
 
   afterEach(async () => {
@@ -49,7 +49,7 @@ describe("spend cap and prices through real turns", () => {
       [TIDY_MARKER]: '{"pairs":[]}',
     }));
     session = await launchVerificationServer({ ...process.env, FAKE_CLAUDE_TEXT_ROUTES: routes, FAKE_CLAUDE_TEXT_DUMP: dump },
-      undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+      undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
     const created = await api("/api/bots", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ name: "Budgeted memory" }) });
     expect(created.status).toBe(201);
     const { bot } = await created.json() as any;
@@ -131,7 +131,7 @@ describe("spend cap and prices through real turns", () => {
     await session.close();
     session = await launchVerificationServer({ ...process.env,
       FAKE_CLAUDE_TEXT_RESULT: JSON.stringify({ type: "result", result: '{"moves":[]}', ...metadata }),
-    }, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    }, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
     const { bot } = await control(["new-bot", "--name", "Helper usage"]);
     expect((await api(`/api/bots/${bot.id}/memory/file`, {
       method: "PUT", headers: { "content-type": "application/json" },
@@ -214,7 +214,7 @@ describe("spend cap and prices through real turns", () => {
         "The draft has been checked.",
       ]),
       FAKE_CLAUDE_REPLY_STATE: replyState,
-    }, undefined, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
+    }, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
     expect((await put({ budgets: { monthlyUsd: allowedTurns * 0.01 } })).status).toBe(200);
     const lead = (await control(["new-bot", "--name", "Lead"])).bot;
     const worker = (await control(["new-bot", "--name", "Worker"])).bot;

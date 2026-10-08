@@ -107,9 +107,8 @@ export class CloudOverflowConsent {
 }
 
 /** One running cloud seat started by overflow. `touch` is called only
- * for real computer tool completions on that seat — screen-poller frames
- * never reach it, exactly like #1653's activity clock, so preview
- * traffic cannot keep a paid machine awake. */
+ * for real computer tool completions on that seat, exactly like #1653's
+ * activity clock, so background traffic cannot keep a paid machine awake. */
 export class CloudSeatLease {
   readonly botId: string;
   readonly threadId: string;

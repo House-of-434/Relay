@@ -11,7 +11,7 @@ export type BrowserControlTransitionFailure =
   | "durable-release"
   | "native-release";
 
-/** BrowserPanel owns a two-phase lease because direct scoped host tokens can
+/** ComputerPanel owns a two-phase lease because direct scoped host tokens can
  * bypass the renderer. Take is native-first; release is durable-first. A
  * failed take stays locally held, and a failed release reasserts the hold. */
 export async function transitionBrowserControlLease(input: {
@@ -46,7 +46,7 @@ export function heldComputerControlBotIds(
 }
 
 /** Coordinate the public server lease with Electron's private browser gate.
- * Take is local-first; release is server-first. BrowserPanel passes
+ * Take is local-first; release is server-first. ComputerPanel passes
  * `syncNativeBrowser: false` because it owns the same choreography itself. */
 export async function transitionComputerControlLease<
   Action extends ComputerControlAction,

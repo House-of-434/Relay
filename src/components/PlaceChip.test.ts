@@ -18,7 +18,7 @@ vi.mock("@/state/store", async (importOriginal) => {
           driverKind: "grokAgent",
           displayName: "Grok",
           snapshot: { state: "available" },
-          capabilities: { computerMcp: true, browserMcp: true },
+          capabilities: { computerMcp: true },
         } as InstanceInfo],
       },
       dispatch: vi.fn(),

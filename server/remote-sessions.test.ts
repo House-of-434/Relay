@@ -134,7 +134,6 @@ beforeAll(async () => {
     instances: { fixture: { driver: "remote-session-test-shadow" } },
     profile: { name: "Security fixture", email: "private@example.invalid" },
     vps: { sshAlias: "fixture-private-host" },
-    browserProfiles: [{ id: "fixture", name: "Fixture browser", partitionId: "fixture-private-partition" }],
   }));
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
@@ -520,12 +519,12 @@ describe("pairing", () => {
     function expectClientConfig(config: any) {
       expect(config.profile).toEqual({ name: "Updated fixture", email: "" });
       expect(config.vps).toEqual({ configured: true, sshAlias: "" });
-      expect(config.browserProfiles).toEqual([{ id: "fixture", name: "Fixture browser" }]);
+      expect(config).not.toHaveProperty("browserProfiles");
     }
     function expectAdminConfig(config: any) {
       expect(config.profile).toEqual({ name: "Updated fixture", email: "updated-private@example.invalid", aboutMe: "" });
       expect(config.vps).toEqual({ configured: true, sshAlias: "fixture-private-host" });
-      expect(config.browserProfiles).toEqual([{ id: "fixture", name: "Fixture browser", partitionId: "fixture-private-partition" }]);
+      expect(config).not.toHaveProperty("browserProfiles");
     }
     try {
       // Connect the client first so a mutation of the shared payload would

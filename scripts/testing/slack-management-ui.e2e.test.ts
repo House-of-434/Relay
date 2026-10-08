@@ -5,17 +5,16 @@ import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
 const forced = process.env.OMB_UI_E2E === "1";
-const enabled = forced || Boolean(binary);
-const launchTimeout = forced && !binary ? 600_000 : 180_000;
-if (!enabled) console.log("skipping Slack settings UI e2e: no agent-browser; set OMB_UI_E2E=1 to install the pinned release");
+const enabled = forced || Boolean(resolveUiChrome(process.env));
+const chrome = resolveUiChrome(process.env);
+const launchTimeout = forced && !chrome ? 600_000 : 180_000;
+if (!enabled) console.log("skipping Slack settings UI e2e: no system Chrome; set OMB_UI_E2E=1 to require it");
 
 describe("Slack management in agent settings", () => {
   let child: ChildProcess | undefined;

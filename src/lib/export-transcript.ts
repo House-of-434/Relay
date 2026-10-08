@@ -131,10 +131,6 @@ export function formatTranscriptMarkdown(options: ExportTranscriptOptions): stri
       messageLines.push(`> ${statusIcon} _Used tool:_ ${inlineCode(toolLabel)}`);
     }
 
-    if (message.kind === "screen" && message.png) {
-      messageLines.push("📷 _Screen capture (image not included in Markdown export)._");
-    }
-
     // Only output if the message has something to display
     if (messageLines.length > 0) {
       lines.push("");

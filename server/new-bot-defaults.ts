@@ -25,7 +25,7 @@ export const botDefaultsProfileSchema = profilePatchSchema.extend({
   color: z.enum(["green", "blue", "red", "orange", "purple", "cyan", "pink", "yellow", "teal", "coral"]).optional(),
   mascotExpression: z.string().max(60).nullable().optional(),
   modelSelection: botDefaultModelSchema.optional(),
-  computer: z.enum(["cloud", "vm", "local", "browser", "off"]).nullable().optional(),
+  computer: z.enum(["cloud", "vm", "local", "off"]).nullable().optional(),
   cloudBackend: z.enum(["box", "vps"]).optional(),
   autoStartVps: z.boolean().optional(),
   cwd: z.string().max(4096).nullable().optional(),
@@ -36,8 +36,6 @@ export const botDefaultsProfileSchema = profilePatchSchema.extend({
   approvePeerComms: z.boolean().optional(),
   peers: strings(1000, 100).nullable().optional(),
   composio: z.boolean().optional(),
-  browser: z.boolean().optional(),
-  browserProfile: z.string().max(100).nullable().optional(),
   mcpServers: strings(100, 100).nullable().optional(),
   parkDirectMessages: z.boolean().optional(),
 }).strict();

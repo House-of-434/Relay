@@ -4,7 +4,6 @@
 // stay pure prop-takers. This hook is the one place in the bot settings
 // dialog that still reaches into useStore.
 import { useDesktopCapabilities } from "../DesktopCapabilities";
-import { browserAvailable, browserUnavailableReason, builtInBrowserEnabled } from "@/lib/feature-flags";
 import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { stateForBot } from "@/lib/mascot";
 import { placeOffered } from "@/lib/place";
@@ -39,7 +38,6 @@ export type BotPatch = Partial<
     | "managedSections"
     | "approvePeerComms"
     | "composio"
-    | "browser"
     | "mcpServers"
     | "modelSelection"
   >
@@ -76,20 +74,6 @@ export function useBotSettingsDerived(bot: Bot) {
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const connectorGrantState: ConnectorGrantsState = connectorGrantsState(bot);
-  const canUseBrowser = engine?.capabilities?.browserMcp === true;
-  const desktopBrowser = browserAvailable(state.config);
-  const browserBlockedOnWindows = window.ogb?.platform === "win32" && !desktopBrowser;
-  const browserFeature = builtInBrowserEnabled(state.config);
-  const browserAllowed = bot.browser !== false;
-  const browserEnabled = browserFeature && browserAllowed;
-  // "Works on: Browser" needs everything the switch needs except the switch
-  // itself; the boat-native Computer engine has no browser-only mode.
-  const browserSelectable = desktopBrowser && browserFeature && canUseBrowser && engine?.driverKind !== "boxAgent";
-  const browserDisabledReason = !desktopBrowser
-    ? browserUnavailableReason(state.config)
-    : !browserFeature
-      ? "The built-in browser is switched off under App Settings → Experimental"
-      : "This model engine cannot use the built-in browser";
   const sectionName = bot.section?.trim() || "General";
   const currentChief = state.bots.find(
     (candidate) =>
@@ -110,14 +94,6 @@ export function useBotSettingsDerived(bot: Bot) {
     connectedAppsConfigured,
     connectedAppsEnabled,
     connectorGrantState,
-    canUseBrowser,
-    desktopBrowser,
-    browserBlockedOnWindows,
-    browserFeature,
-    browserAllowed,
-    browserEnabled,
-    browserSelectable,
-    browserDisabledReason,
     sectionName,
     currentChief,
     botRoutines,

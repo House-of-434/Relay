@@ -134,7 +134,6 @@ export function recordAuthorityChange(
   const scalars: Array<[field: string, before: string, after: string]> = [
     ["approvalMode", before.approvalMode, after.approvalMode],
     ["composio", onOff(before.composio), onOff(after.composio)],
-    ["browser", onOff(before.browser), onOff(after.browser)],
     ["approvePeerComms", onOff(before.approvePeerComms), onOff(after.approvePeerComms)],
   ];
   for (const [field, b, a] of scalars) {

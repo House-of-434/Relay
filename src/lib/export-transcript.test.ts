@@ -185,15 +185,13 @@ describe("export-transcript", () => {
     expect(markdown).not.toContain("/private/attachments");
   });
 
-  it("marks screen captures without embedding pixels or exporting private card fields", () => {
+  it("exports secret cards without their private card fields", () => {
     const markdown = formatTranscriptMarkdown({
       title: "Assistant", exportedAt: fixedDate,
       messages: [
-        { id: "screen", role: "bot", kind: "screen", png: "PRIVATE_BASE64_PIXELS", mime: "image/png", at: 1 },
         { id: "secret", role: "bot", kind: "secret", secret: { requestKey: "PRIVATE_REQUEST_KEY" } as Message["secret"], at: 2 },
       ],
     });
-    expect(markdown).toContain("Screen capture");
     expect(markdown).not.toContain("PRIVATE_");
   });
 

@@ -311,6 +311,10 @@ export interface RoutineRequestServiceOptions {
    * bot is deleted or moved to another section). Returns the sentence to
    * refuse with, or null to allow. Checked at propose AND confirm time. */
   validateTarget?: (proposerBotId: string, target: { botId: string; name: string }) => string | null;
+  /** Resolves the confirming user's identity for routine ownership, read
+   * from the card's conversation at confirm time — never from proposal
+   * text. Absent means pre-owner behavior (no workspace routing). */
+  ownerForThread?: (threadId: string) => { userId?: string; email?: string } | undefined;
 }
 
 export interface ProposeRoutineRequestArgs {
@@ -1092,6 +1096,7 @@ export class RoutineRequestService {
   private readonly canPersist?: RoutineRequestServiceOptions["canPersist"];
   private readonly validateTarget?: RoutineRequestServiceOptions["validateTarget"];
   private readonly autoApply?: RoutineRequestServiceOptions["autoApply"];
+  private readonly ownerForThread?: RoutineRequestServiceOptions["ownerForThread"];
 
   constructor(options: RoutineRequestServiceOptions) {
     this.store = options.store;
@@ -1102,6 +1107,7 @@ export class RoutineRequestService {
     this.canPersist = options.canPersist;
     this.validateTarget = options.validateTarget;
     this.autoApply = options.autoApply;
+    this.ownerForThread = options.ownerForThread;
   }
 
   async propose(args: ProposeRoutineRequestArgs): Promise<RoutineProposalResult> {
@@ -1435,6 +1441,9 @@ export class RoutineRequestService {
   private apply(payload: RoutineRequestCardData, messageId: string, fingerprint: string): string {
     const operation = payload.operation;
     const confirmationAt = this.now();
+    // Owner is the confirming conversation's user, resolved live: the card
+    // may sit open while threads change hands. Model text never supplies it.
+    const owner = this.ownerForThread?.(payload.threadId);
     switch (operation.action) {
       case "create":
         return this.routines.create(inputFromDefinition(
@@ -1449,7 +1458,7 @@ export class RoutineRequestService {
           action: "create",
           fingerprintVersion: ROUTINE_REQUEST_FINGERPRINT_VERSION,
           fingerprint,
-        }).id;
+        }, owner).id;
       case "update": {
         const current = verifyManageSnapshot(operation, this.routines, operation.forBot?.botId ?? payload.botId);
         const updated = this.routines.update(

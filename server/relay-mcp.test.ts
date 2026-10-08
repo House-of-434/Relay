@@ -102,9 +102,12 @@ describe("Relay MCP bot binding", () => {
     }, "http://127.0.0.1:8787")).toThrow(/RELAY_TOOL_ACTOR_SECRET/);
   });
 
-  it("refuses non-loopback Relay Tool Layer URLs", () => {
-    for (const url of ["https://tools.example.com", "http://10.0.0.3:8787", "http://127.0.0.1:9999"]) {
-      expect(() => relayToolMcpServer("scout", url)).toThrow("loopback HTTP origin on port 8787");
+  it("accepts compose-network Relay Tool Layer URLs and refuses malformed origins", () => {
+    expect(relayToolMcpServer("scout", "http://tools:8787")).toEqual({
+      type: "http", url: "http://tools:8787/mcp/scout", headers: {},
+    });
+    for (const url of ["https://user:pw@tools.example.com", "http://tools/mcp/scout?x=1", "ftp://tools:8787"]) {
+      expect(() => relayToolMcpServer("scout", url)).toThrow("RELAY_TOOL_URL must be an http(s) origin");
     }
   });
 });

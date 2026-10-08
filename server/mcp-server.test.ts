@@ -163,14 +163,14 @@ describe("MCP tool execution", () => {
     expect(result.bots[0]).not.toHaveProperty("messages");
   });
 
-  it("reads a bounded bot task and removes pixels and approval grant keys", async () => {
+  it("reads a bounded bot task and removes approval grant keys", async () => {
     const fetcher = vi.fn(async (path: string) => {
       if (path === "/api/bots?messages=0") return {
         bots: [{ id: "bot-1", name: "Deckard", threadId: "task-1", tasks: [{ threadId: "task-1", title: "Case" }] }],
       };
       if (path === "/api/threads/task-1/messages?limit=200") return {
         messages: [{
-          id: "m1", at: 123, role: "bot", kind: "screen", png: "base64-pixels",
+          id: "m1", at: 123, role: "bot", kind: "activity",
           tool: { name: "Browser", ok: false, spoken: "browser failed", setup: true, raw: "drop" },
           card: { title: "Run command?", requestId: "secret-request", allowKey: "Bash:git", answered: false },
         }],
@@ -180,10 +180,9 @@ describe("MCP tool execution", () => {
     });
     const result: any = await handleToolCall("get_bot_messages", { bot_id: "bot-1", limit: 200 }, fetcher);
     expect(result.messages[0]).toMatchObject({
-      id: "m1", at: 123, hasImage: true,
+      id: "m1", at: 123,
       tool: { name: "Browser", ok: false, spoken: "browser failed", setup: true },
     });
-    expect(result.messages[0]).not.toHaveProperty("png");
     expect(result.messages[0].card).not.toHaveProperty("allowKey");
     expect(result.messages[0].card).not.toHaveProperty("requestId");
     expect(result.hasMore).toBe(true);

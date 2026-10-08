@@ -50,7 +50,7 @@ export const MESSAGE_FILE_ROUTE = {
 
 export const CLOUD_DESKTOP_CONTROL_ROUTE = {
   method: "POST",
-  path: /^\/api\/bots\/[\w-]+\/computer\/(?:control|screenshot|viewer-close)$/,
+  path: /^\/api\/bots\/[\w-]+\/computer\/(?:control|viewer-close)$/,
 } as const;
 
 export function isCloudDesktopJoin(method: string, path: string): boolean {
@@ -140,9 +140,8 @@ const ALLOWED: ReadonlyArray<{ method: string; path: RegExp }> = [
   { method: "PATCH", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
   { method: "DELETE", path: /^\/api\/groups\/[\w-]+\/tasks\/[\w-]+$/ },
 
-  // a transcript, its images, and answering an approval
+  // a transcript and answering an approval
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages$/ },
-  { method: "GET", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/image$/ },
   MESSAGE_FILE_ROUTE,
   { method: "POST", path: /^\/api\/threads\/[\w-]+\/messages\/[\w-]+\/reactions$/ },
   { method: "GET", path: /^\/api\/threads\/[\w-]+\/export$/ },

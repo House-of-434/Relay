@@ -3,16 +3,15 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(binary);
-if (!enabled) console.info("skipping team computers UI e2e: set OMB_UI_E2E=1 to install the pinned browser");
+const chrome = resolveUiChrome(process.env);
+const enabled = process.env.OMB_UI_E2E === "1" || Boolean(chrome);
+if (!enabled) console.info("skipping team computers UI e2e: set OMB_UI_E2E=1 to require system Chrome");
 
 type Info = { ui: string; url: string; botId: string; dataDir: string; logPath: string; boatFixtureApi: string };
 type Computer = { id: string; name: string; section: string | null; state: string; problem?: string; held?: boolean };
@@ -32,7 +31,7 @@ type Computer = { id: string; name: string; section: string | null; state: strin
     await expect.poll(() => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`Computer UI fixture exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info?.ui); } catch { return false; }
-    }, { timeout: binary ? 180_000 : 600_000, interval: 250 }).toBe(true);
+    }, { timeout: chrome ? 180_000 : 600_000, interval: 250 }).toBe(true);
     const fixture = info!;
     const api = fixtureApi(fixture.url);
     const provider = fixtureApi(fixture.boatFixtureApi);
@@ -203,4 +202,4 @@ type Computer = { id: string; name: string; section: string | null; state: strin
       if (info) expect(existsSync(info.dataDir)).toBe(false);
     }
   }
-}, binary ? 300_000 : 720_000);
+}, chrome ? 300_000 : 720_000);

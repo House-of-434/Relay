@@ -25,12 +25,11 @@ import type { BotRecord } from "./store.ts";
 const MAX_REASON = 500;
 const STALE = "This bot's authority changed after this card was prepared. Ask the bot to review it and propose again.";
 const NO_SUCH_BOT = "That bot no longer exists";
-const CHOOSE_ONE = "Choose at least one tightening intent: approvalMode, composio, browser, approvePeerComms, alwaysAllow, mcpServers, skills";
+const CHOOSE_ONE = "Choose at least one tightening intent: approvalMode, composio, approvePeerComms, alwaysAllow, mcpServers, skills";
 
 const INTENT_KEYS = [
   "approvalMode",
   "composio",
-  "browser",
   "approvePeerComms",
   "alwaysAllow",
   "mcpServers",
@@ -38,7 +37,7 @@ const INTENT_KEYS = [
 ] as const satisfies readonly (keyof TighteningIntents)[];
 
 /** Direction is enforced by shape first: the payload cannot name "full" or
- * "custom" as a target, cannot ask to switch composio/browser back on, and
+ * "custom" as a target, cannot ask to switch composio back on, and
  * the list fields only carry removals. The state-relative remainder (an
  * upward move inside ask/edits/auto, a grant not currently held) is checked
  * by validateTightening against live state at propose and confirm. */
@@ -47,7 +46,6 @@ const intentsSchema = z.object({
     error: 'approvalMode may only be proposed as "ask", "edits", or "auto"; full and custom stay owner-only',
   }).optional(),
   composio: z.literal(false, { error: "composio may only be turned off" }).optional(),
-  browser: z.literal(false, { error: "browser may only be turned off" }).optional(),
   approvePeerComms: z.literal(true, { error: "approvePeerComms may only be turned on" }).optional(),
   alwaysAllow: z.array(z.string().min(1).max(200)).max(200).optional(),
   mcpServers: z.array(z.string().min(1).max(200)).max(100).optional(),
@@ -77,7 +75,6 @@ export interface TighteningRequestStore {
       | "mcpServers"
       | "approvePeerComms"
       | "composio"
-      | "browser"
       | "lastTighteningRequestId">>,
   ): BotRecord | null;
 }
@@ -153,7 +150,6 @@ function parseIntents(input: unknown): TighteningIntents {
   const present: TighteningIntents = {};
   if (record.approvalMode !== undefined) present.approvalMode = intents.approvalMode;
   if (record.composio !== undefined) present.composio = intents.composio;
-  if (record.browser !== undefined) present.browser = intents.browser;
   if (record.approvePeerComms !== undefined) present.approvePeerComms = intents.approvePeerComms;
   if (record.alwaysAllow !== undefined) present.alwaysAllow = intents.alwaysAllow;
   if (record.mcpServers !== undefined) present.mcpServers = intents.mcpServers;
@@ -170,7 +166,6 @@ export function tighteningRevision(state: TighteningState, lastTighteningRequest
     .update(JSON.stringify({
       approvalMode: state.approvalMode,
       composio: state.composio,
-      browser: state.browser,
       approvePeerComms: state.approvePeerComms,
       alwaysAllow: [...state.alwaysAllow].sort(),
       mcpServers: [...state.mcpServers].sort(),
@@ -187,7 +182,6 @@ export function tighteningSnapshot(
   return {
     approvalMode: approvalModeFor(bot),
     composio: bot.composio !== false,
-    browser: bot.browser !== false,
     approvePeerComms: bot.approvePeerComms === true,
     alwaysAllow: bot.alwaysAllow ?? [],
     mcpServers: extras.mcpServers ?? [...(bot.mcpServers ?? [])],
@@ -209,7 +203,6 @@ export function tighteningCardCopy(
   const lines: string[] = target.crossBot ? [`Whose permissions: @${target.name}`, `Why: ${reason}`] : [`Why: ${reason}`];
   if (intents.approvalMode !== undefined) lines.push(`Approvals: ${before.approvalMode} → ${intents.approvalMode}`);
   if (intents.composio !== undefined) lines.push("Connected apps: on → off");
-  if (intents.browser !== undefined) lines.push("Browser: on → off");
   if (intents.approvePeerComms !== undefined) lines.push("Peer contact: no approval → ask first");
   if (intents.alwaysAllow?.length) lines.push(removalLine("Always-allow grants", "removed", before.alwaysAllow, after.alwaysAllow));
   if (intents.mcpServers?.length) lines.push(removalLine("MCP servers", "unmounted", before.mcpServers, after.mcpServers));
@@ -463,7 +456,6 @@ export class TighteningRequestService {
         patch.approvalGrant = undefined;
       }
       if (payload.intents.composio !== undefined) patch.composio = false;
-      if (payload.intents.browser !== undefined) patch.browser = false;
       if (payload.intents.approvePeerComms !== undefined) patch.approvePeerComms = true;
       if (payload.intents.alwaysAllow !== undefined) patch.alwaysAllow = [...checked.after.alwaysAllow];
       if (payload.intents.mcpServers !== undefined) patch.mcpServers = [...checked.after.mcpServers];

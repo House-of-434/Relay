@@ -45,7 +45,7 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
   const groups = new Map<string, { id: string; busyBotId: string | null }>();
   const owners = new Map<string, Owner>(), generations = new Map<string, string>();
   const directBots = new Map<string, Bot>(), speakers = new Map<string, Speaker>();
-  const vmLeases = new Map<string, object>(), approvals = new Set<string>(), screens = new Set<string>(), watched = new Set<string>();
+  const vmLeases = new Map<string, object>(), approvals = new Set<string>(), watched = new Set<string>();
   const autoVmClaims = new Map<string, { owner: { threadId: string; generation: string } }>();
   const started = new Map<string, ReturnType<typeof deferred>>(), interrupted = new Map<string, ReturnType<typeof deferred>>();
   const interruptCalls: string[] = [], cancelled: string[] = [], revoked: string[] = [], messages: string[] = [], settled: string[] = [], detached: string[] = [];
@@ -56,7 +56,7 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
     generations.set(threadId, `company-${threadId}`);
     if (kind === "direct") directBots.set(threadId, bot);
     else { speakers.set(threadId, { botId: threadId, name: "Company turn" }); groups.set(threadId, { id: threadId, busyBotId: threadId }); }
-    vmLeases.set(threadId, {}); approvals.add(threadId); screens.add(threadId); watched.add(threadId);
+    vmLeases.set(threadId, {}); approvals.add(threadId); watched.add(threadId);
     autoVmClaims.set(threadId, { owner: { threadId, generation: `company-${threadId}` } });
     started.set(threadId, deferred()); interrupted.set(threadId, deferred());
   }
@@ -87,7 +87,6 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
     cancelGroupTurnOperations: (_groupId: string, threadId: string) => cancelled.push(threadId),
     revokeInternalCapabilitiesForThread: (threadId: string) => revoked.push(threadId),
     releaseLocalVmThread: (threadId: string) => vmLeases.delete(threadId),
-    stopScreenPoller: (_botId: string, threadId: string) => screens.delete(threadId),
     watchdog: { settle: (threadId: string) => watched.delete(threadId) },
     closeOpenApprovals: (threadId: string) => approvals.delete(threadId),
     finalizeDelegationWatch() {}, routines: { failThread() {} },
@@ -96,7 +95,7 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
   context.runningTurnInstance = (bot: Bot) => context.registry.get(bot.modelSelection.instanceId);
   vm.runInContext(code, context, { filename: "index.ts (Company cleanup ownership fixture)" });
   return {
-    bots, tasks, groups, owners, directBots, speakers, vmLeases, approvals, screens, watched,
+    bots, tasks, groups, owners, directBots, speakers, vmLeases, approvals, watched,
     autoVmClaims,
     interruptCalls, cancelled, revoked, messages, settled, detached,
     context,
@@ -111,7 +110,7 @@ function fixture(kind: "direct" | "group", threadIds = ["first"]) {
       generations.set(threadId, `personal-${threadId}`);
       if (kind === "direct") directBots.set(threadId, bot);
       else if (replaceSpeaker) speakers.set(threadId, { botId: threadId, name: "Personal turn" });
-      vmLeases.set(threadId, {}); approvals.add(threadId); screens.add(threadId); watched.add(threadId);
+    vmLeases.set(threadId, {}); approvals.add(threadId); watched.add(threadId);
       autoVmClaims.set(threadId, { owner: { threadId, generation: `personal-${threadId}` } });
     },
   };
@@ -122,7 +121,6 @@ function expectPersonalResources(f: ReturnType<typeof fixture>, threadId: string
   expect(f.autoVmClaims.get(threadId)?.owner?.generation).toBe(`personal-${threadId}`);
   expect(f.vmLeases.has(threadId)).toBe(true);
   expect(f.approvals.has(threadId)).toBe(true);
-  expect(f.screens.has(threadId)).toBe(true);
   expect(f.watched.has(threadId)).toBe(true);
   expect(f.messages).not.toContain(threadId);
 }

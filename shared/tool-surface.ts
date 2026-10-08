@@ -1,5 +1,5 @@
 // Which place a tool call touched, read from its name alone. Shared by the
-// server (screen poller, transcript frames) and the renderer (place icons on
+// server (computer-activity accounting) and the renderer (place icons on
 // tool chips), so both sides read the same tool the same way. Names arrive
 // namespaced (`mcp__computer__click`, `computer__click`), prefixed
 // (`computer_click`) or bare (`click`).
@@ -19,36 +19,18 @@ export const SCREEN_TOUCHING_TOOLS: ReadonlySet<string> = new Set([
   "agent_browser_select", "agent_browser_check", "agent_browser_screenshot",
   // Cua Driver (local Mac, Local VM, VPS)
   "double_click", "right_click", "drag", "hotkey", "move_cursor", "launch_app", "bring_to_front", "zoom",
+  // Relay research browser (Tool Layer): navigations and extractions change
+  // the page; reads only observe it, like snapshot/read/get_text above.
+  "browser_open", "browser_extract",
 ]);
 
 // Keep legacy MCP namespaces accepted; desktop server__tool names follow
 // MCP_NAME in mcp-registry.ts (lowercase letters, digits, underscores, hyphens).
 export const TOOL_NAMESPACE = /^(?:mcp__.+?|[a-z][a-z0-9_-]{0,31})__/;
 
-/** The same tool reaches the poke site as `mcp__computer__click`,
- * `computer__click`, bare `click`, or pi's `computer_click`. A single-underscore
- * server prefix is stripped at most once, so pi's `computer_computer_exec`
- * lands on `computer_exec` (still a shell) and never on a bare `exec`. */
-export function screenTouchingTool(toolName: string): boolean {
-  const bare = toolName.toLowerCase().replace(TOOL_NAMESPACE, "");
-  return SCREEN_TOUCHING_TOOLS.has(bare) || SCREEN_TOUCHING_TOOLS.has(bare.replace(/^(?:computer|browser)_/, ""));
-}
-
-/** Which surface a screen-touching tool acted on. The computer server's
- * browser_click/fill act inside the desktop, not in agent-browser, so the
- * server identity is checked before prefixes are stripped. */
-export function screenSurfaceForTool(toolName: string): "browser" | "computer" {
-  const name = toolName.toLowerCase();
-  if (name.startsWith("mcp__computer__") || name.startsWith("computer_")) return "computer";
-  if (name.startsWith("mcp__browser__") || name.startsWith("browser__")) return "browser";
-  const bare = name.replace(TOOL_NAMESPACE, "");
-  if (bare === "browser_click" || bare === "browser_fill") return "computer";
-  return bare.startsWith("agent_browser_") || bare.startsWith("browser_") ? "browser" : "computer";
-}
-
 /** Whether a tool belongs to a screen place at all — the built-in browser, a
- * computer, or neither (shell, files, teammates, memory). Unlike
- * screenSurfaceForTool this never guesses "computer" for an unrelated tool. */
+ * computer, or neither (shell, files, teammates, memory). Never guesses
+ * "computer" for an unrelated tool. */
 export function toolSurfaceKind(toolName: string): "browser" | "computer" | null {
   const name = toolName.toLowerCase();
   if (name.startsWith("mcp__browser__") || name.startsWith("browser__")) return "browser";

@@ -49,7 +49,7 @@ function messageText(message: Message): string {
   if (message.kind === "secret") parts.push("[Secret request — not restored]");
   if (message.routineRun) parts.push(`[Routine: ${message.routineRun.routineName} — ${message.routineRun.status}]`, message.routineRun.summary ?? "", message.routineRun.error ?? "");
   if (message.goalRun) parts.push(`[Room goal: ${message.goalRun.status}]`, message.goalRun.goal, message.goalRun.detail ?? "");
-  if (message.kind === "screen" || message.attachments?.length) parts.push("[Image or attachment — file not included in this backup]");
+  if (message.attachments?.length) parts.push("[Attachment — file not included in this backup]");
   return parts.filter(Boolean).join("\n");
 }
 
@@ -184,7 +184,7 @@ export function importTeamBackup(store: Store, routines: RoutineManager, input: 
       }, { seedMessages: false });
       bots.push(bot);
       botIds.set(source.key, bot.id);
-      store.patchBot(bot.id, { composio: false, computer: "off", browser: false, approvalMode: "ask", autoApprove: false,
+      store.patchBot(bot.id, { composio: false, computer: "off", approvalMode: "ask", autoApprove: false,
         connectorTools: {}, hidden: source.hidden, chiefOfStaff: source.chiefOfStaff, playbooks: source.playbooks });
       if (source.memory) restoreMemory(bot.id, source.memory);
     }

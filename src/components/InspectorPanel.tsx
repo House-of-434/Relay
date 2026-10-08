@@ -134,7 +134,6 @@ export function InspectorPanel({ bot }: { bot: Bot }) {
     managedRefresh.current = requestRefresh;
 
     const stopLive = openLiveEvents({
-      screens: false,
       onSnapshotRequired: refreshFromSnapshot,
       onFrame: (frame) => {
         if (frame.kind !== "runtime") return;

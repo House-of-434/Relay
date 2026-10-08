@@ -2,11 +2,13 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeGmail, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
 import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
+import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
+import { registerSearchTools, type SearchToolContext } from "./search-server.js";
 
 export interface RelayGmailContext {
   client: RelayGmailClient;
@@ -29,6 +31,8 @@ export function createAgentMcpServer(
   database: RelayDatabase,
   gmail: RelayGmailContext | undefined,
   calendar: RelayCalendarContext | undefined,
+  browser?: BladeBrowserContext | undefined,
+  search?: SearchToolContext | undefined,
 ): McpServer {
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
 
@@ -41,6 +45,7 @@ export function createAgentMcpServer(
     },
     async ({ table, filters, limit }) => {
       try {
+        if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "read", table);
         const shape = getShape(table);
         if (!shape.filterable) throw new Error(`No filter shape is configured for ${table}`);
@@ -62,6 +67,7 @@ export function createAgentMcpServer(
     },
     async ({ table, operation, data, where }) => {
       try {
+        if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "write", table);
         const prepared = prepareWrite(table, operation, data, where, { agent, userId });
         const result = await database.write(project, table, operation, prepared.values, prepared.where);
@@ -74,6 +80,21 @@ export function createAgentMcpServer(
 
   // Visibility matches authorization: an agent with no Gmail or calendar
   // capability must not even see those tools offered.
+  //
+  // The research browser additionally requires an authenticated user: without
+  // one there is no workspace the daemon could safely be scoped to.
+  if (browser && userId && BROWSER_PERMISSIONS[agent].length > 0) {
+    registerBrowserTools(server, agent, browser);
+  }
+
+  // Search carries no per-user state (unlike the browser workspace), so the
+  // call itself needs no userId — but listing it still requires an
+  // authenticated actor. No user-scoped data required does not mean no
+  // caller identity required. Visibility still matches authorization.
+  if (search && userId && SEARCH_PERMISSIONS[agent].length > 0) {
+    registerSearchTools(server, agent, search);
+  }
+
   if (gmail && GMAIL_PERMISSIONS[agent].length > 0) {
     const gmailContext: RelayGmailContext = gmail;
 

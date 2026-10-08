@@ -1,7 +1,6 @@
 // Access: where this bot runs, its working folder, Google connections,
-// browser toggles, its webhooks, and the standing "always allowed" grants.
+// its webhooks, and the standing "always allowed" grants.
 import { useState } from "react";
-import { browserUnavailableReason } from "@/lib/feature-flags";
 import { FolderOpen, Plus } from "lucide-react";
 
 import { useStore, type Bot } from "@/state/store";
@@ -114,18 +113,9 @@ export function AccessSection({
   const {
     patch,
     canUseVps,
-    canUseBrowser,
-    desktopBrowser,
-    browserBlockedOnWindows,
-    browserFeature,
-    browserAllowed,
-    browserEnabled,
-    browserSelectable,
-    browserDisabledReason,
     localSelectable,
     localDisabledReason,
   } = derived;
-  const browserInstallable = state.config?.browserEngine?.installable === true;
   const relayWorkspace = state.config?.sharedWorkspace === true;
   const [localAutoWarning, setLocalAutoWarning] = useState<string | null>(null);
 
@@ -138,7 +128,7 @@ export function AccessSection({
       <div className="rounded-xl bg-card p-4">
         <div className="text-[15px] font-medium text-ink">Works on</div>
         <div className="mt-0.5 text-[13px] text-ink-secondary">
-          Where this bot works{bot.computer ? "" : " (currently: auto)"}. Browser is the built-in browser tab only; no desktop.
+          Where this bot works{bot.computer ? "" : " (currently: auto)"}.
         </div>
         <ProposalStatus bot={bot} kind="owner" />
         <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
@@ -147,33 +137,27 @@ export function AccessSection({
             ["cloud", "Cloud"],
             ["vm", "Local VM"],
             ["local", "This computer"],
-            ["browser", "Browser"],
             ["off", "Off"],
           ] as const).filter(([mode]) => mode === null || mode === "off" || placeOffered(mode, state.config)).map(([mode, label], i) => (
             <button
               key={mode ?? "auto"}
-              disabled={(mode === "local" && !localSelectable) || (mode === "browser" && !browserSelectable)}
+              disabled={mode === "local" && !localSelectable}
               title={
                 mode === "local" && !localSelectable
                   ? localDisabledReason ?? undefined
-                  : mode === "browser"
-                    ? browserSelectable ? "The built-in browser tab only; no desktop" : browserDisabledReason
-                    : mode === "off"
-                      ? "No computer and no built-in browser"
-                      : undefined
+                  : mode === "off"
+                    ? "No computer"
+                    : undefined
               }
               onClick={() => {
                 if ((mode === null && bot.computer === undefined) || mode === bot.computer) return;
                 if (mode === "local" && derived.approvalMode === "auto") setLocalAutoWarning(bot.id);
-                // a browser-only bot must actually have its browser: flip
-                // the per-bot switch on with the destination
-                else if (mode === "browser") patch({ computer: mode, browser: true });
                 else patch({ computer: mode });
               }}
               className={cn(
                 "flex-1 py-1.5 text-[13px] capitalize",
                 i > 0 && "border-l border-hairline/40",
-                ((mode === "local" && !localSelectable) || (mode === "browser" && !browserSelectable)) && "cursor-not-allowed opacity-40",
+                (mode === "local" && !localSelectable) && "cursor-not-allowed opacity-40",
                 (mode === null ? bot.computer === undefined : bot.computer === mode)
                   ? "bg-control text-ink"
                   : "text-ink-secondary hover:bg-control/60 hover:text-ink",
@@ -186,7 +170,7 @@ export function AccessSection({
         {bot.computer === "off" && (
           <div className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-secondary">
             <span className="font-medium text-ink">Off means no screen.</span>{" "}
-            This bot gets no computer and no built-in browser, so it cannot open a web page, click, or type
+            This bot gets no computer, so it cannot open a web page, click, or type
             anywhere. Its connected apps, MCP servers, files and chat all still work.
           </div>
         )}
@@ -233,39 +217,6 @@ export function AccessSection({
           </button>
         </div>
       )}
-
-      {!relayWorkspace && <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
-        <div>
-          <div className="text-[15px] font-medium text-ink">Browser</div>
-          <div className="mt-0.5 text-[13px] text-ink-secondary">
-            {!desktopBrowser
-              ? browserBlockedOnWindows && !browserInstallable
-                ? "Not available on this Windows machine yet: install the browser engine with `openmausbot browser install`."
-                : browserUnavailableReason(state.config)
-              : !browserFeature
-                ? "The built-in browser is switched off under App Settings → Experimental."
-                : !canUseBrowser
-                  ? "This bot's current engine cannot use the built-in browser."
-                  : bot.computer === "off"
-                    ? "Works on is set to Off, so this bot has no browser. Pick another destination above to give it one."
-                    : browserEnabled
-                      ? "This bot has its own browser with its own logins."
-                      : "Keep the built-in browser unavailable to this bot."}
-          </div>
-          <ProposalStatus bot={bot} kind="owner" />
-        </div>
-        <Switch
-          checked={browserEnabled && bot.computer !== "off"}
-          aria-label="Give this bot a built-in browser"
-          disabled={
-            bot.computer === "off" ||
-            (!browserEnabled && ((!desktopBrowser && !browserInstallable) || !browserFeature || !canUseBrowser))
-          }
-          onClick={() => patch({ browser: !browserAllowed })}
-          title={bot.computer === "off" ? "Works on is set to Off, so this bot has no browser" : undefined}
-          className="disabled:cursor-not-allowed"
-        />
-      </div>}
 
       {!draft && <div className="rounded-xl bg-card p-4">
         <div className="text-[15px] font-medium text-ink">Webhooks</div>

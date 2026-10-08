@@ -106,32 +106,32 @@ const FULL = { direct: "direct+skills+shared+voice", room: "room+own-thread+skil
  * by more than 2%, and may not undercut it by more than 2% either: a smaller
  * catalog is the goal, so lock the win in by lowering the number. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "direct": 44032,
-  "direct+voice": 44773,
-  "direct+shared": 45777,
-  "direct+shared+voice": 46518,
-  "direct+skills": 45958,
-  "direct+skills+voice": 46699,
-  "direct+skills+shared": 47703,
-  "direct+skills+shared+voice": 48444,
-  "room": 42050,
-  "room+voice": 42791,
-  "room+shared": 43795,
-  "room+shared+voice": 44536,
-  "room+skills": 43976,
-  "room+skills+voice": 44717,
-  "room+skills+shared": 45721,
-  "room+skills+shared+voice": 46462,
-  "room+own-thread": 43337,
-  "room+own-thread+voice": 44078,
-  "room+own-thread+shared": 45082,
-  "room+own-thread+shared+voice": 45823,
-  "room+own-thread+skills": 45263,
-  "room+own-thread+skills+voice": 46004,
-  "room+own-thread+skills+shared": 47008,
-  "room+own-thread+skills+shared+voice": 47749,
-  "direct+skills+shared+voice+cloud-home": 47778,
-  "room+own-thread+skills+shared+voice+cloud-home": 47083,
+  "direct": 48525,
+  "direct+voice": 49266,
+  "direct+shared": 50270,
+  "direct+shared+voice": 51011,
+  "direct+skills": 50451,
+  "direct+skills+voice": 51192,
+  "direct+skills+shared": 52196,
+  "direct+skills+shared+voice": 52937,
+  "room": 46543,
+  "room+voice": 47284,
+  "room+shared": 48288,
+  "room+shared+voice": 49029,
+  "room+skills": 48469,
+  "room+skills+voice": 49210,
+  "room+skills+shared": 50214,
+  "room+skills+shared+voice": 50955,
+  "room+own-thread": 47830,
+  "room+own-thread+voice": 48571,
+  "room+own-thread+shared": 49575,
+  "room+own-thread+shared+voice": 50316,
+  "room+own-thread+skills": 49756,
+  "room+own-thread+skills+voice": 50497,
+  "room+own-thread+skills+shared": 51501,
+  "room+own-thread+skills+shared+voice": 52242,
+  "direct+skills+shared+voice+cloud-home": 52011,
+  "room+own-thread+skills+shared+voice+cloud-home": 51316,
   "external": 3030,
   "external+everything": 3030,
 };
@@ -245,10 +245,10 @@ describe("agents proxy tools/list golden", () => {
       const desktop = wires[name.slice(0, -"+cloud-home".length)]!;
       const names = toolsOf(wires[name]!).map((tool) => tool.name);
       expect(names).toEqual(toolsOf(desktop).map((tool) => tool.name).filter((tool) => tool !== "vm_exec"));
-      expect(select(desktop).inputSchema.properties.surface.enum).toEqual(["auto", "cloud", "vm", "local", "browser"]);
+      expect(select(desktop).inputSchema.properties.surface.enum).toEqual(["auto", "cloud", "vm", "local"]);
       expect(toolsOf(desktop).map((tool) => tool.name)).toContain("vm_exec");
       const surface = select(wires[name]!).inputSchema.properties.surface;
-      expect(surface.enum).toEqual(["auto", "cloud", "browser"]);
+      expect(surface.enum).toEqual(["auto", "cloud"]);
       expect(surface.description).not.toMatch(/\b(?:vm|local) =/);
     }
   });

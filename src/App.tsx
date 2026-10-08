@@ -15,7 +15,6 @@ import { RemoteAgentSettingsPanel } from "@/components/RemoteAgentSettingsPanel"
 import { NewBotDialog } from "@/components/NewBotDialog";
 import { PluginsPanel, type ConnectionAccount, type ConnectionService } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
-import { RemoteDesktopPanel } from "@/components/remote-desktop-panel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { WorkspaceBackupRecovery } from "@/components/WorkspaceBackupSettings";
@@ -381,16 +380,12 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
           ? <RemoteAgentSettingsPanel bot={bot} />
           : <BotSettingsDialog key={`settings:${bot.id}`} bot={bot} />
       )}
-      {state.computerOpen && bot && (
-        remoteClient ? (
-          <RemoteDesktopPanel key={`computer:${bot.id}`} bot={bot} />
-        ) : (
-          <ComputerPanel
-            key={`computer:${bot.id}`}
-            bot={bot}
-            onOpenVmWorkspace={openLocalVmWorkspace}
-          />
-        )
+      {!remoteClient && state.computerOpen && bot && (
+        <ComputerPanel
+          key={`computer:${bot.id}`}
+          bot={bot}
+          onOpenVmWorkspace={openLocalVmWorkspace}
+        />
       )}
       {!remoteClient && state.inspectorOpen && bot && <InspectorPanel key={bot.threadId} bot={bot} />}
       {state.appSettingsOpen && <SettingsModal />}

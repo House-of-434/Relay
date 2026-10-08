@@ -57,15 +57,6 @@ describe("partial profile save responses", () => {
   });
 });
 
-describe("screen frame ownership", () => {
-  it("retains the source thread so a sibling's frame cannot masquerade as the selected screen", () => {
-    const first = reducer(initialState, { type: "screenFrame", botId: "bot", threadId: "vm-thread", png: "vm", mime: "image/png" });
-    const second = reducer(first, { type: "screenFrame", botId: "bot", threadId: "browser-thread", png: "browser", mime: "image/jpeg" });
-    expect(first.screens.bot).toMatchObject({ threadId: "vm-thread", png: "vm" });
-    expect(second.screens.bot).toMatchObject({ threadId: "browser-thread", png: "browser" });
-  });
-});
-
 describe("composer thread approval persistence", () => {
   it.each(["ask", "edits", "auto", "full", "custom"] as const)("saves %s through the scoped bridge and returns its committed state", async mode => {
     const bot = { id: "bot", approvalMode: "ask", tasks: [{ threadId: "thread", approvalMode: mode }] } as BotAnnouncement;
@@ -1391,7 +1382,7 @@ describe("computer destination announcements", () => {
     const bot: Bot = {
       id: "computer-bot", threadId: "computer-thread", name: "Ziggy", title: "", description: "",
       notifications: true, color: "green", unread: false,
-      modelSelection: { instanceId: "codex", model: "default" }, computer: "browser",
+      modelSelection: { instanceId: "codex", model: "default" }, computer: "cloud",
       messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
     };
     const { computer: _oldComputer, ...announcement } = bot;
@@ -1433,23 +1424,6 @@ describe("teammate wait announcements", () => {
     const { messages, ...rest } = waiting;
     const next = reducer({ ...initialState, bots: [waiting] }, { type: "botPatched", bot: rest });
     expect(next.bots[0]?.waitingForTeammates).toBe(true);
-    expect(next.bots[0]?.messages).toBe(messages);
-  });
-});
-
-describe("browser profile announcements", () => {
-  it.each([undefined, null, "guest", "another-profile"])("replaces an old shared profile with %s without losing chat", (profile) => {
-    const bot: Bot = {
-      id: "browser-bot", threadId: "browser-thread", name: "Pepper", title: "", description: "",
-      notifications: true, color: "green", unread: false,
-      modelSelection: { instanceId: "codex", model: "default" }, browserProfile: "old-profile",
-      messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
-    };
-    const { messages, browserProfile: _oldProfile, ...announcement } = bot;
-    const next = reducer({ ...initialState, bots: [bot] }, {
-      type: "botPatched", bot: { ...announcement, ...(profile === undefined ? {} : { browserProfile: profile }) },
-    });
-    expect(next.bots[0]?.browserProfile).toBe(profile);
     expect(next.bots[0]?.messages).toBe(messages);
   });
 });
@@ -1952,14 +1926,14 @@ describe("messageAdded leaf adoption", () => {
   });
 
   it("keeps the leaf when a late artifact is chain-inserted mid-branch", () => {
-    // the settle-time screenshot arrives parented to m1 while m2 is the leaf
+    // a late turn artifact (e.g. a digest) arrives parented to m1 while m2 is the leaf
     const next = reducer(state, {
       type: "messageAdded",
       threadId: "thread-1",
-      message: { id: "shot", at: 3, parentId: "m1", role: "bot", kind: "screen", png: "x" } as never as Message,
+      message: { id: "digest", at: 3, parentId: "m1", role: "bot", kind: "digest", text: "summary" } as never as Message,
     });
     expect(next.bots[0].activeLeafId).toBe("m2"); // the user's message stays the tail
-    expect(next.bots[0].messages.map((m) => m.id)).toContain("shot");
+    expect(next.bots[0].messages.map((m) => m.id)).toContain("digest");
   });
 });
 

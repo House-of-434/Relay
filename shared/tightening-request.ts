@@ -22,8 +22,6 @@ export interface TighteningIntents {
   approvalMode?: TighteningModeTarget;
   /** true → false only. */
   composio?: false;
-  /** true → false only. */
-  browser?: false;
   /** false → true only: pausing before peer contact is tightening. */
   approvePeerComms?: true;
   /** Entries to remove from the always-allow list; additions are inexpressible. */
@@ -41,7 +39,6 @@ export interface TighteningIntents {
 export interface TighteningState {
   approvalMode: ApprovalMode;
   composio: boolean;
-  browser: boolean;
   approvePeerComms: boolean;
   alwaysAllow: readonly string[];
   mcpServers: readonly string[];
@@ -96,10 +93,6 @@ export function validateTightening(before: TighteningState, intents: TighteningI
   if (intents.composio !== undefined) {
     if (!before.composio) return { ok: false, error: "composio is already off; it may only be turned off" };
     after.composio = false;
-  }
-  if (intents.browser !== undefined) {
-    if (!before.browser) return { ok: false, error: "browser is already off; it may only be turned off" };
-    after.browser = false;
   }
   if (intents.approvePeerComms !== undefined) {
     if (before.approvePeerComms) return { ok: false, error: "approvePeerComms is already on; it may only be turned on" };

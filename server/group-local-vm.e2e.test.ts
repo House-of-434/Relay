@@ -447,7 +447,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     const { bot } = await api("POST", "/api/bots", { name: "Chat cloud selection" });
     try {
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
-      await api("PATCH", `/api/bots/${bot.id}`, { computer: state === "missing-auto" ? "browser" : "vm", browser: false });
+      if (state !== "missing-auto") await api("PATCH", `/api/bots/${bot.id}`, { computer: "vm" });
       const environmentId = readFileSync(join(fixtureHome, "data", "environment-id"), "utf8").trim();
       const scope = createHash("sha256").update(environmentId).digest("hex").slice(0, 12);
       const prefix = bot.id.slice(0, 8).replace(/[^a-z0-9]/g, "");
@@ -497,7 +497,6 @@ describe("Group Local VM ownership on the real isolated server", () => {
     const { bot } = await api("POST", "/api/bots", { name: "Chat selects computer" });
     try {
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
-      await api("PATCH", `/api/bots/${bot.id}`, { computer: "browser", browser: false });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on an available VM and inspect its page title" });
       const before: any = await dump();
       expect(computer(before)).toBeUndefined();
@@ -507,7 +506,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       const available = await (await call("GET")).json() as any;
       expect(available.canSelect).toBe(true);
       // Not a Cloud home: every place is listed, and no bot is told it runs in the cloud.
-      expect(available.options.map((option: any) => option.surface)).toEqual(["cloud", "vm", "local", "browser"]);
+      expect(available.options.map((option: any) => option.surface)).toEqual(["cloud", "vm", "local"]);
       expect(before.mcpConfig.mcpServers.agents.env.OMB_CLOUD_HOME).toBe("0");
       expect(before.systemPrompt).not.toContain(cloudHomePrompt(true));
       expect(before.systemPrompt).not.toContain("You run on the user's OMB Cloud");
@@ -545,7 +544,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
     const { bot } = await api("POST", "/api/bots", { name: `Computer selection ${failure}` });
     try {
-      await api("PATCH", `/api/bots/${bot.id}`, { computer: failure === "off" ? "off" : "browser", browser: false });
+      await api("PATCH", `/api/bots/${bot.id}`, { computer: failure === "off" ? "off" : "cloud" });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on the VM" });
       const sent: any = await dump();
       const token = sent.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN;
@@ -556,10 +555,10 @@ describe("Group Local VM ownership on the real isolated server", () => {
       if (failure === "failure") process.kill(sent.pid, "SIGKILL");
       else if (failure === "manual-selection") {
         const changing = await fetch(base + `/api/bots/${bot.id}/tasks/${bot.threadId}`, { method: "PATCH",
-          headers: { "content-type": "application/json" }, body: JSON.stringify({ surface: "browser" }) });
+          headers: { "content-type": "application/json" }, body: JSON.stringify({ surface: "cloud" }) });
         expect(changing.status).toBe(409);
         await api("POST", `/api/bots/${bot.id}/interrupt`, {}); await idle(bot.id);
-        await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { surface: "browser" });
+        await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { surface: "cloud" });
       } else if (failure === "new-request") {
         const text = "Forget the VM request. Just answer this new question.";
         const queued = await api("POST", `/api/bots/${bot.id}/messages`, { text });
@@ -574,7 +573,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       await idle(bot.id);
       if (failure !== "new-request") expect(existsSync(dumpFile)).toBe(false);
       const state = await api("GET", "/api/bots?messages=0");
-      expect(state.bots.find((b: any) => b.id === bot.id).tasks[0].surface).toBe(failure === "manual-selection" ? "browser" : undefined);
+      expect(state.bots.find((b: any) => b.id === bot.id).tasks[0].surface).toBe(failure === "manual-selection" ? "cloud" : undefined);
       if (failure === "new-request") {
         const transcript = await api("GET", `/api/threads/${bot.threadId}/messages?limit=50`);
         expect(transcript.messages.filter((message: any) => message.role === "user" && message.kind === "text")

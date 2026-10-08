@@ -236,10 +236,9 @@
               "auto",
               "cloud",
               "vm",
-              "local",
-              "browser"
+              "local"
             ],
-            "description": "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop, browser = built-in browser. Omit to list."
+            "description": "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop. Omit to list."
           }
         }
       }
@@ -880,7 +879,7 @@
     },
     {
       "name": "propose_routine",
-      "description": "Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. Convert calendar requests (monthly dates, last days, nth weekdays) into a validated five-field cron schedule with an explicit IANA timeZone; keep elapsed every-N-minutes work as interval. Never approximate unsupported requests with a different weekly schedule or an AI date-check routine; explain the limitation instead. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id; each run retains that bot's own permissions. Read the result: granted Full Access may apply the change immediately. If applied, continue the requested work without another confirmation. Only a pending result requires ending the turn and waiting for the in-app decision. Never claim success from the permission mode alone; report failed or cancelled results honestly. This does not elevate another bot's execution permissions.",
+      "description": "Prepare a new routine after the user explicitly asks to schedule recurring or future work — or a bounded one-shot investigation (a `once` schedule): the confirmation card shows the plan, and Confirm executes it exactly once. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. Convert calendar requests (monthly dates, last days, nth weekdays) into a validated five-field cron schedule with an explicit IANA timeZone; keep elapsed every-N-minutes work as interval. Never approximate unsupported requests with a different weekly schedule or an AI date-check routine; explain the limitation instead. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id; each run retains that bot's own permissions. Read the result: granted Full Access may apply the change immediately. If applied, continue the requested work without another confirmation. Only a pending result requires ending the turn and waiting for the in-app decision. Never claim success from the permission mode alone; report failed or cancelled results honestly. This does not elevate another bot's execution permissions.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -1251,6 +1250,172 @@
           }
         },
         "required": [
+          "reason"
+        ]
+      }
+    },
+    {
+      "name": "propose_calendar_invite",
+      "description": "Ask the user to confirm creating an event with attendees on their primary calendar. Pass the complete event exactly as it should be created; the card shows the summary, time, and attendees. On confirmation the event is created and invitations are emailed together — there is no separate notify step. Read the result: granted Full Access may apply the change immediately. If applied, continue the requested work without another confirmation. Only a pending result requires ending the turn and waiting for the in-app decision. Never claim success from the permission mode alone; report failed or cancelled results honestly. This does not elevate another bot's execution permissions.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "summary": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "Event title, shown on the card."
+          },
+          "start": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dateTime": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "RFC3339 start for a timed event."
+              },
+              "date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Date for an all-day event."
+              },
+              "timeZone": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "IANA time zone for a timed start."
+              }
+            },
+            "description": "Start: dateTime for a timed event, date for an all-day one."
+          },
+          "end": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "dateTime": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "RFC3339 end for a timed event."
+              },
+              "date": {
+                "type": "string",
+                "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                "description": "Date for an all-day event."
+              },
+              "timeZone": {
+                "type": "string",
+                "maxLength": 64,
+                "description": "IANA time zone for a timed end."
+              }
+            },
+            "description": "End: dateTime for a timed event, date for an all-day one."
+          },
+          "when": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120,
+            "description": "Human-readable time, shown on the card, for example Tuesday, October 6 at 10:00 AM."
+          },
+          "attendees": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 320
+            },
+            "description": "Attendee email addresses to show and invite."
+          },
+          "description": {
+            "type": "string",
+            "maxLength": 8000,
+            "description": "Event description."
+          },
+          "location": {
+            "type": "string",
+            "maxLength": 500,
+            "description": "Event location."
+          },
+          "timeZone": {
+            "type": "string",
+            "maxLength": 64,
+            "description": "IANA time zone for the event."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "One sentence the user will see explaining why."
+          }
+        },
+        "required": [
+          "summary",
+          "start",
+          "end",
+          "when",
+          "attendees",
+          "reason"
+        ]
+      }
+    },
+    {
+      "name": "propose_email_send",
+      "description": "Ask the user to confirm sending an email you composed. The recipients, subject, and full body from this call are what the card shows and what gets sent on confirmation. Nothing is sent until the user confirms the card. Read the result: granted Full Access may apply the change immediately. If applied, continue the requested work without another confirmation. Only a pending result requires ending the turn and waiting for the in-app decision. Never claim success from the permission mode alone; report failed or cancelled results honestly. This does not elevate another bot's execution permissions.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "to": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 320
+            },
+            "description": "Recipient email addresses."
+          },
+          "cc": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 320
+            },
+            "description": "Cc email addresses, visible to all recipients."
+          },
+          "bcc": {
+            "type": "array",
+            "maxItems": 20,
+            "items": {
+              "type": "string",
+              "maxLength": 320
+            },
+            "description": "Bcc email addresses, hidden from other recipients. The card shows them to the owner."
+          },
+          "subject": {
+            "type": "string",
+            "maxLength": 250,
+            "description": "Email subject."
+          },
+          "body": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 20000,
+            "description": "Full email body, exactly as it will be sent."
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 500,
+            "description": "One sentence the user will see explaining why."
+          }
+        },
+        "required": [
+          "to",
+          "subject",
+          "body",
           "reason"
         ]
       }

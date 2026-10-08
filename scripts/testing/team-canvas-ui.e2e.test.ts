@@ -3,16 +3,15 @@ import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(binary);
-if (!enabled) console.info("skipping team canvas UI e2e: set OMB_UI_E2E=1 to install the pinned browser");
+const chrome = resolveUiChrome(process.env);
+const enabled = process.env.OMB_UI_E2E === "1" || Boolean(chrome);
+if (!enabled) console.info("skipping team canvas UI e2e: set OMB_UI_E2E=1 to require system Chrome");
 
 type BotRecord = {
   id: string; name: string; title?: string; section?: string; threadId: string;
@@ -35,7 +34,7 @@ type BotRecord = {
     await expect.poll(() => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info?.ui); } catch { return false; }
-    }, { timeout: binary ? 180_000 : 600_000, interval: 250 }).toBe(true);
+    }, { timeout: chrome ? 180_000 : 600_000, interval: 250 }).toBe(true);
     const fixture = info!;
     const api = fixtureApi(fixture.url);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", fixture.ui, ...args]) as Promise<Record<string, any>>;
@@ -382,4 +381,4 @@ type BotRecord = {
     }
     await waitForExit(child, { signal: "SIGINT", graceMs: 30_000 });
   }
-}, binary ? 240_000 : 720_000);
+}, chrome ? 240_000 : 720_000);

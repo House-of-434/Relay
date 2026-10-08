@@ -69,7 +69,6 @@ import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { AttachmentGallery, collectMessageFiles, splitMessageAttachments } from "./AttachmentGallery";
-import { ScreenFrame } from "./ScreenFrame";
 import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { ModelPicker } from "./ModelPicker";
@@ -851,8 +850,6 @@ const MessagesList = memo(function MessagesList({
               return showToolCalls ? <DigestChip message={m} /> : null;
             case "compaction":
               return <CompactionChip message={m} />;
-            case "screen":
-              return m.png ? <ScreenFrame png={m.png} mime={m.mime} /> : null;
             default:
               return (
                 <Bubble
@@ -1345,8 +1342,8 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
-          {!computerComingSoon && <CallButton bot={bot} />}
-          <button
+          {!remoteClient && !computerComingSoon && <CallButton bot={bot} />}
+          {!remoteClient && <button
             data-tour="computer"
             type="button"
             disabled={computerComingSoon}
@@ -1359,7 +1356,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             title={computerComingSoon ? "Coming soon" : t("chat.computer")}
           >
             <Monitor size={18} />
-          </button>
+          </button>}
           {!remoteClient && <button
             onClick={() => dispatch({ type: "toggleInspector" })}
             aria-label={t("chat.inspector")}

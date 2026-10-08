@@ -30,8 +30,6 @@ export type BotUpdatePatch = Partial<
     | "chiefOfStaff"
     | "approvePeerComms"
     | "composio"
-    | "browser"
-    | "browserProfile"
     | "memoryUpkeep"
     | "mcpServers"
     | "modelSelection"

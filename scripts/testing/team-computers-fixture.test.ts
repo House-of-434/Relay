@@ -10,7 +10,7 @@ it.each([
   "http://127.0.0.1:12345/api", "http://127.0.0.1:12345?token=secret", "http://127.0.0.1:12345#fragment",
   "http://user:password@127.0.0.1:12345", "http://127.0.0.1:0", "http://127.0.0.1:65536",
 ])("rejects an unsafe Boat fixture endpoint before launching: %s", async (endpoint) => {
-  await expect(launchVerificationServer({}, undefined, undefined, undefined, undefined, undefined, [], endpoint))
+  await expect(launchVerificationServer({}, undefined, undefined, undefined, undefined, [], endpoint))
     .rejects.toThrow(/Boat verification requires/);
 });
 
@@ -28,7 +28,7 @@ it.each([false, true])("registers a computer engine only for an opted-in Boat fi
     const address = provider.address();
     if (!address || typeof address === "string") throw new Error("Boat fixture has no loopback port");
     const endpoint = `http://127.0.0.1:${address.port}`;
-    fixture = await launchVerificationServer({}, undefined, undefined, undefined, undefined, undefined, [], withBoat ? endpoint : undefined);
+    fixture = await launchVerificationServer({}, undefined, undefined, undefined, undefined, [], withBoat ? endpoint : undefined);
     const config = JSON.parse(readFileSync(join(fixture.info.dataDir, "config.json"), "utf8"));
     const response = await fetch(`${fixture.info.url}/api/instances`);
     expect(response.ok).toBe(true);

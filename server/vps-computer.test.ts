@@ -1,9 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { PassThrough, Writable } from "node:stream";
 
 const { spawnMock } = vi.hoisted(() => ({ spawnMock: vi.fn() }));
@@ -31,7 +27,6 @@ import {
   VPS_MANAGED_LABEL,
   VPS_VIEWER_LABEL,
   vpsComputerAction,
-  vpsComputerScreenshot,
   vpsComputerStatus,
   vpsComputerMcp,
   vpsContainerMcpArgs,
@@ -51,16 +46,6 @@ const BOT_ID = "bot-1234-abcd";
 const CONFIG: AppConfig = { vps: { sshAlias: "production-vps" } };
 const IMAGE_ID = `sha256:${"a".repeat(64)}`;
 const CONTAINER_ID = "b".repeat(64);
-const screenshot = Buffer.concat([
-  Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  Buffer.alloc(600),
-  Buffer.from("IEND", "ascii"),
-]);
-const hasPillow = (() => {
-  if (process.platform === "win32") return false;
-  try { execFileSync("python3", ["-I", "-c", "from PIL import Image"], { stdio: "ignore" }); return true; }
-  catch { return false; }
-})();
 
 function fixture({
   image = true,
@@ -80,8 +65,6 @@ function fixture({
   pidMode = "",
   ipcMode,
   capAdd = ["CAP_SETUID", "CAP_SETGID"],
-  screenshotValid = true,
-  screenshotCaptureFails = false,
   desktopProbeFails = false,
   securityOpt = [],
   memory = 4 * 1024 * 1024 * 1024,
@@ -107,8 +90,6 @@ function fixture({
   pidMode?: string;
   ipcMode?: string;
   capAdd?: string[];
-  screenshotValid?: boolean;
-  screenshotCaptureFails?: boolean;
   desktopProbeFails?: boolean;
   securityOpt?: string[];
   memory?: number;
@@ -202,10 +183,6 @@ function fixture({
       };
     }
     if (command === "exec") {
-      // only the pixel-carrying screenshot call fails; the status path's
-      // plain get_desktop_state readiness probe keeps answering
-      if (screenshotCaptureFails && args.includes("--screenshot-out-file")) throw new Error("capture failed");
-      if (args.includes("openmausbot-preview")) return { stdout: screenshotValid ? screenshot.toString("base64") : "not-an-image", stderr: "" };
       if (args.includes("tail")) {
         return { stdout: "X display :1 did not become ready within 45 seconds\n", stderr: "" };
       }
@@ -332,8 +309,7 @@ describe("VPS computer", () => {
     expect(probes.every(({ args }) => args.includes(`DISPLAY=${DISPLAY}`))).toBe(true);
     expect(probes.every(({ args }) => args.includes("CUA_DRIVER_RS_TELEMETRY_ENABLED=0"))).toBe(true);
     // The status poll must never transfer pixels: readiness is the driver
-    // answering get_desktop_state, and pixel validation belongs to the
-    // screenshot path alone.
+    // answering get_desktop_state, and there is no other pixel path.
     expect(fake.calls.some(({ args }) => args.includes("openmausbot-preview"))).toBe(false);
     expect(fake.calls.some(({ args }) => args.includes("--screenshot-out-file"))).toBe(false);
   });
@@ -518,36 +494,6 @@ describe("VPS computer", () => {
     }
   });
 
-  it.each(["provision", "auto"] as const)("waits through a normal slow preview before %s readiness", async (mode) => {
-    vi.useFakeTimers();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const fake = fixture();
-    const runner: VpsCommandRunner = async (args, options) => {
-      if (args.includes("--screenshot-out-file")) await gate;
-      return fake.runner(args, options);
-    };
-    const preview = vpsComputerScreenshot(CONFIG, BOT_ID, runner);
-    await vi.advanceTimersByTimeAsync(0);
-    let failure: unknown;
-    const readiness = (mode === "provision"
-      ? vpsComputerAction("provision", CONFIG, BOT_ID, runner)
-      : inspectVpsForAuto(CONFIG, BOT_ID, runner)).catch((error) => { failure = error; return null; });
-    try {
-      await vi.advanceTimersByTimeAsync(6_000);
-      expect(failure).toBeUndefined();
-      expect(vpsLifecycleBusy()).toBe(true);
-      release();
-      await preview;
-      expect((await readiness)?.ready).toBe(true);
-      expect(vpsLifecycleBusy()).toBe(false);
-    } finally {
-      release();
-      await Promise.allSettled([preview, readiness]);
-      vi.useRealTimers();
-    }
-  });
-
   it("keeps provisioning and readiness checks on the alias captured at operation start", async () => {
     const fake = fixture({ container: false });
     const config: AppConfig = { vps: { sshAlias: "original-vps" } };
@@ -589,269 +535,6 @@ describe("VPS computer", () => {
       "--socket",
       "/run/user/1000/openmausbot-cua.sock",
     ]);
-  });
-
-  it("captures screenshots through Cua Driver and validates the returned image", async () => {
-    const fake = fixture();
-    const frame = await vpsComputerScreenshot(CONFIG, BOT_ID, fake.runner);
-    expect(frame).toEqual({ png: screenshot.toString("base64"), format: "png" });
-    expect(fake.calls.some(({ args }) => args.includes("get_desktop_state"))).toBe(true);
-    const transfer = fake.calls.find(({ args }) => args.includes("openmausbot-preview"))!.args;
-    expect(transfer.slice(2)).toEqual([
-      "exec", "-u", "cua", "-e", "HOME=/home/cua", CONTAINER_ID,
-      "sh", "-c", expect.stringContaining('quality=70'), "openmausbot-preview", "/tmp/openmausbot-vps-preview.png",
-    ]);
-    expect(transfer[transfer.indexOf("-c") + 1]).toContain("image.thumbnail((1280, 1280))");
-    expect(fake.calls.some(({ args }) => args.includes("rm") && args.includes("-f"))).toBe(true);
-
-    await expect(vpsComputerScreenshot(CONFIG, BOT_ID, fixture({ screenshotValid: false }).runner)).rejects.toThrow(/incomplete/);
-
-    const failedCapture = fixture({ screenshotCaptureFails: true });
-    await expect(vpsComputerScreenshot(CONFIG, BOT_ID, failedCapture.runner)).rejects.toThrow(/capture failed/);
-    expect(failedCapture.calls.some(({ args }) => args.includes("rm") && args.includes("-f"))).toBe(true);
-  });
-
-  it.skipIf(!hasPillow)("transfers real JPEG previews at quality 70, within 1280px without upscaling", async () => {
-    const fake = fixture();
-    await vpsComputerScreenshot(CONFIG, BOT_ID, fake.runner);
-    const transfer = fake.calls.find(({ args }) => args.includes("openmausbot-preview"))!.args;
-    // Execute the exact in-container script, substituting only the local
-    // Pillow interpreter and a disposable input image. No Docker or SSH.
-    const script = transfer[transfer.indexOf("-c") + 1].replace("/opt/venv/bin/python", "python3");
-    const scratch = mkdtempSync(join(tmpdir(), "omb-vps-preview-image-"));
-    try {
-      for (const [width, height, expected] of [[2560, 1600, [1280, 800]], [1600, 2560, [800, 1280]], [320, 200, [320, 200]]] as const) {
-        const original = execFileSync("python3", ["-I", "-c", `from PIL import Image; import sys; Image.effect_noise((${width}, ${height}), 64).convert("RGBA").save(sys.stdout.buffer, format="PNG")`], { maxBuffer: 32 * 1024 * 1024 });
-        const path = join(scratch, "preview.png");
-        writeFileSync(path, original);
-        const encoded = execFileSync("sh", ["-c", script, "openmausbot-preview", path], { encoding: "utf8", maxBuffer: 16 * 1024 * 1024 });
-        const jpeg = Buffer.from(encoded, "base64");
-        const decoded = execFileSync("python3", ["-I", "-c", [
-          "from PIL import Image",
-          "import io, json, sys",
-          "image = Image.open(io.BytesIO(sys.stdin.buffer.read()))",
-          "image.load()",
-          "reference = io.BytesIO()",
-          "Image.new('RGB', (1, 1)).save(reference, format='JPEG', quality=70)",
-          "print(json.dumps(dict(format=image.format, size=image.size, mode=image.mode, quality70=image.quantization == Image.open(reference).quantization)))",
-        ].join("\n")], { input: jpeg, encoding: "utf8" });
-        expect(JSON.parse(decoded)).toEqual({ format: "JPEG", size: expected, mode: "RGB", quality70: true });
-        expect(jpeg.length).toBeLessThan(original.length / 2);
-        expect(readFileSync(path).equals(original)).toBe(true);
-        const frame = await vpsComputerScreenshot(CONFIG, BOT_ID, async (args, options) => args.includes("openmausbot-preview")
-          ? { stdout: encoded, stderr: "" }
-          : fake.runner(args, options));
-        expect(frame).toEqual({ png: encoded, format: "jpeg" });
-      }
-    } finally { rmSync(scratch, { recursive: true, force: true }); }
-  });
-
-  it.skipIf(process.platform === "win32")("falls back to the original PNG when conversion is unavailable or fails", async () => {
-    const fake = fixture();
-    await vpsComputerScreenshot(CONFIG, BOT_ID, fake.runner);
-    const transfer = fake.calls.find(({ args }) => args.includes("openmausbot-preview"))!.args;
-    const originalScript = transfer[transfer.indexOf("-c") + 1];
-    const scratch = mkdtempSync(join(tmpdir(), "omb-vps-preview-fallback-"));
-    try {
-      const path = join(scratch, "preview.png");
-      writeFileSync(path, screenshot);
-      // A missing interpreter and a failed conversion must both preserve
-      // the previous PNG behavior, never return a partial JPEG plus a PNG.
-      for (const interpreter of [join(scratch, "missing-python"), "false"]) {
-        const script = originalScript.replace("/opt/venv/bin/python", interpreter);
-        const encoded = execFileSync("sh", ["-c", script, "openmausbot-preview", path], { encoding: "utf8" });
-        expect(encoded).toBe(screenshot.toString("base64"));
-      }
-    } finally { rmSync(scratch, { recursive: true, force: true }); }
-  });
-
-  it("shares overlapping captures of the same target through cleanup", async () => {
-    const fake = fixture();
-    let release!: () => void;
-    let entered!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const capturing = new Promise<void>((resolve) => { entered = resolve; });
-    const runner: VpsCommandRunner = async (args, options) => {
-      if (args.includes("--screenshot-out-file")) { entered(); await gate; }
-      return fake.runner(args, options);
-    };
-    const first = vpsComputerScreenshot(CONFIG, BOT_ID, runner);
-    await capturing;
-    const second = vpsComputerScreenshot(CONFIG, BOT_ID, runner);
-    expect(vpsLifecycleBusy()).toBe(true);
-    release();
-    const frames = await Promise.all([first, second]);
-    expect(frames[0]).toEqual(frames[1]);
-    expect(fake.calls.filter(({ args }) => args.includes("--screenshot-out-file"))).toHaveLength(1);
-    expect(fake.calls.filter(({ args }) => args.includes("openmausbot-preview"))).toHaveLength(1);
-    expect(fake.calls.filter(({ args }) => args.includes("rm"))).toHaveLength(1);
-    expect(vpsLifecycleBusy()).toBe(false);
-  });
-
-  it("pins the capture alias and never shares its frame with a different VPS", async () => {
-    const cfg: AppConfig = { vps: { sshAlias: "first-preview-vps" } };
-    const fake = fixture();
-    let release!: () => void;
-    let entered!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    const capturing = new Promise<void>((resolve) => { entered = resolve; });
-    const runner: VpsCommandRunner = async (args, options) => {
-      if (args[1] === "ssh://first-preview-vps" && args.includes("--screenshot-out-file")) { entered(); await gate; }
-      return fake.runner(args, options);
-    };
-    const first = vpsComputerScreenshot(cfg, BOT_ID, runner);
-    await capturing;
-    cfg.vps!.sshAlias = "second-preview-vps";
-    await vpsComputerScreenshot(cfg, BOT_ID, runner);
-    release();
-    await first;
-    for (const alias of ["first-preview-vps", "second-preview-vps"]) {
-      expect(fake.calls.filter(({ args }) => args[1] === `ssh://${alias}` && args.includes("--screenshot-out-file"))).toHaveLength(1);
-      expect(fake.calls.filter(({ args }) => args[1] === `ssh://${alias}` && args.includes("openmausbot-preview"))).toHaveLength(1);
-    }
-  });
-
-  it("bounds the complete slow preview, holds its lock through timed-out cleanup, and recovers", async () => {
-    vi.useFakeTimers();
-    try {
-      const fake = fixture();
-      const calls: Array<{ args: string[]; timeoutMs: number }> = [];
-      const runner: VpsCommandRunner = async (args, options) => {
-        const timeoutMs = options?.timeoutMs ?? 120_000;
-        calls.push({ args, timeoutMs });
-        if (args.includes("openmausbot-preview") || args.includes("rm")) {
-          // Match defaultRunner: time out, terminate, then wait its 6s kill
-          // grace before settling. Nothing races ahead of this outstanding work.
-          await new Promise((resolve) => setTimeout(resolve, timeoutMs + 6_000));
-          throw new Error("Docker-over-SSH command timed out");
-        }
-        await new Promise((resolve) => setTimeout(resolve, args.includes("--screenshot-out-file") ? 4_000 : 2_000));
-        return fake.runner(args, options);
-      };
-      const start = Date.now();
-      let settled = false;
-      const first = vpsComputerScreenshot(CONFIG, BOT_ID, runner).finally(() => { settled = true; });
-      const rejected = expect(first).rejects.toMatchObject({ status: 504 });
-      await vi.advanceTimersByTimeAsync(35_000);
-      expect(calls.find(({ args }) => args.includes("openmausbot-preview"))?.timeoutMs).toBe(13_000);
-      expect(calls.find(({ args }) => args.includes("rm"))?.timeoutMs).toBe(4_000);
-      expect(vpsLifecycleBusy()).toBe(true);
-      expect(settled).toBe(false);
-      const joined = expect(vpsComputerScreenshot(CONFIG, BOT_ID, runner)).rejects.toMatchObject({ status: 504 });
-      await vi.advanceTimersByTimeAsync(9_999);
-      expect(settled).toBe(false);
-      await vi.advanceTimersByTimeAsync(1);
-      await Promise.all([rejected, joined]);
-      expect(Date.now() - start).toBe(45_000);
-      expect(calls.filter(({ args }) => args.includes("--screenshot-out-file"))).toHaveLength(1);
-      expect(vpsLifecycleBusy()).toBe(false);
-      await expect(vpsComputerScreenshot(CONFIG, BOT_ID, fixture().runner)).resolves.toMatchObject({ format: "png" });
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("shares cold status work with a capture and refreshes cache after a slow frame, not before it", async () => {
-    vi.useFakeTimers();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    try {
-      const fake = fixture();
-      const cfg: AppConfig = { vps: { sshAlias: "cache-preview-vps" } };
-      let entered!: () => void;
-      const capturing = new Promise<void>((resolve) => { entered = resolve; });
-      let captures = 0;
-      // Exercise the real defaultRunner/cache path, but replace only the
-      // child transport. No Docker or SSH process reaches a real provider.
-      spawnMock.mockImplementation((_command: string, args: string[]) => {
-        const child = Object.assign(new EventEmitter(), {
-          stdin: new Writable({ write: (_chunk, _encoding, callback) => callback() }),
-          stdout: new PassThrough(), stderr: new PassThrough(),
-          kill: () => true,
-        });
-        queueMicrotask(() => {
-          void (async () => {
-            if (args.includes("--screenshot-out-file") && ++captures === 1) { entered(); await gate; }
-            const output = await fake.runner(args);
-            child.stdout.end(output.stdout);
-            child.stderr.end(output.stderr);
-            child.emit("close", 0, null);
-          })().catch((error: Error) => {
-            child.stderr.end(error.message);
-            child.emit("close", 1, null);
-          });
-        });
-        return child;
-      });
-      const frame = vpsComputerScreenshot(cfg, BOT_ID);
-      await capturing;
-      const status = vpsComputerStatus(cfg, BOT_ID);
-      await vi.advanceTimersByTimeAsync(12_000); // longer than the old 10s cache
-      expect(fake.calls.filter(({ args }) => args[2] === "image")).toHaveLength(1);
-      release();
-      await expect(frame).resolves.toMatchObject({ format: "png" });
-      await expect(status).resolves.toMatchObject({ ready: true });
-      await vpsComputerScreenshot(cfg, BOT_ID);
-      expect(captures).toBe(2);
-      expect(fake.calls.filter(({ args }) => args[2] === "image")).toHaveLength(1);
-      // A real lifecycle transition still invalidates this fresh cache.
-      await vpsComputerAction("stop", cfg, BOT_ID);
-      await expect(vpsComputerScreenshot(cfg, BOT_ID)).rejects.toThrow(/stopped|running/);
-      expect(captures).toBe(2);
-    } finally { release(); spawnMock.mockReset(); vi.useRealTimers(); }
-  });
-
-  it("shares status-first cold inspection with other polls and a preview", async () => {
-    const cfg: AppConfig = { vps: { sshAlias: "status-first-vps" } };
-    const fake = fixture();
-    let release!: () => void;
-    const gate = new Promise<void>((resolve) => { release = resolve; });
-    let entered!: () => void;
-    const inspecting = new Promise<void>((resolve) => { entered = resolve; });
-    mockTransport(async (args, options) => {
-      if (args[2] === "image") { entered(); await gate; }
-      return fake.runner(args, options);
-    });
-    const first = vpsComputerStatus(cfg, BOT_ID);
-    await inspecting;
-    const second = vpsComputerStatus(cfg, BOT_ID);
-    const preview = vpsComputerScreenshot(cfg, BOT_ID);
-    try {
-      release();
-      const results = await Promise.all([first, second, preview]);
-      expect(results[0]).toMatchObject({ ready: true });
-      expect(results[1]).toMatchObject({ ready: true });
-      expect(results[2]).toMatchObject({ format: "png" });
-      expect(fake.calls.filter(({ args }) => args[2] === "image")).toHaveLength(1);
-    } finally {
-      release();
-      await Promise.allSettled([first, second, preview]);
-      spawnMock.mockReset();
-    }
-  });
-
-  it("keeps a preview bounded when an independently owned status poll is slower", async () => {
-    vi.useFakeTimers();
-    const cfg: AppConfig = { vps: { sshAlias: "slow-shared-status-vps" } };
-    const fake = fixture();
-    mockTransport(async (args, options) => {
-      // Every individual command is healthy, but the full inspection is
-      // longer than the preview's budget. No real Docker or SSH is started.
-      await new Promise((resolve) => setTimeout(resolve, 9_000));
-      return fake.runner(args, options);
-    });
-    try {
-      const status = vpsComputerStatus(cfg, BOT_ID);
-      await vi.advanceTimersByTimeAsync(0);
-      const preview = expect(vpsComputerScreenshot(cfg, BOT_ID)).rejects.toMatchObject({ status: 504 });
-      await vi.advanceTimersByTimeAsync(35_000);
-      await preview;
-      expect(vpsLifecycleBusy()).toBe(false);
-      await vi.advanceTimersByTimeAsync(20_000);
-      expect((await status).ready).toBe(true);
-      const refreshed = vpsComputerStatus(cfg, BOT_ID);
-      await vi.advanceTimersByTimeAsync(55_000);
-      expect((await refreshed).ready).toBe(true);
-      expect(fake.calls.filter(({ args }) => args[2] === "image")).toHaveLength(2);
-    } finally { spawnMock.mockReset(); vi.useRealTimers(); }
   });
 
   it("does not republish an old ready poll after stopping the container", async () => {

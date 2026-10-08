@@ -117,8 +117,8 @@ export { cloudHomeOffersPlace } from "../shared/cloud-home.ts";
  * the person's, no Local VM), in the words the person reads; undefined for a
  * place it offers. A turn's error shows 160 characters, so each fits. */
 export function cloudHomePlaceRefusal(place: Surface): string | undefined {
-  if (place === "local") return "This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto, Cloud or Browser, or lend your Mac under Settings → OMB Cloud.";
-  if (place === "vm") return "Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto, Cloud or Browser.";
+  if (place === "local") return "This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto or Cloud, or lend your Mac under Settings → OMB Cloud.";
+  if (place === "vm") return "Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto or Cloud.";
   return undefined;
 }
 
@@ -126,7 +126,7 @@ export function cloudHomePlaceRefusal(place: Surface): string | undefined {
  * key of the person's and no included Boat). A Cloud home has no Local VM to
  * suggest instead. */
 export function boatNotConfiguredMessage(cloudHome: boolean): string {
-  return `Cloud Boat is not configured — add a Boat API key or choose ${cloudHome ? "Browser" : "Local VM"}`;
+  return `Cloud Boat is not configured — add a Boat API key${cloudHome ? "" : " or choose Local VM"}`;
 }
 
 /** The Cloud's setup checklist (docs/cloud-pro.md) has a "try something"

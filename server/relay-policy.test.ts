@@ -17,16 +17,14 @@ describe("Relay computer safety flag", () => {
 });
 
 describe("Relay disabled computer routes", () => {
-  it("blocks computer, browser, voice, and phone endpoints without blocking Relay data or auth", () => {
+  it("blocks computer, voice, and phone endpoints without blocking Relay data or auth", () => {
     for (const path of [
       "/api/computers/vps",
       "/api/local-computer/screenshot",
       "/api/local-vm/inventory",
-      "/api/browser-engine/install",
       "/api/internal/computer-control",
       "/api/internal/computer/select",
       "/api/internal/vm-exec",
-      "/api/internal/browser/mcp",
       "/api/internal/phone/claim",
       "/api/internal/voice-note",
       "/api/bots/bot-1/computer/control",
@@ -46,23 +44,20 @@ describe("Relay disabled computer routes", () => {
 });
 
 describe("Relay disabled settings refusals", () => {
-  it("rejects enabling computer, browser, VPS autostart, or voice notes but permits disabling and unrelated edits", () => {
+  it("rejects enabling computer, VPS autostart, or voice notes but permits disabling and unrelated edits", () => {
     for (const patch of [
       { computer: "cloud" },
       { computer: null },
-      { browser: true },
       { autoStartVps: true },
       { voiceNotes: true },
       { voice: "voice-1" },
-      { browserProfile: "work" },
     ]) expect(relayComputerSettingsRefusal(patch)).toBeTruthy();
-    expect(relayComputerSettingsRefusal({ computer: "off", browser: false, voiceNotes: false, title: "Scout" })).toBeNull();
+    expect(relayComputerSettingsRefusal({ computer: "off", voiceNotes: false, title: "Scout" })).toBeNull();
     expect(relayComputerSettingsRefusal({ title: "Scout" })).toBeNull();
   });
 
-  it("rejects config patches that turn on browser, shared-computer, voice, or unsafe bot defaults", () => {
+  it("rejects config patches that turn on shared-computer, voice, or unsafe bot defaults", () => {
     for (const patch of [
-      { features: { browser: true } },
       { features: { sharedComputers: true } },
       { tts: { provider: "system" } },
       { newBotDefaults: { profile: { computer: "cloud" } } },

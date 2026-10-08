@@ -7,11 +7,20 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { createRelayToolServer } from "./index.js";
 import type { RelayDatabase } from "./infra/database.js";
 
-test("HTTP MCP exposes exactly two tools and keeps agent permissions server-bound", async () => {
+test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bound", async () => {
+  const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
+    .update(JSON.stringify([userId, "person@example.test", issuedAt])).digest("base64url");
+  const assertion = JSON.stringify({ userId, email: "person@example.test", issuedAt, signature });
   const calls: Array<{ method: string; args: unknown[] }> = [];
   let failRead = false;
   const database = {
     async verifyRelayProject() {},
+    async authenticateActorAssertion(value: string) {
+      assert.equal(value, assertion);
+      return userId;
+    },
     async read(...args: unknown[]) {
       calls.push({ method: "read", args });
       if (failRead) throw new Error("database unavailable");
@@ -27,12 +36,14 @@ test("HTTP MCP exposes exactly two tools and keeps agent permissions server-boun
   const address = server.address();
   assert.ok(address && typeof address === "object");
   const client = new Client({ name: "relay-tools-test", version: "0.1.0" });
-  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/scout`));
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/scout`), {
+    requestInit: { headers: { "x-relay-actor-user": assertion } },
+  });
 
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["relay_read", "relay_write"]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["browser_extract", "browser_open", "browser_read", "relay_read", "relay_write", "web_search"]);
 
     const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
     assert.equal(read.isError, undefined);
@@ -57,7 +68,9 @@ test("HTTP MCP exposes exactly two tools and keeps agent permissions server-boun
     assert.equal(calls.some((call) => call.method === "write"), false);
 
     const mercuryClient = new Client({ name: "relay-mercury-test", version: "0.1.0" });
-    const mercuryTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/mercury`));
+    const mercuryTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/mercury`), {
+      requestInit: { headers: { "x-relay-actor-user": assertion } },
+    });
     try {
       await mercuryClient.connect(mercuryTransport);
       const safetyRead = await mercuryClient.callTool({
@@ -113,8 +126,41 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
 
   // Scout and Curator hold no Gmail or calendar capability, so those tools must
   // not be advertised at all rather than offered and refused.
-  for (const agent of ["scout", "curator"]) {
-    const listed = await names(agent);
-    assert.deepEqual(listed, ["relay_read", "relay_write"], agent);
+  // Scout additionally holds the research capabilities, visible only to an
+  // authenticated caller; Curator holds none.
+  assert.deepEqual(await names("scout"), [
+    "browser_extract",
+    "browser_open",
+    "browser_read",
+    "relay_read",
+    "relay_write",
+    "web_search",
+  ]);
+  assert.deepEqual(await names("curator"), ["relay_read", "relay_write"], "curator");
+});
+
+test("unauthenticated MCP callers cannot reach relay data", async () => {
+  const database = {
+    async verifyRelayProject() {},
+    async read() {
+      throw new Error("must not reach database without an actor");
+    },
+    async write() {
+      throw new Error("must not reach database without an actor");
+    },
+  } as unknown as RelayDatabase;
+
+  const server = await createRelayToolServer(database, 0);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  try {
+    for (const agent of ["scout", "mercury", "curator"]) {
+      const endpoint: string = `http://127.0.0.1:${(address as { port: number }).port}/mcp/${agent}`;
+      const noAuth: Response = await fetch(endpoint, { method: "POST", headers: { "content-type": "application/json" }, body: "{}" });
+      assert.equal(noAuth.status, 401, agent);
+      await noAuth.text().catch(() => undefined);
+    }
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

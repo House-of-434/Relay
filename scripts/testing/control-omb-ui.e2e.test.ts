@@ -3,9 +3,9 @@
 // drives the real <App/> through the ui verbs, and reads the outcome back from
 // the accessibility tree — the same evidence a person would collect by hand.
 //
-// Needs the pinned agent-browser binary. It runs when one resolves (the tools
-// directory, OMB_AGENT_BROWSER_PATH or PATH) or when OMB_UI_E2E=1 asks for the
-// verified download; otherwise it is skipped with a printed reason.
+// Needs system Chrome (CHROME_PATH or a well-known install). It runs when
+// one resolves or when OMB_UI_E2E=1 requires it; otherwise it is skipped
+// with a printed reason.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -13,24 +13,22 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "scripts", "control-omb.ts");
 const forced = process.env.OMB_UI_E2E === "1";
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-const enabled = forced || Boolean(binary);
+const enabled = forced || Boolean(resolveUiChrome(process.env));
 if (!enabled) {
-  console.log(`skipping control-omb ui e2e: no agent-browser binary resolves (looked in ${UI_TOOLS_DIR}, OMB_AGENT_BROWSER_PATH and PATH); set OMB_UI_E2E=1 to install the pinned release`);
+  console.log(`skipping control-omb ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set OMB_UI_E2E=1 to require it`);
 }
 const run = enabled ? it : it.skip;
-// A cold run downloads the binary and Chrome; a warm one launches in seconds.
-// A forced run may still have Chrome for Testing to download (agent-browser can
-// be cached while Chrome is not), so give every forced run the long budget.
+// A launch starts a fixture server, a Vite preview and a headless Chrome;
+// a warm one launches in seconds. A forced run still waits the full budget
+// for a cold machine, so give every forced run the long budget.
 const LAUNCH_TIMEOUT_MS = forced ? 600_000 : 180_000;
 
 // Synthetic provider outcomes exercise the UI, not the commands themselves.
@@ -55,7 +53,7 @@ interface Launched {
 function launch(args: string[]): Promise<Launched> {
   return new Promise((done, fail) => {
     // Own process group: a timeout must take the launch AND whatever it is
-    // running (an `agent-browser install` mid-download) down with it.
+    // running (fixture, preview, driver) down with it.
     const child = spawn(process.execPath, ["--experimental-strip-types", CLI, "ui", "launch", ...args], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32",
     });
@@ -216,8 +214,8 @@ describe("control-omb ui drives the real renderer", () => {
     expect(info.ui).toBe(join(info.dataDir, "ui.json"));
     expect(existsSync(info.ui)).toBe(true);
     const handle = JSON.parse(readFileSync(info.ui, "utf8"));
-    expect(handle).toMatchObject({ url: info.url, previewUrl: info.previewUrl, botId: info.botId, home: info.dataDir, session: `omb-ui-${new URL(info.url).port}` });
-    expect(existsSync(handle.binary)).toBe(true);
+    expect(handle).toMatchObject({ url: info.url, previewUrl: info.previewUrl, botId: info.botId, home: info.dataDir, driverUrl: expect.stringMatching(/^http:\/\/127\.0\.0\.1:\d+$/) });
+    expect(existsSync(handle.chrome)).toBe(true);
 
     // The flag flips on the server; the renderer picks it up over SSE.
     const dry = await ui("flag", info.ui, "--set", "features.showToolCalls=true", "--dry-run");

@@ -1351,10 +1351,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         mcpServers.phone = { ...turn.integrations.phone };
         allowed.push("mcp__phone");
       }
-      if (turn.integrations?.browser) {
-        mcpServers.browser = { ...turn.integrations.browser };
-        allowed.push("mcp__browser");
-      }
       // dweb network daemon (status / repo / opencode model access) via
       // server/drivers/dweb-proxy.ts — points at the configured dweb instance
       if (turn.integrations?.dweb) {
@@ -2260,7 +2256,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
-          browserMcp: true,
           images: true,
           nativeImageInput: true,
           effortLevels: ["low", "medium", "high", "xhigh", "max"],

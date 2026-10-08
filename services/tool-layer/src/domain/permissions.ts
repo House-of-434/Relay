@@ -129,6 +129,39 @@ export function authorizeCalendar(agent: Agent, capability: CalendarCapability):
   }
 }
 
+/** Research-browser operations are granted per agent, never per request.
+ * Only Scout researches the open web; Mercury and Curator work from Relay
+ * records, mail, and calendar. */
+export type BrowserCapability = "open" | "read" | "extract";
+
+export const BROWSER_PERMISSIONS: Record<Agent, readonly BrowserCapability[]> = {
+  scout: ["open", "read", "extract"],
+  mercury: [],
+  curator: [],
+};
+
+export function authorizeBrowser(agent: Agent, capability: BrowserCapability): void {
+  if (!BROWSER_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`${capability} access denied for ${agent}`);
+  }
+}
+
+/** Web-search capability: discovery with no per-user state, granted per
+ * agent like everything else. Only Scout researches the open web. */
+export type SearchCapability = "search";
+
+export const SEARCH_PERMISSIONS: Record<Agent, readonly SearchCapability[]> = {
+  scout: ["search"],
+  mercury: [],
+  curator: [],
+};
+
+export function authorizeSearch(agent: Agent, capability: SearchCapability): void {
+  if (!SEARCH_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`${capability} access denied for ${agent}`);
+  }
+}
+
 export function isAgent(value: string): value is Agent {
   return (AGENTS as readonly string[]).includes(value);
 }

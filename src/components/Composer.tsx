@@ -605,7 +605,8 @@ export function Composer({
     // named `body`, not `t` — that name belongs to the catalog lookup now
     // resolvable "#Title" runs leave as canonical links, so the thread id
     // stays machine-readable in the stored send and the model's context
-    const body = composeMessage(serializeThreadRefs(effectiveText, threads, currentBotId), attachments);
+    const composed = composeMessage(serializeThreadRefs(effectiveText, threads, currentBotId), attachments);
+    const body = composed;
     if (!body) return;
     const sentDraft: ComposerDraftSnapshot = {
       draftId,

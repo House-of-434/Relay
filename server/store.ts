@@ -12,7 +12,7 @@ import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
 import type { BotProfilePatch } from "./bot-profile.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
-import { DATA_DIR, EVENTS_DIR, NATIVE_DIR, loadBrowserProfileIdAliases } from "./config.ts";
+import { DATA_DIR, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import * as mdb from "./message-db.ts";
 import { runCommand, type Command } from "./commands.ts";
 import { workspaceDir } from "./workspace.ts";
@@ -401,7 +401,7 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
  * WireTask[], avatarUrl is coerced to always-present). The exactness
  * assertion fails to compile when either side drifts, so a new server
  * field forces a decision — wire-visible or private here. */
-export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "relayAgent" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase";
+export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase";
 export type BotWireProjection = Pick<BotRecord, Exclude<keyof BotRecord, BotWirePrivateKeys>>;
 export type BotWireProjectionIsExact = AssertExact<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection> & AssertSameKeys<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection>;
 export const botWireProjectionIsExact: BotWireProjectionIsExact = true;
@@ -632,7 +632,6 @@ export class Store {
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
-    const browserProfileAliases = loadBrowserProfileIdAliases();
     const chiefSectionsSeen = new Set<string>();
     const relayAgentRolesSeen = new Set<RelayAgentRole>();
     let groupsMigrated = false;
@@ -666,12 +665,16 @@ export class Store {
           console.warn(`[bot-folder] could not create SOUL.md for ${b.id}: ${(e as Error).message}`);
         }
       }
-      if (b.browserProfile) {
-        const browserProfile = browserProfileAliases.get(b.browserProfile);
-        if (browserProfile && browserProfile !== b.browserProfile) {
-          b.browserProfile = browserProfile;
-          botsMigrated = true;
-        }
+      // The built-in browser is gone: a stored "browser" destination falls
+      // back to Auto, and the per-bot browser switch/profile are dropped.
+      if ((b as { computer?: unknown }).computer === "browser") {
+        delete b.computer;
+        botsMigrated = true;
+      }
+      if ("browser" in b || "browserProfile" in b) {
+        delete (b as { browser?: unknown }).browser;
+        delete (b as { browserProfile?: unknown }).browserProfile;
+        botsMigrated = true;
       }
       if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
         delete b.cloudBackend;
@@ -1542,47 +1545,12 @@ export class Store {
     // the in-memory branch and subscribers unchanged, just like SQLite.
     t.messages.push(full);
     t.activeLeafId = full.id;
-    if (full.kind === "screen") {
-      for (const pruned of this.pruneScreenFrames(t)) {
-        mdb.updateMessage(threadId, pruned);
-        this.emit({ type: "message.patch", threadId, message: pruned });
-      }
-    }
     this.noteThreadActivity(threadId, full.at);
     this.emit({ type: "message", threadId, message: full });
     // The first-run quiz is not a live ask. Talking past it hides it so the
     // transcript is just the greeting plus what they said. Cards with a
     // requestId are permission/question prompts and stay until answered.
     if (full.role === "user" && full.kind === "text") this.dismissOnboardingCard(threadId);
-    return full;
-  }
-
-  /** Insert a message into the active chain directly after `anchorId` — the
-   * home for turn artifacts that finish AFTER the world moved on (the
-   * settle-time screen capture races a fast follow-up send, which used to
-   * leave the user's message stranded above the screenshot). When the anchor
-   * is still the leaf this is a plain append; otherwise the anchor's
-   * children are re-parented onto the inserted message, so the transcript
-   * reads turn → artifact → follow-up and the leaf stays where it was. */
-  insertMessageAfter(threadId: string, anchorId: string | undefined, message: Omit<Message, "id" | "at">): Message {
-    const t = this.thread(threadId);
-    const anchorExists = anchorId !== undefined && t.messages.some((m) => m.id === anchorId);
-    if (!anchorExists || t.activeLeafId === anchorId) return this.appendMessage(threadId, message);
-    const full: Message = { id: newId(), at: Date.now(), ...redactBotAuthored(message), parentId: anchorId };
-    const children = t.messages.filter((m) => m.parentId === anchorId);
-    t.messages.push(full);
-    mdb.appendMessage(threadId, full);
-    if (full.kind === "screen") {
-      for (const pruned of this.pruneScreenFrames(t)) {
-        mdb.updateMessage(threadId, pruned);
-        this.emit({ type: "message.patch", threadId, message: pruned });
-      }
-    }
-    this.noteThreadActivity(threadId, full.at);
-    this.emit({ type: "message", threadId, message: full });
-    // announced after the insert so no client ever sees two siblings
-    // claiming the same parent
-    for (const child of children) this.patchMessage(threadId, child.id, { parentId: full.id });
     return full;
   }
 
@@ -1594,27 +1562,6 @@ export class Store {
     );
     if (!card?.card) return null;
     return this.patchMessage(threadId, card.id, { card: { ...card.card, dismissed: true } });
-  }
-
-  /** Screen frames are ~100-500KB of base64 each; keeping every frame of a
-   * long computer session bloats the transcript for nothing the client
-   * would ever show. The newest few keep their pixels; older ones stay in
-   * the transcript as placeholders. Mirrors the client's own frame cap.
-   * Returns the messages whose pixels were dropped so the caller can
-   * persist exactly those. */
-  private pruneScreenFrames(t: { messages: Message[] }, keep = 4): Message[] {
-    const pruned: Message[] = [];
-    let seen = 0;
-    for (let i = t.messages.length - 1; i >= 0 && seen < t.messages.length; i--) {
-      const m = t.messages[i];
-      if (m.kind !== "screen" || !m.png) continue;
-      seen += 1;
-      if (seen > keep) {
-        m.png = undefined;
-        pruned.push(m);
-      }
-    }
-    return pruned;
   }
 
   /** Fork the conversation: a new user message that replaces `sourceId`
@@ -2756,7 +2703,6 @@ export class Store {
       const bot = this.createBot({ ...seed.profile, name }, { relayAgent: seed.role });
       this.patchBot(bot.id, {
         computer: "off",
-        browser: false,
         autoStartVps: false,
         voiceNotes: false,
         composio: false,

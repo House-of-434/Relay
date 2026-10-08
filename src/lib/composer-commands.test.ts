@@ -32,6 +32,7 @@ describe("composer slash commands", () => {
     expect(goalTextFromComposer("discuss /goal later")).toBeNull();
   });
 
+
   it("offers setup as a slash command id and keeps the typed token", () => {
     const id: ComposerSlashCommandId = "setup";
     expect(id).toBe("setup");

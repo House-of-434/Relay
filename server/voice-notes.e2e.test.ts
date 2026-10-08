@@ -21,7 +21,6 @@ async function withVoiceFixture(test: (f: any) => Promise<void>, options?: { fai
     undefined,
     undefined,
     undefined,
-    undefined,
     { scripted: true },
   );
   const cli = (...args: string[]) => runControlOmb(args, { env: { OPENMAUSBOT_URL: session.info.url } }) as Promise<any>;

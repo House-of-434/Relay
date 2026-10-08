@@ -23,6 +23,7 @@ import type { SkillRequestCardData } from "./skill-request.ts";
 import type { QuestionRequestCardData } from "./ask-question.ts";
 import type { RoutineRunCardData } from "./routine-run.ts";
 import type { GroupGoalRunCardData } from "./group-goal-run.ts";
+import type { RelayAgentRole } from "../packages/relay-shared/relay-agent.ts";
 import type { RuntimeEvent } from "./runtime-events.ts";
 import type { Notification } from "./notification.ts";
 import type { Routine, RoutineRun } from "./routines.ts";
@@ -55,7 +56,7 @@ export type CloudBackend = "box" | "vps";
 
 /** A place a bot can act. cloud covers both cloud backends — from the
  * person's seat they are the same "cloud computer" panel. */
-export type Surface = "cloud" | "vm" | "local" | "browser";
+export type Surface = "cloud" | "vm" | "local";
 
 export type MausColor =
   | "green" | "blue" | "red" | "orange" | "purple" | "cyan" | "pink"
@@ -237,6 +238,10 @@ export interface WireBot {
   name: string;
   title: string;
   description: string;
+  /** The built-in Relay role that seeded this bot, when it came from a role
+   * seed. Lets the UI offer role affordances (Scout's research plan) from
+   * server truth rather than matching on the editable name or title. */
+  relayAgent?: RelayAgentRole;
   /** Standing instructions — the persona body. */
   soul?: string;
   /** sha256 of soul, for spotting a SOUL.md edited outside the app. */
@@ -308,8 +313,6 @@ export interface WireBot {
    * false = none); an explicit `{}` grants no tools. Grants never travel in
    * shareable exports and imported bots always land with none. */
   connectorTools?: Record<string, ConnectorToolGrant>;
-  /** Whether this bot gets the app's built-in browser. */
-  browser?: boolean;
   /** Memory upkeep: the harness captures facts from finished chats into
    * MEMORY.md and topic files, adds facts about the person to About me and
    * tidies nightly. On unless explicitly false; every change is journaled
@@ -317,8 +320,6 @@ export interface WireBot {
   memoryUpkeep?: boolean;
   /** Which of the app-wide MCP servers this bot mounts, by name. */
   mcpServers?: string[];
-  /** Id of a named browser profile; absent = the bot's own private session. */
-  browserProfile?: string;
   /** Public, package-authored playbooks installed for this bot. */
   playbooks?: InstalledPlaybook[];
   /** Listing provenance for package details and future re-export. */
@@ -371,7 +372,7 @@ export interface WireMessage {
   roomRequest?: { id: string; phase: "request" | "result" };
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "screen" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
+  kind: "text" | "options" | "activity" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
   text?: string;
   digest?: TurnDigest;
   compaction?: {
@@ -440,9 +441,6 @@ export interface WireMessage {
   requestPending?: boolean;
   /** The last assistant text item from a settled provider turn. */
   turnTerminal?: boolean;
-  /** screen messages: a frame of the bot's computer (base64 image) */
-  png?: string;
-  mime?: string;
   at: number;
   /** the message this one follows; null = thread root. */
   parentId?: string | null;
@@ -656,7 +654,6 @@ export type ServerFrame =
   | { kind: "webhook.attempt"; attempt: WebhookAttempt }
   | { kind: "webhook.deleted"; webhookId: string }
   | { kind: "runtime"; event: RuntimeEvent }
-  | { kind: "screen"; botId: string; threadId: string; png: string; mime?: string }
   | { kind: "computer"; botId: string; state: "provisioning" | "waking" }
   | { kind: "computer-control"; botId: string; held: boolean; helpReason: string | null }
   | { kind: "bot.deleted"; botId: string }

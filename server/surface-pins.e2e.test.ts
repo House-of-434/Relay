@@ -224,7 +224,7 @@ describe("surface pin provenance against the real server", () => {
     expect(savedTask(bot.id, task.threadId)?.surfaceSource).toBeUndefined();
     const place = await apiOk("GET", `/api/bots/${bot.id}/computer?threadId=${task.threadId}`);
     expect(place.surface).toBe("local");
-    await apiOk("PATCH", `/api/bots/${bot.id}`, { computer: "browser" });
+    await apiOk("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" });
     expect(savedTask(bot.id, task.threadId)?.surface).toBe("local");
     await stop();
     await start();

@@ -5,8 +5,10 @@ import { RelayDatabase } from "../infra/database.js";
 import { isAgent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
+import { BladeBrowserPool } from "../infra/bladebro.js";
+import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
-import { assertValidPort, bffConfig, toolPort } from "../config.js";
+import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolHost, toolPort } from "../config.js";
 
 function bearerToken(request: IncomingMessage): string | null {
   const authorization = request.headers.authorization;
@@ -34,6 +36,8 @@ function sendJson(response: ServerResponse, status: number, body: unknown): void
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body));
 }
+
+let sharedBladePool: BladeBrowserPool | null = null;
 
 export async function createRelayToolServer(
   database: RelayDatabase = new RelayDatabase(),
@@ -69,6 +73,14 @@ export async function createRelayToolServer(
         return;
       }
 
+      // The HMAC actor assertion is the real boundary (compose exposes this
+      // service on the container network). service_role bypasses Postgres RLS,
+      // so unauthenticated relay reads would leak shared internal rows.
+      if (!actor.userId) {
+        sendJson(response, 401, { error: "authenticated actor required" });
+        return;
+      }
+
       // Gmail and Calendar are exposed only to a caller that proved a signed
       // actor identity; without one there is no mailbox or calendar the BFF
       // could safely derive.
@@ -80,7 +92,34 @@ export async function createRelayToolServer(
         ? { client: new RelayCalendarClient({ bffInternalUrl, capability }), actorAssertion: actor.actorAssertion }
         : undefined;
 
-      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar);
+      // The research browser needs an authenticated user to scope the daemon
+      // workspace. The pool is process-shared so daemon tracking survives
+      // across requests. Search carries no per-user state, so the provider
+      // is built unconditionally — visibility is decided per agent below.
+      const blade = bladeConfig();
+      if (actor.userId) {
+        sharedBladePool ??= new BladeBrowserPool({
+          dataRoot: blade.dataRoot,
+          binary: blade.binary,
+          chromePath: blade.chromePath,
+          proxy: blade.proxy,
+          timezone: blade.timezone,
+          locale: blade.locale,
+        });
+      }
+      const browser =
+        actor.userId && sharedBladePool ? { pool: sharedBladePool, userId: actor.userId } : undefined;
+
+      const searchConfigValue = searchConfig();
+      const search = {
+        provider: new TinyFishSearchProvider({
+          binary: searchConfigValue.binary,
+          apiKey: searchConfigValue.apiKey,
+          home: searchConfigValue.home,
+        }),
+      };
+
+      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar, browser, search);
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await mcp.connect(transport);
@@ -102,7 +141,7 @@ export async function createRelayToolServer(
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once("error", reject);
-    httpServer.listen(requestedPort, "127.0.0.1", () => {
+    httpServer.listen(requestedPort, toolHost(), () => {
       httpServer.off("error", reject);
       resolve();
     });

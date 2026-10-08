@@ -8,7 +8,7 @@ import { removeTempDir } from "./testing/cleanup.ts";
 it("Chief creation uses the workspace default or a validated explicit model without inheriting permissions", async () => {
   const temp = mkdtempSync(join(tmpdir(), "omb-create-model-"));
   const gate = join(temp, "finish");
-  const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, undefined, undefined, undefined, undefined, undefined, ["codex"]);
+  const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, undefined, undefined, undefined, undefined, ["codex"]);
   const api = async (method: string, path: string, body?: unknown, expected = 200, token?: string) => {
     const response = await fetch(fixture.info.url + path, { method,
       headers: { "content-type": "application/json", origin: fixture.info.url,

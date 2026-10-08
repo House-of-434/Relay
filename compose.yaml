@@ -3,27 +3,62 @@ services:
   omb:
     init: true
     build:
-      context: ./deploy/local
+      context: .
+      dockerfile: deploy/local/Dockerfile
       args:
-        BASE_IMAGE: ${OMB_BASE_IMAGE:-ghcr.io/milind-soni/openmausbot:latest}
-        ENGINES: ${ENGINES-@anthropic-ai/claude-code @openai/codex}
+        # Space-separated npm packages for engine CLIs the bots use (e.g. an
+        # opencode CLI for the opencodeGo instance). Empty by default; the
+        # operator sets it to match the configured models. No default CLIs are
+        # baked in because unused engines are pure image weight.
+        ENGINES: ${OMB_ENGINES:-}
     image: ${OMB_LOCAL_IMAGE:-openmausbot-local:latest}
     restart: unless-stopped
     volumes:
       - data:/data
     ports:
       - "${OMB_BIND_ADDRESS:-127.0.0.1}:${OMB_HTTP_PORT:-8080}:80"
+    env_file:
+      - .env
+      - .env.secrets
     environment:
       OMB_PORT: "8799"
       OMB_WEBHOOK_PORT: "8800"
       OMB_PUBLIC_URL: ${OMB_PUBLIC_URL:-http://localhost:${OMB_HTTP_PORT:-8080}}
       OMB_WEBHOOK_PUBLIC_URL: ${OMB_WEBHOOK_PUBLIC_URL:-${OMB_PUBLIC_URL:-http://localhost:${OMB_HTTP_PORT:-8080}}}
+      # The Tool Layer runs as its own service; localhost here would point at
+      # this container, not at it.
+      RELAY_TOOL_URL: http://tools:8787
+  tools:
+    init: true
+    build:
+      context: .
+      dockerfile: deploy/local/Dockerfile
+      args:
+        ENGINES: ${OMB_ENGINES:-}
+    # Same image as omb (compose reuses the build); only the command differs.
+    image: ${OMB_LOCAL_IMAGE:-openmausbot-local:latest}
+    command: ["/usr/local/bin/start-tools.sh"]
+    restart: unless-stopped
+    volumes:
+      - data:/data
+    env_file:
+      - .env
+      - .env.secrets
+    environment:
+      # Listen on the container interface so the harness can reach this
+      # service over the compose network. The HMAC actor assertion stays the
+      # real boundary (default loopback is for bare processes, not compose).
+      RELAY_TOOL_HOST: "0.0.0.0"
+      RELAY_TOOL_PORT: "8787"
+      RELAY_BLADE_ROOT: /data/blade
+    expose:
+      - "8787"
     healthcheck:
       test:
         - CMD
         - node
         - -e
-        - "fetch('http://127.0.0.1:8799/api/health', { signal: AbortSignal.timeout(4000) }).then(async r => { if (!r.ok || !(await r.text()).includes('openmausbot')) process.exit(1); }).catch(() => process.exit(1))"
+        - "fetch('http://127.0.0.1:8787/healthz', { signal: AbortSignal.timeout(4000) }).then(async r => { if (!r.ok) process.exit(1); }).catch(() => process.exit(1))"
       interval: 15s
       timeout: 5s
       start_period: 30s

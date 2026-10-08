@@ -334,8 +334,8 @@ const toolDefinitions = (externalRuntime: boolean) => [
     description:
       "Choose where this conversation does computer work. Call with no arguments to inspect actual available choices and the current place. For a task needing computer interaction, select the requested place, or auto to choose a suitable configured computer without asking the user to use menus. OpenMausBot reuses an existing computer first; with a configured provider it can start or provision one when needed. Do not provision for ordinary chat or just to inspect availability. A pending result means end this turn immediately: OpenMausBot updates the conversation selector and resumes the original request with that computer's real tools. Do not use the old tools after requesting a switch, repeat the task, or claim the action is done. This cannot change permissions, override Off, or switch a teammate/routine/channel.",
     inputSchema: { type: "object", additionalProperties: false, properties: {
-      surface: { type: "string", enum: ["auto", "cloud", "vm", "local", "browser"],
-        description: "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop, browser = built-in browser. Omit to list." },
+      surface: { type: "string", enum: ["auto", "cloud", "vm", "local"],
+        description: "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop. Omit to list." },
     } },
   },
   {
@@ -659,7 +659,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "propose_routine",
     description:
-      "Prepare a new routine after the user explicitly asks to schedule recurring or future work. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. Convert calendar requests (monthly dates, last days, nth weekdays) into a validated five-field cron schedule with an explicit IANA timeZone; keep elapsed every-N-minutes work as interval. Never approximate unsupported requests with a different weekly schedule or an AI date-check routine; explain the limitation instead. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id; each run retains that bot's own permissions." + PROPOSAL_OUTCOME,
+      "Prepare a new routine after the user explicitly asks to schedule recurring or future work — or a bounded one-shot investigation (a `once` schedule): the confirmation card shows the plan, and Confirm executes it exactly once. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. Convert calendar requests (monthly dates, last days, nth weekdays) into a validated five-field cron schedule with an explicit IANA timeZone; keep elapsed every-N-minutes work as interval. Never approximate unsupported requests with a different weekly schedule or an AI date-check routine; explain the limitation instead. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id; each run retains that bot's own permissions." + PROPOSAL_OUTCOME,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -887,8 +887,8 @@ const WATCHER_TOOL_NAMES = new Set(["create_options_card"]);
 // shown them as choices, nor a VM shell they could never have.
 const LOCAL_VM_TOOL_NAMES = new Set(["vm_exec"]);
 const CLOUD_HOME_SURFACE = {
-  type: "string", enum: ["auto", "cloud", "browser"],
-  description: "auto = suitable configured computer, cloud = remote Boat/VPS, browser = built-in browser. Omit to list. This server runs in the cloud: the user's own computer and a Local VM are not places here.",
+  type: "string", enum: ["auto", "cloud"],
+  description: "auto = suitable configured computer, cloud = remote Boat/VPS. Omit to list. This server runs in the cloud: the user's own computer and a Local VM are not places here.",
 };
 
 /** The tools one turn is shown, exactly as tools/list serializes them. */

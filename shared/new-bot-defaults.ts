@@ -6,13 +6,12 @@ export type BotDefaultsProfile = Partial<Pick<WireBot,
   "name" | "title" | "description" | "soul" | "notifications" | "avatarUrl" | "avatarCrop" |
   "mascotBody" | "color" | "voice" | "speakReplies" | "section" | "modelSelection" |
   "cloudBackend" | "autoStartVps" | "approvalMode" | "alwaysAllow" | "chiefOfStaff" |
-  "managedSections" | "approvePeerComms" | "composio" | "browser"
+  "managedSections" | "approvePeerComms" | "composio"
 >> & {
   mascotExpression?: string | null;
   computer?: WireBot["computer"] | null;
   cwd?: string | null;
   peers?: string[] | null;
-  browserProfile?: string | null;
   mcpServers?: string[] | null;
   parkDirectMessages?: boolean;
 };

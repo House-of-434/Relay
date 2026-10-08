@@ -252,7 +252,6 @@ posixOnly("per-bot visibility on a shared workspace", () => {
     const refused: Array<[string, string, unknown?]> = [
       ["GET", `/api/threads/${ids.hrThread}/messages`],
       ["GET", `/api/threads/${ids.hrThread}/messages?around=${hrMessage}`],
-      ["GET", `/api/threads/${ids.hrThread}/messages/${hrMessage}/image`],
       ["GET", `/api/threads/${ids.hrThread}/export`],
       ["GET", `/api/threads/${ids.hrThread}/export?format=json`],
       ["POST", `/api/threads/${ids.hrThread}/respond`, { requestId: "x", behavior: "deny" }],

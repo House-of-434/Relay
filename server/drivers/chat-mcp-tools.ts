@@ -242,7 +242,6 @@ export async function mountChatTools(integrations: SendTurnInput["integrations"]
   const servers: Array<[string, Server | BoatDescriptor]> = [];
   if (computerUse && integrations?.computer) servers.push(["computer", integrations.computer]);
   if (computerUse && integrations?.localComputer) servers.push(["computer", integrations.localComputer]);
-  if (computerUse && integrations?.browser) servers.push(["browser", integrations.browser]);
   if (integrations?.agents) servers.push(["agents", integrations.agents]);
   if (integrations?.composio) servers.push(["composio", integrations.composio]);
   // this client starts its servers and talks over stdio; a remote (url)

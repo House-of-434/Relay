@@ -109,6 +109,11 @@ export interface Routine {
   sourceThreadId?: string;
   /** Stable visible report destination; execution still gets a fresh task. */
   resultsThreadId?: string;
+  /** The authenticated user whose workspace routine runs execute in. Set
+   * only from server-derived identity at creation (never model input);
+   * absent on pre-owner records, which behave exactly as before. */
+  ownerUserId?: string;
+  ownerEmail?: string;
   /** Server-private: added from the organization's library. Never on the
    * wire (routineWithHealth drops it); packageStamps() reads it. */
   installedPackage?: RoutinePackageStamp;
@@ -266,6 +271,58 @@ const WEBHOOK_RETRY_WINDOW_MS = 7 * 24 * 60 * 60_000;
 const MAX_WEBHOOK_RECEIPTS = 20_000;
 
 export type RoutineRequestOwner = Pick<RoutineRequestReceipt, "requestId" | "messageId" | "botId" | "threadId">;
+
+/** A routine owner's verified identity. Both halves are required: a user
+ * without an email cannot mint Tool Layer actor context, and an email
+ * without a user id selects no workspace. */
+export interface RoutineOwner {
+  userId: string;
+  email: string;
+}
+
+const OWNER_USER_ID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const OWNER_EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/** Canonicalize a server-derived owner (lowercase both halves) or reject
+ * it to undefined. Both-or-nothing: a half identity selects no workspace
+ * and must not become one. Model input never reaches this function. */
+export function cleanRoutineOwner(owner: unknown): RoutineOwner | undefined {
+  if (!owner || typeof owner !== "object") return undefined;
+  const { userId, email } = owner as { userId?: unknown; email?: unknown };
+  if (typeof userId !== "string" || typeof email !== "string") return undefined;
+  const id = userId.toLowerCase();
+  const mail = email.toLowerCase();
+  if (!OWNER_USER_ID_PATTERN.test(id) || !OWNER_EMAIL_PATTERN.test(mail)) return undefined;
+  return { userId: id, email: mail };
+}
+
+export interface RoutineOwnerLookup {
+  runForThread(threadId: string): { routineId: string } | null;
+  routineOwner(routineId: string): { ownerUserId?: string; ownerEmail?: string } | undefined;
+  delegationSource(threadId: string): string | undefined;
+}
+
+/** Resolve the routine owner for a thread: directly when the thread is a
+ * routine's execution or results thread, or one delegation hop away (a peer
+ * turn opened from a routine execution). Cycle-safe and depth-capped; the
+ * caller's own user lookup always wins and runs first. */
+export function resolveRoutineOwner(
+  deps: RoutineOwnerLookup,
+  threadId: string,
+  seen: Set<string> = new Set(),
+): RoutineOwner | undefined {
+  if (seen.has(threadId) || seen.size > 3) return undefined;
+  seen.add(threadId);
+  const run = deps.runForThread(threadId);
+  if (run) {
+    const record = deps.routineOwner(run.routineId);
+    const owner = record ? cleanRoutineOwner({ userId: record.ownerUserId, email: record.ownerEmail }) : undefined;
+    if (owner) return owner;
+  }
+  const source = deps.delegationSource(threadId);
+  if (source) return resolveRoutineOwner(deps, source, seen);
+  return undefined;
+}
 
 type ResultsThreadAllocation = { botId: string; threadId: string };
 
@@ -1029,7 +1086,7 @@ export class RoutineManager {
     return run ? cloneRun(run) : null;
   }
 
-  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">): Routine {
+  create(input: RoutineInput, request?: RoutineRequestCommitFor<"create">, owner?: unknown): Routine {
     if (request) {
       const receipt = this.matchingRoutineRequestReceipt(request);
       if (receipt) {
@@ -1045,12 +1102,18 @@ export class RoutineManager {
     if (clean.schedule.type === "interval" && clean.enabled && nextRunAt === null) {
       throw new Error("This interval has no future runs. Choose a later end date or turn it off.");
     }
+    // The owner rides alongside the input, never inside it: RoutineInput
+    // is model-influenced, and no prompt, card field, or patch may select
+    // the workspace a routine executes in. cleanRoutineOwner drops anything
+    // partial or malformed to undefined (pre-owner behavior).
+    const cleanOwner = cleanRoutineOwner(owner);
     const routine: Routine = {
       id: randomUUID(),
       ...clean,
       // Only a confirmed chat card supplies `request`; the public calendar
       // API cannot choose an arbitrary transcript as a reporting target.
       sourceThreadId: request?.threadId,
+      ...(cleanOwner ? { ownerUserId: cleanOwner.userId, ownerEmail: cleanOwner.email } : {}),
       nextRunAt,
       createdAt: at,
       updatedAt: at,

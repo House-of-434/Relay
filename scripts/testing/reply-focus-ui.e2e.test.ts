@@ -2,15 +2,14 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-omb-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(binary);
-if (!enabled) console.info("skipping reply focus UI e2e: set OMB_UI_E2E=1 to install the pinned browser");
+const chrome = resolveUiChrome(process.env);
+const enabled = process.env.OMB_UI_E2E === "1" || Boolean(chrome);
+if (!enabled) console.info("skipping reply focus UI e2e: set OMB_UI_E2E=1 to require system Chrome");
 
 // MOCA-263: choosing Reply showed "Replying to …" but left the caret outside
 // the draft, so the reply could not be typed without clicking the box first.
@@ -28,7 +27,7 @@ if (!enabled) console.info("skipping reply focus UI e2e: set OMB_UI_E2E=1 to ins
     await expect.poll(() => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info?.ui); } catch { return false; }
-    }, { timeout: binary ? 180_000 : 600_000, interval: 250 }).toBe(true);
+    }, { timeout: chrome ? 180_000 : 600_000, interval: 250 }).toBe(true);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info!.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const focused = () => evaluate("document.activeElement?.getAttribute('aria-label') || document.activeElement?.tagName");
@@ -54,4 +53,4 @@ if (!enabled) console.info("skipping reply focus UI e2e: set OMB_UI_E2E=1 to ins
   } finally {
     await waitForExit(child, { signal: "SIGINT", graceMs: 30_000 });
   }
-}, binary ? 240_000 : 720_000);
+}, chrome ? 240_000 : 720_000);

@@ -5,9 +5,9 @@
 // A Cloud home is a headless Linux server in the cloud. "This computer" there
 // would be the server itself, not the person's own Mac or PC (which it cannot
 // reach yet), and a Local VM needs a container runtime a Fly machine cannot
-// run. So neither is ever offered: not in the place list, the Computer panel,
-// the tools a bot sees, Auto routing, or what a bot is told. Bots there work
-// in the built-in browser and on cloud computers.
+// run. So neither is ever offered: not in the place list, the Computer
+// panel, the tools a bot sees, Auto routing, or what a bot is told. Bots there work
+// on cloud computers.
 import type { Surface } from "./wire.ts";
 
 /** Whether a Cloud home offers this place at all. */
