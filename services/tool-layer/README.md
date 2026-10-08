@@ -1,9 +1,15 @@
 # Relay Tool Layer
 
 The Tool Layer is the database security boundary. It binds to `127.0.0.1:8787`
-and exposes exactly two MCP tools: `relay_read` and `relay_write`. Agent identity
-comes from the configured MCP route (`/mcp/scout`, `/mcp/mercury`, or
-`/mcp/curator`), never from tool arguments.
+by default (compose overrides the bind for the container network, where the
+HMAC actor assertion below is the real boundary) and exposes `relay_read` and
+`relay_write` on every MCP route (`/mcp/scout`, `/mcp/mercury`, or
+`/mcp/curator`); agents with research capability additionally expose browser
+and search tools to authenticated callers. Agent identity
+comes from the configured MCP route, never from tool arguments. Every MCP
+request requires an authenticated actor (verified Bearer user or signed
+`x-relay-actor-user` assertion) and is rejected with 401 without one, because
+the service-role credential bypasses Postgres RLS.
 
 ## Configuration
 
@@ -32,7 +38,9 @@ closed rather than guessing columns.
 
 Conversation history is readable by every agent and writable by none: a
 conversation belongs to the authenticated user, so `read` is scoped to the
-caller's own `user_id` and refuses to run without an authenticated actor.
+caller's own `user_id`. All `relay_read` and `relay_write` calls refuse to run
+without an authenticated actor; entity writes additionally stamp
+server-controlled provenance (`actor_user`, `actor_agent`).
 
 The BFF verifies Supabase identity and issues a Relay session through the
 internal portal-session route. That session's UUID `userId` is the account
@@ -44,6 +52,11 @@ UUID for ownership. Supabase JWTs are not forwarded into the harness or agents,
 and agent tool arguments cannot select actor identity. Direct bearer-user calls
 are verified with Supabase Auth and likewise resolve to the verified user's
 UUID.
+
+Model-controlled browser URLs are restricted to public `http(s)` hosts: the
+Tool Layer refuses loopback, private, link-local, and cloud-metadata targets
+(including numeric obfuscations). Redirect and DNS-rebinding containment inside
+the headful browser belongs to the egress proxy allowlist (`BLADE_PROXY`).
 
 `POST /approve` is separate from MCP and requires a Supabase `Authorization:
 Bearer …` token; it only approves/rejects a pending suggestion owned by that
