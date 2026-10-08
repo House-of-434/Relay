@@ -12,30 +12,13 @@
 // how the bug escaped. The copy is the whole point; do not "simplify" it away.
 import { execFile, spawn } from "node:child_process";
 import assert from "node:assert/strict";
-import { cpSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs, promisify } from "node:util";
-import { browserBundlePaths, browserBundleSpec } from "../server/browser-bundle-release.ts";
+import { promisify } from "node:util";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const { values } = parseArgs({ options: { "browser-bundle": { type: "string" } } });
-const browserBundle = values["browser-bundle"];
-let browserSpec;
-if (browserBundle !== undefined) {
-  assert(isAbsolute(browserBundle), "--browser-bundle must be an absolute staged browser target directory");
-  const manifest = JSON.parse(readFileSync(join(browserBundle, "manifest.json"), "utf8"));
-  browserSpec = browserBundleSpec(manifest.target);
-  assert.equal(manifest.target, `${process.platform}-${process.arch}`, "--browser-bundle must match this Node host's platform and architecture");
-  assert.equal(manifest.schemaVersion, browserSpec.schemaVersion, "Unsupported browser bundle manifest");
-  const paths = browserBundlePaths(browserBundle, manifest.target);
-  for (const component of ["engine", "chrome"]) {
-    assert.equal(manifest[component]?.version, browserSpec[component].version);
-    assert.equal(manifest[component]?.executable, browserSpec[component].executable);
-    assert(statSync(paths[component]).isFile(), `Missing bundled ${component}`);
-  }
-}
 const staging = mkdtempSync(join(tmpdir(), "omb-smoke-"));
 const home = mkdtempSync(join(tmpdir(), "omb-smoke-home-"));
 const port = 21000 + Math.floor(Math.random() * 9000);
@@ -44,7 +27,6 @@ const port = 21000 + Math.floor(Math.random() * 9000);
 // Resources/server tree instead of the repo build.
 try {
   cpSync(process.env.OMB_SMOKE_DIST ?? join(root, "dist-server"), join(staging, "server"), { recursive: true });
-  if (browserBundle) cpSync(resolve(browserBundle), join(staging, "browser-engine"), { recursive: true });
 } catch (error) {
   for (const directory of [staging, home]) rmSync(directory, { recursive: true, force: true });
   throw error;
@@ -66,11 +48,6 @@ const fixtureEnv = {
   // layer and say whether it found one (checked below), never enough to
   // unlock anything.
   OMB_LICENSE_KEY: "omb1.not.real",
-  ...(browserBundle ? {
-    OMB_RESOURCES_PATH: staging,
-    // A global engine on the developer's PATH must not make this test pass.
-    PATH: process.platform === "win32" ? join(process.env.SystemRoot ?? "C:\\Windows", "System32") : "/usr/bin:/bin",
-  } : {}),
 };
 
 const child = spawn(process.execPath, [join(staging, "server", "index.js")], {
@@ -121,16 +98,6 @@ if (listening) {
     const response = await fetch(`http://127.0.0.1:${port}/api/search?q=packaged-worker-probe`, { signal: AbortSignal.timeout(10_000) });
     searchReport = { status: response.status, body: await response.json() };
   } catch (error) { searchReport = { error: String(error) }; }
-}
-
-let browserReport = null;
-if (browserBundle && listening) {
-  try {
-    const response = await fetch(`http://127.0.0.1:${port}/api/config`, { signal: AbortSignal.timeout(5_000) });
-    assert.equal(response.status, 200, "Packaged browser config did not respond successfully");
-    const config = await response.json();
-    browserReport = { browserEngine: config.browserEngine, browserEnabled: config.features?.browser };
-  } catch (error) { browserReport = { error: String(error) }; }
 }
 
 // Serving /api/health is necessary but nowhere near sufficient. Bundling
@@ -275,13 +242,6 @@ if (!proxyReport || proxyReport.error || proxyReport.missing.length > 0) {
   process.exit(1);
 }
 
-if (browserBundle && (browserReport?.error || browserReport?.browserEngine?.kind !== "engine" ||
-  browserReport.browserEngine.version !== browserSpec.engine.version || browserReport.browserEnabled !== false)) {
-  console.error("The fresh-home packaged server did not discover its browser bundle with browser access still opt-in:");
-  console.error(JSON.stringify(browserReport, null, 2));
-  process.exit(1);
-}
-
 if (
   !mcpReport ||
   mcpReport.error ||
@@ -306,4 +266,3 @@ console.log(`all ${count} spawned proxy paths resolve inside the packaged server
 console.log("packaged MCP stdio server reached the API and flushed its final frames ✓");
 console.log("packaged backup worker exported an encrypted archive ✓");
 if (layerShipped) console.log("packaged server found its enterprise layer inside the server dir ✓");
-if (browserBundle) console.log(`packaged browser discovered without installation; access remains opt-in ✓ ${JSON.stringify(browserReport)}`);
