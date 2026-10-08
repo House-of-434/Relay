@@ -160,6 +160,35 @@ test("urls are validated server-side", () => {
   assert.throws(() => assertHttpUrl(`https://example.com/${"a".repeat(BLADE_URL_MAX_LENGTH)}`), /short http/);
 });
 
+test("model-controlled urls cannot reach private or link-local targets", () => {
+  for (const blocked of [
+    "http://127.0.0.1/",
+    "http://localhost/",
+    "http://localhost:8080/",
+    "http://[::1]/",
+    "http://[fe80::1]/",
+    "http://[fc00::1]/",
+    "http://10.0.0.1/",
+    "http://172.16.0.1/",
+    "http://172.31.255.255/",
+    "http://192.168.1.1/",
+    "http://169.254.169.254/",
+    "http://169.254.169.254/computeMetadata/v1/",
+    "http://0.0.0.0/",
+    "http://2130706433/",
+    "http://0x7f.0.0.1/",
+    "http://0177.0.0.1/",
+    "http://metadata.google.internal/",
+    "http://instance-data.compute.google.com/",
+    "http://router.local/",
+    "http://host.internal/",
+    "http://intranet/",
+  ]) {
+    assert.throws(() => assertHttpUrl(blocked), /private or link-local/, blocked);
+  }
+  assert.equal(assertHttpUrl("https://example.com/research"), "https://example.com/research");
+});
+
 test("oversized results spill to the user's artifacts dir and page back", async () => {
   const big = "x".repeat(BROWSER_RESULT_BUDGET + 100);
   const spawn = makeSpawn(() => okJson(big));

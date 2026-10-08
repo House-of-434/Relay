@@ -54,8 +54,7 @@ export default defineConfig(({ mode }) => {
       ignored: ["**/release/**", "**/build/**", "**/dist/**", "**/electron/resources/**"],
     },
     // the harness server owns every provider process; the app only ever
-    // talks to the local BFF, which owns browser identity and the harness
-    // session token
+    // talks to the local BFF, which owns the harness session token
     proxy: {
       "/auth": {
         target: `http://127.0.0.1:${bffPort}`,

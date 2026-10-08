@@ -45,6 +45,7 @@ export function createAgentMcpServer(
     },
     async ({ table, filters, limit }) => {
       try {
+        if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "read", table);
         const shape = getShape(table);
         if (!shape.filterable) throw new Error(`No filter shape is configured for ${table}`);
@@ -66,6 +67,7 @@ export function createAgentMcpServer(
     },
     async ({ table, operation, data, where }) => {
       try {
+        if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "write", table);
         const prepared = prepareWrite(table, operation, data, where, { agent, userId });
         const result = await database.write(project, table, operation, prepared.values, prepared.where);

@@ -16,7 +16,7 @@ to revisit. Nothing here is forgotten; everything here has a condition.
 | X API (paid read tier) | ~$200/mo; Bladebro reads page API traffic instead | Bladebro X adapter stops working |
 | `config.tools` / `disallowedTools` per-bot enforcement | Prompt-only accepted for MVP | Unbounded-egress incident or audit requirement |
 | Subagent research pool | Parallel MCP calls cover fan-out; depth-1 cap anyway | Reasoning (not search) needs fan-out |
-| Chrome pin in Dockerfile | Adapter accepts `CHROME_PATH` and auto-detects; image still provisions no Chrome | Pin + provision Chrome in the image |
+| Chrome pin in Dockerfile | Chrome provisioned in `deploy/local/Dockerfile:38-55` (google-chrome-stable + Xvfb, `CHROME_PATH` set); version pin remains deferred | Pin Chrome to a digest |
 | Deep-research Start/Cancel card UI | Conversational confirmation covers MVP; `create_options_card` is Watcher-locked, new card = new request service | Users ask for buttons, or confirmation needs richer structure |
 | Backup/restore routine ownership | Import stamps no owner (pre-owner behavior); exporting owner would let a crafted backup claim another user's workspace | Backup adopt proven ownership with importer verification |
 | Remove `RELAY_SHARED_WORKSPACE` flag + Composio remnants | Composio dropped as a third-party dependency, but the flag still gates live behavior (default tool URL, connector prompt suppression, seed path) and the e2e roster boots with `=1`; untangling needs the shared-roster mode defined without it. Our connectors are Google OAuth from outside, not Composio. | Shared-roster mode is defined without Composio; update `relay-agents.e2e.test.ts` to not depend on `=1`; drop the dead prompt |

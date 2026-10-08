@@ -125,7 +125,108 @@ export function assertHttpUrl(url: unknown): string {
     throw new Error("browser url must be http(s)");
   }
   if (parsed.username || parsed.password) throw new Error("browser url must not contain credentials");
+  assertPublicHttpHost(parsed.hostname);
   return parsed.toString();
+}
+
+/** SSRF guard for model-controlled URLs. Blocks literal private IPs (incl.
+/// decimal/hex/octal obfuscation) and sensitive hostnames. This checks the
+/// initial URL only — redirects and DNS rebinding inside the headful browser
+/// must be contained by an egress proxy allowlist (BLADE_PROXY). */
+function assertPublicHttpHost(hostname: string): void {
+  const host = hostname.toLowerCase().replace(/\.+$/, "");
+  if (!host) throw new Error("browser url host is invalid");
+  const ipv4 = parseIPv4Host(host);
+  if (ipv4) {
+    if (isBlockedIPv4(ipv4)) throw new Error("browser url must not target private or link-local addresses");
+    return;
+  }
+  if (host.includes(":")) {
+    if (isBlockedIPv6Literal(host)) throw new Error("browser url must not target private or link-local addresses");
+    return;
+  }
+  if (isBlockedHostname(host)) throw new Error("browser url must not target private or link-local addresses");
+}
+
+function parseIPv4Part(part: string): number | null {
+  let radix = 10;
+  let digits = part;
+  if (/^0[xX][0-9a-fA-F]+$/.test(part)) {
+    radix = 16;
+    digits = part.slice(2);
+  } else if (/^0[0-7]+$/.test(part)) {
+    radix = 8;
+    digits = part.slice(1);
+  } else if (!/^\d+$/.test(part)) {
+    return null;
+  }
+  const value = parseInt(digits, radix);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 4294967295) return null;
+  return value;
+}
+
+function parseIPv4Host(host: string): [number, number, number, number] | null {
+  if (/^\d+$/.test(host) || /^0[xX][0-9a-fA-F]+$/.test(host)) {
+    const value = parseIPv4Part(host);
+    if (value === null) return null;
+    return [(value >>> 24) & 255, (value >>> 16) & 255, (value >>> 8) & 255, value & 255];
+  }
+  const parts = host.split(".");
+  if (parts.length !== 4) return null;
+  const octets: number[] = [];
+  for (const part of parts) {
+    const value = parseIPv4Part(part);
+    if (value === null || value > 255) return null;
+    octets.push(value);
+  }
+  return octets as [number, number, number, number];
+}
+
+function isBlockedIPv4([a, b, c, d]: [number, number, number, number]): boolean {
+  void c;
+  void d;
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 192 && b === 0 && (c === 0 || c === 2)) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a === 198 && b === 51 && c === 100) return true;
+  if (a === 203 && b === 0 && c === 113) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
+function isBlockedIPv6Literal(host: string): boolean {
+  const h = host.toLowerCase().replace(/^\[|\]$/g, "");
+  if (h === "::1" || h === "::" || h === "::ffff:127.0.0.1") return true;
+  if (h.startsWith("fe80:") || h.startsWith("fec0:") || h.startsWith("fc00:") || h.startsWith("fd00:")) return true;
+  if (h.startsWith("ff00:") || h.startsWith("ff02:")) return true;
+  if (h.startsWith("::ffff:")) {
+    const embedded = parseIPv4Host(h.slice("::ffff:".length));
+    if (embedded && isBlockedIPv4(embedded)) return true;
+    if (embedded) return false;
+    return true;
+  }
+  // Any other colon-containing literal is treated as non-routable unless it
+  // looks like a global unicast address; fail closed on unparseable forms.
+  if (/^[0-9a-f:]+%?[a-z0-9]*$/i.test(h) && h.includes("::")) return true;
+  return true;
+}
+
+function isBlockedHostname(host: string): boolean {
+  if (host === "localhost") return true;
+  if (host.endsWith(".localhost")) return true;
+  if (host === "metadata.google" || host === "metadata.google.internal") return true;
+  if (host === "instance-data" || host === "instance-data.compute.google.com") return true;
+  if (host === "169.254.169.254") return true;
+  const privateSuffixes = [".internal", ".local", ".lan", ".home", ".corp", ".intranet", ".invalid", ".test", ".example"];
+  if (privateSuffixes.some((suffix) => host.endsWith(suffix))) return true;
+  if (!host.includes(".")) return true;
+  return false;
 }
 
 export class BladeBrowserPool {

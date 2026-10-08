@@ -73,6 +73,14 @@ export async function createRelayToolServer(
         return;
       }
 
+      // The HMAC actor assertion is the real boundary (compose exposes this
+      // service on the container network). service_role bypasses Postgres RLS,
+      // so unauthenticated relay reads would leak shared internal rows.
+      if (!actor.userId) {
+        sendJson(response, 401, { error: "authenticated actor required" });
+        return;
+      }
+
       // Gmail and Calendar are exposed only to a caller that proved a signed
       // actor identity; without one there is no mailbox or calendar the BFF
       // could safely derive.

@@ -170,14 +170,12 @@ product's nine tables, so Relay writes stay strictly inside `app`/`history`/
 Ordered so each step unblocks the next. Steps 1–3 are code; 4–8 are
 provisioning and verification on the host.
 
-1. **Create `deploy/local/Dockerfile` and `deploy/local/Caddyfile`.**
-   `compose.yaml` cannot start without them: it builds from
-   `context: ./deploy/local` (line 6) and bind-mounts
-   `./deploy/local/Caddyfile` (line 55), and **neither exists in the repo**
-   (`git ls-files deploy/` is empty; not gitignored, simply absent).
+1. **Create `deploy/local/Dockerfile` and `deploy/local/Caddyfile`.** ✅ Done:
+   `deploy/local/Dockerfile`, `deploy/local/Caddyfile`, and `compose.yaml:3-98`
+   (omb/tools/caddy) exist.
 2. **Add the Tool Layer as a compose service**, pointed at by
    `RELAY_TOOL_URL`, keeping `BLADE_HOME` under `/data` so browser state lives
-   on the volume.
+   on the volume. ✅ Done: `compose.yaml:31-55`.
 3. **Provision Chrome in the image**, then set `CHROME_PATH`. The image
    deliberately ships no browser (`Dockerfile:56-58`); Chrome system libraries
    are already present. Linux headful also needs Xvfb. (Tracked deferral in
