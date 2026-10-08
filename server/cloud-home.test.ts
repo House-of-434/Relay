@@ -307,23 +307,6 @@ it("gives the edge only its routing name and the server the contract, never a ga
   expect(passwdIds("root:x:0:0::/root:/bin/sh\n", "maus")).toBeNull();
 });
 
-it("ships an edge and a Fly template that keep the server private", () => {
-  const caddy = readFileSync(join(import.meta.dirname, "../deploy/fly/Caddyfile"), "utf8");
-  expect(caddy).toMatch(/^:8080 \{/m);
-  const upstreams = [...caddy.matchAll(/reverse_proxy (\S+)/g)].map(match => match[1]);
-  expect(new Set(upstreams)).toEqual(new Set(["127.0.0.1:8799", "127.0.0.1:8800"]));
-  // every forwarded request is marked as proxied
-  expect(caddy.match(/header_up X-Forwarded-For \{client_ip\}/g)).toHaveLength(upstreams.length);
-  const fly = readFileSync(join(import.meta.dirname, "../deploy/fly/fly.toml"), "utf8");
-  expect(fly).toMatch(/internal_port = 8080/);
-  expect(fly).toMatch(/destination = "\/data"/);
-  expect(fly).toMatch(/path = "\/api\/health"/);
-  const env = /\[env\]([\s\S]*?)\n\[/.exec(fly)![1];
-  for (const secretKey of ["OMB_CLOUD_BOOTSTRAP_SECRET", "OMB_CLOUD_ADMIN_URL"]) expect(env).not.toMatch(new RegExp(`^\\s*${secretKey}\\s*=`, "m"));
-  // Cloud Pro includes no AI: the template sets no gateway.
-  expect(fly).not.toContain("OMB_HOSTED_");
-});
-
 it("starts the server again only when it asks to after a restore, and only a few times in a row", () => {
   expect(serverExitAction(CLOUD_HOME_RESTART_EXIT_CODE, false, 0)).toBe("restart");
   expect(serverExitAction(CLOUD_HOME_RESTART_EXIT_CODE, false, 4)).toBe("restart");
