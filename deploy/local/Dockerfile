@@ -57,7 +57,11 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build --chown=maus:maus /src/dist-server ./dist-server
 COPY --from=build --chown=maus:maus /src/dist ./dist
-COPY --from=build --chown=maus:maus /src/services/tool-layer/dist ./tool-layer-dist
+# The compiled Tool Layer must live inside its workspace package directory:
+# pnpm isolates workspace deps under services/tool-layer/node_modules, so
+# running the bundle from anywhere else breaks Node module resolution
+# (ERR_MODULE_NOT_FOUND for @supabase/supabase-js et al).
+COPY --from=build --chown=maus:maus /src/services/tool-layer/dist ./services/tool-layer/dist
 # The BFF runs from source via Node type-stripping (it has no bundle step),
 # so it ships with the shared tree it imports and production node_modules.
 COPY --from=build --chown=maus:maus /src/services/bff ./services/bff
