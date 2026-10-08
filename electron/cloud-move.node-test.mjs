@@ -13,7 +13,7 @@ import environments from "./environments.cjs";
 import localOrigin from "./local-origin.cjs";
 import { cloudPageSenderAllowed, createCloudMove } from "./cloud-move.mjs";
 
-const ORIGIN = "https://omb-u-1a2b3c4d5e6f.fly.dev";
+const ORIGIN = "https://relay-u-1a2b3c4d5e6f.fly.dev";
 const MAGIC = Buffer.from("OMB-WORKSPACE-1\n");
 const UUID = () => "3f9c2a4e-8b1d-4c6e-9a7f-" + randomBytes(6).toString("hex");
 const json = (status, body) => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
@@ -51,7 +51,7 @@ function cloudFake({ freeBytes = 1024 ** 4, empty = true, failPut = () => false,
     log.push([init.method ?? "GET", pathname]);
     if (pathname === "/api/auth/pair") {
       assert.equal(JSON.parse(init.body).code, "ABCD-EFGH-JKLM");
-      const token = `omb_sess_${randomBytes(8).toString("hex")}`; tokens.add(token);
+      const token = `relay_sess_${randomBytes(8).toString("hex")}`; tokens.add(token);
       return json(200, { token });
     }
     if (!tokens.has(auth?.slice("Bearer ".length))) return json(401, { error: "unauthorized" });
@@ -104,7 +104,7 @@ function cloudFake({ freeBytes = 1024 ** 4, empty = true, failPut = () => false,
 }
 
 function harness(options = {}) {
-  const temp = mkdtempSync(join(tmpdir(), "omb-cloud-move-test-"));
+  const temp = mkdtempSync(join(tmpdir(), "relay-cloud-move-test-"));
   const local = desktop(options.desktop), cloud = cloudFake(options.cloud), states = [];
   const move = createCloudMove({
     localRequest: local.request, fetchImpl: cloud.fetchImpl, tempRoot: join(temp, "move"),
@@ -296,7 +296,7 @@ const LOCAL = "http://127.0.0.1:48993";
 function preload({ remote = false, activation = false } = {}) {
   let bridge; const invoked = [];
   vm.runInNewContext(readFileSync(new URL("./preload.cjs", import.meta.url), "utf8"), {
-    process: { platform: "darwin", argv: [`--omb-local-origin=${LOCAL}`, "--omb-company-desktop=1"] },
+    process: { platform: "darwin", argv: [`--relay-local-origin=${LOCAL}`, "--relay-company-desktop=1"] },
     location: { origin: remote ? ORIGIN : LOCAL }, navigator: { userActivation: { isActive: activation } },
     TextEncoder, localStorage: { getItem: () => null },
     require: () => ({ webUtils: {}, contextBridge: { exposeInMainWorld: (_name, value) => { bridge = value; } },

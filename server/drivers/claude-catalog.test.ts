@@ -13,7 +13,7 @@ afterEach(() => {
 
 describe("readClaudeModelCatalog", () => {
   it("returns the official models when settings are missing", () => {
-    expect(readClaudeModelCatalog({ HOME: join(tmpdir(), "omb-claude-missing-home") })).toEqual(STATIC_CLAUDE_MODELS);
+    expect(readClaudeModelCatalog({ HOME: join(tmpdir(), "relay-claude-missing-home") })).toEqual(STATIC_CLAUDE_MODELS);
     expect(STATIC_CLAUDE_MODELS.options.slice(0, 2)).toEqual([
       { id: "claude-fable-5-1", label: "Claude Fable 5.1" },
       { id: "claude-fable-5", label: "Claude Fable 5" },
@@ -35,14 +35,14 @@ describe("readClaudeModelCatalog", () => {
   });
 
   it("lists ANTHROPIC_MODEL from the instance environment when settings are missing", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-missing-home-"));
+    const home = mkdtempSync(join(tmpdir(), "relay-claude-missing-home-"));
     scratchDirs.push(home);
     const catalog = readClaudeModelCatalog({ HOME: join(home, "missing"), ANTHROPIC_MODEL: "MiniMax-M3" });
     expect(catalog.options).toEqual([...STATIC_CLAUDE_MODELS.options, { id: "MiniMax-M3", label: "MiniMax-M3", custom: true }]);
   });
 
   it("tags extra settings models as custom and leaves official rows untagged", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-catalog-"));
+    const home = mkdtempSync(join(tmpdir(), "relay-claude-catalog-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
     mkdirSync(dir, { recursive: true });
@@ -66,7 +66,7 @@ describe("readClaudeModelCatalog", () => {
   });
 
   it("does not list settings.model as a Custom leftover", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-leftover-"));
+    const home = mkdtempSync(join(tmpdir(), "relay-claude-leftover-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
     mkdirSync(dir, { recursive: true });
@@ -81,7 +81,7 @@ describe("readClaudeModelCatalog", () => {
 
 describe("ClaudeDriver catalog", () => {
   it("loads extras when the instance is created", async () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-claude-instance-"));
+    const home = mkdtempSync(join(tmpdir(), "relay-claude-instance-"));
     scratchDirs.push(home);
     const dir = join(home, ".claude");
     mkdirSync(dir, { recursive: true });

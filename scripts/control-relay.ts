@@ -9,7 +9,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
 import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
-import { launchUi, runControlOmbUi } from "./testing/control-omb-ui.ts";
+import { launchUi, runControlOmbUi } from "./testing/control-relay-ui.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 
@@ -44,7 +44,7 @@ export interface ControlOmbDependencies {
 }
 
 export const HELP_UI = `renderer (needs a ui launch handle; every verb takes --ui HANDLE, never discovery):
-  node --experimental-strip-types scripts/control-omb.ts ui launch [--entry threads] [--tool-calls JSON] [--mode happy]
+  node --experimental-strip-types scripts/control-relay.ts ui launch [--entry threads] [--tool-calls JSON] [--mode happy]
   ui snapshot --ui HANDLE [--interactive]
   ui click --ui HANDLE (--ref @eN | --name NAME)
   ui type --ui HANDLE (--ref @eN | --name NAME) --text TEXT
@@ -56,7 +56,7 @@ export const HELP_UI = `renderer (needs a ui launch handle; every verb takes --u
   ui wait-settle --ui HANDLE [--timeout 30]
   ui help`;
 
-export const HELP = `control-omb — verify a running OpenMausBot instance through its shared MCP core
+export const HELP = `control-relay — verify a running Relay instance through its shared MCP core
 
 read-only:
   doctor [--url URL]
@@ -68,7 +68,7 @@ read-only:
   wait --bot ID [--task ID] [--timeout 30] [--url URL]
   wait --channel ID [--task ID] [--timeout 30] [--url URL]
 
-mutating (an explicit --url or OPENMAUSBOT_URL/OMB_PORT is required):
+mutating (an explicit --url or RELAY_URL/RELAY_PORT is required):
   new-bot --name NAME [--url URL]
   new-channel --name NAME --members ID,ID [--url URL]
   send --bot ID --text TEXT [--task ID] [--dry-run] [--url URL]
@@ -81,7 +81,7 @@ mutating (an explicit --url or OPENMAUSBOT_URL/OMB_PORT is required):
 ${HELP_UI}
 
 isolated fixture:
-  node --experimental-strip-types scripts/control-omb.ts launch
+  node --experimental-strip-types scripts/control-relay.ts launch
 
 Output is JSON. launch and ui launch own a temporary fake-engine server until interrupted.`;
 
@@ -105,7 +105,7 @@ export function parse(
   } catch (error) {
     throw new ControlOmbError(
       error instanceof Error ? error.message : String(error),
-      `run control-omb help for the ${command} syntax`,
+      `run control-relay help for the ${command} syntax`,
     );
   }
 }
@@ -127,12 +127,12 @@ function positiveInteger(value: unknown, name: string, fallback: number, maximum
 function configuredUrl(raw: unknown, env: NodeJS.ProcessEnv, requiredForMutation: boolean): string | undefined {
   const explicit = typeof raw === "string" && raw.trim()
     ? raw.trim()
-    : env.OPENMAUSBOT_URL?.trim() || (env.OMB_PORT ? `http://127.0.0.1:${env.OMB_PORT}` : "");
+    : env.RELAY_URL?.trim() || (env.RELAY_PORT ? `http://127.0.0.1:${env.RELAY_PORT}` : "");
   if (!explicit) {
     if (requiredForMutation) {
       throw new ControlOmbError(
-        "mutating commands require an explicit OpenMausBot instance",
-        "start `control-omb launch`, then pass its URL with --url",
+        "mutating commands require an explicit Relay instance",
+        "start `control-relay launch`, then pass its URL with --url",
       );
     }
     return undefined;
@@ -186,7 +186,7 @@ export async function runControlOmb(
     const health = rawHealth as { status: string; endpoint?: string; app: string; packaged: boolean };
     const instances = (models as { instances?: Array<{ instanceId?: string; snapshot?: { state?: string } }> }).instances ?? [];
     return {
-      ok: health.app === "openmausbot"
+      ok: health.app === "relay"
         && instances.some((instance) => instance.snapshot?.state === "available"),
       health: endpoint ? { ...health, endpoint } : health,
       availableEngines: instances
@@ -319,7 +319,7 @@ export async function runControlOmb(
     return dryRun(command, values, tool, input) ?? call(tool, input, values.url);
   }
 
-  throw new ControlOmbError(`unknown command ${JSON.stringify(command)}`, "run control-omb help");
+  throw new ControlOmbError(`unknown command ${JSON.stringify(command)}`, "run control-relay help");
 }
 
 export interface VerificationServer {
@@ -353,9 +353,9 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
     TMP: fixtureTemp,
     TMPDIR: fixtureTemp,
     HERMES_HOME: join(dataDir, ".hermes"),
-    OMB_DATA_DIR: dataDir,
-    OMB_PORT: String(port),
-    OMB_WEBHOOK_PORT: String(port + 1),
+    RELAY_DATA_DIR: dataDir,
+    RELAY_PORT: String(port),
+    RELAY_WEBHOOK_PORT: String(port + 1),
     // The fixture's default CLI behaviour; a caller that sets
     // FAKE_CLAUDE_MODE explicitly overrides it below to drive the CLI's
     // failure paths (exit-early, dead-session, hang...) through the real
@@ -375,11 +375,11 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   }
   // A test's key for relaying an organization library into the fixture
   // (POST /api/testing/org-library); the route does not exist without it.
-  if (parentEnv.OMB_TEST_ORG_LIBRARY_KEY) childEnv.OMB_TEST_ORG_LIBRARY_KEY = parentEnv.OMB_TEST_ORG_LIBRARY_KEY;
+  if (parentEnv.RELAY_TEST_ORG_LIBRARY_KEY) childEnv.RELAY_TEST_ORG_LIBRARY_KEY = parentEnv.RELAY_TEST_ORG_LIBRARY_KEY;
   // Voice-note e2e fault injection: arms the one-shot audio-append failure
   // prelude inside the fixture server (see fail-audio-append-once.mjs).
-  if (parentEnv.OMB_TEST_FAIL_AUDIO_APPEND_ONCE) {
-    childEnv.OMB_TEST_FAIL_AUDIO_APPEND_ONCE = parentEnv.OMB_TEST_FAIL_AUDIO_APPEND_ONCE;
+  if (parentEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE) {
+    childEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE = parentEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE;
   }
   childEnv.RELAY_SHARED_WORKSPACE = parentEnv.RELAY_SHARED_WORKSPACE ?? "0";
   if (parentEnv.RELAY_DISABLE_COMPUTER !== undefined) {
@@ -420,11 +420,11 @@ export async function launchVerificationServer(
   if (signal?.aborted) throw new ControlOmbError("verification launch cancelled");
   const url = `http://127.0.0.1:${port}`;
   // This is an owned, randomly named fixture only.
-  const dataDir = mkdtempSync(join(tmpdir(), "openmausbot-verify-data-"));
+  const dataDir = mkdtempSync(join(tmpdir(), "relay-verify-data-"));
   const fixtureTemp = join(dataDir, "tmp");
   const fixtureDumpPath = join(dataDir, "fake-claude-dump.json");
   mkdirSync(fixtureTemp, { recursive: true });
-  const evidenceDir = join(tmpdir(), "openmausbot-verification-evidence");
+  const evidenceDir = join(tmpdir(), "relay-verification-evidence");
   mkdirSync(evidenceDir, { recursive: true });
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
@@ -450,15 +450,15 @@ export async function launchVerificationServer(
   // Opt-in live Local VM fixture: keep the temporary home and fake engine,
   // granting only the explicitly selected machine connection and static UI.
   if (localVm) Object.assign(childEnv, {
-    OMB_EXTRA_PATH: [localVm.binDir, ...(process.platform === "win32" ? [join(childEnv.SYSTEMROOT || "C:\\Windows", "System32")] : [])].join(delimiter),
+    RELAY_EXTRA_PATH: [localVm.binDir, ...(process.platform === "win32" ? [join(childEnv.SYSTEMROOT || "C:\\Windows", "System32")] : [])].join(delimiter),
     CONTAINER_HOST: localVm.host,
     CONTAINER_SSHKEY: localVm.sshKey,
-    OMB_STATIC_DIR: localVm.staticDir,
+    RELAY_STATIC_DIR: localVm.staticDir,
   });
-  if (enterprise) Object.assign(childEnv, { OMB_ENTERPRISE_DIR: enterprise.dir, OMB_LICENSE_KEY: enterprise.licenseKey });
-  if (boatFixtureApi) childEnv.OMB_BOX_API = boatFixtureApi;
+  if (enterprise) Object.assign(childEnv, { RELAY_ENTERPRISE_DIR: enterprise.dir, RELAY_LICENSE_KEY: enterprise.licenseKey });
+  if (boatFixtureApi) childEnv.RELAY_BOX_API = boatFixtureApi;
   const serverArgs = ["--experimental-strip-types"];
-  if (childEnv.OMB_TEST_FAIL_AUDIO_APPEND_ONCE === "1") {
+  if (childEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE === "1") {
     serverArgs.push("--import", pathToFileURL(join(ROOT, "server", "testing", "fail-audio-append-once.mjs")).href);
   }
   serverArgs.push(join(ROOT, "server", "index.ts"));
@@ -482,7 +482,7 @@ export async function launchVerificationServer(
           signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
         });
         const body = response.ok ? await response.json() as { app?: string } : null;
-        if (body?.app === "openmausbot") break;
+        if (body?.app === "relay") break;
       } catch {
         // The server is still starting.
       }
@@ -559,10 +559,10 @@ export function controlResultSucceeded(command: string, result: unknown): boolea
 
 /** pnpm swallows Ctrl-C; a launcher that owns processes must get the signal itself. */
 function requireForegroundTerminal(command: string): void {
-  if (process.env.npm_lifecycle_event === "control:omb") {
+  if (process.env.npm_lifecycle_event === "control:relay") {
     throw new ControlOmbError(
       `${command} must own the terminal directly so Ctrl-C can clean up its children`,
-      `run \`node --experimental-strip-types scripts/control-omb.ts ${command}\``,
+      `run \`node --experimental-strip-types scripts/control-relay.ts ${command}\``,
     );
   }
 }

@@ -179,7 +179,7 @@ class ChatMcpClient {
       return deadline - Date.now();
     };
     const initialized = await this.call("initialize", {
-      protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "openmausbot-chat", version: "1" },
+      protocolVersion: "2024-11-05", capabilities: {}, clientInfo: { name: "relay-chat", version: "1" },
     }, signal, remaining());
     if (!object(initialized)) throw new Error("MCP initialization returned an invalid result");
     if (signal.aborted) throw aborted();

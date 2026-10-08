@@ -148,7 +148,7 @@ test("invalid browser URLs are refused and cancellation cannot persist a late is
 });
 
 test("Cloud records use separate encrypted atomic storage, not plaintext or saved entitlements", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "omb-cloud-record-"));
+  const directory = await mkdtemp(join(tmpdir(), "relay-cloud-record-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const file = join(directory, "cloud-account.bin"); let unlocked = true;
   // The fixture substitutes encryption; it does not use the user's keychain.
@@ -160,7 +160,7 @@ test("Cloud records use separate encrypted atomic storage, not plaintext or save
 });
 
 test("cancelling during the encrypted write queues deletion after it and cannot restore the grant", async t => {
-  const directory = await mkdtemp(join(tmpdir(), "omb-cloud-cancel-")); t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await mkdtemp(join(tmpdir(), "relay-cloud-cancel-")); t.after(() => rm(directory, { recursive: true, force: true }));
   let release, writing = false; const gate = new Promise(resolve => { release = resolve; });
   const store = createCloudAccountStore({ file: join(directory, "cloud-account.bin"), encryption: { available: async () => true,
     encrypt: async value => { writing = true; await gate; return Buffer.from(value); }, decrypt: value => value.toString() } });

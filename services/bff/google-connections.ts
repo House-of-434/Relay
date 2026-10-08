@@ -99,7 +99,7 @@ const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const MAX_REFRESH_TOKEN_LENGTH = 16_384;
 
 export function googleConnectionsDataDir(value?: string): string {
-  return value?.trim() || join(homedir(), ".openmausbot");
+  return value?.trim() || join(homedir(), ".relay");
 }
 
 export function parseTokenEncryptionKey(value: string | undefined): Buffer {

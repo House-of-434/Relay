@@ -39,7 +39,7 @@ jobs:
         env:
           ENGINES:
         run: docker compose build
-      - name: Boot the compose stack and prove omb answers
+      - name: Boot the compose stack and prove relay answers
         env:
           ENGINES:
         run: |
@@ -48,14 +48,14 @@ jobs:
           touch .env.secrets
           docker compose up -d
           for i in $(seq 1 40); do
-            if [ "$(docker inspect -f '{{.State.Health.Status}}' openmausbot-omb-1 2>/dev/null)" = healthy ]; then break; fi
+            if [ "$(docker inspect -f '{{.State.Health.Status}}' relay-app-1 2>/dev/null)" = healthy ]; then break; fi
             sleep 5
-            if [ "$i" = "40" ]; then docker compose logs omb; echo "omb never became healthy"; exit 1; fi
+            if [ "$i" = "40" ]; then docker compose logs relay; echo "relay never became healthy"; exit 1; fi
           done
-          # the renderer is served by Caddy from the harness (OMB_STATIC_DIR)
-          docker compose exec -T omb curl -sf http://127.0.0.1:8799/ | grep -qi "<html" || { docker compose logs omb; echo "UI not served"; exit 1; }
+          # the renderer is served by Caddy from the harness (RELAY_STATIC_DIR)
+          docker compose exec -T relay curl -sf http://127.0.0.1:8799/ | grep -qi "<html" || { docker compose logs relay; echo "UI not served"; exit 1; }
           curl -sf http://127.0.0.1:8080/api/health
-          docker compose logs omb | tail -5
+          docker compose logs relay | tail -5
       - name: Prove the harness never binds a public interface
         # The loopback-trust model is the auth model, so the harness must keep
         # the server unreachable from the container's own network. Probe from a
@@ -63,16 +63,16 @@ jobs:
         # first proves the probe can see a socket that does bind 0.0.0.0.
         run: |
           set -euo pipefail
-          net=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' openmausbot-omb-1 | awk '{print $1}')
+          net=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' relay-app-1 | awk '{print $1}')
           test -n "$net"
           probe() { docker run --rm --network "$net" curlimages/curl:8.14.1 -s --max-time 3 "http://$1:$2/" >/dev/null; }
-          docker run -d --name leaky --entrypoint node openmausbot-local:latest -e "require('http').createServer((q,s)=>s.end('leak')).listen(8799,'0.0.0.0')"
+          docker run -d --name leaky --entrypoint node relay-local:latest -e "require('http').createServer((q,s)=>s.end('leak')).listen(8799,'0.0.0.0')"
           sleep 2
           leaky_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' leaky | awk '{print $1}')
           test -n "$leaky_ip"
           probe "$leaky_ip" 8799 || { echo "probe cannot see a 0.0.0.0 listener; the check would be vacuous"; exit 1; }
           docker rm -f leaky >/dev/null
-          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' openmausbot-omb-1 | awk '{print $1}')
+          ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' relay-app-1 | awk '{print $1}')
           test -n "$ip"
           if probe "$ip" 8799 || probe "$ip" 8800; then
             echo "server answered on $ip — it must only bind 127.0.0.1"; exit 1

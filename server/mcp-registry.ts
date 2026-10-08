@@ -45,18 +45,18 @@ const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** An HTTP header field name: RFC 9110 token characters. */
 const HEADER_NAME = /^[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}$/;
 
-/** Names used to route OpenMausBot's built-in MCP proxies and their ephemeral
+/** Names used to route Relay's built-in MCP proxies and their ephemeral
  * capabilities. Codex exposes MCP env names through one app-server process;
  * a custom server must never request one of these names or it could redirect
  * a built-in proxy or receive that proxy's bearer. */
 export function isHarnessOwnedMcpEnvName(name: string): boolean {
-  return name === "ELECTRON_RUN_AS_NODE" || name.startsWith("OMB_") || name.startsWith("OGB_");
+  return name === "ELECTRON_RUN_AS_NODE" || name.startsWith("RELAY_") || name.startsWith("OGB_");
 }
 
 function environmentNameError(name: string): string | null {
   if (!ENV_NAME.test(name)) return `Environment variable “${name}” is not valid.`;
   if (isHarnessOwnedMcpEnvName(name)) {
-    return `Environment variable “${name}” is reserved by OpenMausBot.`;
+    return `Environment variable “${name}” is reserved by Relay.`;
   }
   return null;
 }
@@ -90,8 +90,8 @@ const RESERVED_MCP_NAMES = new Set([
   "browser",
   "phone",
   "dweb",
-  "openmausbot_connectors",
-  "openmausbot_phone",
+  "relay_connectors",
+  "relay_phone",
 ]);
 
 const stdioEntrySchema = z.object({
@@ -130,7 +130,7 @@ export function mcpServerNameError(name: string): string | null {
   if (!MCP_NAME.test(name)) {
     return "Use 1–32 lowercase letters, numbers, underscores, or hyphens, starting with a letter.";
   }
-  if (RESERVED_MCP_NAMES.has(name)) return "That name is reserved by OpenMausBot.";
+  if (RESERVED_MCP_NAMES.has(name)) return "That name is reserved by Relay.";
   return null;
 }
 

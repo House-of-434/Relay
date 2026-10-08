@@ -1,4 +1,4 @@
-// Headless-Chrome UI driver for the verification harness (`control-omb ui`
+// Headless-Chrome UI driver for the verification harness (`control-relay ui`
 // verbs and the UI e2e suite). Replaces the removed agent-browser binary:
 // one persistent Chromium (system Chrome via playwright-core) behind a tiny
 // loopback HTTP API, so separate CLI invocations share a single browser

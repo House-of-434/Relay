@@ -885,7 +885,7 @@ export interface AppState {
   appSettingsOpen: boolean;
   appSettingsSection: AppSettingsSection;
   /** Non-zero while Settings → OMB Cloud is open because of the Cloud page's
-   * openmausbot://cloud link; each link counts up. Any other
+   * relay://cloud link; each link counts up. Any other
    * toggleAppSettings (another section, the same one by hand, closing) sets 0. */
   appSettingsCloudLink: number;
   shortcutsOpen: boolean;
@@ -1363,7 +1363,7 @@ function optimisticUserMessage(
   };
 }
 
-/** Settings → OMB Cloud as opened by openmausbot://cloud (the Cloud page's
+/** Settings → OMB Cloud as opened by relay://cloud (the Cloud page's
  * "Open in the app"); that view then signs in or connects by itself. */
 export const CLOUD_LINK_SETTINGS = { type: "toggleAppSettings", open: true, section: "cloudAccount", cloudLink: true } as const satisfies Action;
 

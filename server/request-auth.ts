@@ -91,8 +91,8 @@ export function serviceAllowed(method: string, path: string): boolean {
  *
  * A packaged desktop keeps `owner`: its mutations already need Electron's
  * per-launch capability, and only its owner uses the machine. Elsewhere the
- * operator may set OMB_LOOPBACK_TRUST=owner|service. Without it a hosted
- * workspace (any OMB_ADMIN_* setting, even an incomplete one) defaults to
+ * operator may set RELAY_LOOPBACK_TRUST=owner|service. Without it a hosted
+ * workspace (any RELAY_ADMIN_* setting, even an incomplete one) defaults to
  * `service` — shared-workspace Full access is only honoured there, so it needs
  * no rule of its own — and a headless self-hosted server keeps `owner`. A
  * value that is neither fails closed. */
@@ -105,25 +105,25 @@ export function resolveLoopbackTrust(input: {
    * machine (a bot's shell). Always `service`, whatever the setting. */
   cloudHome?: boolean;
 }): { trust: LoopbackTrust; reason: string; warning?: string } {
-  const raw = (input.env ?? process.env).OMB_LOOPBACK_TRUST;
+  const raw = (input.env ?? process.env).RELAY_LOOPBACK_TRUST;
   const requested = raw?.trim().toLowerCase();
   if (input.cloudHome) {
-    return { trust: "service", reason: "OMB Cloud home", ...(raw !== undefined && requested !== "service" ? { warning: "OMB_LOOPBACK_TRUST is ignored on an OMB Cloud home: a local request is always a service" } : {}) };
+    return { trust: "service", reason: "OMB Cloud home", ...(raw !== undefined && requested !== "service" ? { warning: "RELAY_LOOPBACK_TRUST is ignored on an OMB Cloud home: a local request is always a service" } : {}) };
   }
   if (input.desktopManaged) {
-    return { trust: "owner", reason: "desktop app", ...(raw !== undefined ? { warning: "OMB_LOOPBACK_TRUST is ignored in the desktop app" } : {}) };
+    return { trust: "owner", reason: "desktop app", ...(raw !== undefined ? { warning: "RELAY_LOOPBACK_TRUST is ignored in the desktop app" } : {}) };
   }
   if (requested === "owner" || requested === "service") {
     return {
       trust: requested,
-      reason: "OMB_LOOPBACK_TRUST",
+      reason: "RELAY_LOOPBACK_TRUST",
       ...(requested === "owner" && input.hostedWorkspace
-        ? { warning: "OMB_LOOPBACK_TRUST=owner on a shared workspace: every bot's shell can change settings and approve cards as the owner" }
+        ? { warning: "RELAY_LOOPBACK_TRUST=owner on a shared workspace: every bot's shell can change settings and approve cards as the owner" }
         : {}),
     };
   }
   if (raw !== undefined && requested !== "") {
-    return { trust: "service", reason: "OMB_LOOPBACK_TRUST", warning: `OMB_LOOPBACK_TRUST="${raw.replace(/[^\w.-]/g, "").slice(0, 40)}" is not owner or service; using service` };
+    return { trust: "service", reason: "RELAY_LOOPBACK_TRUST", warning: `RELAY_LOOPBACK_TRUST="${raw.replace(/[^\w.-]/g, "").slice(0, 40)}" is not owner or service; using service` };
   }
   if (input.hostedWorkspace) return { trust: "service", reason: "hosted workspace" };
   return { trust: "owner", reason: "self-hosted default" };
@@ -188,7 +188,7 @@ export function isProxied(req: IncomingMessage): boolean {
 
 /** A request over an IPC listener (a unix socket or a named pipe) has no peer
  * address. Only a gateway on this machine can reach such a listener, and it
- * is there to forward traffic from elsewhere (`openmausbot serve --tunnel`),
+ * is there to forward traffic from elsewhere (`relay serve --tunnel`),
  * so the request is remote by construction: whatever headers it carries or
  * lacks, it never gets loopback trust. */
 export function ipcPeer(req: IncomingMessage): boolean {
@@ -268,7 +268,7 @@ export function bearerToken(header: string | string[] | undefined): string | und
  * otherwise clobber each other's session. The environment id keeps a
  * reinstalled server from reading a cookie signed by its predecessor. */
 export function sessionCookieName(port: number, environmentId: string): string {
-  return `omb_session_${port}_${environmentId.replace(/[^a-z0-9]/gi, "").slice(0, 12)}`;
+  return `relay_session_${port}_${environmentId.replace(/[^a-z0-9]/gi, "").slice(0, 12)}`;
 }
 
 export function serializeSessionCookie(
@@ -411,18 +411,18 @@ export interface ResolveOptions {
   /** See LoopbackTrust. Absent is `owner`, the historical behaviour. Ignored
    * while a desktop capability is in force (loopbackMutationToken). */
   loopbackTrust?: LoopbackTrust;
-  /** Under `service`: a per-launch secret the `openmausbot serve` process
+  /** Under `service`: a per-launch secret the `relay serve` process
    * that started this server handed it over the child's stdin (never the
    * environment, which the server's other children could read). It lets that
    * CLI, and nothing else, mint and list pairing codes. */
   cliOwnerToken?: string;
 }
 
-const CLI_OWNER_HEADER = "x-openmausbot-cli-owner";
+const CLI_OWNER_HEADER = "x-relay-cli-owner";
 /** The only routes the serving CLI's secret opens: its pairing code. */
 const CLI_OWNER_ROUTE = /^\/api\/auth\/pairing$/;
 
-const DESKTOP_OWNER_HEADER = "x-openmausbot-desktop-owner";
+const DESKTOP_OWNER_HEADER = "x-relay-desktop-owner";
 
 function mutatingPublicRoute(method: string, path: string): boolean {
   const upper = method.toUpperCase();
@@ -464,7 +464,7 @@ export function resolveRequestAuth(req: IncomingMessage, options: ResolveOptions
   const ticket = path === options.streamPath ? options.url.searchParams.get("ticket") : null;
   let session: SessionRecord | null = null;
   let via: "bearer" | "cookie" | "ticket" | null = null;
-  if (bearer?.startsWith("omb_sess_")) {
+  if (bearer?.startsWith("relay_sess_")) {
     session = options.sessions.authenticate(bearer);
     via = "bearer";
   } else if (ticket) {
@@ -504,12 +504,12 @@ export function resolveRequestAuth(req: IncomingMessage, options: ResolveOptions
   const proxied = isProxied(req);
   const loopback = !proxied && isLoopbackHost(headerValue(req.headers.host)) && isAllowedOrigin(headerValue(req.headers.origin));
   if (loopback) {
-    const companionToken = headerValue(req.headers["x-openmausbot-companion-auth"]);
+    const companionToken = headerValue(req.headers["x-relay-companion-auth"]);
     if (companionToken && options.loopbackMutationToken !== undefined) {
       if (
         !secureTokenMatch(companionToken, options.companionMutationToken ?? "") ||
-        req.headers["x-openmausbot-companion"] !== "1" ||
-        !/^[\w-]{1,128}$/.test(headerValue(req.headers["x-openmausbot-companion-device"]) ?? "") ||
+        req.headers["x-relay-companion"] !== "1" ||
+        !/^[\w-]{1,128}$/.test(headerValue(req.headers["x-relay-companion-device"]) ?? "") ||
         companionDenial({ path, method, authenticated: true })
       ) return deny(403, "forbidden: invalid companion request");
       return { auth: { kind: "loopback", scopes: LOOPBACK_SCOPES }, status: 401, error: "" };

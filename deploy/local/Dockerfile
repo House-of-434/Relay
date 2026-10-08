@@ -1,12 +1,12 @@
 # Relay cloud MVP image: harness + BFF + Tool Layer + Bladebro + Chrome.
 #
-# Single image, three processes across two compose services: `omb` runs the
+# Single image, three processes across two compose services: `relay` runs the
 # harness and the BFF (the BFF hardcodes the harness at 127.0.0.1, so they
 # share a network namespace), `tools` runs the Tool Layer on its own
 # container with RELAY_TOOL_HOST=0.0.0.0.
 #
 # Build from the repo root:
-#   docker build -f deploy/local/Dockerfile -t relay-omb:local .
+#   docker build -f deploy/local/Dockerfile -t relay-relay:local .
 # Or via compose (context is the repo root, not deploy/local):
 #   docker compose build && docker compose up -d
 #
@@ -81,19 +81,19 @@ RUN npm install -g pnpm@10.33.0 \
 ARG ENGINES=""
 RUN if [ -n "$ENGINES" ]; then npm install -g $ENGINES; fi
 ENV HOME=/data \
-    OMB_DATA_DIR=/data/.openmausbot \
-    OMB_STATIC_DIR=/app/dist \
-    OMB_PORT=8799 \
-    OMB_WEBHOOK_PORT=8800 \
+    RELAY_DATA_DIR=/data/.relay \
+    RELAY_STATIC_DIR=/app/dist \
+    RELAY_PORT=8799 \
+    RELAY_WEBHOOK_PORT=8800 \
     CHROME_PATH=/usr/bin/google-chrome-stable \
     NODE_ENV=production
 VOLUME ["/data"]
-# The omb service runs harness+BFF via start.sh; the tools service overrides
+# The relay service runs harness+BFF via start.sh; the tools service overrides
 # the command to run the Tool Layer instead.
-COPY deploy/local/start-omb.sh /usr/local/bin/start-omb.sh
+COPY deploy/local/start-relay.sh /usr/local/bin/start-relay.sh
 COPY deploy/local/start-tools.sh /usr/local/bin/start-tools.sh
-RUN chmod +x /usr/local/bin/start-omb.sh /usr/local/bin/start-tools.sh
+RUN chmod +x /usr/local/bin/start-relay.sh /usr/local/bin/start-tools.sh
 USER maus
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -sf http://127.0.0.1:8799/api/health | grep -q openmausbot || exit 1
-CMD ["/usr/local/bin/start-omb.sh"]
+  CMD curl -sf http://127.0.0.1:8799/api/health | grep -q relay || exit 1
+CMD ["/usr/local/bin/start-relay.sh"]

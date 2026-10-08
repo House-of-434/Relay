@@ -42,9 +42,9 @@ const yamlEsmPlugin = {
 const ENTRY_POINTS = [
   "index.ts",
   "message-search.worker.ts",
-  // the `openmausbot` command (serve/pair/sessions/status) for the npm
+  // the `relay` command (serve/pair/sessions/status) for the npm
   // package, the container image and checkouts; pair-cli.ts stays as an alias
-  "openmausbot.ts",
+  "relay.ts",
   "pair-cli.ts",
   "workspace-backup.worker.ts",
   // the OMB Cloud Pro home image's entry point (deploy/fly/Dockerfile): it
@@ -59,7 +59,7 @@ const ENTRY_POINTS = [
   "local-computer.ts",
   "local-computer-proxy.ts",
   // the hook helper Claude Code runs at PostToolUse/PreCompact/SessionStart/Stop
-  "hooks/omb-hook.ts",
+  "hooks/relay-hook.ts",
   "container-mcp.ts",
   "vps-container-mcp.ts",
   "permission-proxy.ts",
@@ -99,7 +99,7 @@ await build({
   logLevel: "info",
 });
 
-// `openmausbot serve --tunnel` (server/tunnel.ts) spawns the connector guardian
+// `relay serve --tunnel` (server/tunnel.ts) spawns the connector guardian
 // as its own process, so it has to exist as a file beside the server, not only
 // as code inlined into the bundle that imports its neighbours. Bundled under
 // its own name: the same code the desktop app runs from
@@ -151,7 +151,7 @@ if (existsSync(join(root, "enterprise", "server", "index.ts"))) {
   copyFileSync(join(root, "enterprise", "LICENSE"), join(root, "dist-server", "enterprise", "LICENSE"));
 }
 
-// pi-mcp-extension.ts is NOT an OpenMausBot entry point: it is loaded by the
+// pi-mcp-extension.ts is NOT an Relay entry point: it is loaded by the
 // external `pi` process (pi's own jiti), which resolves its
 // @earendil-works/pi-coding-agent and typebox imports from pi's install. Ship
 // it verbatim as .ts so the packaged app has it too — never bundle it, or

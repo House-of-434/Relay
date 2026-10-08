@@ -61,11 +61,11 @@ function profiles(): Record<string, Profile> {
             all[name] = {
               family: room ? "room" : "direct",
               env: {
-                OMB_ROOM_TURN: flag(room),
-                OMB_OWN_THREAD_CREATION: flag(ownThread),
-                OMB_SKILL_AUTHORING_ENABLED: flag(skills),
-                OMB_SHARED_COMPUTERS_ENABLED: flag(shared),
-                OMB_VOICE_NOTES: flag(voice),
+                RELAY_ROOM_TURN: flag(room),
+                RELAY_OWN_THREAD_CREATION: flag(ownThread),
+                RELAY_SKILL_AUTHORING_ENABLED: flag(skills),
+                RELAY_SHARED_COMPUTERS_ENABLED: flag(shared),
+                RELAY_VOICE_NOTES: flag(voice),
               },
             };
           }
@@ -77,20 +77,20 @@ function profiles(): Record<string, Profile> {
   // profiles are pinned, and differ from their family only where the test
   // below says they may.
   for (const name of ["direct+skills+shared+voice", "room+own-thread+skills+shared+voice"]) {
-    all[`${name}+cloud-home`] = { family: all[name]!.family, env: { ...all[name]!.env, OMB_CLOUD_HOME: "1" } };
+    all[`${name}+cloud-home`] = { family: all[name]!.family, env: { ...all[name]!.env, RELAY_CLOUD_HOME: "1" } };
   }
-  all.external = { family: "external", env: { OMB_EXTERNAL_RUNTIME: "1" } };
+  all.external = { family: "external", env: { RELAY_EXTERNAL_RUNTIME: "1" } };
   // The external switch wins over every other one; pin that it still does.
   all["external+everything"] = {
     family: "external",
     env: {
-      OMB_EXTERNAL_RUNTIME: "1",
-      OMB_ROOM_TURN: "1",
-      OMB_OWN_THREAD_CREATION: "1",
-      OMB_SKILL_AUTHORING_ENABLED: "1",
-      OMB_SHARED_COMPUTERS_ENABLED: "1",
-      OMB_VOICE_NOTES: "1",
-      OMB_CLOUD_HOME: "1",
+      RELAY_EXTERNAL_RUNTIME: "1",
+      RELAY_ROOM_TURN: "1",
+      RELAY_OWN_THREAD_CREATION: "1",
+      RELAY_SKILL_AUTHORING_ENABLED: "1",
+      RELAY_SHARED_COMPUTERS_ENABLED: "1",
+      RELAY_VOICE_NOTES: "1",
+      RELAY_CLOUD_HOME: "1",
     },
   };
   return all;
@@ -141,11 +141,11 @@ const RPC_PREFIX = '{"jsonrpc":"2.0","id":1,"result":';
 /** The exact `result` text of one tools/list answer from a freshly spawned
  * proxy. Sliced out of the raw stdout line, never re-serialized. */
 async function toolsListWire(entry: string, env: Record<string, string>): Promise<string> {
-  // A developer shell (or an OpenMausBot turn running this suite) can carry
-  // OMB_* switches of its own; the profile must be the only source.
-  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("OMB_")));
+  // A developer shell (or an Relay turn running this suite) can carry
+  // RELAY_* switches of its own; the profile must be the only source.
+  const inherited = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith("RELAY_")));
   const child = spawn(process.execPath, [entry], {
-    env: { ...inherited, OMB_HARNESS_URL: "http://127.0.0.1:9", OMB_BOT_ID: "bot-golden", OMB_THREAD_ID: "thread-golden", OMB_COMMS_TOKEN: "unused", OMB_TURN_DEPTH: "0", ...env },
+    env: { ...inherited, RELAY_HARNESS_URL: "http://127.0.0.1:9", RELAY_BOT_ID: "bot-golden", RELAY_THREAD_ID: "thread-golden", RELAY_COMMS_TOKEN: "unused", RELAY_TURN_DEPTH: "0", ...env },
     stdio: ["pipe", "pipe", "inherit"],
   });
   try {
@@ -230,7 +230,7 @@ describe("agents proxy tools/list golden", () => {
       const full = new Map(toolsOf(wires[FULL[profile.family]]!).map((tool) => [tool.name, JSON.stringify(tool)]));
       for (const tool of toolsOf(wires[name]!)) {
         // A Cloud home's own select_computer is pinned by the next test.
-        if (profile.env.OMB_CLOUD_HOME === "1" && tool.name === "select_computer") continue;
+        if (profile.env.RELAY_CLOUD_HOME === "1" && tool.name === "select_computer") continue;
         expect(JSON.stringify(tool), `${name}: ${tool.name}`).toBe(full.get(tool.name));
       }
     }
@@ -255,7 +255,7 @@ describe("agents proxy tools/list golden", () => {
 
   it("is what the catalog module computes in-process, so another front end mounts the same tools", () => {
     for (const [name, profile] of Object.entries(PROFILES)) {
-      const tools = availableTools(catalogProfileFromEnv({ OMB_BOT_ID: "bot-golden", ...profile.env }));
+      const tools = availableTools(catalogProfileFromEnv({ RELAY_BOT_ID: "bot-golden", ...profile.env }));
       expect(JSON.stringify({ tools }), name).toBe(wires[name]);
     }
   });
@@ -292,7 +292,7 @@ describe("agents proxy tools/list from the packaged bundle", () => {
     // dist-server/ that the desktop app, the npm package and the container
     // image all copy whole. The proxy runs as its own process there, so every
     // module it imports has to be inlined into this one file.
-    directory = realpathSync(mkdtempSync(join(tmpdir(), "omb-agents-proxy-bundle-")));
+    directory = realpathSync(mkdtempSync(join(tmpdir(), "relay-agents-proxy-bundle-")));
     await build({
       entryPoints: [PROXY_SOURCE],
       bundle: true,

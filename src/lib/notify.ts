@@ -27,7 +27,7 @@ export interface NotificationBotIdentity {
  * coalescing key platforms replace on (`tag`) and its avatar, when the
  * profile has one. Pure so the grouping rule stays testable on its own. */
 export function buildNotificationOptions(bot: NotificationBotIdentity): NotificationOptions {
-  return { tag: `openmausbot:${bot.id}`, icon: bot.avatarUrl ?? undefined };
+  return { tag: `relay:${bot.id}`, icon: bot.avatarUrl ?? undefined };
 }
 
 /** Show one unless the exact destination conversation is already visible.
@@ -55,7 +55,7 @@ export function showNotification(
       body: frame.body,
       ...buildNotificationOptions({ id: frame.botId, avatarUrl }),
       // its own stack, so a bot's next "finished" never replaces it
-      ...(spend ? { tag: "openmausbot:spend", icon: undefined } : {}),
+      ...(spend ? { tag: "relay:spend", icon: undefined } : {}),
       // The banner still lands; only the platform's alert sound is held
       // back, which is what a person on a call with the bot asked for.
       ...(notificationSoundsEnabled() ? {} : { silent: true }),

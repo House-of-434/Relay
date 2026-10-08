@@ -12,7 +12,7 @@ const { once } = require("node:events");
 const { setTimeout: delay } = require("node:timers/promises");
 
 const root = resolve(__dirname, "..");
-const home = mkdtempSync(join(tmpdir(), "omb-phone-auth-smoke-"));
+const home = mkdtempSync(join(tmpdir(), "relay-phone-auth-smoke-"));
 app.setPath("userData", join(home, "electron"));
 const children = [];
 let logs = "";
@@ -60,16 +60,16 @@ app.whenReady().then(async () => {
     claude: { driver: "claudeAgent", config: { cli: join(root, "server/testing/fake-claude-cli.ts") } },
   } }));
   const env = {
-    HOME: home, USERPROFILE: home, OMB_DATA_DIR: home, PATH: "",
+    HOME: home, USERPROFILE: home, RELAY_DATA_DIR: home, PATH: "",
     ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-    OMB_PORT: String(harnessPort), OMB_WEBHOOK_PORT: String(webhookPort),
-    OMB_COMPANION_PORT: String(phonePort), OMB_CONTROL_PORT: String(controlPort),
+    RELAY_PORT: String(harnessPort), RELAY_WEBHOOK_PORT: String(webhookPort),
+    RELAY_COMPANION_PORT: String(phonePort), RELAY_CONTROL_PORT: String(controlPort),
     FAKE_CLAUDE_MODE: "happy",
   };
-  const harness = fork("dist-server/index.js", { ...env, OMB_DESKTOP_PARENT: "1" });
+  const harness = fork("dist-server/index.js", { ...env, RELAY_DESKTOP_PARENT: "1" });
   await until(() => api(harnessPort, "/api/health").catch(() => null));
   assert.equal((await api(harnessPort, "/api/bots", "POST", {})).status, 403);
-  harness.postMessage({ type: "openmausbot:desktop-mutation-token", token: owner, companionToken: relay });
+  harness.postMessage({ type: "relay:desktop-mutation-token", token: owner, companionToken: relay });
   const sidecar = fork("dist-companion/index.js", env);
   await until(() => api(controlPort, "/state").catch(() => null));
   const pairing = await api(controlPort, "/pairing", "POST");
@@ -81,13 +81,13 @@ app.whenReady().then(async () => {
   assert.equal((await phone("/api/bots", "POST", {})).status, 503, "bootstrap must fail closed");
   // Reproduce the old relay: marker/device alone cannot authorize a mutation.
   assert.equal((await api(harnessPort, "/api/bots", "POST", {}, {
-    "x-openmausbot-companion": "1", "x-openmausbot-companion-device": paired.body.device.id,
+    "x-relay-companion": "1", "x-relay-companion-device": paired.body.device.id,
   })).status, 403);
-  sidecar.postMessage({ type: "openmausbot:companion-mutation-token", token: relay });
+  sidecar.postMessage({ type: "relay:companion-mutation-token", token: relay });
   await until(async () => (await phone("/api/bots")).status === 200);
   const created = await phone("/api/bots", "POST", { modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } }, {
-    "x-openmausbot-companion-auth": "forged", "x-openmausbot-desktop-owner": "forged",
-    "x-openmausbot-companion-device": "forged-device",
+    "x-relay-companion-auth": "forged", "x-relay-desktop-owner": "forged",
+    "x-relay-companion-device": "forged-device",
   });
   assert.equal(created.status, 201);
   const id = created.body.bot.id;
@@ -105,9 +105,9 @@ app.whenReady().then(async () => {
   sidecar.kill();
   await sidecarExited;
   const nextRelay = randomBytes(32).toString("base64url");
-  harness.postMessage({ type: "openmausbot:desktop-mutation-token", token: owner, companionToken: nextRelay });
+  harness.postMessage({ type: "relay:desktop-mutation-token", token: owner, companionToken: nextRelay });
   const restarted = fork("dist-companion/index.js", env);
-  restarted.once("spawn", () => restarted.postMessage({ type: "openmausbot:companion-mutation-token", token: nextRelay }));
+  restarted.once("spawn", () => restarted.postMessage({ type: "relay:companion-mutation-token", token: nextRelay }));
   await until(() => phone("/api/bots").then((r) => r.status === 200).catch(() => false));
   assert.equal((await phone(`/api/bots/${id}/read`, "POST", {})).status, 200);
   assert.equal((await api(phonePort, `/api/bots/${id}/read`, "POST", {})).status, 401);
@@ -122,7 +122,7 @@ app.whenReady().then(async () => {
   console.error(error);
   process.exitCode = 1;
 }).finally(async () => {
-  const evidence = join(tmpdir(), `omb-phone-auth-${Date.now()}.log`);
+  const evidence = join(tmpdir(), `relay-phone-auth-${Date.now()}.log`);
   writeFileSync(evidence, logs.replaceAll(owner, "[redacted]").replaceAll(relay, "[redacted]"));
   console.log(`Fixture log: ${evidence}`);
   for (const child of children.reverse()) {

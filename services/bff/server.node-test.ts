@@ -29,7 +29,7 @@ const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const OTHER_USER_ID = "f7cd9c1b-5f39-4892-b37e-baf8ae27c0c5";
 const USER_EMAIL = "teammate@houseof434.com";
 const ACCESS_TOKEN_SENTINEL = "supabase-access-token-must-stay-on-bff";
-const RELAY_TOKEN = `omb_sess_${"R".repeat(43)}`;
+const RELAY_TOKEN = `relay_sess_${"R".repeat(43)}`;
 const RELAY_SESSION_ID = "2457cb2a-7543-4b48-8854-a63cd160241f";
 const VERIFIED_AUTH_USER = {
   id: USER_ID,
@@ -260,7 +260,7 @@ function fixtureFetcher(
     }
     if (url.pathname === "/api/internal/portal-session/revoke") return Response.json({ ok: true, revoked: true });
     if (url.pathname === "/api/auth/logout") return Response.json({ ok: true });
-    if (url.pathname === "/.well-known/openmausbot/environment") {
+    if (url.pathname === "/.well-known/relay/environment") {
       return Response.json({ environmentId: "fixture-environment", capabilities: { emailSignIn: false } });
     }
     if (url.pathname === "/api/events") {
@@ -509,7 +509,7 @@ test("requires BFF capability and Supabase configuration instead of starting a d
   });
   assert.equal(googleRedirectUri, undefined);
   assert.equal(googleTokenEncryptionKey, undefined);
-  assert.ok(dataDir?.endsWith(".openmausbot"));
+  assert.ok(dataDir?.endsWith(".relay"));
   const independentClients = configFromEnvironment({
     SUPABASE_PROJECT_URL: PROJECT_URL,
     SUPABASE_ANON_KEY,
@@ -520,7 +520,7 @@ test("requires BFF capability and Supabase configuration instead of starting a d
     RELAY_CONN_CALENDAR_CLIENT_SECRET: "calendar-client-secret",
     RELAY_GOOGLE_REDIRECT_URI: "http://localhost:8798/api/google/oauth/callback",
     RELAY_TOKEN_ENCRYPTION_KEY: GOOGLE_TOKEN_KEY,
-    OMB_DATA_DIR: "/tmp/relay-bff-data",
+    RELAY_DATA_DIR: "/tmp/relay-bff-data",
   });
   assert.equal(independentClients.googleOAuthClients?.gmail?.clientId, "gmail-client-id");
   assert.equal(independentClients.googleOAuthClients?.gmail?.clientSecret, "gmail-client-secret");
@@ -756,7 +756,7 @@ test("never proxies browser access to internal harness routes", async () => {
 
 test("proxies public environment discovery without browser Supabase credentials", async () => {
   const fixture = await startFixture();
-  const response = await fetch(`${fixture.baseUrl}/.well-known/openmausbot/environment`, {
+  const response = await fetch(`${fixture.baseUrl}/.well-known/relay/environment`, {
     headers: {
       cookie: `sb-access-token=${ACCESS_TOKEN_SENTINEL}`,
       authorization: `Bearer ${ACCESS_TOKEN_SENTINEL}`,
@@ -764,7 +764,7 @@ test("proxies public environment discovery without browser Supabase credentials"
     },
   });
   assert.equal(response.status, 200);
-  const proxied = fixture.requests.find((request) => request.url.pathname === "/.well-known/openmausbot/environment")!;
+  const proxied = fixture.requests.find((request) => request.url.pathname === "/.well-known/relay/environment")!;
   assert.equal(proxied.headers.has("cookie"), false);
   assert.equal(proxied.headers.has("authorization"), false);
   assert.equal(proxied.headers.has("apikey"), false);

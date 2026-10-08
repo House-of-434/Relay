@@ -1,5 +1,5 @@
 {
-  "format": "openmaus.package",
+  "format": "relay.package",
   "version": 1,
   "package": {
     "id": "signal-desk",
@@ -9,7 +9,7 @@
     "summary": "A complete two-bot signal workflow.",
     "category": "Research",
     "author": {
-      "name": "OpenMausBot"
+      "name": "Relay"
     },
     "license": "MIT",
     "outcomes": [

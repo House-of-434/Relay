@@ -12,7 +12,7 @@ const controllers: AbortController[] = [];
 const schema = { type: "object", properties: { value: { type: "string" } }, required: ["value"], additionalProperties: false };
 
 function fixture(body = "", toolSchema: Record<string, unknown> = schema) {
-  const dir = mkdtempSync(join(tmpdir(), "omb-chat-mcp-"));
+  const dir = mkdtempSync(join(tmpdir(), "relay-chat-mcp-"));
   dirs.push(dir);
   const script = join(dir, "fake-mcp.mjs");
   const receipt = join(dir, "receipt.json");
@@ -33,7 +33,7 @@ function fixture(body = "", toolSchema: Record<string, unknown> = schema) {
         const line = buffer.slice(0, newline); buffer = buffer.slice(newline + 1);
         const message = JSON.parse(line);
         calls.push(message);
-        writeFileSync(receipt, JSON.stringify({pid:process.pid,path:process.env.PATH,omb:Object.fromEntries(Object.entries(process.env).filter(([name]) => name.startsWith("OMB_"))),calls}));
+        writeFileSync(receipt, JSON.stringify({pid:process.pid,path:process.env.PATH,relay:Object.fromEntries(Object.entries(process.env).filter(([name]) => name.startsWith("RELAY_"))),calls}));
         ${body}
         if (message.method === "initialize") reply(message, {protocolVersion:"2024-11-05",capabilities:{tools:{}}});
         else if (message.method === "tools/list") reply(message, {tools:[{name:"write",description:"Fixture write",inputSchema:schema}]});
@@ -47,7 +47,7 @@ function fixture(body = "", toolSchema: Record<string, unknown> = schema) {
   const server: { command: string; args: string[]; env: Record<string, string> } = { command: script, args: [], env: { RECEIPT: receipt } };
   return {
     dir, receipt, controller, server,
-    read: () => JSON.parse(readFileSync(receipt, "utf8")) as { pid: number; path: string; omb: Record<string, string>; calls: Array<{ method: string; params?: { name?: string; arguments?: unknown } }> },
+    read: () => JSON.parse(readFileSync(receipt, "utf8")) as { pid: number; path: string; relay: Record<string, string>; calls: Array<{ method: string; params?: { name?: string; arguments?: unknown } }> },
     async mount(computerUse = false, localComputer = false) {
       const session = await mountChatTools(localComputer ? { localComputer: server } : { custom: { audit: server } }, controller.signal, computerUse);
       sessions.push(session);
@@ -103,14 +103,14 @@ describe("Chat MCP session", () => {
   });
 
   it("keeps the operator's control-plane secrets from a chat bot's tool servers, but not what the descriptor grants", async () => {
-    const secrets = ["OMB_CLOUD_READY_TOKEN", "OMB_CLOUD_BOOTSTRAP", "OMB_LICENSE_KEY", "OMB_INSTALLATION_CREDENTIAL"];
+    const secrets = ["RELAY_CLOUD_READY_TOKEN", "RELAY_CLOUD_BOOTSTRAP", "RELAY_LICENSE_KEY", "RELAY_INSTALLATION_CREDENTIAL"];
     for (const name of secrets) vi.stubEnv(name, "should-not-leak");
-    vi.stubEnv("OMB_CLOUDFLARED_PATH", "/usr/local/bin/cloudflared");
+    vi.stubEnv("RELAY_CLOUDFLARED_PATH", "/usr/local/bin/cloudflared");
     const f = fixture();
-    f.server.env = { ...f.server.env, OMB_COMMS_TOKEN: "turn-capability" };
+    f.server.env = { ...f.server.env, RELAY_COMMS_TOKEN: "turn-capability" };
     await f.mount();
-    const seen = f.read().omb;
-    expect(seen).toMatchObject({ OMB_CLOUDFLARED_PATH: "/usr/local/bin/cloudflared", OMB_COMMS_TOKEN: "turn-capability" });
+    const seen = f.read().relay;
+    expect(seen).toMatchObject({ RELAY_CLOUDFLARED_PATH: "/usr/local/bin/cloudflared", RELAY_COMMS_TOKEN: "turn-capability" });
     for (const name of secrets) expect(seen).not.toHaveProperty(name);
   });
 

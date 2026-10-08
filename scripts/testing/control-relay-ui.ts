@@ -1,4 +1,4 @@
-// `control-omb ui`: drive the real React renderer headlessly against the
+// `control-relay ui`: drive the real React renderer headlessly against the
 // isolated fake-engine fixture, through a persistent headless Chrome owned
 // by this harness (system Chrome via playwright-core — no downloaded
 // browser, no daemon outside the fixture). One launch owns a fixture
@@ -6,7 +6,7 @@
 // profile lives in the fixture's disposable data directory; every other verb
 // attaches to that session through the handle file the launch printed.
 //
-// Imported by scripts/control-omb.ts, which owns HELP and the MUTATING set;
+// Imported by scripts/control-relay.ts, which owns HELP and the MUTATING set;
 // this file touches that module's bindings only inside functions so the
 // import cycle is harmless whichever file is loaded first.
 import type { ChildProcess } from "node:child_process";
@@ -22,17 +22,17 @@ import {
   parse,
   runControlOmb,
   type VerificationServer,
-} from "../control-omb.ts";
+} from "../control-relay.ts";
 import { fixtureApi, mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 /** Gitignored, persistent scratch for the harness. */
-export const UI_TOOLS_DIR = join(ROOT, ".omb-scratch", "verify-tools");
+export const UI_TOOLS_DIR = join(ROOT, ".relay-scratch", "verify-tools");
 /** Verbs that change the fixture or the page; they take the explicit handle, never discovery. */
 export const UI_MUTATING = new Set(["click", "type", "press", "flag", "eval"]);
 
 const ENTRIES = {
-  threads: { entry: "/scripts/testing/threads-preview.tsx", route: "/__threads.html", title: "Isolated OpenMausBot Chat" },
+  threads: { entry: "/scripts/testing/threads-preview.tsx", route: "/__threads.html", title: "Isolated Relay Chat" },
 } as const satisfies Record<string, Parameters<typeof mountPreview>[1]>;
 const FAKE_MODES = ["happy", "exit-early", "hang", "malformed", "stream", "not-logged-in", "slow", "background-result"];
 const SEEDED_BOT = "Pepper";
@@ -337,7 +337,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
   const [verb = "help", ...rest] = args;
   if (verb === "help" || verb === "--help" || verb === "-h") return HELP_UI;
   if (verb === "launch") {
-    throw new ControlOmbError("ui launch is available only from the executable CLI", "run `node --experimental-strip-types scripts/control-omb.ts ui launch`");
+    throw new ControlOmbError("ui launch is available only from the executable CLI", "run `node --experimental-strip-types scripts/control-relay.ts ui launch`");
   }
   const command = `ui ${verb}`;
   const ui = { ui: { type: "string" } } as const;
@@ -419,7 +419,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     return waitSettle(handle, timeout);
   }
 
-  throw new ControlOmbError(`unknown ui command ${JSON.stringify(verb)}`, "run control-omb ui help");
+  throw new ControlOmbError(`unknown ui command ${JSON.stringify(verb)}`, "run control-relay ui help");
 }
 
 function parkUntilSignalOrExit(child: ChildProcess, stopRequested: () => boolean): Promise<"signal" | "exit"> {

@@ -67,7 +67,7 @@ function calls(dir: string): Array<{ args: string[]; configDir: string; home: st
 
 beforeEach(() => {
   ensureDirs();
-  scratch = mkdtempSync(join(tmpdir(), "omb-claude-accounts-"));
+  scratch = mkdtempSync(join(tmpdir(), "relay-claude-accounts-"));
   cli = join(scratch, "fake-claude.mjs");
   writeFileSync(cli, FAKE_CLI, { mode: 0o755 });
   vi.stubEnv("CLAUDE_CONFIG_DIR", "");

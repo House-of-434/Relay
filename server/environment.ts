@@ -1,6 +1,6 @@
 // What a client learns about this server before it authenticates: a stable
 // identity, a label, the version, and what it can do. Served without auth at
-// /.well-known/openmausbot/environment so a saved connection can check it is
+// /.well-known/relay/environment so a saved connection can check it is
 // still talking to the same server, and so version skew is visible.
 import { randomUUID } from "node:crypto";
 import {
@@ -105,9 +105,9 @@ export function loadEnvironmentId(dataDir: string): string {
 }
 
 /** The desktop app passes its own version; a checkout reads package.json;
- * an image sets OMB_APP_VERSION at build time. */
+ * an image sets RELAY_APP_VERSION at build time. */
 export function serverVersion(): string {
-  const fromEnv = process.env.OMB_APP_VERSION?.trim();
+  const fromEnv = process.env.RELAY_APP_VERSION?.trim();
   if (fromEnv) return fromEnv;
   try {
     const pkg: unknown = JSON.parse(readFileSync(join(SERVER_ROOT, "..", "package.json"), "utf8"));
@@ -122,7 +122,7 @@ export function serverVersion(): string {
 export function environmentDescriptor(input: { environmentId: string; desktopManaged: boolean; emailSignIn?: boolean; sharedComputers?: boolean }): EnvironmentDescriptor {
   return {
     environmentId: input.environmentId,
-    label: process.env.OMB_ENVIRONMENT_LABEL?.trim() || hostname(),
+    label: process.env.RELAY_ENVIRONMENT_LABEL?.trim() || hostname(),
     platform: process.platform,
     version: serverVersion(),
     capabilities: {

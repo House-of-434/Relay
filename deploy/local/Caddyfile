@@ -1,15 +1,15 @@
-# Caddy shares the omb network namespace (compose `network_mode:
-# service:omb`), so upstreams are 127.0.0.1. The app only ever talks to the
+# Caddy shares the relay network namespace (compose `network_mode:
+# service:app`), so upstreams are 127.0.0.1. The app only ever talks to the
 # BFF — /auth, /api, and /.well-known go there; static UI comes from the
-# harness (OMB_STATIC_DIR). Mirrors vite.config.ts dev proxying.
+# harness (RELAY_STATIC_DIR). Mirrors vite.config.ts dev proxying.
 #
-# Set OMB_HTTPS_HOST to the public hostname for automatic HTTPS. The compose
-# command refuses it unless OMB_BIND_ADDRESS=127.0.0.1: TLS terminates here,
+# Set RELAY_HTTPS_HOST to the public hostname for automatic HTTPS. The compose
+# command refuses it unless RELAY_BIND_ADDRESS=127.0.0.1: TLS terminates here,
 # in front of a loopback-bound app. Leave it empty for plain :80 (dev only —
 # login needs Secure cookies, which need https).
-{$OMB_HTTPS_HOST::80} {
+{$RELAY_HTTPS_HOST::80} {
 	reverse_proxy /auth/* 127.0.0.1:8798
 	reverse_proxy /api/* 127.0.0.1:8798
-	reverse_proxy /.well-known/openmausbot/* 127.0.0.1:8798
+	reverse_proxy /.well-known/relay/* 127.0.0.1:8798
 	reverse_proxy 127.0.0.1:8799
 }

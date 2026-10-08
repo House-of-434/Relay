@@ -50,7 +50,7 @@ describe("thread resource ownership", () => {
   });
 
   it("prevents parent/child project overlap and symlink aliases, not sibling folders", () => {
-    const root = mkdtempSync(join(tmpdir(), "omb-thread-resources-"));
+    const root = mkdtempSync(join(tmpdir(), "relay-thread-resources-"));
     try {
       mkdirSync(join(root, "project", "nested"), { recursive: true });
       mkdirSync(join(root, "project-other"));
@@ -67,7 +67,7 @@ describe("thread resource ownership", () => {
   });
 
   it("treats differently cased paths as one workspace on case-insensitive volumes", ({ skip }) => {
-    const root = mkdtempSync(join(tmpdir(), "omb-thread-case-"));
+    const root = mkdtempSync(join(tmpdir(), "relay-thread-case-"));
     try {
       const folder = join(root, "Project");
       const alias = join(root, "project");

@@ -63,7 +63,7 @@ describe("phone origin validation", () => {
     "https://[::ffff:0.0.0.0]", "https://user:password@maus.example", "https://maus.example/pair",
     "https://maus.example/?token=secret", "https://maus.example/#code=ABCD-EFGH-JKLM",
     "https://maus.example/?", "https://maus.example/#", "https://maus.\nexample",
-    "https://maus.example\\private", "openmausbot://pair?token=secret",
+    "https://maus.example\\private", "relay://pair?token=secret",
   ])("rejects a local, credential-bearing or non-origin input: %s", (input) => {
     expect(normalizePhoneOrigin(input)).toBeNull();
   });
@@ -76,7 +76,7 @@ describe("optional phone setup", () => {
     const result = await runPhoneSetup(options, ui.io, deps);
     expect(result).toEqual({ options });
     expect(result.options).toBe(options);
-    expect(ui.io.choose).toHaveBeenCalledWith("Use OpenMausBot on your phone?", expect.any(Array), 0);
+    expect(ui.io.choose).toHaveBeenCalledWith("Use Relay on your phone?", expect.any(Array), 0);
     expect(deps.accountReady).not.toHaveBeenCalled();
     expect(deps.login).not.toHaveBeenCalled();
     ui.consumed();
@@ -113,7 +113,7 @@ describe("optional phone setup", () => {
     const ui = prompts({ choices: [2, 0], confirms: [true] });
     expect((await runPhoneSetup(options, ui.io, deps)).phone).toBe("android");
     expect(deps.login).not.toHaveBeenCalled();
-    expect(ui.lines.join("\n")).toContain("saved OpenMausBot account");
+    expect(ui.lines.join("\n")).toContain("saved Relay account");
     ui.consumed();
   });
 
@@ -238,9 +238,9 @@ describe("phone pairing instructions", () => {
 
   it("sends an Android phone to the app first, and still offers the browser", () => {
     const text = phonePairingInstructions("android", { origin: "https://maus.example", ready: true }).join("\n");
-    // The QR beside these lines is the openmausbot:// invite, so the app's
+    // The QR beside these lines is the relay:// invite, so the app's
     // own scanner is now the primary route rather than a dead end.
-    expect(text).toContain("open the OpenMausBot app and scan the QR with its pairing scanner");
+    expect(text).toContain("open the Relay app and scan the QR with its pairing scanner");
     // The QR beside these lines is the app-scheme invite, so telling people to
     // scan it with Camera for the browser would send them nowhere.
     expect(text).toContain("Camera will not open it in a browser");

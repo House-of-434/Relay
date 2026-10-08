@@ -12,7 +12,7 @@ let home: string;
 /** A real Store, RoutineManager, skill store, memory and section registry in
  * a throwaway home; MCP config and policy are in-memory stand-ins. */
 async function installation(options: { refuse?: (name: string) => string | undefined; servers?: Record<string, unknown> } = {}) {
-  home = mkdtempSync(join(tmpdir(), "omb-package-import-"));
+  home = mkdtempSync(join(tmpdir(), "relay-package-import-"));
   vi.resetModules();
   vi.stubEnv("HOME", home);
   vi.stubEnv("USERPROFILE", home);

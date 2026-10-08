@@ -14,7 +14,7 @@ import { z } from "zod";
 
 import { parseJson, type JsonObject, type JsonValue } from "./schema.ts";
 
-const SCHEMA = "aos.openmausbot_status.v1";
+const SCHEMA = "aos.relay_status.v1";
 const TTL_SECONDS = 300;
 const MAX_CACHE_BYTES = 16_384;
 const DIGEST = /^sha256:[a-f0-9]{64}$/;
@@ -62,16 +62,16 @@ const capsuleSchema = z.object({
 
 const jsonObjectSchema = z.record(z.string(), z.custom<JsonValue>());
 
-export const OPENMAUS_STATUS_CACHE_PATH = join(
+export const RELAY_STATUS_CACHE_PATH = join(
   homedir(),
-  ".local/state/aos-session-bridge/openmausbot/latest.json",
+  ".local/state/aos-session-bridge/relay/latest.json",
 );
 
-type OpenMausSlot = z.output<typeof slotSchema>;
-type OpenMausUi = z.output<typeof uiSchema>;
-type OpenMausCapsule = z.output<typeof capsuleSchema>;
+type RelaySlot = z.output<typeof slotSchema>;
+type RelayUi = z.output<typeof uiSchema>;
+type RelayCapsule = z.output<typeof capsuleSchema>;
 
-export interface OpenMausStatusDigest {
+export interface RelayStatusDigest {
   schema: typeof SCHEMA;
   freshness: "fresh" | "stale" | "unknown";
   reason?: "missing_or_insecure" | "invalid" | "clock_skew" | "stale" | "refresh_failed";
@@ -83,7 +83,7 @@ export interface OpenMausStatusDigest {
   mode: "shared" | "per-bot" | "unknown";
   maxInstances: number | null;
   readyCount: number;
-  slots: OpenMausSlot[];
+  slots: RelaySlot[];
   ui: {
     twoUp: boolean;
     maxVisible: 1 | 2;
@@ -93,7 +93,7 @@ export interface OpenMausStatusDigest {
   };
 }
 
-export interface OpenMausStatusReadOptions {
+export interface RelayStatusReadOptions {
   cachePath?: string;
   now?: Date;
 }
@@ -125,7 +125,7 @@ function timestamp(value: string): number | null {
   return parsed;
 }
 
-function expectedUi(twoUp: boolean): OpenMausUi {
+function expectedUi(twoUp: boolean): RelayUi {
   return {
     two_up: twoUp,
     max_visible: twoUp ? 2 : 1,
@@ -134,7 +134,7 @@ function expectedUi(twoUp: boolean): OpenMausUi {
   };
 }
 
-function sameUi(left: OpenMausUi, right: OpenMausUi): boolean {
+function sameUi(left: RelayUi, right: RelayUi): boolean {
   return (
     left.two_up === right.two_up &&
     left.max_visible === right.max_visible &&
@@ -143,7 +143,7 @@ function sameUi(left: OpenMausUi, right: OpenMausUi): boolean {
   );
 }
 
-function unsignedDocument(capsule: OpenMausCapsule): JsonObject {
+function unsignedDocument(capsule: RelayCapsule): JsonObject {
   const document: JsonObject = {
     schema: capsule.schema,
     observed_at: capsule.observed_at,
@@ -175,7 +175,7 @@ function unsignedDocument(capsule: OpenMausCapsule): JsonObject {
   return document;
 }
 
-function validSlotState(slot: OpenMausSlot): boolean {
+function validSlotState(slot: RelaySlot): boolean {
   return (
     slot.readiness !== "ready" ||
     (slot.container === "running" &&
@@ -185,7 +185,7 @@ function validSlotState(slot: OpenMausSlot): boolean {
   );
 }
 
-function validateCapsule(value: JsonValue): OpenMausCapsule | null {
+function validateCapsule(value: JsonValue): RelayCapsule | null {
   const parsed = capsuleSchema.safeParse(value);
   if (!parsed.success) return null;
   const capsule = parsed.data;
@@ -281,10 +281,10 @@ function privateCache(path: string): Buffer | null {
 }
 
 function unknownDigest(
-  reason: NonNullable<OpenMausStatusDigest["reason"]>,
-  freshness: OpenMausStatusDigest["freshness"] = "unknown",
-  receipt?: Pick<OpenMausStatusDigest, "observedAt" | "receiptSha256">,
-): OpenMausStatusDigest {
+  reason: NonNullable<RelayStatusDigest["reason"]>,
+  freshness: RelayStatusDigest["freshness"] = "unknown",
+  receipt?: Pick<RelayStatusDigest, "observedAt" | "receiptSha256">,
+): RelayStatusDigest {
   return {
     schema: SCHEMA,
     freshness,
@@ -305,12 +305,12 @@ function unknownDigest(
   };
 }
 
-export function readOpenMausStatus(
-  options: OpenMausStatusReadOptions = {},
-): OpenMausStatusDigest {
-  const raw = privateCache(options.cachePath ?? OPENMAUS_STATUS_CACHE_PATH);
+export function readRelayStatus(
+  options: RelayStatusReadOptions = {},
+): RelayStatusDigest {
+  const raw = privateCache(options.cachePath ?? RELAY_STATUS_CACHE_PATH);
   if (raw === null) return unknownDigest("missing_or_insecure");
-  let capsule: OpenMausCapsule | null;
+  let capsule: RelayCapsule | null;
   try {
     capsule = validateCapsule(parseJson(raw.toString("utf8")));
   } catch {
@@ -324,7 +324,7 @@ export function readOpenMausStatus(
   if (!Number.isFinite(now) || now < observed) return unknownDigest("clock_skew");
   if (now >= freshUntil) return unknownDigest("stale", "stale", receipt);
   if (capsule.refresh_status === "failed") return unknownDigest("refresh_failed", "fresh", receipt);
-  const result: OpenMausStatusDigest = {
+  const result: RelayStatusDigest = {
     schema: SCHEMA,
     freshness: "fresh",
     ...receipt,
@@ -346,8 +346,8 @@ export function readOpenMausStatus(
   return result;
 }
 
-export function openMausStatusSystemPrompt(options: OpenMausStatusReadOptions = {}): string {
-  const status = readOpenMausStatus(options);
+export function relayStatusSystemPrompt(options: RelayStatusReadOptions = {}): string {
+  const status = readRelayStatus(options);
   const receipt = [
     status.observedAt ? `observed_at=${status.observedAt}` : null,
     status.receiptSha256 ? `receipt_sha256=${status.receiptSha256}` : null,
@@ -373,7 +373,7 @@ export function openMausStatusSystemPrompt(options: OpenMausStatusReadOptions = 
         .join(",")
     : "none";
   return [
-    "TRUSTED OPENMAUSBOT STATUS (read-only, validated, no transcript or credential data):",
+    "TRUSTED RELAY STATUS (read-only, validated, no transcript or credential data):",
     `schema=${status.schema}; freshness=${status.freshness}${status.reason ? `; reason=${status.reason}` : ""}`,
     receipt || "receipt=unavailable",
     runtime,

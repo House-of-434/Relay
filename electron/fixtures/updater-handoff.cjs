@@ -23,7 +23,7 @@ async function main() {
   const { packageInstallCommand } = await import("../package-install-command.mjs");
   const handOff = handOffDownloadedPackage("deb");
 
-  const workspace = mkdtempSync(join(tmpdir(), "omb-handoff-fixture-"));
+  const workspace = mkdtempSync(join(tmpdir(), "relay-handoff-fixture-"));
   const realPath = process.env.PATH;
   try {
     // A real staged file: the hand-off now refuses a path that is gone, so
@@ -53,7 +53,7 @@ async function main() {
 
     // Nothing on PATH: the terminal cannot open, but the command must still be
     // on the clipboard — the docs tell the user to paste it themselves.
-    const empty = mkdtempSync(join(tmpdir(), "omb-handoff-empty-"));
+    const empty = mkdtempSync(join(tmpdir(), "relay-handoff-empty-"));
     clipboard.writeText("something else entirely");
     process.env.PATH = empty;
     const withoutTerminal = await handOff([staged]);

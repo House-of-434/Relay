@@ -19,7 +19,7 @@ import {
   withoutDesktopCompanionAccess,
 } from "./desktop-companion-client.mjs";
 
-const token = `omb_${"a".repeat(43)}`;
+const token = `relay_${"a".repeat(43)}`;
 const deviceId = "123e4567-e89b-12d3-a456-426614174000";
 const access = {
   endpoint: "http://host.example-tailnet.ts.net:8810",
@@ -41,11 +41,11 @@ afterEach(async () => {
 describe("desktop companion endpoint", () => {
   it("preserves the local-origin boundary while marking companion client mode", () => {
     expect(desktopCompanionRendererArguments("http://127.0.0.1:8799", null)).toEqual([
-      "--omb-local-origin=http://127.0.0.1:8799",
+      "--relay-local-origin=http://127.0.0.1:8799",
     ]);
     expect(desktopCompanionRendererArguments("http://127.0.0.1:8798", access)).toEqual([
-      "--omb-local-origin=http://127.0.0.1:8798",
-      "--openmausbot-remote-client",
+      "--relay-local-origin=http://127.0.0.1:8798",
+      "--relay-remote-client",
     ]);
   });
 
@@ -59,7 +59,7 @@ describe("desktop companion endpoint", () => {
     expect(normalizeDesktopCompanionEndpoint("https://c-opaque.openmausbot.com")).toBe(
       "https://c-opaque.openmausbot.com",
     );
-    expect(normalizeDesktopCompanionEndpoint("c-opaque.openmausbot.com")).toBe(
+    expect(normalizeDesktopCompanionEndpoint("c-opaque.relay.com")).toBe(
       "https://c-opaque.openmausbot.com",
     );
     for (const endpoint of [
@@ -171,7 +171,7 @@ describe("desktop companion loopback relay", () => {
   });
 
   it("serves the UI only on loopback and never includes the bearer in the page", async () => {
-    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "omb-desktop-client-"));
+    const directory = fs.mkdtempSync(path.join(os.tmpdir(), "relay-desktop-client-"));
     tempDirs.push(directory);
     fs.writeFileSync(path.join(directory, "index.html"), "<h1>Remote client</h1>");
     const relay = await startDesktopCompanionRelay({ access, staticDir: directory, ports: [0] });

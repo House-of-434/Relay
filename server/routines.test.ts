@@ -20,7 +20,7 @@ import {
 const dirs: string[] = [];
 
 function tempFile() {
-  const dir = mkdtempSync(join(tmpdir(), "omb-routines-"));
+  const dir = mkdtempSync(join(tmpdir(), "relay-routines-"));
   dirs.push(dir);
   return join(dir, "routines.json");
 }
@@ -986,7 +986,7 @@ describe("RoutineManager", () => {
         routineName: "Morning brief",
         status: "failed",
         threadId: "thread-1",
-        error: "OpenMausBot restarted while this routine was running",
+        error: "Relay restarted while this routine was running",
       },
     ]);
   });
@@ -2940,7 +2940,7 @@ describe("routine runs × turn-held BoatAgent asks", () => {
   it("holds the run in waiting until the person answers, then completes it", async () => {
     const h = harness(start);
     const prompts: string[] = [];
-    const askText = "```omb-ask\n" + JSON.stringify({
+    const askText = "```relay-ask\n" + JSON.stringify({
       questions: [{ question: "Ship the release?", options: [{ label: "Ship now" }, { label: "Wait" }] }],
     }) + "\n```";
     const restoreFetch = installFakeBoat([

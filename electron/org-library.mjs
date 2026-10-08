@@ -27,7 +27,7 @@ const APP_VERSION = /^[0-9A-Za-z][0-9A-Za-z.+-]{0,39}$/;
 const BLOB_NAME = /^([a-f0-9]{64})\.json$/, OWNED_BLOB_FILE = /^[a-f0-9]{64}\.json(?:\.[0-9a-f-]{36}\.tmp)?$/;
 const STATES = new Set(["installed", "failed", "removed", "withdrawn"]);
 const REASONS = new Set(["blob_unavailable", "invalid_package", "import_failed", "newer_app_required", "connection_refused_by_policy", "removed_locally", "withdrawn_by_publisher"]);
-export const LIBRARY_STATE_MESSAGE = "openmausbot:managed-library-state";
+export const LIBRARY_STATE_MESSAGE = "relay:managed-library-state";
 
 // The portal label rule of managed-desktop.mjs, and typed: a regex alone would accept ["…"].
 // oxlint-disable-next-line no-control-regex
@@ -90,7 +90,7 @@ export function parseOrgLibraryCatalog(input, { organizationId } = {}) {
   if (typeof input === "string" || input instanceof Uint8Array) {
     try { value = JSON.parse(typeof input === "string" ? input : new TextDecoder("utf-8", { fatal: true }).decode(input)); } catch { return null; }
   }
-  if (!record(value) || value.format !== "openmaus.org-library" || value.version !== 1 || !count(value.libraryVersion) || !record(value.organization) ||
+  if (!record(value) || value.format !== "relay.org-library" || value.version !== 1 || !count(value.libraryVersion) || !record(value.organization) ||
       !matches(UUID, value.organization.id) || !safeText(value.organization.name, 100) || !Array.isArray(value.packages) || value.packages.length > CATALOG_MAX_ENTRIES) return null;
   if (organizationId !== undefined && value.organization.id !== organizationId) return null;
   const seen = new Set(), packages = [];
@@ -98,7 +98,7 @@ export function parseOrgLibraryCatalog(input, { organizationId } = {}) {
     const entry = parseEntry(item);
     if (entry && !seen.has(entry.packageId)) { seen.add(entry.packageId); packages.push(entry); }
   }
-  return { format: "openmaus.org-library", version: 1, libraryVersion: value.libraryVersion, organization: { id: value.organization.id, name: value.organization.name },
+  return { format: "relay.org-library", version: 1, libraryVersion: value.libraryVersion, organization: { id: value.organization.id, name: value.organization.name },
     ...(value.truncated === true ? { truncated: true } : {}), packages };
 }
 /** Install report entries (contract §5.5), each parsed on its own like Admin's: a bad one is dropped. */
@@ -146,7 +146,7 @@ async function writeAtomic(file, bytes) {
 /**
  * Electron main's half of the library (contract §5.6). `fetchBytes` is the
  * managed-desktop client's fetchLibraryBytes (fixed routes, the device token,
- * its caps); `relay` posts { type: "openmausbot:managed-library", library } to
+ * its caps); `relay` posts { type: "relay:managed-library", library } to
  * the local runtime and resolves on its ack; `store` is a separate OS-encrypted
  * record (company-library.bin). `dataDir` is <data dir>/org-library, where the
  * runtime keeps its own state.json and presets.json: main owns catalog.json

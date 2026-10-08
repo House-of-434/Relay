@@ -3,12 +3,12 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import type { WireMessage } from "../../shared/wire.ts";
-import { launchVerificationServer, runControlOmb } from "../control-omb.ts";
-import { driverCall, ensureUiChrome, resolveUiChrome, startUiDriver } from "./control-omb-ui.ts";
+import { launchVerificationServer, runControlOmb } from "../control-relay.ts";
+import { driverCall, ensureUiChrome, resolveUiChrome, startUiDriver } from "./control-relay-ui.ts";
 import { fixtureApi, mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
-if (!enabled) console.info("skipping stream-buffer e2e: no system Chrome resolves; set OMB_UI_E2E=1 to require it");
+const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+if (!enabled) console.info("skipping stream-buffer e2e: no system Chrome resolves; set RELAY_UI_E2E=1 to require it");
 
 it.skipIf(!enabled)("drains pending text and reasoning with rAF paused, then settles without duplicated output", async () => {
   const chrome = ensureUiChrome(process.env);

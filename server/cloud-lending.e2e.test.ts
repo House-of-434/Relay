@@ -19,7 +19,7 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const HOST = "omb-t-0123456789ab.fly.dev";
+const HOST = "relay-t-0123456789ab.fly.dev";
 const secret = randomBytes(32).toString("base64url");
 let home = "";
 let base = "";
@@ -45,11 +45,11 @@ async function api(method: string, path: string, options: { body?: unknown; toke
 }
 
 async function adminPairing(): Promise<string> {
-  const body = JSON.stringify({ label: "OpenMausBot app (Cloud)", ttlSeconds: 300 });
+  const body = JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 300 });
   const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
   const response = await fetch(`${base}/api/cloud/pairing`, { method: "POST", headers: {
     host: HOST, "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https", "content-type": "application/json",
-    "x-omb-cloud-timestamp": timestamp, "x-omb-cloud-nonce": nonce, "x-omb-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
+    "x-relay-cloud-timestamp": timestamp, "x-relay-cloud-nonce": nonce, "x-relay-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
   }, body });
   const granted = await response.json() as { code: string };
   const paired = await api("POST", "/api/auth/pair", { body: { code: granted.code } });
@@ -82,8 +82,8 @@ async function proxyFor(start: () => Promise<void>) {
 }
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-cloud-lending-"));
-  const dataDir = join(home, ".openmausbot");
+  home = mkdtempSync(join(tmpdir(), "relay-cloud-lending-"));
+  const dataDir = join(home, ".relay");
   mkdirSync(dataDir, { recursive: true });
   const cli = join(home, "fixture-claude.mjs");
   writeFileSync(cli, `#!/usr/bin/env node
@@ -113,15 +113,15 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
 let port = 0;
 /** Start (or restart) the Cloud home on its data directory. */
 async function boot() {
-  const dataDir = join(home, ".openmausbot");
+  const dataDir = join(home, ".relay");
   const offlinePrelude = `data:text/javascript,${encodeURIComponent('const real = globalThis.fetch; globalThis.fetch = async (url, init) => String(url).startsWith("http://127.0.0.1:") ? real(url, init) : new Response("offline fixture", { status: 503 });')}`;
   child = spawn(process.execPath, ["--import", offlinePrelude, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
       PATH: process.env.PATH, ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-      HOME: home, USERPROFILE: home, OMB_DATA_DIR: dataDir, OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1),
-      OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", OMB_CLOUD_ADMIN_URL: "https://cloud.example.test",
-      OMB_CLOUD_BOOTSTRAP_SECRET: secret, OMB_PUBLIC_URL: `https://${HOST}`,
+      HOME: home, USERPROFILE: home, RELAY_DATA_DIR: dataDir, RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_CLOUD_ROLE: "home", RELAY_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", RELAY_CLOUD_ADMIN_URL: "https://cloud.example.test",
+      RELAY_CLOUD_BOOTSTRAP_SECRET: secret, RELAY_PUBLIC_URL: `https://${HOST}`,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -144,16 +144,16 @@ afterAll(async () => {
 });
 
 it("offers lending on a Cloud home with the maintainer flag still off", async () => {
-  expect((await api("GET", "/.well-known/openmausbot/environment")).body.capabilities).toMatchObject({ sharedComputers: true });
+  expect((await api("GET", "/.well-known/relay/environment")).body.capabilities).toMatchObject({ sharedComputers: true });
   expect((await api("GET", "/api/config", { token: owner })).body.features.sharedComputers).toBe(false);
   expect(await api("GET", "/api/shared-computers", { token: owner })).toEqual({ status: 200, body: { computers: [] } });
 });
 
 it("only the person's own admin device can lend; a chat-only guest cannot", async () => {
-  const registration = { id: randomUUID(), name: "Guest laptop", environmentId: (await api("GET", "/.well-known/openmausbot/environment")).body.environmentId, folders: [], terminal: false, computer: true };
+  const registration = { id: randomUUID(), name: "Guest laptop", environmentId: (await api("GET", "/.well-known/relay/environment")).body.environmentId, folders: [], terminal: false, computer: true };
   const refused = await fetch(`${base}/api/shared-computers/connect`, { method: "POST", headers: {
     host: HOST, "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https", origin: `https://${HOST}`,
-    authorization: `Bearer ${guest}`, "content-type": "application/json", "x-omb-computer-secret": "c".repeat(64),
+    authorization: `Bearer ${guest}`, "content-type": "application/json", "x-relay-computer-secret": "c".repeat(64),
   }, body: JSON.stringify(registration) });
   expect(refused.status).toBe(403);
   expect(await refused.json()).toMatchObject({ error: expect.stringContaining("Only your own computers") });
@@ -161,7 +161,7 @@ it("only the person's own admin device can lend; a chat-only guest cannot", asyn
 });
 
 it("the person's Mac, lent through the real connector, is usable by the owner's conversations and routines, never a guest's or a webhook's", async () => {
-  const folderPath = realpathSync(mkdtempSync(join(tmpdir(), "omb-cloud-lent-folder-")));
+  const folderPath = realpathSync(mkdtempSync(join(tmpdir(), "relay-cloud-lent-folder-")));
   writeFileSync(join(folderPath, "plan.md"), "from the Mac");
   const env = { id: "my-cloud", name: "My Cloud", origin: base };
   let maintainerChecks = 0;
@@ -378,15 +378,15 @@ it("on a Cloud home a guest cannot answer an options card; the owner's answer is
   const made = (await api("POST", "/api/bots", { token: owner, body: { name: "Watcher", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" } } })).body.bot;
   for (const proxy of proxies.splice(0)) proxy.kill();
   await waitForExit(child, { signal: "SIGTERM" });
-  const botsFile = join(home, ".openmausbot", "bots.json");
+  const botsFile = join(home, ".relay", "bots.json");
   writeFileSync(botsFile, readFileSync(botsFile, "utf8").replaceAll(made.id, WATCHER_OPTIONS_CARD_BOT_ID));
   await boot();
   // The Watcher's own turn posts a card through its turn capability.
   const agents = await agentsFor(async () => {
     expect((await api("POST", `/api/bots/${WATCHER_OPTIONS_CARD_BOT_ID}/messages`, { token: owner, body: { text: "Check the build." } })).status).toBe(202);
   });
-  const posted = await fetch(`${agents.env.OMB_HARNESS_URL}/api/internal/options-card`, {
-    method: "POST", headers: { authorization: `Bearer ${agents.env.OMB_COMMS_TOKEN}`, "content-type": "application/json" },
+  const posted = await fetch(`${agents.env.RELAY_HARNESS_URL}/api/internal/options-card`, {
+    method: "POST", headers: { authorization: `Bearer ${agents.env.RELAY_COMMS_TOKEN}`, "content-type": "application/json" },
     body: JSON.stringify({ title: "Deploy now?", subtitle: "The build is green.", options: ["Yes", "No"] }),
   });
   expect(posted.status, await posted.clone().text()).toBe(201);

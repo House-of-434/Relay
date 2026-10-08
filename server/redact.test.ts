@@ -22,8 +22,8 @@ describe("redactSecrets", () => {
             command: "/usr/bin/node",
             args: ["/app/agents-proxy.js"],
             env: [
-              { name: "OMB_BOT_ID", value: "bot-123" },
-              { name: "OMB_COMMS_TOKEN", value: "s3cret-comms-token-value" },
+              { name: "RELAY_BOT_ID", value: "bot-123" },
+              { name: "RELAY_COMMS_TOKEN", value: "s3cret-comms-token-value" },
             ],
           },
           {
@@ -45,7 +45,7 @@ describe("redactSecrets", () => {
     expect(out).not.toContain("box_live_abcdefghijklmnop");
     // shape survives: still the same method, servers, names and non-secret env
     expect(out).toContain("session/new");
-    expect(out).toContain("OMB_COMMS_TOKEN");
+    expect(out).toContain("RELAY_COMMS_TOKEN");
     expect(out).toContain("OGB_BOX_TOKEN");
     expect(out).toContain("bot-123");
     expect(out).toContain("boat-9");
@@ -211,7 +211,7 @@ describe("redactSecretsInText", () => {
 
   it("masks an assignment to any name ending in KEY, whatever the value looks like", () => {
     expect(redactSecretsInText(`OPENAI_API_KEY=sk-${"a".repeat(20)} pnpm test`)).toBe("OPENAI_API_KEY=«redacted 23 chars» pnpm test");
-    expect(redactSecretsInText("X_KEY=value pnpm control:omb doctor")).toBe("X_KEY=«redacted 5 chars» pnpm control:omb doctor");
+    expect(redactSecretsInText("X_KEY=value pnpm control:relay doctor")).toBe("X_KEY=«redacted 5 chars» pnpm control:relay doctor");
     expect(redactSecretsInText("export xai-key='abc.def'")).toBe("export xai-key='«redacted 7 chars»'");
   });
 
@@ -261,7 +261,7 @@ describe("redactSecretsInText", () => {
   it("is idempotent for structurally identified credentials", () => {
     const input = {
       apiKey: "abcdefgh12345678",
-      env: [{ name: "OMB_COMMS_TOKEN", value: "abcdefghijklmnop" }],
+      env: [{ name: "RELAY_COMMS_TOKEN", value: "abcdefghijklmnop" }],
     };
     const once = redactSecrets(input);
 

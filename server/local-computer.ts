@@ -43,10 +43,10 @@ export function gatedLocalComputer(
       // this the MCP client relaunches OMB, whose single-instance handler
       // focuses the user's window, instead of starting the headless gate.
       ELECTRON_RUN_AS_NODE: "1",
-      OMB_CUA_COMMAND: connection.command,
-      OMB_CUA_ARGS: JSON.stringify(connection.args),
-      OMB_CONTROL_URL: control.url,
-      OMB_CONTROL_TOKEN: control.token,
+      RELAY_CUA_COMMAND: connection.command,
+      RELAY_CUA_ARGS: JSON.stringify(connection.args),
+      RELAY_CONTROL_URL: control.url,
+      RELAY_CONTROL_TOKEN: control.token,
     },
   };
 }
@@ -372,7 +372,7 @@ function firstPresentCuaDescriptor(candidates: string[]): string | null {
 
 export function readCuaConnection({
   platform = process.platform,
-  userData = process.env.OMB_USER_DATA,
+  userData = process.env.RELAY_USER_DATA,
   home = homedir(),
   validateLinuxRuntime = validateLinuxDescriptorRuntime,
   validateLegacyRuntime = validateLegacyDescriptorRuntime,
@@ -386,7 +386,7 @@ export function readCuaConnection({
   const candidates = userData ? [join(userData, "cua-connection.json")] : [];
   if (platform === "darwin" && !userData) {
     // Legacy/dev fallback only when Electron did not provide its exact path.
-    for (const directory of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
+    for (const directory of ["Relay", "relay", "OpenGrokBot", "opengrokbot"]) {
       candidates.push(join(home, "Library", "Application Support", directory, "cua-connection.json"));
     }
   }
@@ -412,7 +412,7 @@ export function readCuaConnection({
  * and only a private, well-formed macOS/Windows descriptor may supply text. */
 export function readCuaUnavailableReason({
   platform = process.platform,
-  userData = process.env.OMB_USER_DATA,
+  userData = process.env.RELAY_USER_DATA,
   home = homedir(),
 }: {
   platform?: NodeJS.Platform;
@@ -422,7 +422,7 @@ export function readCuaUnavailableReason({
   if (!legacyPlatform(platform)) return null;
   const candidates = userData ? [join(userData, "cua-connection.json")] : [];
   if (platform === "darwin" && !userData) {
-    for (const directory of ["OpenMausBot", "openmausbot", "OpenGrokBot", "opengrokbot"]) {
+    for (const directory of ["Relay", "relay", "OpenGrokBot", "opengrokbot"]) {
       candidates.push(join(home, "Library", "Application Support", directory, "cua-connection.json"));
     }
   }

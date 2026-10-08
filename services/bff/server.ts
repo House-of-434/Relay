@@ -30,7 +30,7 @@ const COOKIE_NAME = "relay_bff";
 const OAUTH_STATE_COOKIE_NAME = "relay_bff_oauth_state";
 const GOOGLE_OAUTH_STATE_COOKIE_PREFIX = "relay_google_oauth_state_";
 const DEFAULT_BFF_PORT = 8798;
-const DEFAULT_OMB_PORT = 8799;
+const DEFAULT_RELAY_PORT = 8799;
 const DEFAULT_UI_PORT = 5199;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -38,7 +38,7 @@ const MAX_OAUTH_STATE_TTL_MS = OAUTH_STATE_TTL_MS;
 const MAX_LIVE_SESSIONS = 500;
 const MAX_PENDING_LOGINS = 500;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const RELAY_SESSION_TOKEN_PATTERN = /^omb_sess_[A-Za-z0-9_-]{43}$/;
+const RELAY_SESSION_TOKEN_PATTERN = /^relay_sess_[A-Za-z0-9_-]{43}$/;
 const OAUTH_CODE_PATTERN = /^[\x21-\x7e]{1,4096}$/;
 const RFC3339_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 const CALENDAR_EVENT_PAGE_SIZE = 2500;
@@ -115,8 +115,8 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     relayToolActorSecret: env.RELAY_TOOL_ACTOR_SECRET,
     relayBffPublicUrl: env.RELAY_BFF_PUBLIC_URL?.trim() || `http://localhost:${bffPort}`,
     bffPort,
-    ombPort: parsePort(env.OMB_PORT, DEFAULT_OMB_PORT, "OMB_PORT"),
-    uiPort: parsePort(env.OMB_UI_PORT, DEFAULT_UI_PORT, "OMB_UI_PORT"),
+    ombPort: parsePort(env.RELAY_PORT, DEFAULT_RELAY_PORT, "RELAY_PORT"),
+    uiPort: parsePort(env.RELAY_UI_PORT, DEFAULT_UI_PORT, "RELAY_UI_PORT"),
     googleOAuthClients: {
       gmail: {
         clientId: env[GOOGLE_SERVICE_REGISTRY.gmail.clientIdEnvironmentVariable]?.trim(),
@@ -129,7 +129,7 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     },
     googleRedirectUri: env.RELAY_GOOGLE_REDIRECT_URI?.trim(),
     googleTokenEncryptionKey: env.RELAY_TOKEN_ENCRYPTION_KEY,
-    dataDir: env.OMB_DATA_DIR?.trim() || join(homedir(), ".openmausbot"),
+    dataDir: env.RELAY_DATA_DIR?.trim() || join(homedir(), ".relay"),
   });
 }
 
@@ -158,7 +158,7 @@ function validateConfig(config: RelayBffConfig): RelayBffConfig {
   if (Buffer.byteLength(config.relayBffCapability) < 32) {
     throw new Error("RELAY_BFF_CAPABILITY must be at least 32 bytes");
   }
-  for (const [name, port] of [["RELAY_BFF_PORT", config.bffPort], ["OMB_PORT", config.ombPort], ["OMB_UI_PORT", config.uiPort]] as const) {
+  for (const [name, port] of [["RELAY_BFF_PORT", config.bffPort], ["RELAY_PORT", config.ombPort], ["RELAY_UI_PORT", config.uiPort]] as const) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name} must be a valid TCP port`);
   }
   if (config.sessionTtlMs !== undefined && (!Number.isFinite(config.sessionTtlMs) || config.sessionTtlMs <= 0)) {
@@ -1346,7 +1346,7 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       }
     }
 
-    if (url.pathname === "/.well-known/openmausbot/environment" && method === "GET") {
+    if (url.pathname === "/.well-known/relay/environment" && method === "GET") {
       await proxyRequest({
         req,
         res,

@@ -21,7 +21,7 @@ import { botMemoryFiles, createLendingMemory, FOLDER_ENTRY_CAP, memoryFiles, mem
 let dir = "";
 afterEach(() => { if (dir) rmSync(dir, { recursive: true, force: true }); dir = ""; });
 const workspace = () => {
-  dir = mkdtempSync(join(tmpdir(), "omb-lending-memory-"));
+  dir = mkdtempSync(join(tmpdir(), "relay-lending-memory-"));
   const ws = join(dir, "workspaces", "bot1");
   mkdirSync(join(ws, "memory", "log"), { recursive: true });
   writeFileSync(join(ws, "MEMORY.md"), "# Memory\n");

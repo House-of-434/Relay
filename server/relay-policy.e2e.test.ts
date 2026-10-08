@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { launchVerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer } from "../scripts/control-relay.ts";
 
 it("keeps computer, phone, and voice features disabled across the HTTP API", async () => {
   const fixture = await launchVerificationServer({ ...process.env, RELAY_DISABLE_COMPUTER: "1" });

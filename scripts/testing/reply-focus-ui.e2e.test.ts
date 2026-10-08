@@ -3,13 +3,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const chrome = resolveUiChrome(process.env);
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(chrome);
-if (!enabled) console.info("skipping reply focus UI e2e: set OMB_UI_E2E=1 to require system Chrome");
+const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(chrome);
+if (!enabled) console.info("skipping reply focus UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 // MOCA-263: choosing Reply showed "Replying to …" but left the caret outside
 // the draft, so the reply could not be typed without clicking the box first.
@@ -18,7 +18,7 @@ if (!enabled) console.info("skipping reply focus UI e2e: set OMB_UI_E2E=1 to req
   let info: { ui: string } | undefined;
   try {
     let stdout = "", stderr = "";
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });

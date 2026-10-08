@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer, type VerificationServer } from "../scripts/control-relay.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 const DAY_MS = 24 * 60 * 60_000;
@@ -29,7 +29,7 @@ describe("license expiry through the running server", () => {
   });
 
   const boot = async (expiresAt: string) => {
-    layerDir = mkdtempSync(join(tmpdir(), "omb-expiring-layer-"));
+    layerDir = mkdtempSync(join(tmpdir(), "relay-expiring-layer-"));
     mkdirSync(join(layerDir, "server"));
     writeFileSync(join(layerDir, "server", "index.js"),
       `export async function register() { return { customer: "Fixture Co", features: ["budgets"], expiresAt: ${JSON.stringify(expiresAt)} }; }\n`);
@@ -53,7 +53,7 @@ describe("license expiry through the running server", () => {
     expect(edition).toMatchObject({ edition: "enterprise", features: ["budgets"], expiresAt });
     expect(edition.expiresInDays).toBeGreaterThanOrEqual(11);
     expect(edition.expiresInDays).toBeLessThanOrEqual(12);
-    expect(server.log()).toContain(`OMB_LICENSE_KEY expires on ${expiresAt}`);
+    expect(server.log()).toContain(`RELAY_LICENSE_KEY expires on ${expiresAt}`);
     expect((await server.adminConfig()).edition).toEqual({
       edition: "enterprise", features: ["budgets"], license: { expiresAt, expiresInDays: edition.expiresInDays },
     });
@@ -69,7 +69,7 @@ describe("license expiry through the running server", () => {
     const server = await boot(expiresAt);
     const edition = await server.edition();
     expect(edition).toMatchObject({ edition: "enterprise", features: ["budgets"], expiresAt, graceEndsAt: day(5) });
-    expect(edition.notice).toBe(`OMB_LICENSE_KEY expired on ${expiresAt}; enterprise features keep working until ${day(5)} while it is renewed`);
+    expect(edition.notice).toBe(`RELAY_LICENSE_KEY expired on ${expiresAt}; enterprise features keep working until ${day(5)} while it is renewed`);
     expect(server.log()).toContain(`enterprise features keep working until ${day(5)}`);
     expect((await server.adminConfig()).edition.license).toMatchObject({ expiresAt, graceEndsAt: day(5) });
     expect((await server.memberConfig()).edition.license).toBeUndefined();
@@ -82,6 +82,6 @@ describe("license expiry through the running server", () => {
     const server = await boot(day(90));
     expect((await server.edition()).expiresInDays).toBeGreaterThan(30);
     expect((await server.adminConfig()).edition).toEqual({ edition: "enterprise", features: ["budgets"] });
-    expect(server.log()).not.toContain("OMB_LICENSE_KEY expires on");
+    expect(server.log()).not.toContain("RELAY_LICENSE_KEY expires on");
   }, 90_000);
 });

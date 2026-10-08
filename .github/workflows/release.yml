@@ -190,16 +190,16 @@ jobs:
 
       - name: "Gate: both packaged apps use the canonical updater feed"
         run: |
-          for app in release/mac-arm64/OpenMausBot.app release/mac/OpenMausBot.app; do
+          for app in release/mac-arm64/Relay.app release/mac/Relay.app; do
             update="$app/Contents/Resources/app-update.yml"
             test -f "$update" || { echo "::error::missing $update"; exit 1; }
             grep -Eq '^owner: milind-soni$' "$update" || { echo "::error::wrong update owner in $update"; exit 1; }
-            grep -Eq '^repo: OpenMausBot$' "$update" || { echo "::error::wrong update repo in $update"; exit 1; }
+            grep -Eq '^repo: Relay$' "$update" || { echo "::error::wrong update repo in $update"; exit 1; }
           done
 
       - name: "Gate: the signature must verify BEFORE notarization"
         run: |
-          for app in release/mac-arm64/OpenMausBot.app release/mac/OpenMausBot.app; do
+          for app in release/mac-arm64/Relay.app release/mac/Relay.app; do
             codesign --verify --deep --strict "$app"
             bin="$app/Contents/Resources/cloudflared/cloudflared"
             test -x "$bin" || { echo "::error::missing executable $bin"; exit 1; }
@@ -217,11 +217,11 @@ jobs:
 
       - name: "Gate: both packaged servers start and every helper path resolves"
         run: |
-          for app in release/mac-arm64/OpenMausBot.app release/mac/OpenMausBot.app; do
+          for app in release/mac-arm64/Relay.app release/mac/Relay.app; do
             res="$app/Contents/Resources"
             # the server tree is plain JS — runnable on the runner's node
             # regardless of the app binary's arch
-            OMB_SMOKE_DIST="$res/server" node scripts/smoke-packaged-server.mjs \
+            RELAY_SMOKE_DIST="$res/server" node scripts/smoke-packaged-server.mjs \
               || { echo "::error::packaged server in $app failed to start"; exit 1; }
             node --input-type=module - "$res/server" <<'EOF'
           import { existsSync } from "node:fs";
@@ -235,7 +235,7 @@ jobs:
           }
           console.log(`ok: ${Object.keys(SPAWNED_PROXIES).length} proxies resolve in ${server}`);
           EOF
-            for bin in "$res/cua-driver" "$res/OpenMausBot Speech.app/Contents/MacOS/speech-helper"; do
+            for bin in "$res/cua-driver" "$res/Relay Speech.app/Contents/MacOS/speech-helper"; do
               lipo -archs "$bin" | grep -q "x86_64" || { echo "::error::$bin lacks x86_64"; exit 1; }
               lipo -archs "$bin" | grep -q "arm64" || { echo "::error::$bin lacks arm64"; exit 1; }
             done
@@ -270,17 +270,17 @@ jobs:
 
       - name: Staple, re-zip, regenerate blockmaps and the feed
         run: |
-          xcrun stapler staple release/OpenMausBot-*-arm64.dmg
-          xcrun stapler staple release/OpenMausBot-*-x64.dmg
-          xcrun stapler staple release/mac-arm64/OpenMausBot.app
-          xcrun stapler staple release/mac/OpenMausBot.app
+          xcrun stapler staple release/Relay-*-arm64.dmg
+          xcrun stapler staple release/Relay-*-x64.dmg
+          xcrun stapler staple release/mac-arm64/Relay.app
+          xcrun stapler staple release/mac/Relay.app
           v=$(node -p "require('./package.json').version")
-          rm -f "release/OpenMausBot-$v-arm64.zip" "release/OpenMausBot-$v-x64.zip"
-          ditto -c -k --sequesterRsrc --keepParent release/mac-arm64/OpenMausBot.app "release/OpenMausBot-$v-arm64.zip"
-          ditto -c -k --sequesterRsrc --keepParent release/mac/OpenMausBot.app "release/OpenMausBot-$v-x64.zip"
+          rm -f "release/Relay-$v-arm64.zip" "release/Relay-$v-x64.zip"
+          ditto -c -k --sequesterRsrc --keepParent release/mac-arm64/Relay.app "release/Relay-$v-arm64.zip"
+          ditto -c -k --sequesterRsrc --keepParent release/mac/Relay.app "release/Relay-$v-x64.zip"
           node scripts/regenerate-blockmaps.mjs \
-            "release/OpenMausBot-$v-arm64.zip" "release/OpenMausBot-$v-x64.zip" \
-            "release/OpenMausBot-$v-arm64.dmg" "release/OpenMausBot-$v-x64.dmg"
+            "release/Relay-$v-arm64.zip" "release/Relay-$v-x64.zip" \
+            "release/Relay-$v-arm64.dmg" "release/Relay-$v-x64.dmg"
           # refreshes every hash from the post-staple bytes and refuses to
           # finish unless the feed matches the files on disk
           node scripts/regenerate-mac-feed.mjs
@@ -288,8 +288,8 @@ jobs:
       - name: Stable-named copies for the README's /latest/download links
         run: |
           v=$(node -p "require('./package.json').version")
-          cp "release/OpenMausBot-$v-arm64.dmg" release/OpenMausBot.dmg
-          cp "release/OpenMausBot-$v-x64.dmg" release/OpenMausBot-intel.dmg
+          cp "release/Relay-$v-arm64.dmg" release/Relay.dmg
+          cp "release/Relay-$v-x64.dmg" release/Relay-intel.dmg
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -325,7 +325,7 @@ jobs:
       - run: pnpm package:win
       - name: "Gate: packaged Windows server boots with an empty home"
         env:
-          OMB_SMOKE_DIST: ${{ github.workspace }}/release/win-unpacked/resources/server
+          RELAY_SMOKE_DIST: ${{ github.workspace }}/release/win-unpacked/resources/server
         run: node scripts/smoke-packaged-server.mjs
       - name: Verify the packaged tree and start the packaged server
         shell: bash
@@ -343,11 +343,11 @@ jobs:
             echo "::error::cloudflared has the wrong version"; exit 1; }
           [ -f "$res/app-update.yml" ] || { echo "::error::missing app-update.yml"; exit 1; }
           grep -Eq '^owner: milind-soni$' "$res/app-update.yml" || { echo "::error::wrong update owner"; exit 1; }
-          grep -Eq '^repo: OpenMausBot$' "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
+          grep -Eq '^repo: Relay$' "$res/app-update.yml" || { echo "::error::wrong update repo"; exit 1; }
           if grep -q "publisherName" "$res/app-update.yml"; then
             echo "::error::publisherName on an unsigned build breaks every update"; exit 1
           fi
-          HOME="$RUNNER_TEMP/smoke" USERPROFILE="$RUNNER_TEMP/smoke" OMB_PORT=21987 \
+          HOME="$RUNNER_TEMP/smoke" USERPROFILE="$RUNNER_TEMP/smoke" RELAY_PORT=21987 \
             node "$res/server/index.js" > "$RUNNER_TEMP/server.log" 2>&1 &
           pid=$!
           for _ in $(seq 1 90); do
@@ -362,7 +362,7 @@ jobs:
         shell: bash
         run: |
           v=$(node -p "require('./package.json').version")
-          cp "release/OpenMausBot-$v-setup.exe" release/OpenMausBot-setup.exe
+          cp "release/Relay-$v-setup.exe" release/Relay-setup.exe
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-release
@@ -406,7 +406,7 @@ jobs:
           update=release/linux-unpacked/resources/app-update.yml
           test -f "$update" || { echo "::error::missing $update"; exit 1; }
           grep -Eq '^owner: milind-soni$' "$update" || { echo "::error::wrong update owner"; exit 1; }
-          grep -Eq '^repo: OpenMausBot$' "$update" || { echo "::error::wrong update repo"; exit 1; }
+          grep -Eq '^repo: Relay$' "$update" || { echo "::error::wrong update repo"; exit 1; }
       - name: Verify package contents and metadata
         run: node scripts/verify-linux-package.mjs
       - name: Match a normal Ubuntu package parent on the ephemeral runner
@@ -431,18 +431,18 @@ jobs:
           test "$(stat -c '%U:%G %a' release/linux-unpacked/chrome-sandbox)" = "root:root 4755"
       - name: Smoke the packages
         env:
-          OMB_KEEP_SMOKE_DIR: "1"
-          OMB_SMOKE_INSTALLED_DEB: "1"
+          RELAY_KEEP_SMOKE_DIR: "1"
+          RELAY_SMOKE_INSTALLED_DEB: "1"
         run: pnpm smoke:linux-package
       - name: Remove the installed upgrade fixture
         if: always()
-        run: sudo dpkg --purge openmausbot || true
+        run: sudo dpkg --purge relay || true
       - name: Stable-named copies and checksums
         run: |
           v=$(node -p "require('./package.json').version")
-          cp "release/OpenMausBot-$v-amd64.deb" release/OpenMausBot-amd64.deb
-          cp "release/OpenMausBot-$v-x86_64.AppImage" release/OpenMausBot.AppImage
-          (cd release && sha256sum OpenMausBot-$v-amd64.deb OpenMausBot-$v-x86_64.AppImage > SHA256SUMS-ubuntu-x64.txt)
+          cp "release/Relay-$v-amd64.deb" release/Relay-amd64.deb
+          cp "release/Relay-$v-x86_64.AppImage" release/Relay.AppImage
+          (cd release && sha256sum Relay-$v-amd64.deb Relay-$v-x86_64.AppImage > SHA256SUMS-ubuntu-x64.txt)
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: linux-release
@@ -478,20 +478,20 @@ jobs:
         run: |
           required=(
             latest-linux.yml latest-mac.yml latest.yml
-            "OpenMausBot-$VERSION-amd64.deb"
-            "OpenMausBot-$VERSION-arm64.dmg"
-            "OpenMausBot-$VERSION-arm64.dmg.blockmap"
-            "OpenMausBot-$VERSION-arm64.zip"
-            "OpenMausBot-$VERSION-arm64.zip.blockmap"
-            "OpenMausBot-$VERSION-setup.exe"
-            "OpenMausBot-$VERSION-setup.exe.blockmap"
-            "OpenMausBot-$VERSION-x64.dmg"
-            "OpenMausBot-$VERSION-x64.dmg.blockmap"
-            "OpenMausBot-$VERSION-x64.zip"
-            "OpenMausBot-$VERSION-x64.zip.blockmap"
-            "OpenMausBot-$VERSION-x86_64.AppImage"
-            OpenMausBot-amd64.deb OpenMausBot-intel.dmg OpenMausBot-setup.exe
-            OpenMausBot.AppImage OpenMausBot.dmg SHA256SUMS-ubuntu-x64.txt
+            "Relay-$VERSION-amd64.deb"
+            "Relay-$VERSION-arm64.dmg"
+            "Relay-$VERSION-arm64.dmg.blockmap"
+            "Relay-$VERSION-arm64.zip"
+            "Relay-$VERSION-arm64.zip.blockmap"
+            "Relay-$VERSION-setup.exe"
+            "Relay-$VERSION-setup.exe.blockmap"
+            "Relay-$VERSION-x64.dmg"
+            "Relay-$VERSION-x64.dmg.blockmap"
+            "Relay-$VERSION-x64.zip"
+            "Relay-$VERSION-x64.zip.blockmap"
+            "Relay-$VERSION-x86_64.AppImage"
+            Relay-amd64.deb Relay-intel.dmg Relay-setup.exe
+            Relay.AppImage Relay.dmg SHA256SUMS-ubuntu-x64.txt
           )
           for file in "${required[@]}"; do
             test -s "assets/$file" || { echo "::error::missing or empty release asset: $file"; exit 1; }
@@ -507,15 +507,15 @@ jobs:
           const sha512 = (f) => createHash("sha512").update(readFileSync(f)).digest("base64");
           const expected = new Map([
             ["latest-mac.yml", [
-              "OpenMausBot-${{ needs.prepare.outputs.version }}-x64.zip",
-              "OpenMausBot-${{ needs.prepare.outputs.version }}-arm64.zip",
-              "OpenMausBot-${{ needs.prepare.outputs.version }}-x64.dmg",
-              "OpenMausBot-${{ needs.prepare.outputs.version }}-arm64.dmg",
+              "Relay-${{ needs.prepare.outputs.version }}-x64.zip",
+              "Relay-${{ needs.prepare.outputs.version }}-arm64.zip",
+              "Relay-${{ needs.prepare.outputs.version }}-x64.dmg",
+              "Relay-${{ needs.prepare.outputs.version }}-arm64.dmg",
             ]],
-            ["latest.yml", ["OpenMausBot-${{ needs.prepare.outputs.version }}-setup.exe"]],
+            ["latest.yml", ["Relay-${{ needs.prepare.outputs.version }}-setup.exe"]],
             ["latest-linux.yml", [
-              "OpenMausBot-${{ needs.prepare.outputs.version }}-x86_64.AppImage",
-              "OpenMausBot-${{ needs.prepare.outputs.version }}-amd64.deb",
+              "Relay-${{ needs.prepare.outputs.version }}-x86_64.AppImage",
+              "Relay-${{ needs.prepare.outputs.version }}-amd64.deb",
             ]],
           ]);
           let bad = 0;
@@ -567,7 +567,7 @@ jobs:
             done
           }
           ensure_draft "$GITHUB_REPOSITORY" --target "$SHA" \
-            --draft --title "OpenMausBot $VERSION" --generate-notes
+            --draft --title "Relay $VERSION" --generate-notes
           target=$(gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)
           target_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/$target" --jq .sha)
           test "$target_sha" = "$SHA" || {
@@ -608,9 +608,9 @@ jobs:
             done
           }
           ensure_draft milind-soni/openmausbot-releases \
-            --draft --title "OpenMausBot $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
+            --draft --title "Relay $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
           gh release edit "$tag" --repo milind-soni/openmausbot-releases \
-            --title "OpenMausBot $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
+            --title "Relay $VERSION" --notes-file "$RUNNER_TEMP/release-notes.md"
           for file in assets/*; do
             gh release upload "$tag" "$file" --repo milind-soni/openmausbot-releases --clobber
           done

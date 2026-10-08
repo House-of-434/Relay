@@ -1,5 +1,5 @@
 {
-  "source": "_plans/jev-omb-2026-09-28/bench (datasets.mjs ROOMS + ROOM_HARD_ITEMS), scored 53/53 with a nobody option",
+  "source": "_plans/jev-relay-2026-09-28/bench (datasets.mjs ROOMS + ROOM_HARD_ITEMS), scored 53/53 with a nobody option",
   "rooms": {
     "launch": {
       "name": "#launch",
@@ -405,7 +405,7 @@
       "id": "r31",
       "set": "clean",
       "room": "infra",
-      "message": "DNS for docs.openmaus.com isn't resolving.",
+      "message": "DNS for docs.relay.com isn't resolving.",
       "gold": [
         "ops"
       ]
@@ -603,7 +603,7 @@
       "id": "rh16",
       "set": "hard",
       "room": "infra",
-      "message": "Cloudflare keeps emailing me about an expiring certificate for api.openmaus.com.",
+      "message": "Cloudflare keeps emailing me about an expiring certificate for api.relay.com.",
       "gold": [
         "ops"
       ]

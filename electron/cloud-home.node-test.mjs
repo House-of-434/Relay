@@ -8,7 +8,7 @@ import { CLOUD_HOME_NAME, cloudHomeConnectUrl, parseCloudSummary, parsePairingGr
 import environments from "./environments.cjs";
 
 const NOW = 1_800_000_000_000;
-const origin = "https://omb-u-1a2b3c4d5e6f.fly.dev";
+const origin = "https://relay-u-1a2b3c4d5e6f.fly.dev";
 const code = "ABCD-EFGH-JK23";
 
 test("the Admin's cloud summary becomes one plain machine state", () => {
@@ -25,8 +25,8 @@ test("the Admin's cloud summary becomes one plain machine state", () => {
 
 test("a malformed summary is no machine at all", () => {
   for (const input of [null, undefined, "ready", [], { state: "running", origin }, { state: "ready" }, { state: "ready", origin: null },
-    { state: "ready", origin: "http://omb-u-1a2b3c4d5e6f.fly.dev" }, { state: "ready", origin: `${origin}/pair` },
-    { state: "ready", origin: "https://user:pw@omb-u-1a2b3c4d5e6f.fly.dev" }, { state: "ready", origin: "https://localhost" },
+    { state: "ready", origin: "http://relay-u-1a2b3c4d5e6f.fly.dev" }, { state: "ready", origin: `${origin}/pair` },
+    { state: "ready", origin: "https://user:pw@relay-u-1a2b3c4d5e6f.fly.dev" }, { state: "ready", origin: "https://localhost" },
     { state: "stopped", origin: "javascript:alert(1)" }, { state: "toString", origin }, { state: "__proto__", origin },
     // an included-AI state from before Cloud Pro dropped included AI
     { state: "allowance_used", origin }]) {
@@ -35,9 +35,9 @@ test("a malformed summary is no machine at all", () => {
 });
 
 test("a pairing grant is accepted only for the machine it was asked for, fresh and well formed", () => {
-  const grant = { cloudContractVersion: 1, origin, code, pairingUrl: `${origin}/pair#code=${code}`, expiresAt: NOW + 300_000, credential: `omb_pair_${"c".repeat(43)}` };
+  const grant = { cloudContractVersion: 1, origin, code, pairingUrl: `${origin}/pair#code=${code}`, expiresAt: NOW + 300_000, credential: `relay_pair_${"c".repeat(43)}` };
   assert.deepEqual(parsePairingGrant(grant, origin, NOW), { origin, code, expiresAt: NOW + 300_000 });
-  for (const bad of [{ ...grant, origin: "https://omb-u-ffffffffffff.fly.dev" }, { ...grant, cloudContractVersion: 2 }, { ...grant, code: "abcd-efgh-jk23" },
+  for (const bad of [{ ...grant, origin: "https://relay-u-ffffffffffff.fly.dev" }, { ...grant, cloudContractVersion: 2 }, { ...grant, code: "abcd-efgh-jk23" },
     { ...grant, code: "ABCD-EFGH-JK01" }, { ...grant, code: `${code}&x=1` }, { ...grant, expiresAt: NOW }, { ...grant, expiresAt: NOW + 3_600_000 }, null]) {
     assert.equal(parsePairingGrant(bad, origin, NOW), null, JSON.stringify(bad));
   }
@@ -113,7 +113,7 @@ test("the session's machine reaches the page as state and address; a code is min
   assert.deepEqual(f.client.homeTarget(), { origin });
   assert.ok(!f.requests.some(line => line.includes("/pairing")), "reading the session never mints a code");
 
-  f.pairing = { origin, code, pairingUrl: `${origin}/pair#code=${code}`, expiresAt: NOW + 300_000, credential: `omb_pair_${"c".repeat(43)}` };
+  f.pairing = { origin, code, pairingUrl: `${origin}/pair#code=${code}`, expiresAt: NOW + 300_000, credential: `relay_pair_${"c".repeat(43)}` };
   assert.deepEqual(await f.client.pairHome(), { origin, code, expiresAt: NOW + 300_000 });
   assert.equal(f.requests.filter(line => line === "POST /api/cloud/desktop/pairing token").length, 1);
   assert.ok(!JSON.stringify(f.states).includes(code), "the code never reaches a renderer snapshot");
@@ -124,7 +124,7 @@ test("a grant for another machine or an Admin refusal never connects", async t =
   const f = await admin(t);
   f.cloud = { state: "ready", origin, pairingAvailable: true };
   await f.connect();
-  f.pairing = { origin: "https://omb-u-ffffffffffff.fly.dev", code, expiresAt: NOW + 300_000 };
+  f.pairing = { origin: "https://relay-u-ffffffffffff.fly.dev", code, expiresAt: NOW + 300_000 };
   await assert.rejects(f.client.pairHome(), /Invalid Cloud pairing response/);
   f.pairingStatus = 409;
   await assert.rejects(f.client.pairHome(), error => error.status === 409);

@@ -1,5 +1,5 @@
 {
-  "format": "openmaus.package",
+  "format": "relay.package",
   "version": 3,
   "package": {
     "id": "from-the-future",

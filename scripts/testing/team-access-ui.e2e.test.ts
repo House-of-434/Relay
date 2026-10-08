@@ -3,14 +3,14 @@ import { writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
 
 (enabled ? it : it.skip)("lets an owner select and revoke exactly the Chief's additional teams in the real settings UI", async () => {
-  const child = spawn(process.execPath, ["--experimental-strip-types", "scripts/control-omb.ts", "ui", "launch"], {
+  const child = spawn(process.execPath, ["--experimental-strip-types", "scripts/control-relay.ts", "ui", "launch"], {
     cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
   });
   let output = "";

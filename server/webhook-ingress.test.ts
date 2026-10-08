@@ -21,7 +21,7 @@ let manager: WebhookManager;
 const queued: Array<Record<string, unknown>> = [];
 
 beforeAll(async () => {
-  dir = mkdtempSync(join(tmpdir(), "omb-webhook-ingress-"));
+  dir = mkdtempSync(join(tmpdir(), "relay-webhook-ingress-"));
   manager = new WebhookManager({
     file: join(dir, "webhooks.json"),
     botState: () => "ready",
@@ -58,10 +58,10 @@ describe("webhook-only ingress", () => {
       await new Promise<void>((resolve) => guarded.server.close(() => resolve()));
     }
   });
-  it("exposes health but nothing from the main OpenMausBot API", async () => {
+  it("exposes health but nothing from the main Relay API", async () => {
     const health = await fetch(`${ingress.baseUrl}/health`);
     expect(health.status).toBe(200);
-    expect(await health.json()).toEqual({ app: "openmausbot-webhooks", ready: true });
+    expect(await health.json()).toEqual({ app: "relay-webhooks", ready: true });
     expect((await fetch(`${ingress.baseUrl}/api/bots`)).status).toBe(404);
   });
 

@@ -7,7 +7,7 @@ import { createServer, type Server } from "node:http";
 import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 import { request } from "../scripts/mcp-server.ts";
 
 const MP3 = Buffer.from("ID3 fake mp3 for the voice note fixture");
@@ -16,14 +16,14 @@ async function withVoiceFixture(test: (f: any) => Promise<void>, options?: { fai
   const session = await launchVerificationServer(
     {
       ...process.env,
-      ...(options?.failFirstAudioAppend ? { OMB_TEST_FAIL_AUDIO_APPEND_ONCE: "1" } : {}),
+      ...(options?.failFirstAudioAppend ? { RELAY_TEST_FAIL_AUDIO_APPEND_ONCE: "1" } : {}),
     },
     undefined,
     undefined,
     undefined,
     { scripted: true },
   );
-  const cli = (...args: string[]) => runControlOmb(args, { env: { OPENMAUSBOT_URL: session.info.url } }) as Promise<any>;
+  const cli = (...args: string[]) => runControlOmb(args, { env: { RELAY_URL: session.info.url } }) as Promise<any>;
   const api = (path: string, body?: unknown, method = "POST") =>
     request(path, body === undefined ? {} : { method, body: JSON.stringify(body) }, session.info.url) as Promise<any>;
   let ttsServer: Server | undefined;

@@ -1,6 +1,6 @@
-name: ${COMPOSE_PROJECT_NAME:-openmausbot}
+name: ${COMPOSE_PROJECT_NAME:-relay}
 services:
-  omb:
+  app:
     init: true
     build:
       context: .
@@ -10,21 +10,21 @@ services:
         # opencode CLI for the opencodeGo instance). Empty by default; the
         # operator sets it to match the configured models. No default CLIs are
         # baked in because unused engines are pure image weight.
-        ENGINES: ${OMB_ENGINES:-}
-    image: ${OMB_LOCAL_IMAGE:-openmausbot-local:latest}
+        ENGINES: ${RELAY_ENGINES:-}
+    image: ${RELAY_LOCAL_IMAGE:-relay-local:latest}
     restart: unless-stopped
     volumes:
       - data:/data
     ports:
-      - "${OMB_BIND_ADDRESS:-127.0.0.1}:${OMB_HTTP_PORT:-8080}:80"
+      - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_HTTP_PORT:-8080}:80"
     env_file:
       - .env
       - .env.secrets
     environment:
-      OMB_PORT: "8799"
-      OMB_WEBHOOK_PORT: "8800"
-      OMB_PUBLIC_URL: ${OMB_PUBLIC_URL:-http://localhost:${OMB_HTTP_PORT:-8080}}
-      OMB_WEBHOOK_PUBLIC_URL: ${OMB_WEBHOOK_PUBLIC_URL:-${OMB_PUBLIC_URL:-http://localhost:${OMB_HTTP_PORT:-8080}}}
+      RELAY_PORT: "8799"
+      RELAY_WEBHOOK_PORT: "8800"
+      RELAY_PUBLIC_URL: ${RELAY_PUBLIC_URL:-http://localhost:${RELAY_HTTP_PORT:-8080}}
+      RELAY_WEBHOOK_PUBLIC_URL: ${RELAY_WEBHOOK_PUBLIC_URL:-${RELAY_PUBLIC_URL:-http://localhost:${RELAY_HTTP_PORT:-8080}}}
       # The Tool Layer runs as its own service; localhost here would point at
       # this container, not at it.
       RELAY_TOOL_URL: http://tools:8787
@@ -34,9 +34,9 @@ services:
       context: .
       dockerfile: deploy/local/Dockerfile
       args:
-        ENGINES: ${OMB_ENGINES:-}
-    # Same image as omb (compose reuses the build); only the command differs.
-    image: ${OMB_LOCAL_IMAGE:-openmausbot-local:latest}
+        ENGINES: ${RELAY_ENGINES:-}
+    # Same image as relay (compose reuses the build); only the command differs.
+    image: ${RELAY_LOCAL_IMAGE:-relay-local:latest}
     command: ["/usr/local/bin/start-tools.sh"]
     restart: unless-stopped
     volumes:
@@ -66,25 +66,25 @@ services:
   caddy:
     image: ${CADDY_IMAGE:-caddy:2}
     restart: unless-stopped
-    network_mode: service:omb
+    network_mode: service:app
     environment:
-      OMB_HTTPS_HOST: ${OMB_HTTPS_HOST:-}
-      OMB_BIND_ADDRESS: ${OMB_BIND_ADDRESS:-127.0.0.1}
+      RELAY_HTTPS_HOST: ${RELAY_HTTPS_HOST:-}
+      RELAY_BIND_ADDRESS: ${RELAY_BIND_ADDRESS:-127.0.0.1}
     command:
       - /bin/sh
       - -ec
       - |
-        export OMB_UPSTREAM_SCHEME=http
-        if [ -n "$$OMB_HTTPS_HOST" ] && [ "$$OMB_BIND_ADDRESS" != "127.0.0.1" ]; then
-          echo "OMB_HTTPS_HOST requires OMB_BIND_ADDRESS=127.0.0.1; forward HTTPS through a trusted local proxy." >&2
+        export RELAY_UPSTREAM_SCHEME=http
+        if [ -n "$$RELAY_HTTPS_HOST" ] && [ "$$RELAY_BIND_ADDRESS" != "127.0.0.1" ]; then
+          echo "RELAY_HTTPS_HOST requires RELAY_BIND_ADDRESS=127.0.0.1; forward HTTPS through a trusted local proxy." >&2
           exit 1
         fi
-        if [ -n "$$OMB_HTTPS_HOST" ]; then
-          export OMB_UPSTREAM_SCHEME=https
+        if [ -n "$$RELAY_HTTPS_HOST" ]; then
+          export RELAY_UPSTREAM_SCHEME=https
         fi
         exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     depends_on:
-      omb:
+      app:
         condition: service_healthy
     volumes:
       - ./deploy/local/Caddyfile:/etc/caddy/Caddyfile:ro
@@ -92,7 +92,7 @@ services:
       - caddy_config:/config
 volumes:
   data:
-    external: ${OMB_DATA_EXTERNAL:-false}
-    name: ${OMB_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-openmausbot}_data}
+    external: ${RELAY_DATA_EXTERNAL:-false}
+    name: ${RELAY_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-relay}_data}
   caddy_data:
   caddy_config:

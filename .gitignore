@@ -16,7 +16,7 @@ todo.md
 worktrees/
 .worktrees/
 dist-server
-.omb-scratch
+.relay-scratch
 .wrangler/
 .dev.vars
 .dev.vars.*

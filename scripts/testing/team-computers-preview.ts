@@ -5,7 +5,7 @@ import { once } from "node:events";
 import { resolve } from "node:path";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
-import { launchUi } from "./control-omb-ui.ts";
+import { launchUi } from "./control-relay-ui.ts";
 
 export async function launchTeamComputersPreview() {
   const boats: Array<{ id: string; name: string; state: string }> = [];

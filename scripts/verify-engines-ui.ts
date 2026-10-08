@@ -4,7 +4,7 @@ import { fileURLToPath } from "node:url";
 import { createServer as createHttpServer, type IncomingMessage } from "node:http";
 import { createServer } from "vite";
 import type { InstanceInfo } from "../src/state/store.tsx";
-import { launchVerificationServer } from "./control-omb.ts";
+import { launchVerificationServer } from "./control-relay.ts";
 import { providerIconError, type ProviderIcon } from "../shared/provider-icon.ts";
 
 async function requestJson(req: IncomingMessage): Promise<unknown> {
@@ -66,7 +66,7 @@ try {
   controller.signal.throwIfAborted();
   ui = await createServer({
     root: fileURLToPath(new URL("..", import.meta.url)),
-    cacheDir: fileURLToPath(new URL("../.omb-scratch/engine-preview-vite", import.meta.url)),
+    cacheDir: fileURLToPath(new URL("../.relay-scratch/engine-preview-vite", import.meta.url)),
     // Own the HTTP listener so Vite never installs a process-exit handler.
     server: { middlewareMode: { server: httpServer }, hmr: { server: httpServer }, proxy: { "/api": { target: fixture.info.url } } },
     plugins: [{ name: "isolated-engines", configureServer(server) {
@@ -109,7 +109,7 @@ try {
           return json({ error: "Preview only: no real account or installation is changed." }, 400);
         }
         if (path !== "/__engines.html") return next();
-        void server.transformIndexHtml(req.url!, '<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>OpenMaus · Engine preview</title></head><body><div id="root"></div><script type="module" src="/scripts/testing/engines-preview.tsx"></script></body></html>')
+        void server.transformIndexHtml(req.url!, '<html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Relay · Engine preview</title></head><body><div id="root"></div><script type="module" src="/scripts/testing/engines-preview.tsx"></script></body></html>')
           .then((html) => { res.setHeader("content-type", "text/html"); res.end(html); }).catch(next);
       });
     } }],

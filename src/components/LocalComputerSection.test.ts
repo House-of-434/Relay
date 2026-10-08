@@ -91,7 +91,7 @@ describe("computer inventory request wiring", () => {
     const local = confirmComputerAction(perBotLocalVmDeletePlan(cloudVm), confirm);
     const cloudDelete = confirmComputerAction(cloudComputerActionPlan("delete", ownedCloudComputer), confirm);
     const cloudSleep = confirmComputerAction(cloudComputerActionPlan("sleep", ownedCloudComputer), confirm);
-    const vpsName = "openmausbot-vps-current-123456abcdef";
+    const vpsName = "relay-vps-current-123456abcdef";
     const vps = confirmComputerAction(vpsComputerRemovePlan({
       name: vpsName,
       state: "running",
@@ -297,18 +297,18 @@ describe("cloud computer inventory UI", () => {
   it("keeps disconnected, unavailable, and empty states distinct", () => {
     const disconnected = renderCard({ configured: false });
     expect(disconnected).toContain("Boat is not connected");
-    expect(disconnected).not.toContain("No OpenMaus-managed cloud computers found");
+    expect(disconnected).not.toContain("No Relay-managed cloud computers found");
 
     const unavailable = renderCard({ unavailableReason: "boat.dev is unavailable" });
     expect(unavailable).toContain("boat.dev is unavailable");
-    expect(unavailable).not.toContain("No OpenMaus-managed cloud computers found");
+    expect(unavailable).not.toContain("No Relay-managed cloud computers found");
 
     const endpointFailure = renderCard({ configured: null, unavailableReason: "Computer inventory could not load" });
     expect(endpointFailure).toContain("Computer inventory could not load");
     expect(endpointFailure).not.toContain("Boat is not connected");
 
     const empty = renderCard();
-    expect(empty).toContain("No OpenMaus-managed cloud computers found");
+    expect(empty).toContain("No Relay-managed cloud computers found");
   });
 
   it("uses honest state labels", () => {
@@ -441,7 +441,7 @@ describe("cloud computer inventory UI", () => {
 
 describe("VPS computer inventory UI", () => {
   const ownedVps: VpsComputerInventoryInstance = {
-    name: "openmausbot-vps-current-123456abcdef",
+    name: "relay-vps-current-123456abcdef",
     state: "running",
     ownerBotId: "current-owner",
     ownerName: "Research",
@@ -463,7 +463,7 @@ describe("VPS computer inventory UI", () => {
     }));
 
   it("shows the configured host, owners, orphans, and status without raw container details", () => {
-    const orphanName = "openmausbot-vps-deleted-abcdef123456";
+    const orphanName = "relay-vps-deleted-abcdef123456";
     const markup = renderCard({
       instances: [
         ownedVps,
@@ -489,7 +489,7 @@ describe("VPS computer inventory UI", () => {
   });
 
   it("derives a stable identifier without exposing the bot-derived container name", () => {
-    expect(vpsComputerShortId("openmausbot-vps-deleted-abcdef123456")).toBe("ef123456");
+    expect(vpsComputerShortId("relay-vps-deleted-abcdef123456")).toBe("ef123456");
     expect(vpsComputerShortId("unexpected-provider-name")).toBe("unknown");
   });
 
@@ -511,7 +511,7 @@ describe("VPS computer inventory UI", () => {
   it("keeps disconnected, unavailable, and empty states distinct", () => {
     expect(renderCard({ configured: false, sshAlias: null })).toContain("VPS is not configured");
     expect(renderCard({ unavailableReason: "SSH host cannot be reached" })).toContain("SSH host cannot be reached");
-    expect(renderCard()).toContain("No OpenMaus-managed VPS computers found");
+    expect(renderCard()).toContain("No Relay-managed VPS computers found");
   });
 
   it("uses honest status labels", () => {
