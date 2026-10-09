@@ -37,11 +37,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Build image
         env:
-          ENGINES:
+          RELAY_ENGINES:
         run: docker compose build
       - name: Boot the compose stack and prove relay answers
         env:
-          ENGINES:
+          RELAY_ENGINES:
         run: |
           set -euo pipefail
           cp .env.example .env
@@ -97,8 +97,11 @@ jobs:
         # setting name, never silence and never a partial boot.
         run: |
           set -euo pipefail
-          docker compose logs tools | grep -q "Required Tool Layer setting RELAY_DB_URL is missing" || {
-            docker compose logs tools | tail -20
+          # Capture first: `logs | grep -q` under pipefail races a SIGPIPE from
+          # the still-streaming logs process and reports a false failure.
+          docker compose logs tools > /tmp/tools.log 2>&1
+          grep -q "Required Tool Layer setting RELAY_DB_URL is missing" /tmp/tools.log || {
+            tail -20 /tmp/tools.log
             echo "tools did not fail closed on missing settings"
             exit 1
           }
