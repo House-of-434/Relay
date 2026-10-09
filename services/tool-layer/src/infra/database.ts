@@ -228,6 +228,31 @@ export class RelayDatabase {
     return data[0];
   }
 
+  /**
+   * Operational tool-call log. Unlike `write`, this is not an agent-facing
+   * table: logs.* is denied to agents (permissions.ts) and only the service
+   * role writes it. Callers swallow a failure so a logging outage never
+   * fails the tool call; this rejects only on a real insert error.
+   */
+  async logToolCall(input: {
+    userId: string | null;
+    agent: string;
+    tool: string;
+    argsHash: string;
+    ms: number;
+    error: string | null;
+  }): Promise<void> {
+    const { error } = await this.client("relay").schema("logs").from("tool_calls").insert({
+      user_id: input.userId,
+      agent: input.agent,
+      tool: input.tool,
+      args_hash: input.argsHash,
+      ms: input.ms,
+      error: input.error,
+    });
+    supabaseError(error);
+  }
+
   private async readEntity(client: Client, entityType: string, entityId: string): Promise<unknown> {
     const entityTable = ENTITY_TABLES[entityType];
     if (!entityTable) throw new Error("unsupported entity type");

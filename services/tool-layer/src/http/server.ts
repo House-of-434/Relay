@@ -8,6 +8,7 @@ import { RelayCalendarClient } from "../infra/calendar.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
+import { databaseToolCallLogger } from "../mcp/tool-log.js";
 import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolHost, toolPort } from "../config.js";
 
 function bearerToken(request: IncomingMessage): string | null {
@@ -119,7 +120,8 @@ export async function createRelayToolServer(
         }),
       };
 
-      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar, browser, search);
+      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar, browser, search,
+        databaseToolCallLogger(database, agentName, actor.userId));
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await mcp.connect(transport);

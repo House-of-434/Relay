@@ -9,6 +9,7 @@ import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
+import { instrumentToolCalls, type ToolCallLogger } from "./tool-log.js";
 
 export interface RelayGmailContext {
   client: RelayGmailClient;
@@ -33,8 +34,12 @@ export function createAgentMcpServer(
   calendar: RelayCalendarContext | undefined,
   browser?: BladeBrowserContext | undefined,
   search?: SearchToolContext | undefined,
+  log?: ToolCallLogger | undefined,
 ): McpServer {
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
+  // Record every served call before any tool is registered, so the browser and
+  // search servers (registered below) are wrapped too.
+  if (log) instrumentToolCalls(server, log);
 
   server.registerTool(
     "relay_read",
