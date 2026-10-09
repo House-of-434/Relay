@@ -66,7 +66,7 @@
       layer regardless of specificity.
 
    Contrast is a design constraint here, not an afterthought: every text/surface
-   pair in Atelier and Foundry clears WCAG AA (4.5:1), verified by measuring the
+   pair in both skins clears WCAG AA (4.5:1), verified by measuring the
    rendered values rather than reading the hex. `scripts/check-skin-contrast.mjs`
    re-runs that check.
    ───────────────────────────────────────────────────────────────────────── */
@@ -96,20 +96,18 @@
   --color-panel: #111111;
   --color-raised: #2f2f2f;
   --color-raised-hover: #3d3d3d;
-  /* the composer pill. Every skin but Daylight paints it in `raised`; there
-     it is the page colour with a hairline ring, so it needs a tone (and a
-     ring, transparent everywhere else) of its own. */
+  /* the composer pill. Both skins paint it in `raised`; the ring stays
+     transparent everywhere else for a future skin that needs a tone of
+     its own. */
   --color-composer: #2f2f2f;
   --color-composer-ring: transparent;
-  /* popover and right-click menus. Same story as the composer: every skin
-     but Daylight paints them in `card`, which there is the bot's bubble and
-     a shade too grey for a menu. */
+  /* popover and right-click menus, painted in `card`. */
   --color-menu: #262626;
   --color-card: #262626;
   --color-inset: #191919;
-  /* a control ON a card. The dark skins take their `raised` value, so this
-     is a no-op for them; the light skins need a tone of their own, because
-     there `raised` is pure white and a card is too. */
+  /* a control ON a card. The dark skin takes its `raised` value; the light
+     skin needs a tone of its own, because there `raised` is pure white
+     and a card is too. */
   --color-control: #2f2f2f;
   --color-hairline: #333333;
   --color-ink: #fcfcfc;
@@ -121,12 +119,15 @@
      light skins that leaves little room below the secondary ink, so there
      size carries the hierarchy. Measured by pnpm check:contrast. */
   --color-ink-tertiary: #fcfcfc90;
-  --color-accent: #1084fe;
-  --color-accent-border: #459ffe;
+  /* Brand green: the buttons carry the logo's greens, not the upstream
+     blue. The fill carries white at 5.3:1; the text tone stands on the
+     dark grounds below. */
+  --color-accent: #1c7a4c;
+  --color-accent-border: #3fae6e;
   /* the ring a keyboard user follows; sits on the accent so focus reads as
      "the app is talking to you", not as a browser default */
-  --color-focus: #459ffe;
-  --color-accent-text: #7fc0ff;
+  --color-focus: #3fae6e;
+  --color-accent-text: #7bd8a8;
   --color-bubble-user: #5a5a5a;
   --color-success: #38d591;
   --color-danger: #ff5667;
@@ -154,14 +155,10 @@
 }
 
 /* ── Midnight ──────────────────────────────────────────────────────────────
-   The upstream palette, pixel-sampled from the real Grok app. Repeated here
-   (rather than relying on the `@theme` defaults) so that a `[data-skin]`
-   subtree can switch *back* to it — the picker needs that.
-
-   Two upstream contrast gaps are preserved deliberately, because this skin's
-   job is to be the original: white on the accent fill measures 3.65:1 and
-   white on the danger fill 3.32:1, both short of AA for the 13–15px labels
-   they carry. Atelier and Foundry fix this via --color-accent-ink.
+   The dark skin: near-black grounds, cool neutrals, and the brand green
+   carrying every action. White on the accent fill measures 5.3:1 — the old
+   upstream blue's gap is gone with it. (White on the danger fill is still
+   3.3:1; see the baseline floor in scripts/check-skin-contrast.mjs.)
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="midnight"] {
   --code-color-scheme: dark;
@@ -179,9 +176,10 @@
   --color-ink: #fcfcfc;
   --color-ink-secondary: #fcfcfc99;
   --color-ink-tertiary: #fcfcfc90;
-  --color-accent: #1084fe;
-  --color-accent-border: #459ffe;
-  --color-accent-text: #7fc0ff;
+  --color-accent: #1c7a4c;
+  --color-accent-border: #3fae6e;
+  --color-accent-text: #7bd8a8;
+  --color-focus: #3fae6e;
   --color-accent-ink: #ffffff;
   --color-bubble-user: #5a5a5a;
   --color-bubble-user-ink: #fcfcfc;   /* = ink: unchanged */
@@ -199,138 +197,24 @@
   --radius-xl: 0.75rem;
 }
 
-/* ── Atelier ───────────────────────────────────────────────────────────────
-   Daylight on paper, and the inverse of Midnight in every axis. Its one
-   structural idea: surfaces get BRIGHTER as they rise — rail, sidebar,
-   content — so the ground closest to the work is the lightest, the opposite
-   of a dark skin where raised means lighter-grey.
-
-   Four tones were darkened from the first draft to clear AA; the original
-   value is named next to each, so the drift stays auditable.
-   ───────────────────────────────────────────────────────────────────────── */
-[data-skin="atelier"] {
-  --code-color-scheme: light;
-  --color-app: #f5f1eb;           /* outermost ground */
-  --color-panel: #fbf8f2;         /* sidebar */
-  --color-raised: #ffffff;        /* content — raised means lighter here */
-  --color-raised-hover: #f2e9dc;  /* warm beige doubles as the hover fill */
-  --color-composer: #ffffff;    /* = raised: unchanged */
-  --color-composer-ring: transparent;
-  --color-card: #ffffff;
-  --color-menu: #ffffff;    /* = card: unchanged */
-  --color-inset: #f5f1eb;         /* inset surfaces pick the rail tone back up */
-  --color-control: #ece4d6;       /* raised is white here and so is a card, so
-                                     a control needs its own tone: 1.26:1 on a
-                                     card, and raised-hover still lifts off it */
-  --color-hairline: #c8bda8;      /* #ece7dd was 1.11:1 on the rail → 1.65:1 */
-
-  --color-ink: #1a1a18;           /* 17.4:1 on white */
-  --color-ink-secondary: #6b6559; /* #8b8578 was 3.67:1 → 5.78:1 */
-  --color-ink-tertiary: #6d685c;
-
-  /* Two accent tones: the fill carries white, the text stands on white. */
-  --color-accent: #a05f25;        /* #b06a2c darkened → 5.05:1 */
-  --color-accent-border: #b06a2c; /* the original tone lives on as the border */
-  --color-accent-text: #96551f;   /* for links on a light ground — 5.81:1 */
-  --color-focus: #96551f;         /* the ring rides the accent, not Grok blue */
-  --color-accent-ink: #ffffff;
-  --color-bubble-user: #f2e9dc;   /* your own messages in the badge beige */
-  --color-bubble-user-ink: #1a1a18;   /* = ink: unchanged */
-
-  --color-success: #3f6b47;
-  --color-danger: #a33a32;
-  --color-danger-ink: #ffffff;
-  --color-success-ink: #ffffff;
-  --color-warning: #7a5f31;       /* darkened → 4.98:1 */
-  --color-scrollbar: #c9c0ae;
-  --color-maus-line: #6b6559;
-
-  /* System faces rather than Inter: paper reads as the platform's own. */
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, sans-serif;
-  --radius-lg: 6px;
-  --radius-xl: 10px;
-}
-
-/* ── Foundry ───────────────────────────────────────────────────────────────
-   Night shift. The third corner of the grid: Midnight is dark and cool,
-   Atelier light and warm — this one is dark and warm, which is the register
-   most of this app's actual use falls into.
-
-   Its one structural idea, and the thing that makes it read as metal rather
-   than as "Atelier with the lights off": the accent is the brightest thing on
-   screen, not a darker patch of it. Brass at #d99a3e glows against the ground
-   at 7.9:1 and carries near-black lettering at 7.4:1 — so filled buttons read
-   as lit, not as painted. That inversion is only possible because
-   --color-accent-ink exists; with hardcoded white text the accent would have
-   to stay dark and the skin would lose its point.
-
-   Surfaces warm up as they rise (#100e0b → #262019), the way material does as
-   it comes closer to the lamp. Corners are tighter than Atelier's — 4px and
-   8px — because sheet metal doesn't round the way paper does.
-   ───────────────────────────────────────────────────────────────────────── */
-[data-skin="foundry"] {
-  --code-color-scheme: dark;
-  --color-app: #100e0b;           /* deepest ground, warm black */
-  --color-panel: #171410;         /* sidebar */
-  --color-raised: #262019;        /* raised means warmer, not just lighter */
-  --color-raised-hover: #322b21;
-  --color-composer: #262019;    /* = raised: unchanged */
-  --color-composer-ring: transparent;
-  --color-card: #1e1a14;
-  --color-menu: #1e1a14;    /* = card: unchanged */
-  --color-inset: #0b0a08;         /* inset sinks below the ground */
-  --color-control: #262019;       /* = raised: Foundry is unchanged */
-  --color-hairline: #3d3529;      /* visible on purpose — this UI has edges */
-
-  --color-ink: #f4efe4;           /* warm off-white, never pure #fff */
-  --color-ink-secondary: #b0a696; /* 6.7:1 on raised, 5.9:1 on hover */
-  --color-ink-tertiary: #9c9384;
-
-  /* Brass. Bright fill, dark lettering — the inversion described above. */
-  --color-accent: #d99a3e;
-  --color-accent-border: #e8b25e;
-  --color-accent-text: #e0a44c;   /* 8.6:1 on the ground, for links */
-  --color-focus: #e0a44c;         /* the ring rides the accent, not Grok blue */
-  --color-accent-ink: #1c150c;    /* 7.4:1 on the brass fill */
-  --color-bubble-user: #2a2318;   /* your own messages, one step out of the card */
-  --color-bubble-user-ink: #f4efe4;   /* = ink: unchanged */
-
-  --color-success: #57b078;
-  --color-danger: #e0685e;        /* a lamp, not a paint chip */
-  --color-danger-ink: #1c0d0b;
-  --color-success-ink: #1c150c;
-  --color-warning: #dfa441;
-  --color-scrollbar: #3d3529;
-  --color-maus-line: #b0a696;
-
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", system-ui, sans-serif;
-  --radius-lg: 4px;
-  --radius-xl: 8px;
-}
-
 /* ── Lagoon ────────────────────────────────────────────────────────────────
-   Cool daylight — the fourth corner, and the one the grid was missing:
-   Midnight is dark and cool, Atelier light and warm, Foundry dark and warm.
-
-   Where Atelier is paper, this is glazed ceramic. The neutrals carry a green-
-   blue cast rather than a cream one (#eef2f2, not #f5f1eb), so the whole
-   surface reads cool without a single saturated pixel, and the deep teal
-   accent belongs to the ground instead of sitting on top of it. Even the ink
+   Cool daylight, and the default skin: glazed ceramic grounds with the
+   brand green carrying every action. The neutrals keep their green-blue
+   cast (#eef2f2), so the surface reads cool, and the logo's deep green
+   belongs to the ground instead of sitting on top of it. Even the ink
    is a very dark petrol rather than a neutral black — on a tinted ground a
    truly neutral black reads as a foreign object.
 
-   Corners are the most generous of the four (8px / 14px): glass and ceramic
-   round more than paper does, and far more than sheet metal.
+   Corners are the most generous of the two (8px / 14px): glass and ceramic
+   round more than sheet metal.
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="lagoon"] {
   --code-color-scheme: light;
   /* The tint is the point, so it is carried by the surfaces, not by a button:
-     the ground sits 13 points of green-blue above its red channel, roughly
-     three times Atelier's cream cast, which is what makes the skin read as
-     teal at a glance. Raised surfaces stay pure white as the contrast anchor —
-     tinting those too turns the whole thing to soup. */
+     the ground sits 13 points of green-blue above its red channel, which is
+     what makes the skin read as cool at a glance. Raised surfaces stay pure
+     white as the contrast anchor — tinting those too turns the whole thing
+     to soup. */
   --color-app: #dfeceb;
   --color-panel: #ecf4f3;
   --color-raised: #ffffff;
@@ -353,10 +237,10 @@
   --color-ink-secondary: #4d5c5b; /* 7.0:1 on white, 5.8:1 on the ground */
   --color-ink-tertiary: #566564;
 
-  --color-accent: #11736d;        /* deep teal, carries white at 5.68:1 */
-  --color-accent-border: #14807a;
-  --color-accent-text: #0d5f5a;   /* 7.5:1 on a card */
-  --color-focus: #0d5f5a;         /* the ring rides the accent, not Grok blue */
+  --color-accent: #1c7a4c;        /* the logo green, carries white at 5.3:1 */
+  --color-accent-border: #3fae6e;
+  --color-accent-text: #0f5c36;   /* 7.9:1 on a card */
+  --color-focus: #1c7a4c;         /* the ring rides the accent */
   --color-accent-ink: #ffffff;
   --color-bubble-user: #cfe4e1;
   --color-bubble-user-ink: #14201f;   /* = ink: unchanged */
@@ -371,200 +255,6 @@
 
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;
-  --radius-lg: 8px;
-  --radius-xl: 14px;
-}
-
-/* ── Graphite ─────────────────────────────────────────────────────────────
-   Neutral charcoal for people who want a dark workspace without Midnight's
-   near-black contrast or Foundry's warmth. Steel blue stays deliberately
-   desaturated: it marks actions and focus without making the chrome glow.
-   ───────────────────────────────────────────────────────────────────────── */
-[data-skin="graphite"] {
-  --code-color-scheme: dark;
-  --color-app: #111214;
-  --color-panel: #181a1d;
-  --color-raised: #2a2d32;
-  --color-raised-hover: #353941;
-  --color-composer: #2a2d32;    /* = raised: unchanged */
-  --color-composer-ring: transparent;
-  --color-card: #22252a;
-  --color-menu: #22252a;    /* = card: unchanged */
-  --color-inset: #0d0e10;
-  --color-control: #2a2d32;
-  --color-hairline: #3b4048;
-
-  --color-ink: #f2f4f7;
-  --color-ink-secondary: #b3b8c2;
-  --color-ink-tertiary: #9fa4ad;
-
-  --color-accent: #4f75a2;
-  --color-accent-border: #698fbb;
-  --color-accent-text: #8fb4df;
-  --color-focus: #8fb4df;
-  --color-accent-ink: #ffffff;
-  --color-bubble-user: #30343a;
-  --color-bubble-user-ink: #f2f4f7;   /* = ink: unchanged */
-
-  --color-success: #63b58a;
-  --color-danger: #dd6b73;
-  --color-danger-ink: #1e0b0e;
-  --color-success-ink: #101a14;
-  --color-warning: #d3a150;
-  --color-scrollbar: #464b54;
-  --color-maus-line: #b3b8c2;
-
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", system-ui, sans-serif;
-  --radius-lg: 6px;
-  --radius-xl: 10px;
-}
-
-/* ── Linen ────────────────────────────────────────────────────────────────
-   A neutral daylight skin: less cream than Atelier and less blue-green than
-   Lagoon. Navy is used as ink rather than decoration, keeping the workspace
-   crisp and familiar instead of colourful.
-   ───────────────────────────────────────────────────────────────────────── */
-[data-skin="linen"] {
-  --code-color-scheme: light;
-  --color-app: #eceff3;
-  --color-panel: #f5f6f8;
-  --color-raised: #ffffff;
-  --color-raised-hover: #e1e6ed;
-  --color-composer: #ffffff;    /* = raised: unchanged */
-  --color-composer-ring: transparent;
-  --color-card: #ffffff;
-  --color-menu: #ffffff;    /* = card: unchanged */
-  --color-inset: #e6e9ee;
-  --color-control: #d3d9e1;
-  --color-hairline: #b4bbc5;
-
-  --color-ink: #1d2229;
-  --color-ink-secondary: #59616c;
-  --color-ink-tertiary: #5f6671;
-
-  --color-accent: #355f8a;
-  --color-accent-border: #4978a6;
-  --color-accent-text: #2c5680;
-  --color-focus: #2c5680;
-  --color-accent-ink: #ffffff;
-  --color-bubble-user: #e1e6ed;
-  --color-bubble-user-ink: #1d2229;   /* = ink: unchanged */
-
-  --color-success: #2f704f;
-  --color-danger: #a83d48;
-  --color-danger-ink: #ffffff;
-  --color-success-ink: #ffffff;
-  --color-warning: #765b2b;
-  --color-scrollbar: #aeb6c0;
-  --color-maus-line: #59616c;
-
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
-    Roboto, sans-serif;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-}
-
-/* ── Dusk ─────────────────────────────────────────────────────────────────
-   A restrained plum-dark alternative. The violet lives in the neutrals as
-   much as the accent, so the skin feels cohesive rather than neon or themed.
-   ───────────────────────────────────────────────────────────────────────── */
-[data-skin="dusk"] {
-  --code-color-scheme: dark;
-  --color-app: #121014;
-  --color-panel: #19161c;
-  --color-raised: #2b2630;
-  --color-raised-hover: #37303d;
-  --color-composer: #2b2630;    /* = raised: unchanged */
-  --color-composer-ring: transparent;
-  --color-card: #231f27;
-  --color-menu: #231f27;    /* = card: unchanged */
-  --color-inset: #0d0b0f;
-  --color-control: #2b2630;
-  --color-hairline: #403847;
-
-  --color-ink: #f4eff6;
-  --color-ink-secondary: #b9afbd;
-  --color-ink-tertiary: #a199a5;
-
-  --color-accent: #765683;
-  --color-accent-border: #9670a3;
-  --color-accent-text: #c49bd2;
-  --color-focus: #c49bd2;
-  --color-accent-ink: #ffffff;
-  --color-bubble-user: #332b38;
-  --color-bubble-user-ink: #f4eff6;   /* = ink: unchanged */
-
-  --color-success: #6fad83;
-  --color-danger: #db727a;
-  --color-danger-ink: #210c10;
-  --color-success-ink: #101812;
-  --color-warning: #d0a35d;
-  --color-scrollbar: #4a414f;
-  --color-maus-line: #b9afbd;
-
-  --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text",
-    "Segoe UI", system-ui, sans-serif;
-  --radius-lg: 8px;
-  --radius-xl: 12px;
-}
-
-/* ── Daylight ─────────────────────────────────────────────────────────────
-   Midnight's twin. Midnight was pixel-sampled from the upstream app's dark
-   theme; this is the same sampling of its light one, so the two are the only
-   skins here that copy a palette rather than compose one.
-
-   Its structural quirk is the user's own bubble: near-black on a near-white
-   page, the one place a light skin carries inverted ink. That is what
-   --color-bubble-user-ink exists for — see the rule at the bottom of the
-   file. Everything else is a short ladder of greys: page #fcfcfc, sidebar
-   #f7f7f7, selected row #e1e1e1.
-   ───────────────────────────────────────────────────────────────────────── */
-[data-skin="daylight"] {
-  --code-color-scheme: light;
-  --color-app: #fcfcfc;           /* the thread */
-  --color-panel: #f7f7f7;         /* sidebar, one step down from the thread */
-  --color-raised: #e1e1e1;
-  --color-raised-hover: #d7d7d7;  /* the selected row */
-  --color-card: #eeeeee;          /* what a bot says */
-  --color-inset: #e6e6e6;         /* the search field */
-  --color-control: #dedede;       /* a chip on a card */
-  /* Sampled at #efefef, which is what the eye reads on the divider — but a
-     hairline that faint fails this repo's own gate (1.5:1 against the page)
-     and every border is drawn at /40 on top of that. #d0d0d0 is the lightest
-     grey that still passes; see scripts/check-skin-contrast.mjs. */
-  --color-hairline: #d0d0d0;
-
-  --color-ink: #0d0d0d;
-  --color-ink-secondary: #575757;
-  --color-ink-tertiary: #5c5c5c;
-
-  /* The upstream blue is #1084fe, which carries white at 3.1:1 — fine for the
-     unread dot it is mostly used for, not for a filled button's label. The
-     fill is darkened until white clears AA; the dot keeps reading as blue. */
-  --color-accent: #0b62c4;
-  --color-accent-border: #1084fe;
-  --color-accent-text: #0b5cb8;
-  --color-focus: #0b62c4;
-  --color-accent-ink: #ffffff;
-  /* The composer is the page with a ring around it, not a grey slab —
-     the one surface where this skin departs from `raised`. */
-  --color-composer: #fcfcfc;
-  --color-composer-ring: #e4e4e4;
-  --color-menu: #fcfcfc;          /* menus sit on the page tone, not the bubble */
-  --color-bubble-user: #070707;   /* your own messages, inverted */
-  --color-bubble-user-ink: #fcfcfc;
-
-  --color-success: #1f7a4d;
-  --color-danger: #c02b3a;
-  --color-danger-ink: #ffffff;
-  --color-success-ink: #ffffff;
-  --color-warning: #8a5a00;
-  --color-scrollbar: #c4c4c4;
-  --color-maus-line: #5f5f5f;
-
-  --font-sans: "Inter", -apple-system, blinkmacsystemfont, "SF Pro Text",
-    "Segoe UI", system-ui, sans-serif;
   --radius-lg: 8px;
   --radius-xl: 14px;
 }
@@ -1378,45 +1068,18 @@ body {
 .bg-success {
   color: var(--color-success-ink);
 }
-/* Same mechanism, one skin deeper: Daylight paints the user's own bubble in
-   near-black on a near-white page, and the `text-ink` the composer and the
-   thread hardcode would be black on black. */
+/* The user's own bubble always carries its own ink token, so it reads on
+   every skin without per-surface overrides. */
 .bg-bubble-user {
   color: var(--color-bubble-user-ink);
-}
-
-/* Daylight's inverted bubble is a dark surface, including its editor,
-   quoted replies and attachment controls. Keep their normal semantic tokens
-   together; overriding only the parent's color leaves explicit child ink dark.
-   Stop at a nested skin so the picker previews retain their own palettes. */
-@scope ([data-skin="daylight"]) to ([data-skin]) {
-  .bg-bubble-user {
-    --color-ink: #fcfcfc;
-    --color-ink-secondary: #c4c4c4;
-    --color-ink-tertiary: #aaaaaa;
-    --color-panel: #111111;
-    --color-inset: #191919;
-    --color-raised: #2f2f2f;
-    --color-raised-hover: #3d3d3d;
-    --color-control: #2f2f2f;
-    --color-hairline: #666666;
-    --color-accent: #7fc0ff;
-    --color-accent-text: #7fc0ff;
-    --color-accent-ink: #070707;
-    --color-focus: #7fc0ff;
-    --color-danger: #ff7788;
-    --color-danger-ink: #070707;
-    --color-success: #63b58a;
-    --color-success-ink: #070707;
-  }
 }
 
 /* Disabled buttons.
    Upstream fades them with `disabled:opacity-40`. On a dark ground that holds:
    the button stays darker than the page and the white label survives. On a
-   light ground it inverts — Atelier's #a05f25 at 40% over white lands on
-   #d9bfa8, where white lettering measures 1.75:1 and effectively disappears.
-   So the disabled state gets its own colours instead of transparency. */
+   light ground it inverts — a green fill at 40% over white loses the white
+   lettering almost entirely. So the disabled state gets its own colours
+   instead of transparency. */
 button:disabled.bg-accent,
 button:disabled.bg-danger {
   background-color: var(--color-raised-hover);

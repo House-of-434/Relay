@@ -1,17 +1,14 @@
 // Per-bot settings as a right sidebar with fold-out (accordion) categories —
 // same shell pattern as InspectorPanel. Every section lives under
-// bot-settings/; this dialog owns only the fetches (overview, system-prompt,
-// history) and which accordion row is expanded.
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Search, X } from "lucide-react";
+// bot-settings/; this dialog owns only the history fetch and which
+// accordion row is expanded.
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Search, X } from "lucide-react";
 
 import { api, useStore, type Bot } from "@/state/store";
-import type { BotOverview } from "@/lib/bot-overview-types";
-import { cn } from "@/lib/cn";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { BOT_SECTIONS } from "./bot-settings/sections";
 import { useBotSettingsDerived } from "./bot-settings/useBotSettingsDerived";
-import { OverviewSection } from "./bot-settings/OverviewSection";
 import { IdentitySection } from "./bot-settings/IdentitySection";
 import { SlackSection } from "./bot-settings/SlackSection";
 import { useSlackManagementUrl } from "./bot-settings/useSlackManagement";
@@ -28,7 +25,6 @@ import { UsageSection } from "./bot-settings/UsageSection";
 import { VisibilitySection } from "./bot-settings/VisibilitySection";
 import { t } from "@/lib/i18n";
 import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
-import type { PromptPreviewData } from "./bot-settings/PromptPreview";
 
 const sectionLabel = (entry: (typeof BOT_SECTIONS)[number]) => (entry.labelKey ? t(entry.labelKey) : entry.label);
 
@@ -43,9 +39,6 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   const derived = useBotSettingsDerived(bot);
   const dialogRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
-  // Keep expansion in the store too: header deep links can arrive while
-  // this panel is already mounted, including after collapsing the same row.
-  const collapsed = !state.botSettingsExpandAccordion;
   const q = query.trim().toLowerCase();
   // Slack is offered only where the server has an Admin page to link to
   // (a hosted organisation workspace); otherwise its row does not exist.
@@ -59,95 +52,12 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
     .filter((entry) => entry.id !== "visibility" || (!window.ogb && ownerOrAdmin === true));
   const visibleSections = sections.filter((entry) => sectionMatches(entry, q));
 
-  const [overview, setOverview] = useState<BotOverview | null>(null);
-  const [overviewError, setOverviewError] = useState(false);
-  const [prompt, setPrompt] = useState<PromptPreviewData | null>(null);
-  const [promptError, setPromptError] = useState(false);
   const [historyRows, setHistoryRows] = useState<HistoryRow[] | null>(null);
   const [historyError, setHistoryError] = useState(false);
   const [historyRevision, setHistoryRevision] = useState<string | null>(null);
   const historyRequest = useRef(0);
   const [rollingBack, setRollingBack] = useState(false);
   const [rollbackTarget, setRollbackTarget] = useState<{ id: string; expectedRevision: string } | null>(null);
-
-  // The bot-record fields the server-built overview and system-prompt
-  // preview actually read (OverviewFacts.bot plus the prompt's persona
-  // inputs). A streamed message or unread flag replaces the bot object but
-  // must not refetch an unchanged overview.
-  const factsSignature = useMemo(
-    () =>
-      JSON.stringify([
-        bot.name,
-        bot.title,
-        bot.description,
-        bot.soul,
-        bot.computer,
-        bot.cloudBackend,
-        bot.cwd,
-        bot.autoApprove,
-        bot.approvePeerComms,
-        bot.peers,
-        bot.section,
-        bot.composio,
-        bot.mcpServers,
-        bot.chiefOfStaff,
-        bot.managedSections,
-        bot.modelSelection,
-      ]),
-    [
-      bot.name,
-      bot.title,
-      bot.description,
-      bot.soul,
-      bot.computer,
-      bot.cloudBackend,
-      bot.cwd,
-      bot.autoApprove,
-      bot.approvePeerComms,
-      bot.peers,
-      bot.section,
-      bot.composio,
-      bot.mcpServers,
-      bot.chiefOfStaff,
-      bot.managedSections,
-      bot.modelSelection,
-    ],
-  );
-
-  // Fetch on entry: skills and memory are files, not bot-record fields, so
-  // returning from either editor must reload their overview/prompt too.
-  // Await the existing write queue instead of racing a second debounce.
-  useEffect(() => {
-    if (section !== "overview") return;
-    let cancelled = false;
-    const fetchOverviewAndPrompt = async () => {
-      await flushBotPatches(bot.id);
-      if (cancelled) return;
-      void api(`/api/bots/${bot.id}/overview`)
-        .then((data: BotOverview) => {
-          if (cancelled) return;
-          setOverview(data);
-          setOverviewError(false);
-        })
-        .catch(() => {
-          if (!cancelled) setOverviewError(true);
-        });
-      void api(`/api/bots/${bot.id}/system-prompt`)
-        .then((data: PromptPreviewData) => {
-          if (cancelled) return;
-          setPrompt(data);
-          setPromptError(false);
-        })
-        .catch(() => {
-          if (!cancelled) setPromptError(true);
-        });
-    };
-
-    void fetchOverviewAndPrompt();
-    return () => {
-      cancelled = true;
-    };
-  }, [bot.id, section, factsSignature, state.routines, state.webhooks, flushBotPatches]);
 
   // Read the file-backed history only when its section is opened. A newer
   // load (or leaving History) invalidates older rows, revision, and errors.
@@ -195,13 +105,12 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   };
 
   useEffect(() => {
-    // Search narrows the collapsed row list. Choosing a row (or following
-    // an external deep link) clears that filter so it cannot hide the body.
-    if (collapsed) return;
+    // Search narrows the section list. Following an external deep link
+    // clears that filter so it cannot hide the section, then scrolls to it.
     if (q) { setQuery(""); return; }
     dialogRef.current?.querySelector(`[data-bot-settings-section="${section}"]`)
       ?.scrollIntoView({ block: "nearest" });
-  }, [collapsed, section, q]);
+  }, [section, q]);
 
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
@@ -236,27 +145,6 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
 
   const renderSectionBody = (id: (typeof BOT_SECTIONS)[number]["id"]) => {
     switch (id) {
-      case "overview":
-        return overview === null && overviewError ? (
-          <div className="rounded-xl bg-card p-4 text-[13px] text-ink-secondary">Couldn’t load the overview.</div>
-        ) : (
-          // Data wins over a transient refetch failure: once an overview has
-          // loaded once, a later failed refetch (routines/webhooks/bot-record
-          // changed, the request errored) keeps showing it rather than
-          // replacing a fully populated card with an error block — the same
-          // precedence PromptPreview already gives its own data vs. error.
-          <OverviewSection
-            overview={overview}
-            refreshError={overview !== null && overviewError}
-            prompt={prompt}
-            promptError={promptError}
-            onOpen={(target) => dispatch({ type: "toggleSettings", open: true, section: target })}
-            onSetup={derived.canCoordinate && !bot.busy ? () => {
-              dispatch({ type: "toggleSettings", open: false });
-              dispatch({ type: "send", botId: bot.id, text: "/setup", threadId: bot.threadId });
-            } : undefined}
-          />
-        );
       case "identity":
         return (
           <IdentitySection
@@ -277,7 +165,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
         // while the user consults another section. It fetches when it
         // becomes the active section. Always mounted; visibility toggled
         // via hidden on the accordion body wrapper.
-        return <MemorySection bot={bot} active={!collapsed && section === "memory"} />;
+        return <MemorySection bot={bot} active={section === "memory"} />;
       case "routines":
         return <RoutinesSection bot={bot} routines={derived.botRoutines} runs={state.routineRuns} />;
       case "access":
@@ -363,15 +251,15 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
               Nothing matches “{query.trim()}”
             </div>
           )}
-          {/* Walk all sections so Memory keeps a stable mount (draft survival)
-              even when search filters its row out of view. Other unmatched
-              rows are omitted entirely. */}
+          {/* Every section renders open: the dialog is a scrolling page of
+              settings, not an accordion. Unmatched rows are omitted
+              entirely, except Memory, which stays mounted (hidden) so an
+              unsaved draft survives filtering it out of view. */}
           {sections.map((entry) => {
             const { id, icon: Icon } = entry;
             const label = sectionLabel(entry);
             const matched = sectionMatches(entry, q);
             if (!matched && id !== "memory") return null;
-            const open = !collapsed && section === id;
             return (
               <div
                 key={id}
@@ -379,40 +267,11 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
                 className="border-b border-hairline/30"
                 hidden={!matched}
               >
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (section === id && !collapsed) {
-                      dispatch({ type: "toggleSettings", open: true });
-                      return;
-                    }
-                    dispatch({ type: "toggleSettings", open: true, section: id });
-                  }}
-                  aria-expanded={open}
-                  className={cn(
-                    "flex w-full shrink-0 items-center gap-2.5 px-4 py-2.5 text-left text-[14px]",
-                    open ? "bg-control/60 text-ink" : "text-ink-secondary hover:bg-control/40 hover:text-ink",
-                  )}
-                >
+                <div className="flex w-full shrink-0 items-center gap-2.5 bg-control/60 px-4 py-2.5 text-left text-[14px] text-ink">
                   <Icon size={15} className="shrink-0" />
                   <span className="min-w-0 flex-1 truncate">{label}</span>
-                  <ChevronDown
-                    size={16}
-                    className={cn(
-                      "shrink-0 text-ink-secondary transition-transform",
-                      open && "rotate-180",
-                    )}
-                  />
-                </button>
-                {/* Memory stays mounted (hidden when collapsed) so drafts survive;
-                    other sections only mount while expanded. */}
-                {id === "memory" ? (
-                  <div hidden={!open} className="px-4 pb-4 pt-1">
-                    {renderSectionBody("memory")}
-                  </div>
-                ) : (
-                  open && <div className="px-4 pb-4 pt-1">{renderSectionBody(id)}</div>
-                )}
+                </div>
+                <div className="px-4 pb-4 pt-1">{renderSectionBody(id)}</div>
               </div>
             );
           })}

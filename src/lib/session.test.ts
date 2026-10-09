@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  BROWSER_SIGN_IN_FAILED, cloudOwnerOf, isConnected, isOwnerOrAdmin, previewBrowserSignIn, readSessionState, reasonWorthShowing, SERVICE_TRUST_REASON, signInWithBrowserGrant,
+  BROWSER_SIGN_IN_FAILED, cloudOwnerOf, isConnected, isOwnerOrAdmin, previewBrowserSignIn, readSessionState, reasonWorthShowing, SERVICE_TRUST_REASON, signInWithBrowserGrant, signOut,
   takeBrowserSignInFromLocation, takeInvitedEmailFromLocation, takePairingCodeFromLocation,
 } from "./session";
 
@@ -114,6 +114,23 @@ describe("an SSH tunnel to a server that treats local requests as a service", ()
     expect(isConnected({ kind: "unauthenticated", error: "pair" })).toBe(false);
     expect(isConnected(null)).toBe(false);
     expect(reasonWorthShowing(SERVICE_TRUST_REASON)).toBe(SERVICE_TRUST_REASON);
+  });
+});
+
+describe("signing out", () => {
+  it("ends the server session, then reloads so boot lands on sign-in", async () => {
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+    const reload = vi.fn();
+    await signOut(fetchImpl, reload);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("still reloads when the server cannot be reached, so boot reports the true state", async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error("down"); }) as unknown as typeof fetch;
+    const reload = vi.fn();
+    await signOut(fetchImpl, reload);
+    expect(reload).toHaveBeenCalledOnce();
   });
 });
 

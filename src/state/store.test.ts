@@ -334,8 +334,7 @@ describe("independent bot threads", () => {
 describe("keyboard shortcuts dialog state", () => {
   it("opens and closes without replacing bot settings navigation", () => {
     expect(initialState.shortcutsOpen).toBe(false);
-    expect(initialState.botSettingsSection).toBe("overview");
-    expect(initialState.botSettingsExpandAccordion).toBe(false);
+    expect(initialState.botSettingsSection).toBe("identity");
     const state = { ...initialState, botSettingsSection: "soul" as const };
     const opened = reducer(state, { type: "toggleShortcuts", open: true });
     expect(opened.shortcutsOpen).toBe(true);
@@ -1959,7 +1958,6 @@ describe("bot settings section", () => {
     });
     expect(next.settingsOpen).toBe(true);
     expect(next.botSettingsSection).toBe("identity");
-    expect(next.botSettingsExpandAccordion).toBe(true);
   });
 
   it("toggleSettings leaves the computer panel and inspector open, closes app settings", () => {
@@ -1971,14 +1969,11 @@ describe("bot settings section", () => {
     expect(next.appSettingsOpen).toBe(false);
   });
 
-  it("reopens the same section after a collapse without remounting settings", () => {
+  it("reopens the same section without remounting settings", () => {
     const opened = reducer(initialState, { type: "toggleSettings", open: true, section: "usage" });
-    const collapsed = reducer(opened, { type: "toggleSettings", open: true });
-    expect(collapsed.settingsOpen).toBe(true);
-    expect(collapsed.botSettingsExpandAccordion).toBe(false);
-    const reopened = reducer(collapsed, { type: "toggleSettings", open: true, section: "usage" });
+    const reopened = reducer(opened, { type: "toggleSettings", open: true, section: "usage" });
+    expect(reopened.settingsOpen).toBe(true);
     expect(reopened.botSettingsSection).toBe("usage");
-    expect(reopened.botSettingsExpandAccordion).toBe(true);
   });
 
   it("toggleSettings without a section keeps it", () => {
@@ -1987,14 +1982,11 @@ describe("bot settings section", () => {
       open: true,
       section: "soul",
     });
-    expect(state.botSettingsExpandAccordion).toBe(true);
     const next = reducer(state, {
       type: "toggleSettings",
       open: true,
     });
     expect(next.botSettingsSection).toBe("soul");
-    // Bare reopen (mascot) must not auto-expand a leftover section.
-    expect(next.botSettingsExpandAccordion).toBe(false);
   });
 
   it.each(["identity", "model"] as const)("opens a bot's %s settings without leaving the current view or reading its conversations", (section) => {
@@ -2010,7 +2002,6 @@ describe("bot settings section", () => {
     expect(next.activeView).toBe("routines");
     expect(next.settingsOpen).toBe(true);
     expect(next.botSettingsSection).toBe(section);
-    expect(next.botSettingsExpandAccordion).toBe(true);
     expect(next.bots).toBe(state.bots);
     expect(next.groups).toBe(state.groups);
   });
@@ -2024,19 +2015,16 @@ describe("bot settings section", () => {
       bots: [bot, other],
       settingsOpen: true,
       botSettingsSection: "soul" as const,
-      botSettingsExpandAccordion: true,
     };
     const next = reducer(state, { type: "toggleSettings", botId: other.id });
     expect(next.selectedId).toBe(other.id);
     expect(next.activeView).toBe("routines");
     expect(next.settingsOpen).toBe(true);
-    expect(next.botSettingsSection).toBe("overview");
-    expect(next.botSettingsExpandAccordion).toBe(false);
+    expect(next.botSettingsSection).toBe("identity");
 
     const model = reducer(next, { type: "toggleSettings", botId: bot.id, section: "model" });
     expect(model.settingsOpen).toBe(true);
     expect(model.botSettingsSection).toBe("model");
-    expect(model.botSettingsExpandAccordion).toBe(true);
     expect(reducer(model, { type: "toggleSettings", botId: bot.id }).settingsOpen).toBe(true);
     expect(reducer(model, { type: "toggleSettings", botId: bot.id, open: false }).settingsOpen).toBe(false);
     expect(reducer(model, { type: "toggleSettings" }).settingsOpen).toBe(false);
@@ -2054,7 +2042,7 @@ describe("bot settings section", () => {
     expect(reducer(state, { type: "toggleSettings", botId, section: "identity" })).toBe(state);
   });
 
-  it("selecting a different bot resets botSettingsSection to overview", () => {
+  it("selecting a different bot resets botSettingsSection to identity", () => {
     // Add bot A and select it
     let state = reducer(initialState, {
       type: "botAdded",
@@ -2075,12 +2063,12 @@ describe("bot settings section", () => {
     });
     expect(state.botSettingsSection).toBe("identity");
 
-    // Select bot A → should reset to "overview" because we're changing bots
+    // Select bot A → should reset to "identity" because we're changing bots
     const next = reducer(state, {
       type: "select",
       id: "bot-a",
     });
-    expect(next.botSettingsSection).toBe("overview");
+    expect(next.botSettingsSection).toBe("identity");
   });
 
   it("re-selecting the same bot keeps botSettingsSection, but selecting a different bot resets it", () => {
@@ -2113,12 +2101,12 @@ describe("bot settings section", () => {
     });
     expect(state.selectedId).toBe("bot-b");
 
-    // Select bot A again → should reset to "overview" because we're changing from bot-b to bot-a
+    // Select bot A again → should reset to "identity" because we're changing from bot-b to bot-a
     state = reducer(state, {
       type: "select",
       id: "bot-a",
     });
-    expect(state.botSettingsSection).toBe("overview");
+    expect(state.botSettingsSection).toBe("identity");
   });
 });
 

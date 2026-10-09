@@ -197,6 +197,18 @@ export function verifyEmailSignIn(input: { email: string; code: string; label: s
   return postAuth("/api/auth/email/verify", { email: input.email, code: input.code, label: input.label }, fetchImpl);
 }
 
+/** End the Relay session on the server, then reload so boot re-reads the
+ * session and lands on sign-in. Reloading even when the call fails is the
+ * honest outcome: boot reports whatever session is actually left. */
+export async function signOut(fetchImpl: typeof fetch = fetch, reload: () => void = (): void => window.location.reload()): Promise<void> {
+  try {
+    await fetchImpl("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch {
+    // unreachable server: boot below reports that instead of pretending
+  }
+  reload();
+}
+
 /** The gate's ordinary "you have no session" wording is why the pair page is
  * shown at all; repeating it under an email form reads like an error. Only a
  * reason that says something else (a session that expired or was revoked)

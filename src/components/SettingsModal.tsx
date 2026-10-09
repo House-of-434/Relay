@@ -3,13 +3,14 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Archive, Coins, FlaskConical, KeyRound, Monitor, Palette, ScrollText, Search, TabletSmartphone, Terminal, User, Users, X, Building2, Zap } from "lucide-react";
-import { api, useStore, type AppSettingsSection, type ConfigStatus } from "@/state/store";
+import { Coins, FlaskConical, KeyRound, Monitor, Palette, ScrollText, Search, TabletSmartphone, Terminal, User, X, Building2, Zap } from "lucide-react";
+import { api, useStore, type AppSettingsSection, type ConfigStatus, ApiError } from "@/state/store";
 import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { routinesInConversationEnabled, showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
 import { localeChoices, type LocaleKey } from "@/locales";
 import { t } from "@/lib/i18n";
 import { withTourReset } from "@/lib/guided-tour";
+import { clearTourSeen, tourStorage } from "@/lib/first-run";
 import { completionPatch } from "@/lib/onboarding";
 import { ApiKeyRow, OpenAiCompatUrl, VpsConnection } from "./ApiKeys";
 import { DecisionModelSettings } from "./DecisionModelSettings";
@@ -18,13 +19,13 @@ import { EnginesSettings } from "./EnginesSettings";
 import { LocalComputerSection } from "./LocalComputerSection";
 import { CompanionSection } from "./CompanionSection";
 import { ServerPairingCard } from "./ServerPairingCard";
-import { PeopleSection } from "./PeopleSection";
 import { ActivitySection } from "./ActivitySection";
 import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 import { CustomDomainSettings } from "./CustomDomainSettings";
 import { RemoteComputerSection } from "./RemoteComputerSection";
 import { ConnectedWorkspacesSettings } from "./ConnectedWorkspacesSettings";
 import { Card, SettingRow, Switch } from "./SettingsPrimitives";
+import { useSidebarIdentity } from "./SidebarProfileMenu";
 import { effortLabel } from "./ModelPicker";
 import { EFFORT_LEVELS, isEffortLevel } from "../../shared/wire";
 import { shortcutLabel } from "./ShortcutHint";
@@ -39,7 +40,6 @@ import { ThreadConcurrencySettings } from "./ThreadConcurrencySettings";
 import { AutomaticRecoverySettings } from "./AutomaticRecoverySettings";
 import { ThreadCleanupSettings } from "./ThreadCleanupSettings";
 import { DefaultBotSettings } from "./NewBotDialog";
-import { WorkspaceBackupSettings } from "./WorkspaceBackupSettings";
 import { cn } from "@/lib/cn";
 import { setNotificationSounds, useNotificationSounds } from "@/lib/notification-preferences";
 import { effectiveLanguage, setLanguageChoice, useLanguageChoice } from "@/lib/language-preference";
@@ -64,9 +64,7 @@ export const SECTIONS: Array<{
   { id: "companion", labelKey: "settings.section.companion", icon: TabletSmartphone, keywords: ["companion", "device", "phone", "desktop", "client", "host", "pair", "pairing", "mobile", "https", "secure", "tailscale", "wifi", "remote", "advanced", "domain", "dns", "self-hosted", "server", "caddy"] },
   { id: "computer", labelKey: "settings.section.computer", icon: Monitor, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", labelKey: "settings.section.usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
-  { id: "people", labelKey: "settings.section.people", icon: Users, keywords: ["people", "users", "invite", "sign in", "members", "admins", "access"] },
   { id: "activity", labelKey: "settings.section.activity", icon: ScrollText, keywords: ["activity", "audit", "log", "history", "who changed", "approvals", "decisions", "admin"] },
-  { id: "backups", labelKey: "settings.section.backups", icon: Archive, keywords: ["export", "import", "restore", "full backup", "password", "recovery"] },
   { id: "workspaces", labelKey: "settings.section.workspaces", icon: Building2, keywords: ["clients", "tenants", "fleet", "workspaces", "installation", "installations"] },
 ];
 
@@ -75,43 +73,23 @@ export function sectionMatches(section: (typeof SECTIONS)[number], query: string
   return [t(section.labelKey), ...section.keywords].some((part) => part.toLowerCase().includes(query));
 }
 
-/** Name and email save on blur; shared context has its own autosave. */
+/** Name and email are read from the sign-in, not set here: the only thing
+ * the profile teaches the bots is About me. */
 function ProfileFields() {
-  const { state, dispatch } = useStore();
-  const [name, setName] = useState(state.config?.profile?.name ?? "");
-  const [email, setEmail] = useState(state.config?.profile?.email ?? "");
-  useEffect(() => {
-    setName(state.config?.profile?.name ?? "");
-    setEmail(state.config?.profile?.email ?? "");
-  }, [state.config?.profile?.name, state.config?.profile?.email]);
-
-  const save = () => {
-    void fetch("/api/config", {
-      method: "PUT",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ profile: { name: name.trim(), email: email.trim().toLowerCase() } }),
-    })
-      .then((r) => { if (!r.ok) throw new Error("Profile save failed"); return r.json(); })
-      .then((config: ConfigStatus) => {
-        if (config.profile) dispatch({ type: "profileSaved", profile: { name: config.profile.name, email: config.profile.email } });
-      })
-      .catch(() => {});
-  };
-
-  const inputClass =
-    "w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none";
+  const { state } = useStore();
+  const identity = useSidebarIdentity();
+  const email = state.config?.profile?.email?.trim() ?? "";
+  const rowClass = "flex items-baseline justify-between gap-3 rounded-lg border border-hairline/40 bg-inset px-3 py-2";
   return (
     <div className="flex flex-col gap-3">
-      <input aria-label={t("settings.profile.name")} value={name} onChange={(e) => setName(e.target.value)} onBlur={save} placeholder={t("settings.profile.name")} className={inputClass} />
-      <input
-        type="email"
-        aria-label={t("phone.signIn.email")}
-        value={email}
-        onChange={(e) => setEmail(e.target.value)}
-        onBlur={save}
-        placeholder="you@example.com"
-        className={inputClass}
-      />
+      <div className={rowClass}>
+        <span className="shrink-0 text-[12px] text-ink-secondary">{t("settings.profile.nameLabel")}</span>
+        <span className="truncate text-[14px] text-ink">{identity.name}</span>
+      </div>
+      <div className={rowClass}>
+        <span className="shrink-0 text-[12px] text-ink-secondary">{t("settings.profile.emailLabel")}</span>
+        <span className="truncate text-[14px] text-ink">{email || "—"}</span>
+      </div>
       <AboutMeSettings />
     </div>
   );
@@ -250,7 +228,11 @@ function AnalyticsRow() {
   );
 }
 
-/** Clears the tour's steps and opens it again on the live interface. */
+/** Clears the tour's steps and opens it again on the live interface. The
+ * browser's record is cleared first: a session that cannot write the
+ * workspace record (a shared-workspace member signs in with client scope,
+ * and `PUT /api/config` is admin-only) still replays from that record, so a
+ * refused server write opens the tour rather than erroring. */
 function ReplayAppTourButton() {
   const { state, dispatch } = useStore();
   const [saving, setSaving] = useState(false);
@@ -262,6 +244,7 @@ function ReplayAppTourButton() {
         onClick={() => {
           setSaving(true);
           setFailed(false);
+          clearTourSeen(tourStorage());
           void api("/api/config", {
             method: "PUT",
             body: JSON.stringify({ onboarding: {
@@ -275,7 +258,16 @@ function ReplayAppTourButton() {
               dispatch({ type: "configStatus", config });
               dispatch({ type: "toggleTour", open: true });
             })
-            .catch(() => setFailed(true))
+            .catch((cause) => {
+              // A session the server will not let write is not a failure: the
+              // browser's record (cleared above) is the whole record for it.
+              // Anything else — offline, a 500 — still reports honestly.
+              if (cause instanceof ApiError && cause.status === 403) {
+                dispatch({ type: "toggleTour", open: true });
+                return;
+              }
+              setFailed(true);
+            })
             .finally(() => setSaving(false));
         }}
         className="ui-button"
@@ -288,17 +280,10 @@ function ReplayAppTourButton() {
 }
 
 function ReplayTourRow() {
-  const { dispatch } = useStore();
   return (
     <SettingRow title={t("settings.welcome.title")} subtitle={t("settings.welcome.subtitle")}>
-      <div className="flex flex-wrap gap-2">
+      <div className="flex flex-wrap justify-end gap-2">
         <ReplayAppTourButton />
-        <button
-          onClick={() => dispatch({ type: "toggleWelcome", open: true })}
-          className="ui-button"
-        >
-          {t("settings.welcome.replay")}
-        </button>
       </div>
     </SettingRow>
   );
@@ -555,8 +540,6 @@ export function SettingsModal() {
     .filter((entry) => entry.id !== "desktopWorkspaces" || Boolean(window.ogb?.environments))
     // the operator's screen for other workspaces exists only where a fleet agent does
     .filter((entry) => entry.id !== "workspaces" || workspacesAvailable(state.config))
-    // sign-in by email is a hosted server's; the desktop app pairs devices under Remote access
-    .filter((entry) => entry.id !== "people" || !window.ogb)
     // the activity log belongs to a workspace served to a browser, and to its admins
     .filter((entry) => entry.id !== "activity" || (!window.ogb && ownerOrAdmin === true));
   const visibleSections = availableSections.filter((entry) => sectionMatches(entry, q));
@@ -788,8 +771,6 @@ export function SettingsModal() {
               <EnginesSettings />
             )}
 
-            {section === "backups" && <WorkspaceBackupSettings />}
-
             {section === "companion" && (
               <>
                 <RemoteComputerSection />
@@ -808,7 +789,6 @@ export function SettingsModal() {
             {section === "computer" && <LocalComputerSection />}
 
             {section === "usage" && <UsageSection />}
-            {section === "people" && <PeopleSection />}
             {section === "activity" && <ActivitySection />}
             {section === "workspaces" && <WorkspacesSection />}
           </div>
