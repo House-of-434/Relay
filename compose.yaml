@@ -75,12 +75,14 @@ services:
       - -ec
       - |
         export RELAY_UPSTREAM_SCHEME=http
+        export RELAY_SITE=":80"
         if [ -n "$$RELAY_HTTPS_HOST" ] && [ "$$RELAY_BIND_ADDRESS" != "127.0.0.1" ]; then
           echo "RELAY_HTTPS_HOST requires RELAY_BIND_ADDRESS=127.0.0.1; forward HTTPS through a trusted local proxy." >&2
           exit 1
         fi
         if [ -n "$$RELAY_HTTPS_HOST" ]; then
           export RELAY_UPSTREAM_SCHEME=https
+          export RELAY_SITE="$$RELAY_HTTPS_HOST"
         fi
         exec caddy run --config /etc/caddy/Caddyfile --adapter caddyfile
     depends_on:

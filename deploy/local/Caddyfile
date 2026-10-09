@@ -6,8 +6,11 @@
 # Set RELAY_HTTPS_HOST to the public hostname for automatic HTTPS. The compose
 # command refuses it unless RELAY_BIND_ADDRESS=127.0.0.1: TLS terminates here,
 # in front of a loopback-bound app. Leave it empty for plain :80 (dev only —
-# login needs Secure cookies, which need https).
-{$RELAY_HTTPS_HOST::80} {
+# login needs Secure cookies, which need https). The site address comes from
+# RELAY_SITE, computed by the compose command: an env placeholder default
+# cannot be trusted here because a set-but-empty variable defeats it and
+# Caddy rejects the resulting empty site address.
+{$RELAY_SITE} {
 	reverse_proxy /auth/* 127.0.0.1:8798
 	reverse_proxy /api/* 127.0.0.1:8798
 	reverse_proxy /.well-known/relay/* 127.0.0.1:8798

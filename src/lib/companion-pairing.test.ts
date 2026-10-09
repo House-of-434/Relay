@@ -148,15 +148,15 @@ describe("companionPairingLink", () => {
     }, "automatic");
 
     expect(route).toEqual({
-      address: "device.relay.com",
+      address: "device.openmausbot.com",
       port: 443,
-      hosts: ["device.relay.com"],
+      hosts: ["device.openmausbot.com"],
       endpoints: [endpoints[0]],
     });
     const link = companionPairingLink({ ...route!, code: "004209", token });
     const url = new URL(link!);
-    expect(url.searchParams.get("address")).toBe("device.relay.com:443");
-    expect(url.searchParams.get("hosts")).toBe("device.relay.com");
+    expect(url.searchParams.get("address")).toBe("device.openmausbot.com:443");
+    expect(url.searchParams.get("hosts")).toBe("device.openmausbot.com");
     expect(url.searchParams.get("hosts")).not.toContain("192.168.1.42");
     expect(url.searchParams.get("hosts")).not.toContain("tail1234.ts.net");
     expect(decodedEndpoints(link!)).toEqual([endpoints[0]]);
@@ -202,9 +202,9 @@ describe("companionPairingLink", () => {
       priority: 0,
     });
     expect(pin?.route).toMatchObject({
-      address: "device.relay.com",
+      address: "device.openmausbot.com",
       port: 443,
-      hosts: ["device.relay.com"],
+      hosts: ["device.openmausbot.com"],
     });
 
     const withdrawn = {
@@ -241,9 +241,9 @@ describe("companionPairingLink", () => {
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
       ],
     }, "automatic")?.route).toEqual({
-      address: "device.relay.com",
+      address: "device.openmausbot.com",
       port: 443,
-      hosts: ["device.relay.com"],
+      hosts: ["device.openmausbot.com"],
       endpoints: [
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
       ],
