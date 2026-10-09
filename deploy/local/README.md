@@ -38,6 +38,7 @@ Required for the deployment (see `.env.example` for the full list):
 | `RELAY_LOOPBACK_TRUST` | `service` — no network request is ever trusted as owner |
 | `SUPABASE_PROJECT_URL` / `SUPABASE_ANON_KEY` | From the Supabase dashboard |
 | `RELAY_BFF_CAPABILITY` | Shared BFF capability (see `.env.example`) |
+| `RELAY_PORTAL_SESSIONS` | `1` — the BFF owns sign-in here; without it the harness refuses the session bridge and login fails |
 | `RELAY_DB_URL` / `RELAY_DB_PROJECT_REF` / `RELAY_DB_SERVICE_ROLE_KEY` | Tool Layer database access |
 | `RELAY_TOOL_ACTOR_SECRET` | In `.env.secrets`; must match between harness and Tool Layer |
 | `RELAY_ALLOWED_EMAIL_DOMAINS` | Allowed sign-in domains |
