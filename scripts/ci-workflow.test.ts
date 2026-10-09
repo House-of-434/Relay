@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { parse } from "yaml";
 
 const workflow = parse(readFileSync(new URL("../.github/workflows/ci.yml", import.meta.url), "utf8"));
-const requiredRuntimeJobs = ["vitest", "behavior-evals", "packaged-server", "windows-cua", "electron-smokes"];
+const requiredRuntimeJobs = ["vitest", "behavior-evals", "packaged-server"];
 
 function runGate(needs: Record<string, unknown>) {
   // Execute the actual gate, not a duplicate of its success/failure logic.
@@ -63,18 +63,18 @@ describe("CI concurrency", () => {
     });
   });
 
-  it("keeps each PR to one macOS job unless native code changed", () => {
+  it("has no macOS or mobile-platform jobs while browser-only", () => {
     const macosJobs = Object.entries(workflow.jobs as Record<string, { "runs-on": string; strategy?: { matrix?: { os?: unknown } } }>)
       .filter(([, job]) => job["runs-on"] === "macos-latest" || JSON.stringify(job.strategy?.matrix?.os ?? "").includes("macos"))
       .map(([name]) => name);
-    expect(macosJobs.sort()).toEqual(["electron-smokes", "ios"]);
-    const smokes = workflow.jobs["electron-smokes"].steps.map((step: { run?: string }) => step.run);
-    expect(smokes).toContain("pnpm test:packaged-server");
-    expect(workflow.jobs.ios.steps.some((step: { run?: string }) => step.run?.includes("verify-ios-thread-navigation"))).toBe(false);
+    expect(macosJobs.sort()).toEqual([]);
+    // Dead platform coverage stays deleted: the scripts, sources and app IDs
+    // they needed are gone from the repo (restore from git history with them).
+    for (const name of ["electron-smokes", "ios", "android", "windows-cua", "control-plane", "package-linux"]) {
+      expect(workflow.jobs[name]).toBeUndefined();
+    }
+    // The nightly iOS suite stays paused while browser-only.
     const ui = parse(readFileSync(new URL("../.github/workflows/ios-thread-ui.yml", import.meta.url), "utf8"));
-    expect(ui.jobs["thread-ui"].steps.some((step: { run?: string }) => step.run === "bash scripts/verify-ios-thread-navigation-ci.sh")).toBe(true);
-    // Nightly schedule paused while the product is browser-only; manual and
-    // push-triggered runs stay available.
     expect(Object.keys(ui.on).sort()).toEqual(["push", "workflow_dispatch"]);
   });
 
@@ -126,7 +126,7 @@ describe("CI concurrency", () => {
     for (const [name, job] of Object.entries(workflow.jobs) as [string, { needs?: string; if?: string }][]) {
       if (["static", "gate"].includes(name)) continue;
       expect(job.needs).toBe("static");
-      expect(job.if).toBe(`needs.static.outputs.${["ios", "android"].includes(name) ? "mobile" : "runtime"} == 'true'`);
+      expect(job.if).toBe("needs.static.outputs.runtime == 'true'");
     }
   });
 
