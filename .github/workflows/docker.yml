@@ -45,17 +45,31 @@ jobs:
         run: |
           set -euo pipefail
           cp .env.example .env
+          # CI has no real Supabase or secrets: the harness boots on dummies
+          # (it binds and serves), the BFF validates config shape at boot, and
+          # tools must fail closed on the missing database settings (asserted
+          # below). Nothing here touches a real backend.
+          {
+            echo "SUPABASE_PROJECT_URL=https://ci-smoke.supabase.co"
+            echo "SUPABASE_ANON_KEY=ci-smoke-anon-key"
+            echo "RELAY_BFF_CAPABILITY=$(openssl rand -hex 32)"
+            echo "RELAY_BFF_PUBLIC_URL=http://localhost:8080"
+          } >> .env
           touch .env.secrets
           docker compose up -d
           for i in $(seq 1 40); do
             if [ "$(docker inspect -f '{{.State.Health.Status}}' relay-app-1 2>/dev/null)" = healthy ]; then break; fi
             sleep 5
-            if [ "$i" = "40" ]; then docker compose logs relay; echo "relay never became healthy"; exit 1; fi
+            if [ "$i" = "40" ]; then docker compose logs app; echo "app never became healthy"; exit 1; fi
           done
           # the renderer is served by Caddy from the harness (RELAY_STATIC_DIR)
-          docker compose exec -T relay curl -sf http://127.0.0.1:8799/ | grep -qi "<html" || { docker compose logs relay; echo "UI not served"; exit 1; }
-          curl -sf http://127.0.0.1:8080/api/health
-          docker compose logs relay | tail -5
+          docker compose exec -T app curl -sf http://127.0.0.1:8799/ | grep -qi "<html" || { docker compose logs app; echo "UI not served"; exit 1; }
+          # harness health is public and names the app; the BFF health behind
+          # Caddy is auth-gated by design, so 401 proves it is reachable.
+          docker compose exec -T app curl -sf http://127.0.0.1:8799/api/health | grep -q relay
+          curl -sf http://127.0.0.1:8080/ | grep -qi "<html"
+          test "$(curl -s -o /dev/null -w '%{http_code}' --max-time 5 http://127.0.0.1:8080/api/health)" = 401
+          docker compose logs app | tail -5
       - name: Prove the harness never binds a public interface
         # The loopback-trust model is the auth model, so the harness must keep
         # the server unreachable from the container's own network. Probe from a

@@ -53,7 +53,7 @@ the public hostname, and the Google OAuth client must register
 docker compose build
 docker compose up -d
 docker compose ps
-curl -sf http://127.0.0.1:8080/api/health
+docker compose exec app curl -sf http://127.0.0.1:8799/api/health
 ```
 
 Caddy serves `:80` and, with `RELAY_HTTPS_HOST` set, `:443` with automatic
