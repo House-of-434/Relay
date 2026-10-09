@@ -7,7 +7,7 @@ import {
 } from "./companion-pairing";
 
 describe("companionPairingLink", () => {
-  const token = `omb_pair_${"a".repeat(43)}`;
+  const token = `relay_pair_${"a".repeat(43)}`;
   const secretPublicKey = "BIPBQ12_dWnF1DZLsTZO3Vg0NGjds5-jp9h3jhjr2To7bJelczS0LM82rfXV68PmSJhz2ePosj3fL974XckCpDU";
 
   const decodedEndpoints = (link: string) => {
@@ -28,7 +28,7 @@ describe("companionPairingLink", () => {
     });
 
     const url = new URL(link!);
-    expect(url.protocol).toBe("openmausbot:");
+    expect(url.protocol).toBe("relay:");
     expect(url.host).toBe("pair");
     expect(url.searchParams.get("address")).toBe("macbook.tail1234.ts.net:8810");
     expect(url.searchParams.get("token")).toBe(token);
@@ -63,10 +63,10 @@ describe("companionPairingLink", () => {
       port: 8810,
       code: "004209",
       token,
-      hosts: ["macbook.tail1234.ts.net", "192.168.1.42", "openmausbot-abcd1234.local"],
+      hosts: ["macbook.tail1234.ts.net", "192.168.1.42", "relay-abcd1234.local"],
     });
     expect(new URL(link!).searchParams.get("hosts")).toBe(
-      "macbook.tail1234.ts.net,192.168.1.42,openmausbot-abcd1234.local",
+      "macbook.tail1234.ts.net,192.168.1.42,relay-abcd1234.local",
     );
   });
 
@@ -76,22 +76,22 @@ describe("companionPairingLink", () => {
       port: 8810,
       code: "004209",
       token,
-      hosts: ["192.168.1.42", "openmausbot-abcd1234.local"],
+      hosts: ["192.168.1.42", "relay-abcd1234.local"],
       endpoints: [
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
         { url: "https://Device-123.Companion.Example/", kind: "hosted", priority: 0 },
-        { url: "http://openmausbot-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://relay-abcd1234.local:8810", kind: "bonjour", priority: 300 },
       ],
     });
 
     const url = new URL(link!);
     expect(url.searchParams.get("address")).toBe("192.168.1.42:8810");
-    expect(url.searchParams.get("hosts")).toBe("192.168.1.42,openmausbot-abcd1234.local");
+    expect(url.searchParams.get("hosts")).toBe("192.168.1.42,relay-abcd1234.local");
     expect(url.searchParams.get("endpoints")).toMatch(/^[A-Za-z0-9_-]+$/);
     expect(decodedEndpoints(link!)).toEqual([
       { url: "https://device-123.companion.example", kind: "hosted", priority: 0 },
       { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
-      { url: "http://openmausbot-abcd1234.local:8810", kind: "bonjour", priority: 300 },
+      { url: "http://relay-abcd1234.local:8810", kind: "bonjour", priority: 300 },
     ]);
   });
 
@@ -148,15 +148,15 @@ describe("companionPairingLink", () => {
     }, "automatic");
 
     expect(route).toEqual({
-      address: "device.openmausbot.com",
+      address: "device.relay.com",
       port: 443,
-      hosts: ["device.openmausbot.com"],
+      hosts: ["device.relay.com"],
       endpoints: [endpoints[0]],
     });
     const link = companionPairingLink({ ...route!, code: "004209", token });
     const url = new URL(link!);
-    expect(url.searchParams.get("address")).toBe("device.openmausbot.com:443");
-    expect(url.searchParams.get("hosts")).toBe("device.openmausbot.com");
+    expect(url.searchParams.get("address")).toBe("device.relay.com:443");
+    expect(url.searchParams.get("hosts")).toBe("device.relay.com");
     expect(url.searchParams.get("hosts")).not.toContain("192.168.1.42");
     expect(url.searchParams.get("hosts")).not.toContain("tail1234.ts.net");
     expect(decodedEndpoints(link!)).toEqual([endpoints[0]]);
@@ -174,7 +174,7 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       lan: "192.168.1.42",
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "relay-aa.local"],
       endpoints: [
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet" as const, priority: 0 },
         { url: "http://192.168.1.42:8810", kind: "lan" as const, priority: 100 },
@@ -202,9 +202,9 @@ describe("companionPairingLink", () => {
       priority: 0,
     });
     expect(pin?.route).toMatchObject({
-      address: "device.openmausbot.com",
+      address: "device.relay.com",
       port: 443,
-      hosts: ["device.openmausbot.com"],
+      hosts: ["device.relay.com"],
     });
 
     const withdrawn = {
@@ -241,9 +241,9 @@ describe("companionPairingLink", () => {
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
       ],
     }, "automatic")?.route).toEqual({
-      address: "device.openmausbot.com",
+      address: "device.relay.com",
       port: 443,
-      hosts: ["device.openmausbot.com"],
+      hosts: ["device.relay.com"],
       endpoints: [
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
       ],
@@ -255,12 +255,12 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       lan: "192.168.1.42",
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "relay-aa.local"],
       endpoints: [
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 100 },
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://relay-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local");
 
@@ -268,14 +268,14 @@ describe("companionPairingLink", () => {
     expect(route?.port).toBe(8810);
     expect(route?.hosts).toEqual([
       "192.168.1.42",
-      "openmausbot-aa.local",
+      "relay-aa.local",
     ]);
     const link = companionPairingLink({ ...route!, code: "004209", token });
     expect(new URL(link!).searchParams.get("address")).toBe("192.168.1.42:8810");
     expect(decodedEndpoints(link!)).toEqual([
       { url: "http://192.168.1.42:8810", kind: "lan", priority: 0 },
       { url: "https://device.openmausbot.com", kind: "hosted", priority: 100 },
-      { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 200 },
+      { url: "http://relay-aa.local:8810", kind: "bonjour", priority: 200 },
     ]);
   });
 
@@ -284,12 +284,12 @@ describe("companionPairingLink", () => {
       port: 8810,
       tailnetName: "mac.tail1234.ts.net",
       lan: "192.168.1.42",
-      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "openmausbot-aa.local"],
+      hosts: ["mac.tail1234.ts.net", "192.168.1.42", "relay-aa.local"],
       endpoints: [
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
         { url: "http://mac.tail1234.ts.net:8810", kind: "tailnet", priority: 100 },
         { url: "http://192.168.1.42:8810", kind: "lan", priority: 200 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://relay-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "tailscale");
 
@@ -331,27 +331,27 @@ describe("companionPairingLink", () => {
   it("uses an advertised Bonjour route when no LAN address is available", () => {
     const route = companionPairingRoute({
       port: 8810,
-      hosts: ["mac.tail1234.ts.net", "openmausbot-aa.local"],
-      discovery: { advertising: true, name: "openmausbot-aa.local" },
+      hosts: ["mac.tail1234.ts.net", "relay-aa.local"],
+      discovery: { advertising: true, name: "relay-aa.local" },
       endpoints: [
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://relay-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local");
 
-    expect(route?.address).toBe("openmausbot-aa.local");
-    expect(route?.hosts?.[0]).toBe("openmausbot-aa.local");
+    expect(route?.address).toBe("relay-aa.local");
+    expect(route?.hosts?.[0]).toBe("relay-aa.local");
     expect(route?.endpoints?.map((endpoint) => endpoint.kind)).toEqual(["bonjour", "hosted"]);
   });
 
   it("does not treat an inactive synthetic Bonjour name as a reachable local route", () => {
     expect(companionPairingRoute({
       port: 8810,
-      hosts: ["mac.tail1234.ts.net", "openmausbot-aa.local"],
-      discovery: { advertising: false, name: "openmausbot-aa.local" },
+      hosts: ["mac.tail1234.ts.net", "relay-aa.local"],
+      discovery: { advertising: false, name: "relay-aa.local" },
       endpoints: [
         { url: "https://device.openmausbot.com", kind: "hosted", priority: 0 },
-        { url: "http://openmausbot-aa.local:8810", kind: "bonjour", priority: 300 },
+        { url: "http://relay-aa.local:8810", kind: "bonjour", priority: 300 },
       ],
     }, "local")).toBeNull();
   });

@@ -59,7 +59,7 @@ export async function mountPreview(
     ...(logLevel ? { logLevel } : {}),
     server: { host: "127.0.0.1", port: 0, proxy: {
       "/api": { target: fixture.info.url },
-      "/.well-known/openmausbot/environment": { target: fixture.info.url },
+      "/.well-known/relay/environment": { target: fixture.info.url },
     } },
     plugins: [{
       name: "isolated-preview",

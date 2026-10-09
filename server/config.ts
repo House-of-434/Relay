@@ -1,4 +1,4 @@
-// Config + data dirs. One file, ~/.openmausbot/config.json, env fallbacks:
+// Config + data dirs. One file, ~/.relay/config.json, env fallbacks:
 //   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
@@ -343,7 +343,7 @@ const appConfigSchema = z.object({
   }).strict().optional(),
   threads: threadsConfigSchema.optional(),
   /** The authorization decision log (server/decision-log.ts): days of month
-   * files kept, at least; OMB_DECISION_RETENTION_DAYS wins when set. */
+   * files kept, at least; RELAY_DECISION_RETENTION_DAYS wins when set. */
   decisions: z.object({ retentionDays: z.number().int().min(1).max(3650).optional() }).strict().optional(),
   /** #1655 cloud-overflow settings. perSecondCostUsd is the operator's own
    * verified rate: with no price configured the feature stays inert rather
@@ -531,7 +531,7 @@ export function routinesInConversationEnabled(cfg: AppConfig): boolean {
  *
  * Deliberately NOT a Settings toggle: this is a maintainer-only escape hatch
  * for an unfinished feature, not a user preference. Someone who needs it
- * enables it by hand in `~/.openmausbot/config.json`
+ * enables it by hand in `~/.relay/config.json`
  * (`{"features": {"sharedComputers": true}}`) and restarts the server. */
 export function sharedComputersEnabled(cfg: AppConfig): boolean {
   return cfg.features?.sharedComputers === true;
@@ -548,7 +548,7 @@ export function claudeUserMcpEnabled(cfg: AppConfig): boolean {
 
 /** Opt-in generated titles for new bot threads: a cheap provider one-shot
  * names the row instead of the first-message snippet. Off until enabled by
- * hand in ~/.openmausbot/config.json
+ * hand in ~/.relay/config.json
  * (`{"features": {"llmThreadTitles": true}}`); a one-shot that fails or
  * answers anything unusable leaves the snippet untouched. */
 export function llmThreadTitlesEnabled(cfg: AppConfig): boolean {
@@ -561,7 +561,7 @@ export function llmThreadTitlesEnabled(cfg: AppConfig): boolean {
  * re-claims directly inside a reclaim window (default 10 minutes) while
  * yielding to a seat another turn already holds. Off unless an explicit
  * `true` — bake it as a maintainer-only flag first, exactly like
- * sharedComputers: enable by hand in ~/.openmausbot/config.json
+ * sharedComputers: enable by hand in ~/.relay/config.json
  * (`{"features": {"computerClaimIdleRelease": true}}`) and restart. */
 export function computerClaimIdleReleaseEnabled(cfg: AppConfig): boolean {
   return cfg.features?.computerClaimIdleRelease === true;
@@ -573,7 +573,7 @@ export function computerClaimIdleReleaseEnabled(cfg: AppConfig): boolean {
  * explicit per-conversation consent or a configured allowlist thread may
  * start the machine, which then hard-stops after an idle window. Off
  * unless an explicit `true`, like computerClaimIdleRelease: enable by
- * hand in ~/.openmausbot/config.json
+ * hand in ~/.relay/config.json
  * (`{"features": {"cloudOverflow": true}, "cloudOverflow": {"perSecondCostUsd": 0.0004}}`)
  * and restart. */
 export function cloudOverflowEnabled(cfg: AppConfig): boolean {
@@ -626,8 +626,8 @@ export function providerReloadKeys(patch: object): string[] {
   return Object.keys(patch).filter((key) => !FLEET_NEUTRAL_KEYS.has(key));
 }
 
-// OMB_DATA_DIR isolates test/soak rigs from the user's real fleet.
-export const DATA_DIR = process.env.OMB_DATA_DIR ?? join(homedir(), ".openmausbot");
+// RELAY_DATA_DIR isolates test/soak rigs from the user's real fleet.
+export const DATA_DIR = process.env.RELAY_DATA_DIR ?? join(homedir(), ".relay");
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
@@ -716,8 +716,8 @@ export function loadConfig(): AppConfig {
   // never the workspace key, so an operator's stray variable cannot flip
   // every Claude bot onto pay-as-you-go billing.
   cfg.anthropic = { ...cfg.anthropic };
-  if (process.env.OMB_ANTHROPIC_API_KEY !== undefined) cfg.anthropic.key = process.env.OMB_ANTHROPIC_API_KEY;
-  if (process.env.OMB_ANTHROPIC_API_URL !== undefined) cfg.anthropic.url = process.env.OMB_ANTHROPIC_API_URL;
+  if (process.env.RELAY_ANTHROPIC_API_KEY !== undefined) cfg.anthropic.key = process.env.RELAY_ANTHROPIC_API_KEY;
+  if (process.env.RELAY_ANTHROPIC_API_URL !== undefined) cfg.anthropic.url = process.env.RELAY_ANTHROPIC_API_URL;
   cfg.openaiCompat = { ...cfg.openaiCompat };
   if (process.env.OPENAI_COMPAT_API_KEY !== undefined) cfg.openaiCompat.key = process.env.OPENAI_COMPAT_API_KEY;
   if (process.env.OPENAI_COMPAT_URL !== undefined) cfg.openaiCompat.url = process.env.OPENAI_COMPAT_URL;
@@ -731,24 +731,24 @@ export function loadConfig(): AppConfig {
   cfg.opencodeGo = { ...cfg.opencodeGo };
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.tts = { ...cfg.tts };
-  if (process.env.OMB_TTS_KEY !== undefined) cfg.tts.key = process.env.OMB_TTS_KEY;
+  if (process.env.RELAY_TTS_KEY !== undefined) cfg.tts.key = process.env.RELAY_TTS_KEY;
   // A preset ElevenLabs voice (Cloud Pro sets one) is only a default: a voice or
   // another speech provider the person picked in Settings always wins.
-  const presetVoice = process.env.OMB_TTS_DEFAULT_VOICE?.trim();
+  const presetVoice = process.env.RELAY_TTS_DEFAULT_VOICE?.trim();
   if (presetVoice && !cfg.tts.voice?.trim() && (cfg.tts.provider ?? "elevenlabs") === "elevenlabs") cfg.tts.voice = presetVoice;
-  if (process.env.OMB_FISH_AUDIO_API_KEY !== undefined) cfg.tts.fishKey = process.env.OMB_FISH_AUDIO_API_KEY;
+  if (process.env.RELAY_FISH_AUDIO_API_KEY !== undefined) cfg.tts.fishKey = process.env.RELAY_FISH_AUDIO_API_KEY;
   cfg.decider = { ...cfg.decider };
-  if (process.env.OMB_JEV_API_KEY !== undefined) cfg.decider.key = process.env.OMB_JEV_API_KEY;
+  if (process.env.RELAY_JEV_API_KEY !== undefined) cfg.decider.key = process.env.RELAY_JEV_API_KEY;
   cfg.imageGen = { ...cfg.imageGen };
-  if (process.env.OMB_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.OMB_OPENAI_IMAGE_KEY;
-  if (process.env.OMB_CUSTOM_IMAGE_KEY !== undefined) cfg.imageGen.customApiKey = process.env.OMB_CUSTOM_IMAGE_KEY;
+  if (process.env.RELAY_OPENAI_IMAGE_KEY !== undefined) cfg.imageGen.key = process.env.RELAY_OPENAI_IMAGE_KEY;
+  if (process.env.RELAY_CUSTOM_IMAGE_KEY !== undefined) cfg.imageGen.customApiKey = process.env.RELAY_CUSTOM_IMAGE_KEY;
   // The sign-in allow-list: env is how a headless box or a container is
   // bootstrapped before anyone can reach Settings.
   const splitEmails = (value: string) => value.split(/[,\s]+/).map((entry) => entry.trim().toLowerCase()).filter(Boolean);
-  if (process.env.OMB_SIGNIN_EMAILS !== undefined || process.env.OMB_SIGNIN_MEMBER_EMAILS !== undefined) {
+  if (process.env.RELAY_SIGNIN_EMAILS !== undefined || process.env.RELAY_SIGNIN_MEMBER_EMAILS !== undefined) {
     cfg.signIn = { ...cfg.signIn };
-    if (process.env.OMB_SIGNIN_EMAILS !== undefined) cfg.signIn.admins = splitEmails(process.env.OMB_SIGNIN_EMAILS);
-    if (process.env.OMB_SIGNIN_MEMBER_EMAILS !== undefined) cfg.signIn.members = splitEmails(process.env.OMB_SIGNIN_MEMBER_EMAILS);
+    if (process.env.RELAY_SIGNIN_EMAILS !== undefined) cfg.signIn.admins = splitEmails(process.env.RELAY_SIGNIN_EMAILS);
+    if (process.env.RELAY_SIGNIN_MEMBER_EMAILS !== undefined) cfg.signIn.members = splitEmails(process.env.RELAY_SIGNIN_MEMBER_EMAILS);
   }
   return cfg;
 }
@@ -764,16 +764,16 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
   const secrets: Array<[value: string | undefined, name: string]> = [
     [patch.xai?.key, "XAI_API_KEY"],
     [patch.mistral?.key, "MISTRAL_API_KEY"],
-    [patch.anthropic?.key, "OMB_ANTHROPIC_API_KEY"],
+    [patch.anthropic?.key, "RELAY_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
-    [patch.tts?.key, "OMB_TTS_KEY"],
-    [patch.tts?.fishKey, "OMB_FISH_AUDIO_API_KEY"],
-    [patch.decider?.key, "OMB_JEV_API_KEY"],
-    [patch.imageGen?.key, "OMB_OPENAI_IMAGE_KEY"],
-    [patch.imageGen?.customApiKey, "OMB_CUSTOM_IMAGE_KEY"],
+    [patch.tts?.key, "RELAY_TTS_KEY"],
+    [patch.tts?.fishKey, "RELAY_FISH_AUDIO_API_KEY"],
+    [patch.decider?.key, "RELAY_JEV_API_KEY"],
+    [patch.imageGen?.key, "RELAY_OPENAI_IMAGE_KEY"],
+    [patch.imageGen?.customApiKey, "RELAY_CUSTOM_IMAGE_KEY"],
   ];
   for (const [value, name] of secrets) {
     if (value === undefined) continue;
@@ -784,7 +784,7 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
   // must follow the same set-when-truthy / delete-when-cleared rule as keys.
   const settings: Array<[value: string | undefined, name: string]> = [
     [patch.openaiCompat?.url, "OPENAI_COMPAT_URL"],
-    [patch.anthropic?.url, "OMB_ANTHROPIC_API_URL"],
+    [patch.anthropic?.url, "RELAY_ANTHROPIC_API_URL"],
     [patch.openaiCompat?.model, "OPENAI_COMPAT_MODEL"],
     [patch.openaiCompat?.provider, "OPENAI_COMPAT_PROVIDER"],
   ];
@@ -803,45 +803,45 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
 export const WORKSPACE_CREDENTIAL_ENV = [
   "XAI_API_KEY",
   "MISTRAL_API_KEY",
-  "OMB_ANTHROPIC_API_KEY",
-  "OMB_ANTHROPIC_API_URL",
-  "OMB_HOSTED_MODEL_TOKEN",
-  "OMB_HOSTED_MODELS",
+  "RELAY_ANTHROPIC_API_KEY",
+  "RELAY_ANTHROPIC_API_URL",
+  "RELAY_HOSTED_MODEL_TOKEN",
+  "RELAY_HOSTED_MODELS",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
-  "OMB_TTS_KEY",
-  "OMB_FISH_AUDIO_API_KEY",
-  "OMB_JEV_API_KEY",
-  "OMB_OPENAI_IMAGE_KEY",
-  "OMB_CUSTOM_IMAGE_KEY",
+  "RELAY_TTS_KEY",
+  "RELAY_FISH_AUDIO_API_KEY",
+  "RELAY_JEV_API_KEY",
+  "RELAY_OPENAI_IMAGE_KEY",
+  "RELAY_CUSTOM_IMAGE_KEY",
   "COMPOSIO_API_KEY",
-  "OMB_COMPOSIO_BROKER_TOKEN",
+  "RELAY_COMPOSIO_BROKER_TOKEN",
   // Cloud Pro's included Boat, voice and decision relay tokens
   // (included-services.ts), used only in-process by the Boat, voice and
   // decider modules.
-  "OMB_CLOUD_BOAT_TOKEN",
-  "OMB_CLOUD_VOICE_TOKEN",
-  "OMB_CLOUD_DECIDER_TOKEN",
+  "RELAY_CLOUD_BOAT_TOKEN",
+  "RELAY_CLOUD_VOICE_TOKEN",
+  "RELAY_CLOUD_DECIDER_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
   // exposing them to a shell-capable agent points straight at app-owned
   // state. The browser connection entry covers the file Electron still
   // exports; nothing here reads it anymore.
-  "OMB_BROWSER_CONNECTION",
-  "OMB_USER_DATA",
+  "RELAY_BROWSER_CONNECTION",
+  "RELAY_USER_DATA",
 ] as const;
 
 /** Secrets of whoever operates this server, not of the workspace: the license
  * key, a fleet container's installation credential, and everything a hosting
- * control plane injects under `OMB_CLOUD_` (the readiness token, the bootstrap
+ * control plane injects under `RELAY_CLOUD_` (the readiness token, the bootstrap
  * document and its gateway token). Only this process reads them. The prefix
- * ends in an underscore on purpose: `OMB_CLOUDFLARED_PATH` is not one of them.
+ * ends in an underscore on purpose: `RELAY_CLOUDFLARED_PATH` is not one of them.
  * What an engine is meant to receive arrives under another name through its
  * instance environment (the hosted model token as ANTHROPIC_API_KEY or
- * OPENMAUSBOT_COMPANY_API_KEY), so nothing here is ever an engine's input. */
-export const CONTROL_PLANE_ENV = ["OMB_LICENSE_KEY", "OMB_INSTALLATION_CREDENTIAL"] as const;
-export const CONTROL_PLANE_ENV_PREFIX = "OMB_CLOUD_";
+ * RELAY_COMPANY_API_KEY), so nothing here is ever an engine's input. */
+export const CONTROL_PLANE_ENV = ["RELAY_LICENSE_KEY", "RELAY_INSTALLATION_CREDENTIAL"] as const;
+export const CONTROL_PLANE_ENV_PREFIX = "RELAY_CLOUD_";
 
 /** Drop every control-plane secret from a child-process env (in place). No
  * driver allowlist re-admits these. Names compare case-insensitively because
@@ -890,7 +890,7 @@ export function onConfigSaved(listener: (before: JsonObject, after: JsonObject) 
   return () => { configSaveListeners.delete(listener); };
 }
 
-/** Merge a partial config into ~/.openmausbot/config.json (secrets never
+/** Merge a partial config into ~/.relay/config.json (secrets never
  * echoed back — callers report configured-or-not booleans only). */
 export function saveConfig(
   patch: Partial<Omit<AppConfig, "threads" | "newBots">> & {

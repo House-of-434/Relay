@@ -9,7 +9,7 @@ import { renameWithRetry, writeFileAtomic } from "./atomic.ts";
 describe("writeFileAtomic", () => {
   let dir: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "omb-atomic-"));
+    dir = mkdtempSync(join(tmpdir(), "relay-atomic-"));
   });
   afterEach(() => {
     rmSync(dir, { recursive: true, force: true });

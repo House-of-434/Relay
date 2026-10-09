@@ -281,7 +281,7 @@ beforeAll(async () => {
         session_id: "trs_test",
         mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_test/mcp" },
         config: {
-          user_id: "openmausbot_existing",
+          user_id: "relay_existing",
           multi_account: {
             enable: true,
             max_accounts_per_toolkit: 5,
@@ -300,7 +300,7 @@ beforeAll(async () => {
       return res.end(JSON.stringify({
         session_id: "trs_legacy",
         mcp: { type: "http", url: "https://app.composio.dev/tool_router/v3/trs_legacy/mcp" },
-        config: { user_id: "openmausbot_legacy" },
+        config: { user_id: "relay_legacy" },
       }));
     }
     if (req.method === "GET" && url.pathname.endsWith("/toolkits")) {
@@ -375,36 +375,36 @@ beforeAll(async () => {
   await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(api.address() as { port: number }).port}`;
   base = `${origin}/api/v3.1`;
-  process.env.OMB_COMPOSIO_API = base;
-  process.env.OMB_COMPOSIO_TOOLKITS_API = `${origin}/api/v3`;
+  process.env.RELAY_COMPOSIO_API = base;
+  process.env.RELAY_COMPOSIO_TOOLKITS_API = `${origin}/api/v3`;
 });
 
 afterAll(async () => {
   setManagedBrokerAccess(null);
-  delete process.env.OMB_COMPOSIO_API;
-  delete process.env.OMB_COMPOSIO_TOOLKITS_API;
+  delete process.env.RELAY_COMPOSIO_API;
+  delete process.env.RELAY_COMPOSIO_TOOLKITS_API;
   await new Promise<void>((resolve) => api.close(() => resolve()));
 });
 
 describe.sequential("Composio Sessions", () => {
   it("rejects broker URL components and invalid tokens from the environment", () => {
-    process.env.OMB_COMPOSIO_BROKER_TOKEN = "a".repeat(64);
+    process.env.RELAY_COMPOSIO_BROKER_TOKEN = "a".repeat(64);
     try {
       for (const url of [
         "https://user:secret@broker.example/root",
         "https://broker.example/root?redirect=evil",
         "https://broker.example/root#fragment",
       ]) {
-        process.env.OMB_COMPOSIO_BROKER_URL = url;
+        process.env.RELAY_COMPOSIO_BROKER_URL = url;
         expect(() => connectionMode({})).toThrow(/must not include/);
       }
-      process.env.OMB_COMPOSIO_BROKER_URL = "http://[::1]:3210/root/";
+      process.env.RELAY_COMPOSIO_BROKER_URL = "http://[::1]:3210/root/";
       expect(connectionMode({})).toBe("managed");
-      process.env.OMB_COMPOSIO_BROKER_TOKEN = "short";
+      process.env.RELAY_COMPOSIO_BROKER_TOKEN = "short";
       expect(() => connectionMode({})).toThrow(/token is invalid/);
     } finally {
-      delete process.env.OMB_COMPOSIO_BROKER_URL;
-      delete process.env.OMB_COMPOSIO_BROKER_TOKEN;
+      delete process.env.RELAY_COMPOSIO_BROKER_URL;
+      delete process.env.RELAY_COMPOSIO_BROKER_TOKEN;
     }
   });
   it("accepts a private desktop credential update and rejects unsafe broker URLs", () => {
@@ -426,7 +426,7 @@ describe.sequential("Composio Sessions", () => {
     setManagedBrokerAccess(null);
   });
   it("ignores credential sync without access and clears only on explicit null", () => {
-    const messageType = "openmausbot:managed-composio";
+    const messageType = "relay:managed-composio";
     setManagedBrokerAccess({ url: "http://127.0.0.1:3210/", token: "a".repeat(64) });
 
     expect(applyManagedBrokerMessage({ type: messageType })).toBe(false);
@@ -565,7 +565,7 @@ describe.sequential("Composio Sessions", () => {
       expect(calls.findLast((call) => call.path === "/broker/v1/mcp" && call.body?.id === 105)?.transportSessionId)
         .toBe("mcp_broker");
       const project = await relayMcp(
-        { composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" } },
+        { composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" } },
         { jsonrpc: "2.0", id: 102, method: "tools/list" },
         managed.transportSessionId,
       );
@@ -592,7 +592,7 @@ describe.sequential("Composio Sessions", () => {
     });
     try {
       const project = await relayMcp(
-        { composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" } },
+        { composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" } },
         { jsonrpc: "2.0", id: 103, method: "tools/list" },
       );
       expect(project.transportSessionId).toBe("mcp_project_before_managed");
@@ -610,7 +610,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("uses a user-owned project for every connector operation even when the managed broker is available", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     setManagedBrokerAccess({ url: `${origin}/broker`, token: "a".repeat(64) });
     const before = calls.length;
@@ -660,7 +660,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("accepts the legacy x alias but authorizes Composio's twitter toolkit", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     sessionAuthConfigs = { twitter: "ac_twitter" };
     setManagedBrokerAccess({ url: `${origin}/broker`, token: "a".repeat(64) });
@@ -718,14 +718,14 @@ describe.sequential("Composio Sessions", () => {
   });
 
   it("creates one stable per-installation session and reuses it", async () => {
-    const created = await prepareProjectSession("ak_test", { userId: "openmausbot_existing" });
+    const created = await prepareProjectSession("ak_test", { userId: "relay_existing" });
     expect(created).toEqual({
       apiKey: "ak_test",
-      userId: "openmausbot_existing",
+      userId: "relay_existing",
       sessionId: "trs_test",
     });
     expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toEqual({
-      user_id: "openmausbot_existing",
+      user_id: "relay_existing",
       manage_connections: {
         enable: true,
         enable_wait_for_connections: true,
@@ -741,7 +741,7 @@ describe.sequential("Composio Sessions", () => {
     const reused = await prepareProjectSession("ak_test", created);
     expect(reused).toEqual({
       apiKey: "ak_test",
-      userId: "openmausbot_existing",
+      userId: "relay_existing",
       sessionId: "trs_test",
     });
   });
@@ -754,11 +754,11 @@ describe.sequential("Composio Sessions", () => {
     });
     expect(upgraded).toEqual({
       apiKey: "ak_test",
-      userId: "openmausbot_legacy",
+      userId: "relay_legacy",
       sessionId: "trs_test",
     });
     expect(calls.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toMatchObject({
-      user_id: "openmausbot_legacy",
+      user_id: "relay_legacy",
       multi_account: {
         enable: true,
         max_accounts_per_toolkit: 5,
@@ -779,12 +779,12 @@ describe.sequential("Composio Sessions", () => {
     ];
     sessionAuthConfigs = {};
     try {
-      const current = { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" };
+      const current = { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" };
       const before = calls.length;
       await expect(prepareProjectSession("ak_test", current)).resolves.toEqual({ ...current });
       const creates = calls.slice(before).filter((call) => call.method === "POST" && call.path.endsWith("/session"));
       expect(creates).toHaveLength(1);
-      expect(creates[0].body).toMatchObject({ user_id: "openmausbot_existing", auth_configs: { twitter: "ac_twitter" } });
+      expect(creates[0].body).toMatchObject({ user_id: "relay_existing", auth_configs: { twitter: "ac_twitter" } });
       // the rebuilt Session now covers the configs, so the next check reuses it
       const after = calls.length;
       await prepareProjectSession("ak_test", current);
@@ -810,11 +810,11 @@ describe.sequential("Composio Sessions", () => {
       // once against the stale Session, once against the rebuilt one
       expect(since.filter((call) => call.method === "POST" && call.path.endsWith("/link"))).toHaveLength(2);
       expect(since.filter((call) => call.method === "POST" && call.path.endsWith("/session")).at(-1)?.body).toMatchObject({
-        user_id: "openmausbot_existing",
+        user_id: "relay_existing",
         auth_configs: { twitter: "ac_twitter" },
       });
       // the same Composio user keeps every existing connection
-      expect(cfg.composio).toMatchObject({ userId: "openmausbot_existing", sessionId: "trs_test" });
+      expect(cfg.composio).toMatchObject({ userId: "relay_existing", sessionId: "trs_test" });
     } finally {
       customAuthConfigs = [];
       sessionAuthConfigs = {};
@@ -823,12 +823,12 @@ describe.sequential("Composio Sessions", () => {
 
   it("says what to create when the project has no auth config for the toolkit", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     const before = calls.length;
     await expect(authorizeService(cfg, "twitter")).rejects.toThrow(/create an auth config for "twitter"/i);
     expect(calls.slice(before).some((call) => call.method === "POST" && call.path.endsWith("/session"))).toBe(false);
-    expect(cfg.composio).toMatchObject({ userId: "openmausbot_existing", sessionId: "trs_test" });
+    expect(cfg.composio).toMatchObject({ userId: "relay_existing", sessionId: "trs_test" });
     // and a failure that is not about auth configs is passed through untouched
     await expect(authorizeService(cfg, "github", "personal-three")).resolves.toEqual({
       url: "https://connect.composio.dev/link/github",
@@ -837,7 +837,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("does not offer Twitter through the official managed broker without an owned OAuth app", async () => {
     setManagedBrokerAccess({
-      url: "https://broker.openmausbot.test",
+      url: "https://broker.relay.test",
       token: "a".repeat(64),
     });
     try {
@@ -856,7 +856,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("mounts the Session MCP endpoint with the project key header", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     const integration = await mcpIntegration(cfg, {
       harnessUrl: "http://127.0.0.1:8799",
@@ -868,19 +868,19 @@ describe.sequential("Composio Sessions", () => {
       command: process.execPath,
       args: [expect.stringContaining("connector-proxy")],
       env: {
-        OMB_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
-        OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer secret" }),
-        OMB_HARNESS_URL: "http://127.0.0.1:8799",
-        OMB_CONNECTOR_TOKEN: "secret",
-        OMB_BOT_ID: "bot-1",
-        OMB_THREAD_ID: "thread-1",
+        RELAY_CONNECTOR_UPSTREAM_URL: "http://127.0.0.1:8799/api/internal/connectors/mcp",
+        RELAY_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer secret" }),
+        RELAY_HARNESS_URL: "http://127.0.0.1:8799",
+        RELAY_CONNECTOR_TOKEN: "secret",
+        RELAY_BOT_ID: "bot-1",
+        RELAY_THREAD_ID: "thread-1",
       },
     });
   });
 
   it("passes a bot's connector grants to the bridge as an env allowlist", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     const grants: Record<string, ConnectorToolGrant> = { gmail: { tools: ["GMAIL_SEND_EMAIL"] }, slack: { tools: "*" } };
     const integration = await mcpIntegration(cfg, {
@@ -895,7 +895,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("omits the allowlist for legacy bots and for oversized grants, warning once", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
@@ -960,7 +960,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("validates grant patches against connected services and the catalog", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     // github and gmail are connected (session toolkits page 1); slack is not.
     // The ak_test catalog serves x and github.
@@ -1016,7 +1016,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("does not reject grants against a catalog walk that never finished", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_catalog_http_no_total", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_catalog_http_no_total", userId: "relay_existing", sessionId: "trs_test" },
     };
     // github is connected, but the catalog lost its page mid-walk with no
     // reported totals: the partial catalog cannot vouch for what it never
@@ -1026,7 +1026,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("reports connection state, creates auth links and revokes disconnects", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     await expect(connectionStatus(cfg, ["github", "gmail", "slack", "notion", "linear"])).resolves.toEqual({
       github: {
@@ -1078,7 +1078,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("enumerates connected services independently of catalog position", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     const callCount = calls.length;
 
@@ -1122,7 +1122,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("falls back to complete Session toolkit state without connected-account read permission", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     connectedAccountsUnavailable = true;
     try {
@@ -1147,7 +1147,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("falls back to session toolkit state when connected-account items is malformed", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     malformedConnectedAccounts = true;
     try {
@@ -1164,7 +1164,7 @@ describe.sequential("Composio Sessions", () => {
 
   it("uses the provided alias for the first account authorization", async () => {
     const cfg: AppConfig = {
-      composio: { apiKey: "ak_test", userId: "openmausbot_existing", sessionId: "trs_test" },
+      composio: { apiKey: "ak_test", userId: "relay_existing", sessionId: "trs_test" },
     };
     emptyConnectedAccounts = true;
     try {

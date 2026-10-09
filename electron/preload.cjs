@@ -4,7 +4,7 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 
 // Sandboxed preloads receive Electron's restricted `require`, which cannot
 // load sibling CommonJS files. Keep this tiny predicate inline here; main's
-const desktopRemoteClient = process.argv.includes("--openmausbot-remote-client");
+const desktopRemoteClient = process.argv.includes("--relay-remote-client");
 
 let pendingPackageInstallUrl = null;
 const packageInstallListeners = new Set();
@@ -15,7 +15,7 @@ ipcRenderer.on("package:install", (_event, url) => {
 });
 
 // Main can finish loading the document before React subscribes. Retain only
-// the fixed actions (Organisation, the openmausbot://cloud link, and plain
+// the fixed actions (Organisation, the relay://cloud link, and plain
 // Settings → OMB Cloud from the lending menu-bar item), never a destination
 // supplied by a renderer.
 const FIXED_SETTINGS_ACTIONS = new Set(["organization", "cloud", "cloud-settings"]);
@@ -33,7 +33,7 @@ ipcRenderer.on("app:open-settings", (_event, section) => {
 // UI. A remote server's page (Server menu) gets the safe subset: nothing that
 // captures this screen, touches this computer's files or logins, or runs
 // helpers here. Main enforces the same rule on the sensitive channels.
-const localOrigin = process.argv.find((arg) => arg.startsWith("--omb-local-origin="))?.slice("--omb-local-origin=".length) ?? null;
+const localOrigin = process.argv.find((arg) => arg.startsWith("--relay-local-origin="))?.slice("--relay-local-origin=".length) ?? null;
 const isLocalPage = !localOrigin || location.origin === localOrigin;
 // cloudMove and cloudLending: main answers them on a remote page only when
 // that page is the person's own verified Cloud in this window (Move to
@@ -44,12 +44,12 @@ const REMOTE_SAFE = new Set(["platform", "getCapabilities", "onCapabilitiesChang
 // parity with shared/workspace-backup-client.ts (covered by the preload test).
 // Only main can request a fresh snapshot; there is no renderer-callable method.
 const COMPANY_BACKUP_CLIENT_KEYS = [
-  "omb-drafts", "omb-draft-attachments", "omb-draft-send-ids", "omb-draft-channel-modes",
-  "omb-skin", "omb-show-threads", "openmausbot.sidebarDensity",
-  "openmausbot.sidebarCollapsedSections.v1", "openmausbot.sidebarSectionOrder.v1",
-  "omb-analytics-opt-out", "openmausbot.remote-voice.v1",
+  "relay-drafts", "relay-draft-attachments", "relay-draft-send-ids", "relay-draft-channel-modes",
+  "relay-skin", "relay-show-threads", "relay.sidebarDensity",
+  "relay.sidebarCollapsedSections.v1", "relay.sidebarSectionOrder.v1",
+  "relay-analytics-opt-out", "relay.remote-voice.v1",
 ];
-if (isLocalPage && !desktopRemoteClient && process.argv.includes("--omb-company-desktop=1")) {
+if (isLocalPage && !desktopRemoteClient && process.argv.includes("--relay-company-desktop=1")) {
   ipcRenderer.on("company-backups:collect-client-state", (_event, request) => {
     if (!request || typeof request.requestId !== "string" || !/^[a-f0-9-]{36}$/.test(request.requestId)) return;
     try {
@@ -83,7 +83,7 @@ const bridge = {
     ipcRenderer.on("desktop:capabilities-changed", handler);
     return () => ipcRenderer.removeListener("desktop:capabilities-changed", handler);
   },
-  /** Pair this desktop app to another OpenMausBot host. The bearer remains in
+  /** Pair this desktop app to another Relay host. The bearer remains in
    * the main process and is never returned over this bridge. */
   remoteClient: {
     active: desktopRemoteClient,
@@ -208,7 +208,7 @@ const bridge = {
       return () => ipcRenderer.removeListener("window:maximized-changed", handler);
     },
   },
-  /** A reviewed BotMRR package opened through openmausbot://install. */
+  /** A reviewed BotMRR package opened through relay://install. */
   onPackageInstall: (cb) => {
     packageInstallListeners.add(cb);
     if (pendingPackageInstallUrl) cb(pendingPackageInstallUrl);
@@ -244,7 +244,7 @@ const bridge = {
   /** Writes the redacted diagnostics report to a user-chosen file; resolves
    * the path, or null when the save dialog was cancelled. */
   exportDiagnostics: () => ipcRenderer.invoke("desktop:export-diagnostics"),
-  /** Ask where to save a bot-created file (inside ~/.openmausbot), copy it
+  /** Ask where to save a bot-created file (inside ~/.relay), copy it
    * there and reveal it. Returns the chosen path, or null if the user
    * cancelled the dialog. The chat bubble shows the
    * rejection text verbatim, so strip the "Error invoking remote method"
@@ -290,7 +290,7 @@ const bridge = {
       return () => ipcRenderer.removeListener("workspaces:open-settings", handler);
     },
   },
-  cloudAccount: process.argv.includes("--omb-company-desktop=1") ? {
+  cloudAccount: process.argv.includes("--relay-company-desktop=1") ? {
     state: () => ipcRenderer.invoke("cloud-account:state"),
     begin: () => ipcRenderer.invoke("cloud-account:begin"),
     reopen: () => ipcRenderer.invoke("cloud-account:reopen"),
@@ -315,7 +315,7 @@ const bridge = {
   /** Move to Cloud: this computer's workspace to the person's Cloud home.
    * No arguments reach main. A remote page may start a move only from the
    * person's own click. */
-  cloudMove: process.argv.includes("--omb-company-desktop=1") ? {
+  cloudMove: process.argv.includes("--relay-company-desktop=1") ? {
     state: () => ipcRenderer.invoke("cloud-move:state"),
     start: () => isLocalPage || navigator.userActivation?.isActive === true
       ? ipcRenderer.invoke("cloud-move:start") : Promise.reject(new Error("Choose Move to start moving.")),
@@ -331,10 +331,10 @@ const bridge = {
   /** The Cloud's setup checklist: "Let your Cloud use this Mac" opens the
    * lending switch in this app's own Settings → OMB Cloud. No arguments; it
    * shows the switch and changes nothing. */
-  cloudLending: process.argv.includes("--omb-company-desktop=1") ? {
+  cloudLending: process.argv.includes("--relay-company-desktop=1") ? {
     open: () => ipcRenderer.invoke("cloud-lending:open"),
   } : undefined,
-  organization: process.argv.includes("--omb-company-desktop=1") ? {
+  organization: process.argv.includes("--relay-company-desktop=1") ? {
     settingsOpened: () => ipcRenderer.invoke("organization:settings-opened"),
     state: () => ipcRenderer.invoke("organization:state"),
     begin: input => ipcRenderer.invoke("organization:begin", input),
@@ -348,7 +348,7 @@ const bridge = {
       return () => ipcRenderer.removeListener("organization:state-changed", handler);
     },
   } : undefined,
-  companyBackups: process.argv.includes("--omb-company-desktop=1") ? {
+  companyBackups: process.argv.includes("--relay-company-desktop=1") ? {
     state: () => ipcRenderer.invoke("company-backups:state"),
     list: () => ipcRenderer.invoke("company-backups:list"),
     create: input => ipcRenderer.invoke("company-backups:create", input),

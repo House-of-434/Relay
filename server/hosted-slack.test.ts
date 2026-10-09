@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { hostedSlackManagement } from "./hosted-slack.ts";
 
 const hosted = {
-  OMB_ADMIN_URL: "https://admin.example.test",
-  OMB_PUBLIC_URL: "https://acme.example.test",
-  OMB_ADMIN_WORKSPACE: "acme",
-  OMB_ADMIN_MEMBERSHIP: "portal",
+  RELAY_ADMIN_URL: "https://admin.example.test",
+  RELAY_PUBLIC_URL: "https://acme.example.test",
+  RELAY_ADMIN_WORKSPACE: "acme",
+  RELAY_ADMIN_MEMBERSHIP: "portal",
 };
 
 describe("hosted Slack management link", () => {
@@ -25,13 +25,13 @@ describe("hosted Slack management link", () => {
   it("requires a ready runtime with complete portal-managed hosted configuration", () => {
     expect(hostedSlackManagement("bot_123", false, hosted)).toEqual({ available: false });
     for (const env of [
-      {}, { ...hosted, OMB_ADMIN_MEMBERSHIP: undefined },
-      { ...hosted, OMB_ADMIN_MEMBERSHIP: "local" },
-      { ...hosted, OMB_ADMIN_URL: "http://admin.example.test" },
-      { ...hosted, OMB_ADMIN_URL: "https://admin.example.test/another" },
-      { ...hosted, OMB_ADMIN_URL: "https://user:secret@admin.example.test" },
-      { ...hosted, OMB_PUBLIC_URL: undefined },
-      { ...hosted, OMB_ADMIN_WORKSPACE: "../another" },
+      {}, { ...hosted, RELAY_ADMIN_MEMBERSHIP: undefined },
+      { ...hosted, RELAY_ADMIN_MEMBERSHIP: "local" },
+      { ...hosted, RELAY_ADMIN_URL: "http://admin.example.test" },
+      { ...hosted, RELAY_ADMIN_URL: "https://admin.example.test/another" },
+      { ...hosted, RELAY_ADMIN_URL: "https://user:secret@admin.example.test" },
+      { ...hosted, RELAY_PUBLIC_URL: undefined },
+      { ...hosted, RELAY_ADMIN_WORKSPACE: "../another" },
     ]) expect(hostedSlackManagement("bot_123", true, env)).toEqual({ available: false });
   });
 });

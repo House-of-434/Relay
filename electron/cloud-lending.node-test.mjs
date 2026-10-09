@@ -13,7 +13,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { cloudLendingVerdict, createComputerSharing } from "./computer-sharing.mjs";
 import { createLendingIndicator } from "./lending-indicator.mjs";
 
-const ORIGIN = "https://omb-u-fixture.fly.dev";
+const ORIGIN = "https://relay-u-fixture.fly.dev";
 const binding = { accountId: "acct_1", origin: ORIGIN };
 const env = { id: "my-cloud", name: "My Cloud", origin: ORIGIN };
 
@@ -28,14 +28,14 @@ test("the Cloud verdict: same account and machine run, anything else ends or pau
   assert.deepEqual(cloudLendingVerdict(binding, null, env), { pause: "unverified" });
   assert.deepEqual(cloudLendingVerdict(binding, { status: "unavailable", accountId: null, origin: null }, env), { pause: "unverified" });
   assert.deepEqual(cloudLendingVerdict(binding, { ...connected, accountId: "acct_2" }, env), { stop: "account-changed" });
-  assert.deepEqual(cloudLendingVerdict(binding, { ...connected, origin: "https://omb-u-other.fly.dev" }, env), { stop: "machine-changed" });
+  assert.deepEqual(cloudLendingVerdict(binding, { ...connected, origin: "https://relay-u-other.fly.dev" }, env), { stop: "machine-changed" });
   assert.deepEqual(cloudLendingVerdict(binding, connected, { origin: "https://evil.example" }), { stop: "machine-changed" });
   assert.deepEqual(cloudLendingVerdict(binding, { status: "reauth-required", accountId: "acct_1", origin: null }, env), { pause: "reauth-required" });
   assert.deepEqual(cloudLendingVerdict(undefined, connected, env), { stop: "signed-out" });
 });
 
 async function scratch(t) {
-  const dir = await realpath(await mkdtemp(path.join(tmpdir(), "omb-cloud-lending-")));
+  const dir = await realpath(await mkdtemp(path.join(tmpdir(), "relay-cloud-lending-")));
   t.after(() => rm(dir, { recursive: true, force: true }));
   return dir;
 }
@@ -53,7 +53,7 @@ function cloudHome({ cloudHome = true, scopes = ["admin", "client"] } = {}) {
   state.fetch = async (url, init) => {
     const route = new URL(url).pathname;
     if (route === "/api/auth/session") return state.paired ? json({ kind: "session", id: state.sessionId, scopes, ...(cloudHome ? { cloudHome: true } : {}) }) : json({ error: "unauthorized" }, 401);
-    if (route === "/.well-known/openmausbot/environment") return json({ environmentId: state.environmentId, capabilities: { sharedComputers: true } });
+    if (route === "/.well-known/relay/environment") return json({ environmentId: state.environmentId, capabilities: { sharedComputers: true } });
     const body = init?.body ? JSON.parse(init.body) : {};
     if (route === "/api/shared-computers/connect") { state.connects.push(body); return json({ ok: true }); }
     if (route.endsWith("/poll")) {
@@ -139,7 +139,7 @@ test("lends to the person's own Cloud with the maintainer flag off; never a term
 
 test("refuses to lend unless the Cloud sign-in is verified for this exact machine, and never to a server that is not a Cloud home", async t => {
   const folder = async dir => [{ id: randomUUID(), path: dir, write: false }];
-  for (const cloud of [null, { status: "signed-out", accountId: null, origin: null }, { status: "unavailable", accountId: "acct_1", origin: null }, { status: "connected", accountId: "acct_1", origin: "https://omb-u-other.fly.dev" }]) {
+  for (const cloud of [null, { status: "signed-out", accountId: null, origin: null }, { status: "unavailable", accountId: "acct_1", origin: null }, { status: "connected", accountId: "acct_1", origin: "https://relay-u-other.fly.dev" }]) {
     const { folderPath, sharing, home } = await lendingFixture(t, { cloud });
     await assert.rejects(sharing.saveCloud(env, { folders: await folder(folderPath), screen: false }), /Connect to your Cloud first/);
     assert.equal(home.connects.length, 0);
@@ -218,7 +218,7 @@ test("another Cloud account or another machine ends lending; a sign-in that need
     const { folderPath, home, sharing, setCloud } = await lendingFixture(t);
     await sharing.saveCloud(env, { folders: [{ id: randomUUID(), path: folderPath, write: false }], screen: false });
     await connected(sharing, 1, home);
-    setCloud({ status: "connected", accountId: "acct_1", origin: "https://omb-u-new.fly.dev" });
+    setCloud({ status: "connected", accountId: "acct_1", origin: "https://relay-u-new.fly.dev" });
     sharing.cloudChanged();
     assert.deepEqual([sharing.cloudState(env).enabled, sharing.cloudState(env).problem], [false, "machine-changed"]);
   }

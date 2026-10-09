@@ -24,8 +24,8 @@ function fixture({ activeId = "old", remoteAccess = null, restartIntent = false,
 }
 
 test("the organisation protocol is a fixed action without URL routing or credentials", () => {
-  assert.equal(isOrganizationDeepLink("openmausbot://organization"), true);
-  for (const value of [null, {}, "", "openmausbot://organization/", "openmausbot://organization?", "openmausbot://organization#", "openmausbot://organization?url=https://old.example", "openmausbot://organization#token=secret", "openmausbot://organization/other", "openmausbot://user@organization", "openmausbot://organization:443", "openmausbot://organization.evil", "https://organization", " openmausbot://organization", "openmausbot://%6frganization"]) {
+  assert.equal(isOrganizationDeepLink("relay://organization"), true);
+  for (const value of [null, {}, "", "relay://organization/", "relay://organization?", "relay://organization#", "relay://organization?url=https://old.example", "relay://organization#token=secret", "relay://organization/other", "relay://user@organization", "relay://organization:443", "relay://organization.evil", "https://organization", " relay://organization", "relay://%6frganization"]) {
     assert.equal(isOrganizationDeepLink(value), false);
   }
 });
@@ -37,8 +37,8 @@ test("local entry opens Settings without enrollment or persistence", async () =>
 });
 
 test("consuming a launch action prevents it replaying on a later restart without changing other arguments", () => {
-  const original = ["/Applications/OpenMausBot", "--profile=fixture", "openmausbot://organization?ignored", "openmausbot://install/example"];
-  const argv = [...original, "openmausbot://organization", "openmausbot://organization"];
+  const original = ["/Applications/Relay", "--profile=fixture", "relay://organization?ignored", "relay://install/example"];
+  const argv = [...original, "relay://organization", "relay://organization"];
   assert.equal(takeOrganizationDeepLink(argv), true);
   assert.deepEqual(argv, original);
   assert.equal(takeOrganizationDeepLink(argv), false, "the action is consumed exactly once");
@@ -48,14 +48,14 @@ test("consuming a launch action prevents it replaying on a later restart without
 test("the actual companion relaunch passes consumed arguments and requests normal shutdown", () => {
   const main = readFileSync(new URL("./main.mjs", import.meta.url), "utf8");
   const source = main.slice(main.indexOf("function relaunchAfterDesktopRemoteChange()"), main.indexOf('ipcMain.handle("desktop-remote:state"'));
-  const argv = ["/fixture/OpenMausBot", "--fixture", "openmausbot://organization", "openmausbot://organization?ignored"];
+  const argv = ["/fixture/Relay", "--fixture", "relay://organization", "relay://organization?ignored"];
   takeOrganizationDeepLink(argv);
   const calls = [];
   runInNewContext(`${source}\nrelaunchAfterDesktopRemoteChange();`, {
     process: { argv }, setTimeout: callback => { callback(); return {}; },
     app: { relaunch: options => calls.push(options.args), quit: () => calls.push("quit") },
   });
-  assert.deepEqual(calls, [["--fixture", "openmausbot://organization?ignored"], "quit"]);
+  assert.deepEqual(calls, [["--fixture", "relay://organization?ignored"], "quit"]);
 });
 
 test("the shipped updater adapter explicitly omits only the fixed action and its reproducible patch fails closed", () => {
@@ -65,11 +65,11 @@ test("the shipped updater adapter explicitly omits only the fixed action and its
   const bundle = readFileSync(new URL("./vendor/electron-updater.cjs", import.meta.url), "utf8").replace(/\r\n/g, "\n");
   assert.ok(bundle.includes(patched));
   const calls = [];
-  const argv = ["/fixture/OpenMausBot", "--fixture", "openmausbot://organization", "openmausbot://organization?ignored"];
+  const argv = ["/fixture/Relay", "--fixture", "relay://organization", "relay://organization?ignored"];
   runInNewContext(`({ app, ${patched} }).relaunch();`, {
     process: { argv }, app: { relaunch: options => calls.push(options.args) },
   });
-  assert.deepEqual(calls, [["--fixture", "openmausbot://organization?ignored"]]);
+  assert.deepEqual(calls, [["--fixture", "relay://organization?ignored"]]);
   for (const changed of ["", `${before}\n${before}`, patched]) {
     assert.throws(() => patchOrganizationUpdater(changed), /to patch, found/);
   }

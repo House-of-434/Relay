@@ -270,15 +270,15 @@ test("utility replies cannot be forged by another child or reused across request
   const relay = createManagedDesktopRelay(); let message;
   const proc = { postMessage: value => { message = value; } }, foreign = {};
   let completed = false; const operation = relay.send(proc, null).then(() => { completed = true; });
-  relay.receive(foreign, { type: "openmausbot:managed-desktop-result", requestId: message.requestId, ok: true });
+  relay.receive(foreign, { type: "relay:managed-desktop-result", requestId: message.requestId, ok: true });
   await settle(); assert.equal(completed, false);
-  relay.receive(proc, { type: "openmausbot:managed-desktop-result", requestId: message.requestId, ok: true });
+  relay.receive(proc, { type: "relay:managed-desktop-result", requestId: message.requestId, ok: true });
   await operation; assert.equal(completed, true);
   const pending = relay.send(proc, { fixture: true }); relay.rejectProcess(proc);
   await assert.rejects(pending, /could not be connected/);
 });
 test("secure record is encrypted, atomic, bounded and does not follow a symlink on read", async t => {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "omb-managed-store-")); t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "relay-managed-store-")); t.after(() => fs.rm(root, { recursive: true, force: true }));
   const key = randomBytes(32); let unlocked = true;
   const encryption = { available: async () => unlocked, encrypt: async text => {
     const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", key, iv);
@@ -378,7 +378,7 @@ test("against an Admin without renewal or policies it behaves as before: no rene
 test("a lapsed Admin licence is not revocation: no sign-in loop, Company models unavailable, recovers by itself", async t => {
   let lapsed = false;
   const f = fixture(t, { saved: grant(), handler: (url, options) => lapsed && options.method !== "DELETE"
-    ? Response.json({ code: "admin_license_expired", error: "Your organization's OpenMaus Admin license has expired." }, { status: 503 }) : null });
+    ? Response.json({ code: "admin_license_expired", error: "Your organization's Relay Admin license has expired." }, { status: 503 }) : null });
   await f.client.start(); lapsed = true;
   await f.client.refresh();
   assert.equal(f.client.state().status, "license-expired"); assert.equal(f.client.state().message, undefined);

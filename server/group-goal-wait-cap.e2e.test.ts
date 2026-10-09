@@ -26,7 +26,7 @@ let home = "";
 let base = "";
 let stderr = "";
 
-const envelope = (payload: Record<string, string>) => `<openmaus-goal>${JSON.stringify(payload)}</openmaus-goal>`;
+const envelope = (payload: Record<string, string>) => `<relay-goal>${JSON.stringify(payload)}</relay-goal>`;
 
 // turn 1: assign the worker that never frees up; turn 2 (after the harness
 // note): reassign to the helper; turn 3: complete
@@ -53,8 +53,8 @@ const fixture = (displayName: string, environment: Record<string, string>) => ({
 });
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-goal-wait-cap-"));
-  const data = join(home, ".openmausbot");
+  home = mkdtempSync(join(tmpdir(), "relay-goal-wait-cap-"));
+  const data = join(home, ".relay");
   const staticDir = join(home, "static");
   mkdirSync(data, { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -85,11 +85,11 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(port),
-      OMB_WEBHOOK_PORT: String(port + 1),
-      OMB_STATIC_DIR: staticDir,
+      RELAY_PORT: String(port),
+      RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_STATIC_DIR: staticDir,
       // seconds, not minutes: the point of this file is the cap firing
-      OMB_GOAL_WAIT_MAX_MS: "1500",
+      RELAY_GOAL_WAIT_MAX_MS: "1500",
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

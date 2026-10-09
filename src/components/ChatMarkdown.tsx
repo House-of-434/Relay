@@ -458,7 +458,7 @@ export function MermaidDiagram({ code, streaming }: MermaidDiagramProps) {
             theme: scheme === "light" ? "default" : "dark",
             fontFamily: MERMAID_FONT,
           });
-          return module.default.render(`omb-mermaid-${mermaidRenderId}`, code);
+          return module.default.render(`relay-mermaid-${mermaidRenderId}`, code);
         })
         .then((out) => {
           if (!alive) return;
@@ -637,7 +637,7 @@ export function markdownImageName(src: string, alt?: string): string {
   const supplied = alt?.trim();
   if (supplied) return supplied;
   try {
-    const path = decodeURIComponent(new URL(src, "https://openmausbot.invalid").pathname);
+    const path = decodeURIComponent(new URL(src, "https://relay.invalid").pathname);
     const name = path.split(/[\\/]/).filter(Boolean).at(-1)?.trim();
     if (name) return name;
   } catch {
@@ -738,7 +738,7 @@ function protectFencedCode(text: string, protect: (value: string) => string): st
 export function normalizeMathDelimiters(text: string): string {
   const protectedCode: string[] = [];
   const protect = (value: string): string => {
-    const token = `\u0000OMB_CODE_${protectedCode.length}\u0000`;
+    const token = `\u0000RELAY_CODE_${protectedCode.length}\u0000`;
     protectedCode.push(value);
     return token;
   };
@@ -751,7 +751,7 @@ export function normalizeMathDelimiters(text: string): string {
     // their own lines; accept the compact form models commonly produce.
     .replace(/\$\$[ \t]*([^\n][\s\S]*?)[ \t]*\$\$/g, (_match, math: string) => `$$\n${math}\n$$`);
   protectedCode.forEach((value, index) => {
-    normalized = normalized.split(`\u0000OMB_CODE_${index}\u0000`).join(value);
+    normalized = normalized.split(`\u0000RELAY_CODE_${index}\u0000`).join(value);
   });
   return normalized;
 }

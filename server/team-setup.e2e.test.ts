@@ -3,11 +3,11 @@ import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 it("Clive reviews multi-provider teams once, continues after each decision, and preserves existing threads through setup and deletion", async () => {
-  const gates = mkdtempSync(join(tmpdir(), "omb-team-setup-gates-"));
+  const gates = mkdtempSync(join(tmpdir(), "relay-team-setup-gates-"));
   const gate = join(gates, "finish");
   const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, undefined, undefined, undefined, undefined, ["codex"]);
   const evidence: unknown[] = [{ fixture: fixture.info }];
@@ -33,7 +33,7 @@ it("Clive reviews multi-provider teams once, continues after each decision, and 
     const chief = (await api("POST", "/api/bots", { name: "Clive", title: "Chief of Staff", section: "Operations", modelSelection: selection(claude) }, 201)).bot;
     await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true });
     const state = async () => (await api("GET", "/api/bots")).bots;
-    // The fixture pins its starter's name (control-omb.ts), but identity is
+    // The fixture pins its starter's name (control-relay.ts), but identity is
     // still the honest comparison: "Quill" once collided with a randomly
     // named starter and looked like a leaked planned bot (#1257).
     const initialBotIds = new Set((await state()).map((bot: any) => bot.id));
@@ -54,7 +54,7 @@ it("Clive reviews multi-provider teams once, continues after each decision, and 
         return JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).pid !== previousPid;
       }, { timeout: 15_000 }).toBe(true);
       const dump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); previousPid = dump.pid;
-      return dump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN as string;
+      return dump.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN as string;
     };
     const finish = async () => {
       writeFileSync(gate, "finish");
@@ -184,7 +184,7 @@ it("Clive reviews multi-provider teams once, continues after each decision, and 
     const groupDump = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")); previousPid = groupDump.pid;
     const groupStopped = await api("POST", "/api/internal/team-setup-requests", { plan: { reason: "Check room Stop", operations: [
       build("NoRestart", "Operations", selection(claude)),
-    ] } }, 201, groupDump.mcpConfig.mcpServers.agents.env.OMB_COMMS_TOKEN);
+    ] } }, 201, groupDump.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN);
     await api("POST", `/api/threads/${room.activeTaskId}/respond`, { requestId: groupStopped.requestId, behavior: "deny" });
     await stopWithoutResume(groupStopped.requestId, room.activeTaskId, "--channel", room.id);
     expect((await state()).some((bot: any) => bot.name === "NoRestart")).toBe(false);

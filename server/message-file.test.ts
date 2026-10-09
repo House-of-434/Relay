@@ -16,7 +16,7 @@ import {
   openMessageFile,
 } from "./message-file.ts";
 
-const suite = mkdtempSync(join(tmpdir(), "omb-message-file-"));
+const suite = mkdtempSync(join(tmpdir(), "relay-message-file-"));
 const workspace = join(suite, "workspace");
 const outside = join(suite, "outside");
 
@@ -129,17 +129,17 @@ describe("message-linked files", () => {
     )).toBe(false);
   });
 
-  it("keeps a Windows path's backslash before punctuation, as in \\.openmausbot", () => {
-    const report = "C:\\Users\\Maus\\.openmausbot\\workspaces\\bot\\_drafts\\report.md";
-    const chart = "C:\\Users\\Maus\\.openmausbot\\workspaces\\bot\\chart.png";
-    const notes = "C:\\Users\\Maus\\.openmausbot\\release notes.md";
+  it("keeps a Windows path's backslash before punctuation, as in \\.relay", () => {
+    const report = "C:\\Users\\Maus\\.relay\\workspaces\\bot\\_drafts\\report.md";
+    const chart = "C:\\Users\\Maus\\.relay\\workspaces\\bot\\chart.png";
+    const notes = "C:\\Users\\Maus\\.relay\\release notes.md";
     const markdown = `[Report](${report})\n\n![Chart](${chart})\n\n[Notes][notes]\n\n[notes]: <${notes}>`;
 
     expect(messageReferencesFile(markdown, report)).toBe(true);
     expect(messageReferencesFile(markdown, notes)).toBe(true);
     expect(messageImageTargetAt(markdown, markdown.indexOf("![Chart]"))).toBe(chart);
     // The folders a dropped backslash would have joined are not what was linked.
-    expect(messageReferencesFile(markdown, "C:\\Users\\Maus.openmausbot\\workspaces\\bot_drafts\\report.md")).toBe(false);
+    expect(messageReferencesFile(markdown, "C:\\Users\\Maus.relay\\workspaces\\bot_drafts\\report.md")).toBe(false);
   });
 
   it("resolves only definitions used by rendered reference links", () => {

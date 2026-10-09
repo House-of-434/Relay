@@ -102,7 +102,7 @@ describe("sharing with a preset", () => {
 
   it("names a preset's parts by the preset's name", () => {
     const document = parsePackageDocument({
-      format: "openmaus.package", version: 2,
+      format: "relay.package", version: 2,
       package: {
         id: "desk", release: "1.0.0", name: "Desk", tagline: "t", summary: "s", category: "c", author: { name: "Mira" }, license: "MIT",
         outcomes: ["o"], setupMinutes: 2, requirements: { apps: [], capabilities: [] },

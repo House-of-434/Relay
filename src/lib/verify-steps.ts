@@ -1,6 +1,6 @@
 // A bot's run in the current ask, read off its tool chips. Every shell
 // command the bot ran is a step; the ones through a control CLI (`pnpm
-// control:omb doctor`, a `control-<app>.mjs` script) are the verified ones,
+// control:relay doctor`, a `control-<app>.mjs` script) are the verified ones,
 // since the control CLI is the project's verification lever. Reads — `cat`,
 // `git log`, `gh pr view` — are not steps: looking is not doing. The card
 // lists the run and can hand it to the composer as a skill request.
@@ -34,13 +34,13 @@ export function nameIsCommand(name: string): boolean {
 /** The command a tool chip ran: the driver's summary, which is the shell
  * command by construction. Never the name — server-authored status chips
  * quote commands in their name ("Same call repeated 3× — Bash: pnpm
- * control:omb doctor…") and must not become steps. */
+ * control:relay doctor…") and must not become steps. */
 export function commandOf(m: Message): string | undefined {
   return m.kind === "activity" ? m.tool?.summary || undefined : undefined;
 }
 
 // ── parsing one command line ─────────────────────────────────────────
-// Position-based, not substring-based: `cat scripts/control-omb.ts` reads
+// Position-based, not substring-based: `cat scripts/control-relay.ts` reads
 // the CLI's source and is not a step. Only the first program of a shell
 // segment counts, after whatever runs it (`node --flags`, `pnpm run`, an
 // env assignment) is dropped.
@@ -53,10 +53,10 @@ const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
 const WRAPPER = new Set(["env", "sudo"]);
 /** A wrapper flag that takes the next token: `sudo -u root`, `env -u VAR`. */
 const WRAPPER_VALUE_FLAG = new Set(["-u", "-g", "-C"]);
-/** `pnpm run control:omb`, `npm run control:omb -- doctor`, `yarn -s control:omb`. */
+/** `pnpm run control:relay`, `npm run control:relay -- doctor`, `yarn -s control:relay`. */
 const PACKAGE_RUNNER = new Set(["pnpm", "npm", "yarn", "bun"]);
 const PACKAGE_RUNNER_WORD = new Set(["run", "exec", "-s", "--silent", "-r", "--"]);
-/** `node --experimental-strip-types scripts/control-omb.ts`, `npx tsx …`. */
+/** `node --experimental-strip-types scripts/control-relay.ts`, `npx tsx …`. */
 const SCRIPT_RUNNER = new Set(["node", "npx", "tsx"]);
 const CLI_SCRIPT = /^control:[\w-]+$/;
 const CLI_FILE = /^control-[\w-]+\.(?:mjs|ts|js|cjs)$/;
@@ -99,7 +99,7 @@ function strip(argv: string[], runners: boolean): string[] {
   return argv.slice(i);
 }
 
-/** The CLI token's basename when the token IS a control CLI: `control:omb`
+/** The CLI token's basename when the token IS a control CLI: `control:relay`
  * for the package script, `control-atlas.mjs` for a script by path (`/` or
  * `\`, so a Windows path reads the same). */
 function cliTokenOf(word: string): string | undefined {

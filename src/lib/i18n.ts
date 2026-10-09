@@ -23,7 +23,7 @@ const RTL_LANGUAGES = new Set(["ar", "fa", "he", "ur"]);
 
 function applyProductName(template: string): string {
   const productName = brand().name;
-  return template.replaceAll("OpenMausBot", () => productName);
+  return template.replaceAll("Relay", () => productName);
 }
 
 /** Switch the active language (a future settings picker calls this too).

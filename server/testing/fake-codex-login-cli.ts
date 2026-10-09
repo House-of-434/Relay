@@ -1,17 +1,17 @@
 #!/usr/bin/env node
 // Offline UI fixture only. Explicit opt-in and a disposable HOME are required.
-// Approve by creating HOME/.omb-fake-codex-login-approved; this never opens a
+// Approve by creating HOME/.relay-fake-codex-login-approved; this never opens a
 // network connection or creates real provider credentials.
 import { existsSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 
 const home = process.env.HOME;
-if (process.env.OMB_DEVICE_AUTH_FIXTURE !== "1" || !home || !isAbsolute(home)) {
-  process.stderr.write("This fake CLI requires OMB_DEVICE_AUTH_FIXTURE=1 and an isolated HOME.\n");
+if (process.env.RELAY_DEVICE_AUTH_FIXTURE !== "1" || !home || !isAbsolute(home)) {
+  process.stderr.write("This fake CLI requires RELAY_DEVICE_AUTH_FIXTURE=1 and an isolated HOME.\n");
   process.exit(2);
 }
-const authenticated = join(home, ".omb-fake-codex-authenticated");
-const approved = join(home, ".omb-fake-codex-login-approved");
+const authenticated = join(home, ".relay-fake-codex-authenticated");
+const approved = join(home, ".relay-fake-codex-login-approved");
 const args = process.argv.slice(2).join(" ");
 
 if (args === "--version") {
@@ -21,7 +21,7 @@ if (args === "--version") {
   process.stderr.write(signedIn ? "Logged in using ChatGPT\n" : "Not logged in\n");
   process.exitCode = signedIn ? 0 : 1;
 } else if (args === "login --device-auth") {
-  writeFileSync(join(home, ".omb-fake-codex-device.pid"), String(process.pid), { mode: 0o600 });
+  writeFileSync(join(home, ".relay-fake-codex-device.pid"), String(process.pid), { mode: 0o600 });
   process.stderr.write("Offline OMB verification fixture — do not enter this code at OpenAI.\n");
   process.stderr.write("https://auth.openai.com/codex/device\nTEST-12345\n");
   const timer = setInterval(() => {

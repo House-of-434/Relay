@@ -53,14 +53,14 @@ export interface ToolCallResult {
 }
 
 /** The context a spawned proxy was given, with a fresh set of turn guards:
- *   OMB_BOT_ID, OMB_THREAD_ID, OMB_TURN_DEPTH, plus the catalog switches
+ *   RELAY_BOT_ID, RELAY_THREAD_ID, RELAY_TURN_DEPTH, plus the catalog switches
  *   (agents-catalog.ts) and the harness address and token (agents-client.ts). */
 export function toolCallContextFromEnv(env: NodeJS.ProcessEnv): ToolCallContext {
   const profile = catalogProfileFromEnv(env);
   return {
     botId: profile.botId,
-    threadId: env.OMB_THREAD_ID ?? "",
-    depth: Number(env.OMB_TURN_DEPTH ?? "0") || 0,
+    threadId: env.RELAY_THREAD_ID ?? "",
+    depth: Number(env.RELAY_TURN_DEPTH ?? "0") || 0,
     externalRuntime: profile.externalRuntime,
     coordinating: profile.coordinating,
     sharedComputers: profile.sharedComputers,
@@ -921,7 +921,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       return { text: `${r.label ?? CREDENTIAL_TARGETS[credentialId].label} is already configured. Continue the task.` };
     }
     return {
-      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} request is ready. The desktop app and a freshly QR-paired mobile app show its secure entry card; older mobile pairings explain how to pair again or finish on the computer. End this turn; OpenMausBot will resume the task after the user saves or declines. Never ask them to paste the key into chat.`,
+      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} request is ready. The desktop app and a freshly QR-paired mobile app show its secure entry card; older mobile pairings explain how to pair again or finish on the computer. End this turn; Relay will resume the task after the user saves or declines. Never ask them to paste the key into chat.`,
     };
   }
   if (name === "send_voice_note") {

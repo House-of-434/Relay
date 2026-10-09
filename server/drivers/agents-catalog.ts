@@ -39,16 +39,16 @@ export interface CatalogProfile {
 /** The profile a spawned proxy was given. Everything is off unless the
  * harness says "1". */
 export function catalogProfileFromEnv(env: NodeJS.ProcessEnv): CatalogProfile {
-  const externalRuntime = env.OMB_EXTERNAL_RUNTIME === "1";
+  const externalRuntime = env.RELAY_EXTERNAL_RUNTIME === "1";
   return {
     externalRuntime,
-    coordinating: !externalRuntime && env.OMB_ROOM_TURN === "1",
-    ownThreadCreation: env.OMB_OWN_THREAD_CREATION === "1",
-    skillAuthoring: env.OMB_SKILL_AUTHORING_ENABLED === "1",
-    sharedComputers: env.OMB_SHARED_COMPUTERS_ENABLED === "1",
-    voiceNotes: env.OMB_VOICE_NOTES === "1",
-    cloudHome: env.OMB_CLOUD_HOME === "1",
-    botId: env.OMB_BOT_ID ?? "",
+    coordinating: !externalRuntime && env.RELAY_ROOM_TURN === "1",
+    ownThreadCreation: env.RELAY_OWN_THREAD_CREATION === "1",
+    skillAuthoring: env.RELAY_SKILL_AUTHORING_ENABLED === "1",
+    sharedComputers: env.RELAY_SHARED_COMPUTERS_ENABLED === "1",
+    voiceNotes: env.RELAY_VOICE_NOTES === "1",
+    cloudHome: env.RELAY_CLOUD_HOME === "1",
+    botId: env.RELAY_BOT_ID ?? "",
   };
 }
 
@@ -242,12 +242,12 @@ const toolDefinitions = (externalRuntime: boolean) => [
   },
   {
     name: "list_room_targets",
-    description: "Discover actual OpenMausBot teammates and rooms in your allowed teams. Works in a normal bot conversation too; no room is required. Returns bot and room IDs, roles and working folders, never other conversations' history. Use these bots, not native coding helpers with similar names, when the user asks their team to work together.",
+    description: "Discover actual Relay teammates and rooms in your allowed teams. Works in a normal bot conversation too; no room is required. Returns bot and room IDs, roles and working folders, never other conversations' history. Use these bots, not native coding helpers with similar names, when the user asks their team to work together.",
     inputSchema: { type: "object", properties: {}, additionalProperties: false },
   },
   {
     name: "coordinate_bots",
-    description: "Ask existing OpenMausBot teammates for advice or assign concrete work. From normal chat every assignment you send a teammate continues your one standing conversation with that teammate, so they keep the context of what you asked before; from a room it defaults to this room. Use group_id from list_room_targets for a specific room. Give 1-4 bot_ids — teammate ids as list_bots or your roster prints them; a unique teammate name also resolves: they receive only your brief and use their own model, tools and permissions. Busy bots queue. They can consult their specialists; all results return here and resume you automatically. Include exact file paths, constraints and what must be verified. After sending all assignments, END your turn; do not poll or wait. On return, resolve tradeoffs, verify the requested outcome and request concrete corrections if necessary before giving one final answer. Do not send acknowledgements as new work.",
+    description: "Ask existing Relay teammates for advice or assign concrete work. From normal chat every assignment you send a teammate continues your one standing conversation with that teammate, so they keep the context of what you asked before; from a room it defaults to this room. Use group_id from list_room_targets for a specific room. Give 1-4 bot_ids — teammate ids as list_bots or your roster prints them; a unique teammate name also resolves: they receive only your brief and use their own model, tools and permissions. Busy bots queue. They can consult their specialists; all results return here and resume you automatically. Include exact file paths, constraints and what must be verified. After sending all assignments, END your turn; do not poll or wait. On return, resolve tradeoffs, verify the requested outcome and request concrete corrections if necessary before giving one final answer. Do not send acknowledgements as new work.",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       group_id: { type: "string", description: "Optional destination room. Omit for this room, or your standing conversation with each teammate when chatting directly." },
       bot_ids: { type: "array", items: { type: "string", description: "A teammate's id exactly as list_bots or your roster prints it ([id: …]). A teammate's unique display name also resolves; a name shared by two reachable teammates is refused." }, minItems: 1, maxItems: 4, uniqueItems: true },
@@ -332,7 +332,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "select_computer",
     description:
-      "Choose where this conversation does computer work. Call with no arguments to inspect actual available choices and the current place. For a task needing computer interaction, select the requested place, or auto to choose a suitable configured computer without asking the user to use menus. OpenMausBot reuses an existing computer first; with a configured provider it can start or provision one when needed. Do not provision for ordinary chat or just to inspect availability. A pending result means end this turn immediately: OpenMausBot updates the conversation selector and resumes the original request with that computer's real tools. Do not use the old tools after requesting a switch, repeat the task, or claim the action is done. This cannot change permissions, override Off, or switch a teammate/routine/channel.",
+      "Choose where this conversation does computer work. Call with no arguments to inspect actual available choices and the current place. For a task needing computer interaction, select the requested place, or auto to choose a suitable configured computer without asking the user to use menus. Relay reuses an existing computer first; with a configured provider it can start or provision one when needed. Do not provision for ordinary chat or just to inspect availability. A pending result means end this turn immediately: Relay updates the conversation selector and resumes the original request with that computer's real tools. Do not use the old tools after requesting a switch, repeat the task, or claim the action is done. This cannot change permissions, override Off, or switch a teammate/routine/channel.",
     inputSchema: { type: "object", additionalProperties: false, properties: {
       surface: { type: "string", enum: ["auto", "cloud", "vm", "local"],
         description: "auto = suitable configured computer, cloud = remote Boat/VPS, vm = isolated Local VM, local = user's own desktop. Omit to list." },
@@ -531,7 +531,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "request_credential",
     description:
-      "Ask the user for a supported API key through OpenMausBot's secure credential flow. The desktop app and a freshly QR-paired mobile app show a secure entry card; older mobile pairings show how to pair again or finish on the computer. Never claim a secure field opened unless this request succeeds, and never ask the user to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; OpenMausBot resumes the task after the user saves or declines.",
+      "Ask the user for a supported API key through Relay's secure credential flow. The desktop app and a freshly QR-paired mobile app show a secure entry card; older mobile pairings show how to pair again or finish on the computer. Never claim a secure field opened unless this request succeeds, and never ask the user to paste a secret into chat. The secret is saved by the desktop app and is never returned to you. After calling this tool, end the turn; Relay resumes the task after the user saves or declines.",
     inputSchema: {
       type: "object",
       properties: {

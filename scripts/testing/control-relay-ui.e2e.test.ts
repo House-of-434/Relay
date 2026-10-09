@@ -1,10 +1,10 @@
 // The first asserted renderer recipe: docs/verification/chat-ui.md, run by a
-// machine. It spawns the real `control-omb ui launch` (a child it can Ctrl-C),
+// machine. It spawns the real `control-relay ui launch` (a child it can Ctrl-C),
 // drives the real <App/> through the ui verbs, and reads the outcome back from
 // the accessibility tree — the same evidence a person would collect by hand.
 //
 // Needs system Chrome (CHROME_PATH or a well-known install). It runs when
-// one resolves or when OMB_UI_E2E=1 requires it; otherwise it is skipped
+// one resolves or when RELAY_UI_E2E=1 requires it; otherwise it is skipped
 // with a printed reason.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
@@ -14,16 +14,16 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const CLI = join(ROOT, "scripts", "control-omb.ts");
-const forced = process.env.OMB_UI_E2E === "1";
+const CLI = join(ROOT, "scripts", "control-relay.ts");
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
 if (!enabled) {
-  console.log(`skipping control-omb ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set OMB_UI_E2E=1 to require it`);
+  console.log(`skipping control-relay ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set RELAY_UI_E2E=1 to require it`);
 }
 const run = enabled ? it : it.skip;
 // A launch starts a fixture server, a Vite preview and a headless Chrome;
@@ -33,15 +33,15 @@ const LAUNCH_TIMEOUT_MS = forced ? 600_000 : 180_000;
 
 // Synthetic provider outcomes exercise the UI, not the commands themselves.
 const TOOL_CALLS = JSON.stringify([
-  { name: "Bash", input: { command: "pnpm control:omb doctor" }, ok: true },
-  { name: "Bash", input: { command: "pnpm control:omb ui click --name Missing" }, ok: false },
-  { name: "Bash", input: { command: "pnpm control:omb ui flag --set features.showToolCalls=true --dry-run" }, ok: true },
+  { name: "Bash", input: { command: "pnpm control:relay doctor" }, ok: true },
+  { name: "Bash", input: { command: "pnpm control:relay ui click --name Missing" }, ok: false },
+  { name: "Bash", input: { command: "pnpm control:relay ui flag --set features.showToolCalls=true --dry-run" }, ok: true },
 ]);
 const REPLY = "hello from fake claude"; // the fake engine's default reply text
 const COMPOSER = `document.querySelector('textarea[aria-label="Message Pepper"]')`;
-// OMB_UI_EVIDENCE_DIR keeps the screenshot (CI uploads it); otherwise it is temporary.
-const evidenceDir = process.env.OMB_UI_EVIDENCE_DIR ? resolve(ROOT, process.env.OMB_UI_EVIDENCE_DIR) : mkdtempSync(join(tmpdir(), "omb-ui-evidence-"));
-const ownsEvidenceDir = !process.env.OMB_UI_EVIDENCE_DIR;
+// RELAY_UI_EVIDENCE_DIR keeps the screenshot (CI uploads it); otherwise it is temporary.
+const evidenceDir = process.env.RELAY_UI_EVIDENCE_DIR ? resolve(ROOT, process.env.RELAY_UI_EVIDENCE_DIR) : mkdtempSync(join(tmpdir(), "relay-ui-evidence-"));
+const ownsEvidenceDir = !process.env.RELAY_UI_EVIDENCE_DIR;
 
 interface Launched {
   child: ReturnType<typeof spawn>;
@@ -109,7 +109,7 @@ const refsNamed = (snapshot: Record<string, any>, name: string, role?: string) =
     .filter(([, element]) => element.name === name && (!role || element.role === role))
     .map(([id]) => `@${id}`);
 
-describe("control-omb ui drives the real renderer", () => {
+describe("control-relay ui drives the real renderer", () => {
   let launched: Launched | undefined;
 
   afterAll(async () => {
@@ -354,9 +354,9 @@ describe("control-omb ui drives the real renderer", () => {
     expect(drafted.ok).toBe(true);
     const draft = drafted.result as string;
     expect(draft.startsWith("Create a verification skill from the run below.\nGoal: hello\n")).toBe(true);
-    expect(draft).toContain("✓ doctor — pnpm control:omb doctor (verified)\n");
-    expect(draft).toContain("✗ ui — pnpm control:omb ui click --name Missing (verified)\n");
-    expect(draft).toContain("[dry run] ui — pnpm control:omb ui flag --set features.showToolCalls=true --dry-run (verified)\n");
+    expect(draft).toContain("✓ doctor — pnpm control:relay doctor (verified)\n");
+    expect(draft).toContain("✗ ui — pnpm control:relay ui click --name Missing (verified)\n");
+    expect(draft).toContain("[dry run] ui — pnpm control:relay ui flag --set features.showToolCalls=true --dry-run (verified)\n");
     expect(draft.endsWith("\n\n")).toBe(true);
     expect(await ui("eval", info.ui, "--js", `document.activeElement === ${COMPOSER}`)).toMatchObject({ ok: true, result: true });
     // The composer sits inside the conversation landmark, so its draft shows up
@@ -376,8 +376,8 @@ describe("control-omb ui drives the real renderer", () => {
     const inspected = await ui("snapshot", info.ui);
     const runLog = (inspected.snapshot as string).slice((inspected.snapshot as string).indexOf('complementary "Inspector"'));
     expect(runLog).toContain('tab "Run Log" [selected');
-    expect(runLog).toContain("pnpm control:omb doctor");
-    expect(runLog).toContain("pnpm control:omb ui click --name Missing");
+    expect(runLog).toContain("pnpm control:relay doctor");
+    expect(runLog).toContain("pnpm control:relay ui click --name Missing");
     expect(runLog).toContain('StaticText "Failed"');
     expect(runLog).toContain("Copy redacted run log");
     await ui("screenshot", info.ui, "--out", join(evidenceDir, "run-log.png"));
@@ -398,7 +398,7 @@ describe("control-omb ui drives the real renderer", () => {
     expect(logs.ok).toBe(true);
     expect((logs.messages as Array<{ type: string; text: string }>).filter((message) => message.type === "error")).toEqual([]);
     const title = await ui("eval", info.ui, "--js", "document.title");
-    expect(title).toMatchObject({ ok: true, result: "Isolated OpenMaus Chat" });
+    expect(title).toMatchObject({ ok: true, result: "Isolated Relay Chat" });
 
     // Ctrl-C: browser, preview and fixture close; only the fixture's data goes.
     await waitForExit(launched.child, { signal: "SIGINT", graceMs: 30_000 });

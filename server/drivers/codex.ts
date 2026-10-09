@@ -89,7 +89,7 @@ function missingNativeCodexThread(error: unknown, cursor: string): boolean {
 
 /** Ask the configured executable to update itself. This matters when the user
  * selected a non-PATH Codex: installing a second global copy would leave
- * OpenMausBot pointing at the old binary. */
+ * Relay pointing at the old binary. */
 export function codexUpdateCommand(cli: string, platform: NodeJS.Platform = process.platform): string {
   if (cli === "codex") return "codex update";
   const trimmed = cli.trim();
@@ -141,14 +141,14 @@ export function chatgptPlanCodexArgs(): string[] {
     "-c", 'model_provider="openai_chatgpt_plan"',
     "-c", 'model_providers.openai_chatgpt_plan.name="ChatGPT plan"',
     "-c", 'model_providers.openai_chatgpt_plan.base_url="https://api.openai.com/v1"',
-    "-c", 'model_providers.openai_chatgpt_plan.env_key="OPENMAUSBOT_CHATGPT_TOKEN"',
+    "-c", 'model_providers.openai_chatgpt_plan.env_key="RELAY_CHATGPT_TOKEN"',
     "-c", 'model_providers.openai_chatgpt_plan.wire_api="responses"',
     "-c", "model_providers.openai_chatgpt_plan.requires_openai_auth=false",
     "-c", "model_providers.openai_chatgpt_plan.supports_websockets=false",
     "-c", 'cli_auth_credentials_store="ephemeral"',
     "-c", "features.tool_search=false",
     "-c", "shell_environment_policy.ignore_default_excludes=false",
-    "-c", 'shell_environment_policy.exclude=["OPENMAUSBOT_CHATGPT_TOKEN"]',
+    "-c", 'shell_environment_policy.exclude=["RELAY_CHATGPT_TOKEN"]',
   ];
 }
 
@@ -169,19 +169,19 @@ export function managedCodexArgs(config: NonNullable<CodexConfig["managed"]>): s
   // Credential stays in the instance environment, never argv or config.toml.
   // https://learn.chatgpt.com/docs/config-file/config-reference
   return [
-    "-c", 'model_provider="openmaus_company"',
-    "-c", 'model_providers.openmaus_company.name="Company"',
-    "-c", `model_providers.openmaus_company.base_url=${JSON.stringify(config.url)}`,
-    "-c", 'model_providers.openmaus_company.env_key="OPENMAUSBOT_COMPANY_API_KEY"',
-    "-c", 'model_providers.openmaus_company.wire_api="responses"',
-    "-c", "model_providers.openmaus_company.requires_openai_auth=false",
+    "-c", 'model_provider="relay_company"',
+    "-c", 'model_providers.relay_company.name="Company"',
+    "-c", `model_providers.relay_company.base_url=${JSON.stringify(config.url)}`,
+    "-c", 'model_providers.relay_company.env_key="RELAY_COMPANY_API_KEY"',
+    "-c", 'model_providers.relay_company.wire_api="responses"',
+    "-c", "model_providers.relay_company.requires_openai_auth=false",
     "-c", 'cli_auth_credentials_store="ephemeral"',
     "-c", "shell_environment_policy.ignore_default_excludes=false",
   ];
 }
 
 const DENY_TIMEOUT_NOTE =
-  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+  "Relay: nobody answered this permission request in time. Skip this action and finish what you can without it.";
 
 const skippedSseServers = new Set<string>();
 const renamedMcpServers = new Set<string>();
@@ -545,7 +545,7 @@ function mountMcpServer(
     // remote servers are documented and exercised with; any other header
     // rides env_http_headers.
     appServerArgs.push("-c", `${prefix}.url=${JSON.stringify(server.url)}`);
-    const stem = `OMB_MCP_HEADER_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
+    const stem = `RELAY_MCP_HEADER_${name.toUpperCase().replace(/[^A-Z0-9]/g, "_")}`;
     const variables: Record<string, string> = {};
     Object.entries(server.headers).forEach(([header, value], index) => {
       const bearer = header.toLowerCase() === "authorization" ? /^Bearer\s+(\S+)$/i.exec(value) : null;
@@ -616,7 +616,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // The harness process may hold workspace credentials (xai/box/voice
       // keys, env-injected at boot); none of them are this CLI's to see.
       stripWorkspaceCredentialEnv(env);
-      delete env.OPENMAUSBOT_CHATGPT_TOKEN;
+      delete env.RELAY_CHATGPT_TOKEN;
       if (plan) env.CODEX_HOME = join(planDirectory, "codex");
       return env;
     };
@@ -705,8 +705,8 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (!config.managed.models.includes(turn.model)) {
           throw new Error("Company model access is unavailable: " + turn.model + " is not approved for your organization. Reconnect your organization; personal billing will not be used.");
         }
-        if (!input.environment.OPENMAUSBOT_COMPANY_API_KEY) {
-          throw new Error("Company model access is unavailable: OPENMAUSBOT_COMPANY_API_KEY is missing. Reconnect your organization; personal billing will not be used.");
+        if (!input.environment.RELAY_COMPANY_API_KEY) {
+          throw new Error("Company model access is unavailable: RELAY_COMPANY_API_KEY is missing. Reconnect your organization; personal billing will not be used.");
         }
         if (!input.environment.CODEX_HOME) {
           throw new Error("Company model access is unavailable: CODEX_HOME is missing. Reconnect your organization; personal billing will not be used.");
@@ -741,10 +741,10 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
 
       const launchAttempt = async (attempt: number): Promise<void> => {
         const env = childEnv();
-        if (planToken) env.OPENMAUSBOT_CHATGPT_TOKEN = planToken;
+        if (planToken) env.RELAY_CHATGPT_TOKEN = planToken;
         const appServerArgs = ["app-server", ...(plan ? chatgptPlanCodexArgs() : config.managed ? managedCodexArgs(config.managed) : codexLocalProviderArgs(env, turn.model)), ...codexToolSurfaceArgs()];
         if (turn.integrations?.composio) {
-          mountMcpServer(appServerArgs, env, "openmausbot_connectors", turn.integrations.composio);
+          mountMcpServer(appServerArgs, env, "relay_connectors", turn.integrations.composio);
         }
         if (turn.integrations?.agents) {
           mountMcpServer(appServerArgs, env, "agents", turn.integrations.agents);
@@ -774,7 +774,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.phone) {
           const bridge = turn.integrations.phone;
           Object.assign(env, bridge.env);
-          const prefix = "mcp_servers.openmausbot_phone";
+          const prefix = "mcp_servers.relay_phone";
           appServerArgs.push(
             "-c", `${prefix}.command=${JSON.stringify(bridge.command)}`,
             "-c", `${prefix}.args=${JSON.stringify(bridge.args)}`,
@@ -913,7 +913,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       const settle = async (ok: boolean, stopReason: string | null) => {
         if (state.settled) return;
         state.settled = true;
-        for (const finish of Array.from(asks.values())) finish("deny", "OpenMausBot: the turn ended", "system");
+        for (const finish of Array.from(asks.values())) finish("deny", "Relay: the turn ended", "system");
         for (const p of rpcPending.values()) p.reject(new Error("turn settled"));
         rpcPending.clear();
         const complete = () => {
@@ -1457,7 +1457,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       // nothing streamed yet, and never for auth/shape errors or interrupts
       try {
         await request("initialize", {
-          clientInfo: { name: "openmausbot", title: "OpenMausBot", version: serverVersion() },
+          clientInfo: { name: "relay", title: "Relay", version: serverVersion() },
           // Named permission profiles are an experimental app-server field in
           // Codex 0.151. Negotiate them explicitly; older servers ignore this
           // capability and remain on the legacy Custom fallback below.
@@ -1511,7 +1511,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
           approvalParams = namedApprovalParams(approvalMode);
         }
         // Codex's `never` means "do not ask to escalate", not "grant every
-        // requested permission". Only the user's explicit OpenMausBot Full
+        // requested permission". Only the user's explicit Relay Full
         // mode may synthesize approvals; Custom must preserve the sandbox
         // boundary from config.toml (for example never + read-only).
         autoAcceptPermissions = approvalMode === "full";
@@ -1519,7 +1519,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         // on start AND resume so Codex owns their lifetime through compaction.
         // Removed bot rules are cleared without dropping native configured rules.
         const selection = config.managed
-          ? { model: turn.model, modelProvider: "openmaus_company" }
+          ? { model: turn.model, modelProvider: "relay_company" }
           : config.authMode === "chatgpt-plan"
             ? { model: turn.model, modelProvider: "openai_chatgpt_plan" }
             : decodeCodexSelection(turn.model);
@@ -1708,7 +1708,7 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
     if (!version) return { state: "unavailable", reason: `\`${config.cli}\` CLI not found`, ...(plan ? { chatgptPlan: true } : {}) };
     if (planAuth) return { state: "available", version, chatgptPlan: true, billing: "subscription", ...await planAuth.snapshot(), update: await codexReleaseUpdate(version, config.cli),
       ...(planWarning ? { warning: { title: "Check ChatGPT connection", message: planWarning } } : {}) };
-    if (config.managed) return { state: "available", version, authenticated: Boolean(input.environment.OPENMAUSBOT_COMPANY_API_KEY && input.environment.CODEX_HOME), billing: "metered" };
+    if (config.managed) return { state: "available", version, authenticated: Boolean(input.environment.RELAY_COMPANY_API_KEY && input.environment.CODEX_HOME), billing: "metered" };
     const authenticated = await new Promise<boolean>((resolve) => {
       execCli(config.cli, ["login", "status"], { timeout: 8000, env }, (err, stdout, stderr) =>
         resolve(!err && /^logged in\b/im.test(`${stdout}\n${stderr ?? ""}`)),

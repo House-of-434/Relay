@@ -276,7 +276,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   // shell signals the request over the bridge (Cmd+, accelerates the item).
   // Local-shell only: remote server pages never receive the channel, and ogb
   // is absent in the browser.
-  // "cloud" is openmausbot://cloud (the Cloud page's "Open in the app"):
+  // "cloud" is relay://cloud (the Cloud page's "Open in the app"):
   // OMB Cloud, marked as opened by the link so that view signs in or connects.
   useEffect(() => {
     return window.ogb?.onOpenAppSettings?.(section => dispatch(section === "cloud" && window.ogb?.cloudAccount && !remoteClient

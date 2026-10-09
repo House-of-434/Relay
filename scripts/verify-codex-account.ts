@@ -3,7 +3,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { launchVerificationServer, runControlOmb } from "./control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "./control-relay.ts";
 import { fixtureApi, mountPreview, parkUntilSignal, type MountedPreview } from "./testing/preview-fixture.ts";
 
 const fixture = await launchVerificationServer();
@@ -14,20 +14,20 @@ try {
   const codexDir = join(fixtureHome, ".codex");
   const wrapper = join(fixtureHome, "offline-codex-account.mjs");
   const commandLog = join(fixtureHome, "offline-codex-commands.jsonl");
-  const failLogoutMarker = join(fixtureHome, ".omb-fake-codex-logout-fail");
+  const failLogoutMarker = join(fixtureHome, ".relay-fake-codex-logout-fail");
   writeFileSync(failLogoutMarker, "Disposable forced-error fixture. Remove to test retry.\n", { mode: 0o600 });
   mkdirSync(codexDir, { recursive: true });
   // Account identity comes from the fake app-server's account/read response;
   // the disposable CODEX_HOME stays empty and holds no credential-shaped file.
-  writeFileSync(join(fixtureHome, ".omb-fake-codex-authenticated"), "Offline fixture; not a credential.\n", { mode: 0o600 });
+  writeFileSync(join(fixtureHome, ".relay-fake-codex-authenticated"), "Offline fixture; not a credential.\n", { mode: 0o600 });
   writeFileSync(wrapper, [
     "#!/usr/bin/env node",
     'import { appendFileSync, existsSync, unlinkSync } from "node:fs";',
-    `if (process.env.OMB_DEVICE_AUTH_FIXTURE !== "1" || process.env.HOME !== ${JSON.stringify(fixtureHome)} || process.env.CODEX_HOME !== ${JSON.stringify(codexDir)}) { throw new Error("Disposable Codex fixture environment required"); }`,
+    `if (process.env.RELAY_DEVICE_AUTH_FIXTURE !== "1" || process.env.HOME !== ${JSON.stringify(fixtureHome)} || process.env.CODEX_HOME !== ${JSON.stringify(codexDir)}) { throw new Error("Disposable Codex fixture environment required"); }`,
     `appendFileSync(${JSON.stringify(commandLog)}, JSON.stringify(process.argv.slice(2)) + "\\n", { mode: 0o600 });`,
     'if (process.argv.slice(2).join(" ") === "logout") {',
     `  if (existsSync(${JSON.stringify(failLogoutMarker)})) { process.stderr.write("Offline fixture forced logout failure\\n"); process.exit(1); }`,
-    `  for (const file of ${JSON.stringify([join(fixtureHome, ".omb-fake-codex-authenticated"), join(fixtureHome, ".omb-fake-codex-login-approved")])}) { if (existsSync(file)) unlinkSync(file); }`,
+    `  for (const file of ${JSON.stringify([join(fixtureHome, ".relay-fake-codex-authenticated"), join(fixtureHome, ".relay-fake-codex-login-approved")])}) { if (existsSync(file)) unlinkSync(file); }`,
     '  process.stdout.write("Successfully logged out\\n");',
     "} else {",
     `  await import(${JSON.stringify(pathToFileURL(fileURLToPath(new URL("../server/testing/fake-codex-login-cli.ts", import.meta.url))).href)});`,
@@ -40,7 +40,7 @@ try {
   const config = JSON.parse(readFileSync(configPath, "utf8"));
   config.instances.codex = {
     driver: "codex", displayName: "Codex", config: { cli: wrapper },
-    environment: { HOME: fixtureHome, USERPROFILE: fixtureHome, CODEX_HOME: codexDir, OMB_DEVICE_AUTH_FIXTURE: "1", FAKE_CODEX_ACCOUNT_EMAIL: "ada@example.test" },
+    environment: { HOME: fixtureHome, USERPROFILE: fixtureHome, CODEX_HOME: codexDir, RELAY_DEVICE_AUTH_FIXTURE: "1", FAKE_CODEX_ACCOUNT_EMAIL: "ada@example.test" },
   };
   writeFileSync(configPath, JSON.stringify(config, null, 2), { mode: 0o600 });
   await api("PUT", "/api/config", { defaultModelSelection: { instanceId: "codex", model: "gpt-6-astra" } });

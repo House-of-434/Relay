@@ -1,7 +1,7 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 
 it("keeps ordinary work out of setup and carries explicit bot defaults and file locations into rooms", async () => {
   const fixture = await launchVerificationServer();

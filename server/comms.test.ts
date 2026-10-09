@@ -145,7 +145,7 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
 
   beforeAll(async () => {
     chmodSync(FAKE_CLI, 0o755);
-    home = mkdtempSync(join(tmpdir(), "omb-comms-test-"));
+    home = mkdtempSync(join(tmpdir(), "relay-comms-test-"));
     gateFile = join(home, "helper-gate");
     const antigravityDirectory = join(home, "fake-antigravity");
     const antigravityCli = join(antigravityDirectory, "agy_acp_server.ts");
@@ -162,7 +162,7 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
     }
     const antigravityProfile = join(
       home,
-      ".openmausbot",
+      ".relay",
       "providers",
       "antigravity",
       createHash("sha256").update("geminiAsker").digest("hex"),
@@ -170,9 +170,9 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
     );
     mkdirSync(antigravityProfile, { recursive: true });
     writeFileSync(join(antigravityProfile, "acp_token.json"), "{}\n");
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    mkdirSync(join(home, ".relay"), { recursive: true });
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".relay", "config.json"),
       JSON.stringify({
         instances: {
           // the ask-peer fleet: both bots run "ask-peer" so A can ask B
@@ -268,7 +268,7 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(PORT),
+      RELAY_PORT: String(PORT),
       // Keep the production ask budget: the gated-peer test verifies the
       // caller is released promptly without a test-only timeout override.
     };

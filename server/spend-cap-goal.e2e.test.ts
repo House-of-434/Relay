@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { launchVerificationServer, runControlOmb, type VerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb, type VerificationServer } from "../scripts/control-relay.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
 describe("spend cap inside a team goal run", () => {
@@ -19,7 +19,7 @@ describe("spend cap inside a team goal run", () => {
   let layerDir: string;
 
   beforeEach(async () => {
-    layerDir = mkdtempSync(join(tmpdir(), "omb-fake-layer-goal-"));
+    layerDir = mkdtempSync(join(tmpdir(), "relay-fake-layer-goal-"));
     mkdirSync(join(layerDir, "server"));
     writeFileSync(join(layerDir, "server", "index.js"), 'export async function register() { return { customer: "Fixture Co", features: ["budgets", "billing"], expiresAt: "2099-01-01" }; }\n');
     session = await launchVerificationServer({
@@ -29,7 +29,7 @@ describe("spend cap inside a team goal run", () => {
       // so an accidental retry would return the same decision — and price
       // another turn, which the usage assertions below would catch.
       FAKE_CLAUDE_REPLIES: JSON.stringify([
-        'The plan is ready.\n<openmaus-goal>{"status":"continue","next":"Worker","instruction":"Do the thing","detail":"Plan ready"}</openmaus-goal>',
+        'The plan is ready.\n<relay-goal>{"status":"continue","next":"Worker","instruction":"Do the thing","detail":"Plan ready"}</relay-goal>',
       ]),
     }, undefined, undefined, { dir: layerDir, licenseKey: "fixture-key" });
   }, 60_000);

@@ -2,7 +2,7 @@
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { launchVerificationServer, runControlOmb } from "./control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "./control-relay.ts";
 import { fixtureApi, mountPreview, parkUntilSignal, type MountedPreview } from "./testing/preview-fixture.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -34,7 +34,7 @@ try {
     "#!/usr/bin/env node",
     `process.env.FAKE_CLAUDE_REPLIES = ${JSON.stringify(JSON.stringify([reply]))};`,
     `process.env.FAKE_CLAUDE_TOOL_CALLS = ${JSON.stringify(JSON.stringify([
-      { name: "Bash", input: { command: "pnpm control:omb doctor", password: "fixture-password" }, output: { text: "All fixture health checks passed.", token: "fixture-token" }, ok: true },
+      { name: "Bash", input: { command: "pnpm control:relay doctor", password: "fixture-password" }, output: { text: "All fixture health checks passed.", token: "fixture-token" }, ok: true },
       { name: "Read", input: { file_path: "missing.txt" }, output: "File not found: missing.txt", ok: false },
       { name: "Search", input: { query: "release notes" }, ok: true },
     ]))};`,

@@ -33,39 +33,39 @@ const text = (body: string): Message => ({ id: `m${++seq}`, at: seq, role: "bot"
 const ask = (body: string): Message => ({ id: `u${++seq}`, at: seq, role: "user", kind: "text", text: body });
 const stagedSkill = (): Message => ({
   id: `o${++seq}`, at: seq, role: "bot", kind: "options",
-  card: { title: "Enable this skill?", options: [], skillRequest: { name: "verify-omb" } } as unknown as Message["card"],
+  card: { title: "Enable this skill?", options: [], skillRequest: { name: "verify-relay" } } as unknown as Message["card"],
 });
 const triggerTerms = (): string[] =>
   JSON.parse(readFileSync(new URL("../../skills/create-verification-skill/manifest.json", import.meta.url), "utf8")).triggerTerms;
 
-const DOCTOR = "pnpm control:omb doctor --url http://127.0.0.1:8799";
-const SEND = "node --experimental-strip-types scripts/control-omb.ts send --bot x --text y";
+const DOCTOR = "pnpm control:relay doctor --url http://127.0.0.1:8799";
+const SEND = "node --experimental-strip-types scripts/control-relay.ts send --bot x --text y";
 const PRESS = './node_modules/.bin/control-atlas.mjs press "Meta+K"';
 const PUSH = "git push origin main";
 
 describe("parseControlCommand", () => {
   it.each([
-    ["pnpm control:omb doctor --url http://127.0.0.1:1", "doctor"],
-    ["pnpm run control:omb doctor", "doctor"],
-    ["npm run control:omb -- doctor", "doctor"],
+    ["pnpm control:relay doctor --url http://127.0.0.1:1", "doctor"],
+    ["pnpm run control:relay doctor", "doctor"],
+    ["npm run control:relay -- doctor", "doctor"],
     [SEND, "send"],
     [PRESS, "press"],
-    ["cd repo && node scripts/control-omb.ts doctor", "doctor"],
-    ["node scripts\\control-omb.ts doctor", "doctor"],
-    ["FOO=1 pnpm control:omb wait --bot b", "wait"],
-    ["timeout 30 npx tsx ./scripts/control-omb.ts screenshot > out.png 2>&1", "screenshot"],
-    ["sudo -u maus pnpm control:omb doctor", "doctor"],
+    ["cd repo && node scripts/control-relay.ts doctor", "doctor"],
+    ["node scripts\\control-relay.ts doctor", "doctor"],
+    ["FOO=1 pnpm control:relay wait --bot b", "wait"],
+    ["timeout 30 npx tsx ./scripts/control-relay.ts screenshot > out.png 2>&1", "screenshot"],
+    ["sudo -u maus pnpm control:relay doctor", "doctor"],
   ])("accepts %s as a control-CLI invocation of %s", (command, subcommand) => {
     expect(parseControlCommand(command)).toEqual({ subcommand, dryRun: false });
   });
 
   it.each([
-    "cat scripts/control-omb.ts",
-    "sed -n 1,40p scripts/control-omb.ts",
-    "git log -- scripts/control-omb.ts",
-    "grep -n doctor scripts/control-omb.ts",
-    "cat docs/access-control-omb.tsx",
-    "npmcontrol:omb doctor",
+    "cat scripts/control-relay.ts",
+    "sed -n 1,40p scripts/control-relay.ts",
+    "git log -- scripts/control-relay.ts",
+    "grep -n doctor scripts/control-relay.ts",
+    "cat docs/access-control-relay.tsx",
+    "npmcontrol:relay doctor",
     "pnpm typecheck",
     "pnpm typecheck && pnpm test",
   ])("rejects %s — the CLI is not what runs", (command) => {
@@ -73,14 +73,14 @@ describe("parseControlCommand", () => {
   });
 
   it("marks a dry run wherever the flag sits in the segment", () => {
-    expect(parseControlCommand("pnpm control:omb send --bot b --dry-run")).toEqual({ subcommand: "send", dryRun: true });
-    expect(parseControlCommand("pnpm control:omb --dry-run send")).toEqual({ subcommand: "send", dryRun: true });
+    expect(parseControlCommand("pnpm control:relay send --bot b --dry-run")).toEqual({ subcommand: "send", dryRun: true });
+    expect(parseControlCommand("pnpm control:relay --dry-run send")).toEqual({ subcommand: "send", dryRun: true });
     // the flag in another segment belongs to that command
-    expect(parseControlCommand("pnpm control:omb doctor && pnpm release --dry-run")).toEqual({ subcommand: "doctor", dryRun: false });
+    expect(parseControlCommand("pnpm control:relay doctor && pnpm release --dry-run")).toEqual({ subcommand: "doctor", dryRun: false });
   });
 
   it("falls back to the CLI token's basename when no subcommand follows", () => {
-    expect(parseControlCommand("pnpm control:omb --help")?.subcommand).toBe("control:omb");
+    expect(parseControlCommand("pnpm control:relay --help")?.subcommand).toBe("control:relay");
     expect(parseControlCommand("./scripts/control-atlas.mjs && echo done")?.subcommand).toBe("control-atlas.mjs");
   });
 });
@@ -124,7 +124,7 @@ describe("parseRunCommand", () => {
     ["npx tsx scripts/x.ts", "npx"],
     ["./node_modules/.bin/vitest run", "vitest"],
     ["FOO=1 timeout 30 git push", "git push"],
-    ["sudo -u maus systemctl restart omb", "systemctl"],
+    ["sudo -u maus systemctl restart relay", "systemctl"],
   ])("%s is a step labelled %s", (command, label) => {
     expect(parseRunCommand(command)).toEqual({ label, verified: false, dryRun: false });
   });
@@ -182,7 +182,7 @@ describe("runSteps", () => {
       codex(SEND, false),
       acp(PRESS),
       claude("git status", true),
-      claude("cat scripts/control-omb.ts", true),
+      claude("cat scripts/control-relay.ts", true),
       claude(PUSH, true),
     ]);
     expect(steps.map((s) => [s.label, s.status, s.verified])).toEqual([

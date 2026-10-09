@@ -6,13 +6,13 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { BOT_ROLES, roleProfilePatch } from "../../src/lib/bot-roles.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const forced = process.env.OMB_UI_E2E === "1";
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
-if (!enabled) console.log("skipping bot tools UI e2e: no system Chrome; set OMB_UI_E2E=1 to require it");
+if (!enabled) console.log("skipping bot tools UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");
 const chrome = resolveUiChrome(process.env);
 const LAUNCH_TIMEOUT_MS = forced && !chrome ? 600_000 : 180_000;
 
@@ -32,7 +32,7 @@ describe("bot setup and tools in the real renderer", () => {
     let stderr = "";
     // Windows kill("SIGINT") terminates immediately instead of delivering a
     // catchable signal. Ask the disposable launcher to run its normal cleanup.
-    const launcher = new URL("./control-omb-ui.ts", import.meta.url).href;
+    const launcher = new URL("./control-relay-ui.ts", import.meta.url).href;
     const bootstrap = `import { launchUi } from ${JSON.stringify(launcher)};
       process.on('message', message => { if (message === 'stop') process.emit('SIGINT'); });
       try { await launchUi([]); } finally { process.disconnect(); }`;

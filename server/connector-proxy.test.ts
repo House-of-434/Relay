@@ -55,13 +55,13 @@ describe("connector MCP bridge", () => {
       });
     });
     const lines = start({
-      OMB_HARNESS_URL: harness,
-      OMB_CONNECTOR_TOKEN: "bridge-secret",
+      RELAY_HARNESS_URL: harness,
+      RELAY_CONNECTOR_TOKEN: "bridge-secret",
       // A simultaneously mounted agents proxy may define this different
       // value in Codex's flattened child environment.
-      OMB_COMMS_TOKEN: "agents-secret",
-      OMB_BOT_ID: "bot-1",
-      OMB_THREAD_ID: "thread-1",
+      RELAY_COMMS_TOKEN: "agents-secret",
+      RELAY_BOT_ID: "bot-1",
+      RELAY_THREAD_ID: "thread-1",
     });
     child!.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
@@ -89,10 +89,10 @@ describe("connector MCP bridge", () => {
       });
     });
     const lines = start({
-      OMB_HARNESS_URL: harness,
-      OMB_CONNECTOR_TOKEN: "bridge-secret",
-      OMB_BOT_ID: "bot-1",
-      OMB_THREAD_ID: "thread-1",
+      RELAY_HARNESS_URL: harness,
+      RELAY_CONNECTOR_TOKEN: "bridge-secret",
+      RELAY_BOT_ID: "bot-1",
+      RELAY_THREAD_ID: "thread-1",
     });
     child!.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
@@ -140,7 +140,7 @@ describe("connector MCP bridge", () => {
       result: {
         protocolVersion: "2024-11-05",
         capabilities: { tools: {} },
-        serverInfo: { name: "openmausbot-connectors", version: "1" },
+        serverInfo: { name: "relay-connectors", version: "1" },
       },
     });
     expect(reply.result).not.toHaveProperty("isError");
@@ -156,7 +156,7 @@ describe("connector MCP bridge", () => {
       // Deliberately never respond. The proxy must abort this request and
       // return its local capability result instead of hanging OpenCode.
     });
-    const lines = start({ OMB_CONNECTOR_UPSTREAM_URL: upstream });
+    const lines = start({ RELAY_CONNECTOR_UPSTREAM_URL: upstream });
     child!.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
       id: 11,
@@ -198,13 +198,13 @@ describe("connector MCP bridge", () => {
       });
     });
     const lines = start({
-      OMB_CONNECTOR_UPSTREAM_URL: upstream,
-      OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
+      RELAY_CONNECTOR_UPSTREAM_URL: upstream,
+      RELAY_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
     });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 2, method: "initialize", params: { protocolVersion: "2024-11-05" } })}\n`);
     const reply = await nextJson(lines);
     expect(reply.result.protocolVersion).toBe("2024-11-05");
-    expect(reply.result.serverInfo).toEqual({ name: "openmausbot-connectors", version: "1" });
+    expect(reply.result.serverInfo).toEqual({ name: "relay-connectors", version: "1" });
     expect(upstreamAuthorization).toBe("Bearer upstream-secret");
     expect(upstreamBody).toMatchObject({ method: "initialize" });
     expect(JSON.stringify(reply)).not.toContain("upstream-secret");
@@ -227,8 +227,8 @@ describe("connector MCP bridge", () => {
       }));
     });
     const lines = start({
-      OMB_CONNECTOR_UPSTREAM_URL: upstream,
-      OMB_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
+      RELAY_CONNECTOR_UPSTREAM_URL: upstream,
+      RELAY_CONNECTOR_UPSTREAM_HEADERS: JSON.stringify({ authorization: "Bearer upstream-secret" }),
     });
     child!.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", id: 4, method: "tools/list", params: {} })}\n`);
     const reply = await nextJson(lines);
@@ -274,8 +274,8 @@ describe("connector MCP bridge", () => {
       }));
     });
     const lines = start({
-      OMB_CONNECTOR_UPSTREAM_URL: upstream,
-      OMB_CONNECTOR_ALLOWED_TOOLS: JSON.stringify({ gmail: { tools: ["GMAIL_SEND_EMAIL"] } }),
+      RELAY_CONNECTOR_UPSTREAM_URL: upstream,
+      RELAY_CONNECTOR_ALLOWED_TOOLS: JSON.stringify({ gmail: { tools: ["GMAIL_SEND_EMAIL"] } }),
     });
     child!.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 21, method: "tools/list", params: {} }) + "\n");
     const reply = await nextJson(lines);
@@ -307,8 +307,8 @@ describe("connector MCP bridge", () => {
       response.end("data: " + JSON.stringify(frame) + "\n\n");
     });
     const lines = start({
-      OMB_CONNECTOR_UPSTREAM_URL: upstream,
-      OMB_CONNECTOR_ALLOWED_TOOLS: JSON.stringify({ notion: { tools: ["NOTION_CREATE_PAGE"] } }),
+      RELAY_CONNECTOR_UPSTREAM_URL: upstream,
+      RELAY_CONNECTOR_ALLOWED_TOOLS: JSON.stringify({ notion: { tools: ["NOTION_CREATE_PAGE"] } }),
     });
     child!.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 22, method: "tools/list", params: {} }) + "\n");
     const reply = await nextJson(lines);
@@ -331,8 +331,8 @@ describe("connector MCP bridge", () => {
         }));
       });
       const lines = start({
-        OMB_CONNECTOR_UPSTREAM_URL: upstream,
-        ...(allowlist === undefined ? {} : { OMB_CONNECTOR_ALLOWED_TOOLS: allowlist }),
+        RELAY_CONNECTOR_UPSTREAM_URL: upstream,
+        ...(allowlist === undefined ? {} : { RELAY_CONNECTOR_ALLOWED_TOOLS: allowlist }),
       });
       child!.stdin.write(JSON.stringify({ jsonrpc: "2.0", id: 23, method: "tools/list", params: {} }) + "\n");
       const reply = await nextJson(lines);

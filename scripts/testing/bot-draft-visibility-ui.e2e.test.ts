@@ -3,20 +3,20 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const chrome = resolveUiChrome(process.env);
-const enabled = Boolean(chrome) || process.env.OMB_UI_E2E === "1";
-if (!enabled) console.log("skipping draft visibility UI: set OMB_UI_E2E=1 to require system Chrome");
+const enabled = Boolean(chrome) || process.env.RELAY_UI_E2E === "1";
+if (!enabled) console.log("skipping draft visibility UI: set RELAY_UI_E2E=1 to require system Chrome");
 
 (enabled ? it : it.skip)("creates a restricted bot from the full draft dialog without widening its audience", async () => {
   let child: ChildProcess | undefined;
   try {
     let stdout = "", stderr = "";
     let info: { ui: string; url: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", chunk => { stdout += String(chunk); });

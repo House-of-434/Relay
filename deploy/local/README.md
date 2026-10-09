@@ -31,17 +31,17 @@ Required for the deployment (see `.env.example` for the full list):
 
 | Variable | Value on the host |
 |---|---|
-| `OMB_PUBLIC_URL` | `https://<public-hostname>` — never localhost; the OAuth check enforces it |
+| `RELAY_PUBLIC_URL` | `https://<public-hostname>` — never localhost; the OAuth check enforces it |
 | `RELAY_BFF_PUBLIC_URL` | `https://<public-hostname>` (same origin; BFF is behind Caddy) |
-| `OMB_HTTPS_HOST` | `<public-hostname>` (Caddy automatic HTTPS) |
-| `OMB_BIND_ADDRESS` | `127.0.0.1` (compose refuses `OMB_HTTPS_HOST` otherwise; TLS terminates at Caddy) |
-| `OMB_LOOPBACK_TRUST` | `service` — no network request is ever trusted as owner |
+| `RELAY_HTTPS_HOST` | `<public-hostname>` (Caddy automatic HTTPS) |
+| `RELAY_BIND_ADDRESS` | `127.0.0.1` (compose refuses `RELAY_HTTPS_HOST` otherwise; TLS terminates at Caddy) |
+| `RELAY_LOOPBACK_TRUST` | `service` — no network request is ever trusted as owner |
 | `SUPABASE_PROJECT_URL` / `SUPABASE_ANON_KEY` | From the Supabase dashboard |
 | `RELAY_BFF_CAPABILITY` | Shared BFF capability (see `.env.example`) |
 | `RELAY_DB_URL` / `RELAY_DB_PROJECT_REF` / `RELAY_DB_SERVICE_ROLE_KEY` | Tool Layer database access |
 | `RELAY_TOOL_ACTOR_SECRET` | In `.env.secrets`; must match between harness and Tool Layer |
 | `RELAY_ALLOWED_EMAIL_DOMAINS` | Allowed sign-in domains |
-| `OMB_ENGINES` | Optional: space-separated npm packages for engine CLIs the bots use |
+| `RELAY_ENGINES` | Optional: space-separated npm packages for engine CLIs the bots use |
 
 Supabase dashboard side: Site URL + Additional Redirect URLs must allow-list
 the public hostname, and the Google OAuth client must register
@@ -56,9 +56,9 @@ docker compose ps
 curl -sf http://127.0.0.1:8080/api/health
 ```
 
-Caddy serves `:80` and, with `OMB_HTTPS_HOST` set, `:443` with automatic
+Caddy serves `:80` and, with `RELAY_HTTPS_HOST` set, `:443` with automatic
 HTTPS. The app proxies `/auth/*`, `/api/*`, and
-`/.well-known/openmausbot/*` to the BFF (`:8798`) and everything else (static
+`/.well-known/relay/*` to the BFF (`:8798`) and everything else (static
 UI) to the harness (`:8799`) — same split as the dev Vite proxy.
 
 ## Verify the browser gate
@@ -75,12 +75,12 @@ separate architecture test.
 ## Operate
 
 ```sh
-docker compose logs -f omb tools   # follow logs
+docker compose logs -f relay tools   # follow logs
 docker compose restart tools       # bounce the browser worker
 docker compose down                # stop (volume `data` persists)
 ```
 
-Data lives in the `data` volume (`/data/.openmausbot` for the harness,
+Data lives in the `data` volume (`/data/.relay` for the harness,
 `/data/blade` for Bladebro). The volume survives `docker compose down`;
 only `docker volume rm` destroys it.
 
@@ -88,9 +88,9 @@ only `docker volume rm` destroys it.
 
 | Service | Runs | Reachable as |
 |---|---|---|
-| `omb` | Harness `:8799` + BFF `:8798` (must share localhost — the BFF hardcodes the harness at `127.0.0.1`) | Caddy `:80`/`:443` |
-| `tools` | Tool Layer `:8787` (Bladebro + Chrome) | `http://tools:8787` from `omb` only; not published |
-| `caddy` | TLS + reverse proxy | Shares `omb`'s network namespace |
+| `relay` | Harness `:8799` + BFF `:8798` (must share localhost — the BFF hardcodes the harness at `127.0.0.1`) | Caddy `:80`/`:443` |
+| `tools` | Tool Layer `:8787` (Bladebro + Chrome) | `http://tools:8787` from `relay` only; not published |
+| `caddy` | TLS + reverse proxy | Shares `relay`'s network namespace |
 
 The Tool Layer listens on `0.0.0.0` here (`RELAY_TOOL_HOST`) because the
 harness reaches it over the compose network. Bare processes keep the

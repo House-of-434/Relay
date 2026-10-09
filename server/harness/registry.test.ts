@@ -237,7 +237,7 @@ process.exit(0);
     resetPathCacheForTests();
   }
   function withFakeNpm(present: boolean): string {
-    scratch = mkdtempSync(join(tmpdir(), "omb-registry-install-"));
+    scratch = mkdtempSync(join(tmpdir(), "relay-registry-install-"));
     originalPath = process.env.PATH;
     const binDir = join(scratch, "fake-path");
     mkdirSync(binDir);

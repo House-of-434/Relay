@@ -17,7 +17,7 @@ const PASSWORD = "correct horse battery staple";
 const AVATAR_BYTES = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
 const scratch: string[] = [];
 function directory(): string {
-  const path = mkdtempSync(join(tmpdir(), "omb-workspace-backup-"));
+  const path = mkdtempSync(join(tmpdir(), "relay-workspace-backup-"));
   scratch.push(path);
   return path;
 }
@@ -90,7 +90,7 @@ describe("encrypted full workspace backups", () => {
       const originalDb = readFileSync(join(source, "messages.db"));
       const exported = await createWorkspaceBackup(source, {
         password: PASSWORD, appVersion: "test",
-        clientState: { "omb-drafts": '{"thread":"unsent"}', "omb-draft-attachments": JSON.stringify({ thread: [{ kind: "file", path: join(source, "attachments", "image.png") }] }) },
+        clientState: { "relay-drafts": '{"thread":"unsent"}', "relay-draft-attachments": JSON.stringify({ thread: [{ kind: "file", path: join(source, "attachments", "image.png") }] }) },
       });
       expect(exported.summary).toMatchObject({ bots: 1, groups: 1, threads: 1, messages: 1 });
       expect(exported.summary).not.toHaveProperty("includesCredentials");
@@ -106,7 +106,7 @@ describe("encrypted full workspace backups", () => {
       const targetComputers = { version: 1, environmentId: "target-environment", computers: [{ id: "target-computer", name: "Destination desktop", section: null }] };
       json(join(target, "team-computers.json"), targetComputers);
       writeFileSync(join(target, "environment-id"), "target-environment");
-      writeFileSync(join(target, "openmausbot-server.lease"), "live-lease");
+      writeFileSync(join(target, "relay-server.lease"), "live-lease");
       writeFileSync(join(target, "messages.db-wal"), "old database WAL must not enter the new DB");
       writeFileSync(join(target, "messages.db-shm"), "old database shared memory");
       const staged = await stageWorkspaceBackup(target, exported.path, { password: PASSWORD });
@@ -131,7 +131,7 @@ describe("encrypted full workspace backups", () => {
       expect(readJson(join(target, "sessions.json"))).toEqual({ identity: "target-session" });
       expect(readJson(join(target, "team-computers.json"))).toEqual(targetComputers);
       expect(readFileSync(join(target, "environment-id"), "utf8")).toBe("target-environment");
-      expect(readFileSync(join(target, "openmausbot-server.lease"), "utf8")).toBe("live-lease");
+      expect(readFileSync(join(target, "relay-server.lease"), "utf8")).toBe("live-lease");
       expect(existsSync(join(target, "messages.db-wal"))).toBe(false);
       expect(readFileSync(join(result.safetyCopyPath!, "data", "messages.db-wal"), "utf8")).toBe("old database WAL must not enter the new DB");
       expect(existsSync(join(target, "tools"))).toBe(false);
@@ -165,7 +165,7 @@ describe("encrypted full workspace backups", () => {
       const receipt = readLastWorkspaceRestore(target)!;
       expect(receipt.id).toBe(staged.id);
       expect(receipt).not.toHaveProperty("credentials");
-      expect(JSON.parse(receipt.clientState!["omb-draft-attachments"]).thread[0].path).toBe(join(target, "attachments", "image.png"));
+      expect(JSON.parse(receipt.clientState!["relay-draft-attachments"]).thread[0].path).toBe(join(target, "attachments", "image.png"));
       expect(applyPendingWorkspaceRestore(target)).toEqual({ restored: false });
       if (process.platform !== "win32") {
         expect(statSync(exported.path).mode & 0o777).toBe(0o600);
@@ -215,7 +215,7 @@ describe("encrypted full workspace backups", () => {
       "providers/account/auth.json", "providers/antigravity/account/acp_token.json",
       "caddy/data/private.key", "chrome-profile/Cookies", ".agent-browser/auth.json",
       "vm-home/.browser-profiles/chrome/Cookies", "vm-homes/abc/.browser-profiles/chromium/Cookies",
-      "tmp/omb-mcp-123/mcp.json", ".tmp/secret",
+      "tmp/relay-mcp-123/mcp.json", ".tmp/secret",
     ];
     for (const root of [source, target]) {
       for (const path of authPaths) {

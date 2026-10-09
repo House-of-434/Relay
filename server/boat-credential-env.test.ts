@@ -4,7 +4,7 @@ import { boatCredentialEnv } from "./boat.ts";
 import type { AppConfig } from "./config.ts";
 
 // The boat is created with `noEnv: true`, so the only keys its agents ever see
-// are the ones this OpenMausBot forwards. Forward exactly what the user
+// are the ones this Relay forwards. Forward exactly what the user
 // already configured here; never invent, never leak unrelated variables.
 describe("boatCredentialEnv", () => {
   it("forwards the workspace Anthropic key and the known agent keys from the environment", () => {
@@ -13,7 +13,7 @@ describe("boatCredentialEnv", () => {
       OPENAI_API_KEY: "sk-openai",
       DEEPSEEK_API_KEY: "sk-deepseek",
       XAI_API_KEY: "xai-not-a-box-key",
-      OMB_BROWSER_CONNECTION: "private",
+      RELAY_BROWSER_CONNECTION: "private",
       CLAUDE_CODE_OAUTH_TOKEN: "",
     };
     expect(boatCredentialEnv(cfg, env)).toEqual({
@@ -30,10 +30,10 @@ describe("boatCredentialEnv", () => {
   it("never forwards Cloud Pro's included relay tokens into a computer's environment", () => {
     const env = {
       OPENAI_API_KEY: "sk-openai",
-      OMB_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
-      OMB_CLOUD_BOAT_TOKEN: "box_omb_included-relay-token",
-      OMB_CLOUD_VOICE_URL: "https://cloud.example.test/api/cloud/services/voice/v1",
-      OMB_CLOUD_VOICE_TOKEN: "omb_voice_included-relay-token",
+      RELAY_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
+      RELAY_CLOUD_BOAT_TOKEN: "box_relay_included-relay-token",
+      RELAY_CLOUD_VOICE_URL: "https://cloud.example.test/api/cloud/services/voice/v1",
+      RELAY_CLOUD_VOICE_TOKEN: "relay_voice_included-relay-token",
     };
     expect(boatCredentialEnv({} as AppConfig, env)).toEqual({ OPENAI_API_KEY: "sk-openai" });
   });

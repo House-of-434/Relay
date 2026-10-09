@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 import { appendUsage, flushUsageLedger } from "./usage-ledger.ts";
 import type { WireBot, WireGroup } from "../shared/wire.ts";
 

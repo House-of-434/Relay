@@ -2,7 +2,7 @@ import { createServer } from "node:http";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 
 // The fixture can only write one fixed file, provided by the test inside the
 // launcher's disposable home. Provider-supplied arguments cannot select a path.
@@ -35,7 +35,7 @@ type ChatRequest = {
 // prompt, so the provider's cached prefix survives a memory write. Memory is
 // volatile: it rides the newest user message, under this label, on every
 // request (server/drivers/prompt-split.ts, openai-chat.ts).
-const CONTEXT_NOTE = "Context from OpenMausBot updated since this conversation started; it replaces any earlier copy:";
+const CONTEXT_NOTE = "Context from Relay updated since this conversation started; it replaces any earlier copy:";
 const MEMORY = "Your memory (MEMORY.md):\n# Memory\n- Fixture prefers concise replies.";
 /** What the model was actually given: the system message and the newest
  * user message, which carries the volatile context note. */

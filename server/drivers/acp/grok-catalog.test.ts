@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 function scratchConfig(toml: string): string {
-  const dir = mkdtempSync(join(tmpdir(), "omb-grok-catalog-"));
+  const dir = mkdtempSync(join(tmpdir(), "relay-grok-catalog-"));
   scratchDirs.push(dir);
   mkdirSync(join(dir, ".grok"), { recursive: true });
   writeFileSync(join(dir, ".grok", "config.toml"), toml);
@@ -21,7 +21,7 @@ function scratchConfig(toml: string): string {
 
 describe("readGrokModelCatalog", () => {
   it("returns the static cloud models when there is no config", () => {
-    expect(readGrokModelCatalog({ HOME: join(tmpdir(), "omb-grok-missing-home") })).toEqual(STATIC_GROK_MODELS);
+    expect(readGrokModelCatalog({ HOME: join(tmpdir(), "relay-grok-missing-home") })).toEqual(STATIC_GROK_MODELS);
   });
 
   it("appends local slugs from config.toml and prefers their display names", () => {
@@ -71,7 +71,7 @@ name = "OK"
 
   it("honors GROK_HOME over HOME", () => {
     const ignored = scratchConfig(`[model.ignored]\nname = "Ignored"\n`);
-    const grokHomeParent = mkdtempSync(join(tmpdir(), "omb-grok-home-"));
+    const grokHomeParent = mkdtempSync(join(tmpdir(), "relay-grok-home-"));
     const grokHome = join(grokHomeParent, "grok");
     scratchDirs.push(grokHomeParent);
     mkdirSync(grokHome, { recursive: true });

@@ -122,7 +122,9 @@ test("authenticated scout sees browser tools; others do not", async () => {
     assert.ok(!listed.some((name) => name.startsWith("browser_")), agent);
     assert.ok(!listed.includes("web_search"), agent);
   }
-  assert.deepEqual(await toolNames("scout"), ["relay_read", "relay_write"]);
+  // Without an authenticated actor there is no tool list at all: the
+  // request is rejected before any visibility decision.
+  await assert.rejects(toolNames("scout"));
 });
 
 test("browser tools drive the daemon and stay user-scoped end to end", async () => {

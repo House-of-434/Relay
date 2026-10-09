@@ -21,7 +21,7 @@ vi.mock("node:worker_threads", async importOriginal => {
 const TIMEOUT_MS = 120_000;
 
 it("keeps the request loop running during the snapshot copy, not just encryption", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "omb-backup-worker-"));
+  const directory = mkdtempSync(join(tmpdir(), "relay-backup-worker-"));
   const first = "file-0000.txt", last = "file-0319.txt";
   for (let i = 0; i < 320; i++) writeFileSync(join(directory, `file-${String(i).padStart(4, "0")}.txt`), "synthetic");
   let observedCopy = false;
@@ -45,7 +45,7 @@ it("keeps the request loop running during the snapshot copy, not just encryption
 }, TIMEOUT_MS);
 
 it("removes only the failed worker's partial snapshot after an abrupt exit", async () => {
-  const directory = mkdtempSync(join(tmpdir(), "omb-backup-worker-exit-"));
+  const directory = mkdtempSync(join(tmpdir(), "relay-backup-worker-exit-"));
   let pending: Promise<{ error?: unknown }> | undefined;
   try {
     writeFileSync(join(directory, "existing.txt"), "synthetic earlier export");

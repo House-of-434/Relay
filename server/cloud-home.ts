@@ -31,11 +31,11 @@ import { formatPairingCode, type SessionRegistry } from "./sessions.ts";
 
 export const CLOUD_HOME_CONTRACT_VERSION = 1;
 /** Any of these switches the server into Cloud home mode; then all are required. */
-export const CLOUD_HOME_KEYS = ["OMB_CLOUD_ROLE", "OMB_CLOUD_MACHINE_ID", "OMB_CLOUD_ADMIN_URL", "OMB_CLOUD_BOOTSTRAP_SECRET"] as const;
+export const CLOUD_HOME_KEYS = ["RELAY_CLOUD_ROLE", "RELAY_CLOUD_MACHINE_ID", "RELAY_CLOUD_ADMIN_URL", "RELAY_CLOUD_BOOTSTRAP_SECRET"] as const;
 /** A platform model gateway's settings. A Cloud home never uses them: given
  * any, it logs one warning, and neither the server nor anything it starts
  * ever sees them. */
-export const CLOUD_IGNORED_KEYS = ["OMB_HOSTED_MODEL_URL", "OMB_HOSTED_MODEL_TOKEN", "OMB_HOSTED_MODELS"] as const;
+export const CLOUD_IGNORED_KEYS = ["RELAY_HOSTED_MODEL_URL", "RELAY_HOSTED_MODEL_TOKEN", "RELAY_HOSTED_MODELS"] as const;
 export const CLOUD_PAIRING_PATH = "/api/cloud/pairing";
 export const CLOUD_PAIRING_DEFAULT_TTL_S = 300;
 export const CLOUD_PAIRING_MAX_TTL_S = 600;
@@ -48,7 +48,7 @@ export const CLOUD_PAIRING_SKEW_S = 300;
 /** How long a used nonce is refused. Longer than the whole accepted window. */
 export const CLOUD_PAIRING_NONCE_MS = 10 * 60_000;
 const MAX_NONCES = 10_000;
-export const CLOUD_HOME_MARKER = ".omb-cloud-home.json";
+export const CLOUD_HOME_MARKER = ".relay-cloud-home.json";
 /** The server exits with this after a restore commits (Move to Cloud): the
  * launcher then starts it again, and startup installs the restore. Any other
  * exit stops the machine for Fly to restart. */
@@ -87,15 +87,15 @@ function exactHttpsOrigin(raw: string | undefined, name: string): string {
  * throws (so the server refuses to start) on a partial or invalid one. */
 export function cloudHomeConfiguration(env: NodeJS.ProcessEnv = process.env): CloudHomeConfig | null {
   if (!cloudHomeConfigured(env)) return null;
-  if (env.OMB_DESKTOP_PARENT === "1") invalid("the desktop app cannot run as a Cloud home machine");
-  if (hostedWorkspaceConfigured(env)) invalid("a Cloud home is not a hosted team workspace; remove OMB_ADMIN_URL, OMB_ADMIN_WORKSPACE and OMB_ADMIN_MEMBERSHIP");
-  if (env.OMB_CLOUD_ROLE !== "home") invalid('OMB_CLOUD_ROLE must be "home"; this image runs the home machine');
-  const machineId = env.OMB_CLOUD_MACHINE_ID ?? "";
-  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/.test(machineId)) invalid("OMB_CLOUD_MACHINE_ID must be the Admin's machine id (letters, digits, dashes)");
-  const adminOrigin = exactHttpsOrigin(env.OMB_CLOUD_ADMIN_URL, "OMB_CLOUD_ADMIN_URL");
-  const publicOrigin = exactHttpsOrigin(env.OMB_PUBLIC_URL, "OMB_PUBLIC_URL");
-  const bootstrapSecret = env.OMB_CLOUD_BOOTSTRAP_SECRET ?? "";
-  if (!/^[A-Za-z0-9_-]{43,128}$/.test(bootstrapSecret)) invalid("OMB_CLOUD_BOOTSTRAP_SECRET must be at least 256 bits of base64url");
+  if (env.RELAY_DESKTOP_PARENT === "1") invalid("the desktop app cannot run as a Cloud home machine");
+  if (hostedWorkspaceConfigured(env)) invalid("a Cloud home is not a hosted team workspace; remove RELAY_ADMIN_URL, RELAY_ADMIN_WORKSPACE and RELAY_ADMIN_MEMBERSHIP");
+  if (env.RELAY_CLOUD_ROLE !== "home") invalid('RELAY_CLOUD_ROLE must be "home"; this image runs the home machine');
+  const machineId = env.RELAY_CLOUD_MACHINE_ID ?? "";
+  if (!/^[A-Za-z0-9][A-Za-z0-9_-]{2,127}$/.test(machineId)) invalid("RELAY_CLOUD_MACHINE_ID must be the Admin's machine id (letters, digits, dashes)");
+  const adminOrigin = exactHttpsOrigin(env.RELAY_CLOUD_ADMIN_URL, "RELAY_CLOUD_ADMIN_URL");
+  const publicOrigin = exactHttpsOrigin(env.RELAY_PUBLIC_URL, "RELAY_PUBLIC_URL");
+  const bootstrapSecret = env.RELAY_CLOUD_BOOTSTRAP_SECRET ?? "";
+  if (!/^[A-Za-z0-9_-]{43,128}$/.test(bootstrapSecret)) invalid("RELAY_CLOUD_BOOTSTRAP_SECRET must be at least 256 bits of base64url");
   const warnings: string[] = [];
   const ignored = CLOUD_IGNORED_KEYS.filter((key) => env[key] !== undefined);
   if (ignored.length) warnings.push(`ignoring ${ignored.join(", ")}: Cloud Pro includes no AI; people sign in with their own Claude or ChatGPT account, or an API key`);

@@ -34,7 +34,7 @@ import { takeImportName } from "../shared/import-name.ts";
 import { decodeBase64, type PackageAgent, type PackageDocument, type PackageTrust } from "../shared/package-format.ts";
 import type { BotVisibility, ModelSelection } from "../shared/wire.ts";
 
-export const NO_BOTS_MESSAGE = "This package has no bots. Add it from your organization's shelf, or update OpenMausBot.";
+export const NO_BOTS_MESSAGE = "This package has no bots. Add it from your organization's shelf, or update Relay.";
 /** A file with skills only: a file never adds a skill without a bot or a preset to hold it. */
 export const NO_PRESETS_MESSAGE = "This file has no bots or preset bots to add. Its skills can be added from your organization's shelf.";
 
@@ -159,7 +159,7 @@ export type ImportResult = PackageImportResult | { alreadyAdded: true; installId
 /** Deterministic, so reconnecting to the same organization recognizes what
  * it already added. `packageId` is Admin's package UUID. */
 export function orgInstallId(adminOrigin: string, organizationId: string, packageId: string): string {
-  return createHash("sha256").update(`omb-install:v1\n${adminOrigin}\n${organizationId}\n${packageId}`, "utf8").digest("hex").slice(0, 32);
+  return createHash("sha256").update(`relay-install:v1\n${adminOrigin}\n${organizationId}\n${packageId}`, "utf8").digest("hex").slice(0, 32);
 }
 
 function memberFromAgent(agent: PackageAgent): TeamManifestMember {
@@ -260,7 +260,7 @@ function importLibraryFile(document: PackageDocument, presets: PresetRegistry): 
   };
 }
 
-/** Add a legacy `openmaus.team` file: people only (plus a project room when
+/** Add a legacy `relay.team` file: people only (plus a project room when
  * the caller asks for one). */
 export function importTeamManifest(
   manifest: ParsedTeamManifest,

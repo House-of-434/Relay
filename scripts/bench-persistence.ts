@@ -6,9 +6,9 @@ import { join } from "node:path";
 import { monitorEventLoopDelay, performance } from "node:perf_hooks";
 import { setImmediate as yieldLoop, setTimeout as delay } from "node:timers/promises";
 
-const directory = mkdtempSync(join(tmpdir(), "omb-persistence-bench-"));
-const previousDataDir = process.env.OMB_DATA_DIR;
-process.env.OMB_DATA_DIR = directory;
+const directory = mkdtempSync(join(tmpdir(), "relay-persistence-bench-"));
+const previousDataDir = process.env.RELAY_DATA_DIR;
+process.env.RELAY_DATA_DIR = directory;
 mkdirSync(join(directory, "events"));
 const db = await import("../server/message-db.ts");
 const { EventBus } = await import("../server/harness/bus.ts");
@@ -87,7 +87,7 @@ try {
 } finally {
   await db.closeMessageSearch();
   db.closeMessageDb();
-  if (previousDataDir === undefined) delete process.env.OMB_DATA_DIR;
-  else process.env.OMB_DATA_DIR = previousDataDir;
+  if (previousDataDir === undefined) delete process.env.RELAY_DATA_DIR;
+  else process.env.RELAY_DATA_DIR = previousDataDir;
   rmSync(directory, { recursive: true, force: true });
 }

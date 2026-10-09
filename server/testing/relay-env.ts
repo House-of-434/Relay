@@ -1,21 +1,21 @@
-// Keeping a test's children honest about OpenMausBot configuration.
+// Keeping a test's children honest about Relay configuration.
 //
-// A shell that already exports OMB_* or OPENMAUSBOT_* — an OpenMausBot-hosted
+// A shell that already exports RELAY_* or RELAY_* — an Relay-hosted
 // terminal, or a server running in another window — leaks those values into
 // every child a suite spawns and into modules that snapshot process.env at
 // import time. The suite then asserts against a "configured" runtime the test
 // itself never set up (#1676). Strip the ambient values here; each test sets
 // exactly the keys it means to set, on top of a base that carries no
-// OpenMausBot configuration at all.
+// Relay configuration at all.
 
-const AMBIENT_PREFIXES = ["OMB_", "OPENMAUSBOT_"] as const;
+const AMBIENT_PREFIXES = ["RELAY_", "RELAY_"] as const;
 
-/** True for keys owned by the OpenMausBot runtime (`OMB_*`, `OPENMAUSBOT_*`). */
+/** True for keys owned by the Relay runtime (`RELAY_*`, `RELAY_*`). */
 export function isAmbientOmbKey(key: string): boolean {
   return AMBIENT_PREFIXES.some((prefix) => key.startsWith(prefix));
 }
 
-/** Copy `env` without any `OMB_*` / `OPENMAUSBOT_*` keys. */
+/** Copy `env` without any `RELAY_*` / `RELAY_*` keys. */
 export function stripOmbEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   const clean: NodeJS.ProcessEnv = {};
   for (const [key, value] of Object.entries(env)) {
@@ -26,11 +26,11 @@ export function stripOmbEnv(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
 
 /**
  * Environment for a child process spawned by a test: the current environment
- * with ambient OpenMausBot keys stripped, then `overrides` applied on top.
+ * with ambient Relay keys stripped, then `overrides` applied on top.
  *
  * The spread sits where `...process.env` used to, so a suite's own keys —
  * harness URL, tokens the stub validates, feature flags under test — are the
- * only OpenMausBot configuration the child ever sees.
+ * only Relay configuration the child ever sees.
  */
 export function childEnv(overrides: Record<string, string> = {}): NodeJS.ProcessEnv {
   return { ...stripOmbEnv(process.env), ...overrides };

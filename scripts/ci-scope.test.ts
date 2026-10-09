@@ -15,7 +15,7 @@ afterEach(() => {
 });
 
 function fixture(source = "src/page.ts") {
-  const directory = mkdtempSync(join(tmpdir(), "omb-ci-scope-"));
+  const directory = mkdtempSync(join(tmpdir(), "relay-ci-scope-"));
   temporaryDirectories.push(directory);
   const git = (...args: string[]) => execFileSync("git", args, { cwd: directory, encoding: "utf8" }).trim();
   git("init", "--quiet");

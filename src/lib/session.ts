@@ -51,7 +51,7 @@ export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise
 }
 
 /** Why the pair page shows on this machine: the server trusts local
- * requests only as a service (OMB_LOOPBACK_TRUST=service, or a hosted
+ * requests only as a service (RELAY_LOOPBACK_TRUST=service, or a hosted
  * workspace), so an SSH tunnel is not the owner and must sign in. */
 export const SERVICE_TRUST_REASON = "This server does not treat this computer as its owner. Sign in or pair this browser to continue.";
 
@@ -74,13 +74,13 @@ export function takePairingCodeFromLocation(): string | null {
   return decodeURIComponent(m[1]);
 }
 
-/** The OMB Cloud page's "Use in your browser" link, `/pair#signin=omb_pair_…`:
+/** The OMB Cloud page's "Use in your browser" link, `/pair#signin=relay_pair_…`:
  * a single-use browser sign-in the Cloud's Admin opened on this machine. Taken
  * off the address bar and out of this tab's history entry before anything
  * renders, and never shown. */
 export function takeBrowserSignInFromLocation(): string | null {
   if (!/[#&]signin=/.test(location.hash)) return null;
-  const m = /[#&]signin=(omb_pair_[A-Za-z0-9_-]{43})(?:&|$)/.exec(location.hash);
+  const m = /[#&]signin=(relay_pair_[A-Za-z0-9_-]{43})(?:&|$)/.exec(location.hash);
   history.replaceState(null, "", location.pathname + location.search);
   return m ? m[1] : null;
 }

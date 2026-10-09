@@ -2,7 +2,7 @@
 //
 // Provider CLIs only see this stdio server. Ordinary MCP traffic is relayed
 // to the configured Composio Session, but connection requests are converted
-// into first-class OpenMausBot chat cards. The agent never authors an auth
+// into first-class Relay chat cards. The agent never authors an auth
 // URL and credentials never pass through its transcript.
 // tools/list responses are trimmed to this bot's granted tools as a
 // prompt-time hint; every call is still judged harness-side by the grants
@@ -21,11 +21,11 @@ import {
 
 type Json = Record<string, unknown>;
 
-const UPSTREAM = process.env.OMB_CONNECTOR_UPSTREAM_URL ?? "";
-const HARNESS = process.env.OMB_HARNESS_URL ?? "http://127.0.0.1:8799";
-const BOT_ID = process.env.OMB_BOT_ID ?? "";
-const THREAD_ID = process.env.OMB_THREAD_ID ?? "";
-const TOKEN = process.env.OMB_CONNECTOR_TOKEN ?? process.env.OMB_COMMS_TOKEN ?? "";
+const UPSTREAM = process.env.RELAY_CONNECTOR_UPSTREAM_URL ?? "";
+const HARNESS = process.env.RELAY_HARNESS_URL ?? "http://127.0.0.1:8799";
+const BOT_ID = process.env.RELAY_BOT_ID ?? "";
+const THREAD_ID = process.env.RELAY_THREAD_ID ?? "";
+const TOKEN = process.env.RELAY_CONNECTOR_TOKEN ?? process.env.RELAY_COMMS_TOKEN ?? "";
 // The bot's effective tool grants, or null when the harness sent none —
 // legacy bots, oversized allowlists, anything unreadable. null means the
 // upstream list is relayed verbatim; the harness still judges every call.
@@ -37,7 +37,7 @@ const RELAY_TIMEOUT_MS = 10 * 60_000;
 
 function parsedHeaders(): Record<string, string> {
   try {
-    const value: unknown = JSON.parse(process.env.OMB_CONNECTOR_UPSTREAM_HEADERS ?? "{}");
+    const value: unknown = JSON.parse(process.env.RELAY_CONNECTOR_UPSTREAM_HEADERS ?? "{}");
     if (!value || typeof value !== "object" || Array.isArray(value)) return {};
     return Object.fromEntries(
       Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === "string"),
@@ -66,7 +66,7 @@ function initializeResult(id: unknown, protocolVersion: unknown): Json {
     result: {
       protocolVersion: typeof protocolVersion === "string" && protocolVersion ? protocolVersion : "2024-11-05",
       capabilities: { tools: {} },
-      serverInfo: { name: "openmausbot-connectors", version: "1" },
+      serverInfo: { name: "relay-connectors", version: "1" },
     },
   };
 }
@@ -219,12 +219,12 @@ async function handle(message: Json): Promise<void> {
       const labels = requests.map((r) => (r.alias ? `${r.slug} (${r.alias})` : r.slug)).join(", ");
       send(textResult(
         id,
-        `OpenMausBot showed the user a secure connection card for ${labels}. End this turn now. The app will continue the task automatically after the connection finishes.`,
+        `Relay showed the user a secure connection card for ${labels}. End this turn now. The app will continue the task automatically after the connection finishes.`,
       ));
       return;
     }
     if (/WAIT_FOR_CONNECTIONS$/i.test(name)) {
-      send(textResult(id, "OpenMausBot is handling connection completion and will continue the task automatically."));
+      send(textResult(id, "Relay is handling connection completion and will continue the task automatically."));
       return;
     }
   }

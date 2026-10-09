@@ -22,7 +22,7 @@ import { removeTempDir } from "./testing/cleanup.ts";
 import { createWorkspaceBackupSnapshot } from "./workspace-backup.ts";
 
 let dataDir: string, desktop: string;
-beforeEach(() => { dataDir = mkdtempSync(join(tmpdir(), "omb-cloud-move-")); desktop = mkdtempSync(join(tmpdir(), "omb-cloud-move-desktop-")); });
+beforeEach(() => { dataDir = mkdtempSync(join(tmpdir(), "relay-cloud-move-")); desktop = mkdtempSync(join(tmpdir(), "relay-cloud-move-desktop-")); });
 afterEach(async () => { await removeTempDir(dataDir); await removeTempDir(desktop); });
 
 const sha = (bytes: Buffer) => createHash("sha256").update(bytes).digest("hex");

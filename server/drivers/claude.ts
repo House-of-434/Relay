@@ -215,7 +215,7 @@ function claudeEnvironment(
  * to give a bot a server is the app's own `mcpServers` config or the bot
  * project's `.mcp.json`. */
 function inheritsUserConfig(env: NodeJS.ProcessEnv): boolean {
-  return env.OMB_CLAUDE_INHERIT_USER_CONFIG === "1";
+  return env.RELAY_CLAUDE_INHERIT_USER_CONFIG === "1";
 }
 
 /** The Engines-page warning while the escape hatch is set. The flag is a
@@ -228,7 +228,7 @@ export function claudeInheritWarning(env: NodeJS.ProcessEnv): ProviderSnapshot["
   return {
     title: "Bots inherit this machine's Claude Code setup",
     message:
-      "OMB_CLAUDE_INHERIT_USER_CONFIG=1 is set on the OpenMausBot process, so every Claude bot also loads this " +
+      "RELAY_CLAUDE_INHERIT_USER_CONFIG=1 is set on the Relay process, so every Claude bot also loads this " +
       "computer's own MCP servers, connectors, skills, hooks and personal CLAUDE.md on every turn — often thousands " +
       "of extra tokens per model call, and tools nobody gave the bot. Unless a bot genuinely needs a server from " +
       "your user-scope Claude config, remove the variable and restart; add the server under Settings → MCP servers " +
@@ -297,12 +297,12 @@ function projectMcpServers(cwd: string): Record<string, unknown> {
  * compaction to the CLI, which owns the session and already has a summarizer
  * for it; the harness only decides when it is worth paying for.
  *
- * OMB_CLAUDE_AUTOCOMPACT takes a token count, "auto" to hand the decision
+ * RELAY_CLAUDE_AUTOCOMPACT takes a token count, "auto" to hand the decision
  * back to the CLI, or "off" to pass nothing at all. The CLI rejects a window
  * outside 100k-1M as a hard argument error, so a configured value is clamped
  * rather than passed through: a mistyped setting must not fail every turn. */
 export function autoCompactWindow(env: NodeJS.ProcessEnv): string | null {
-  const raw = (env.OMB_CLAUDE_AUTOCOMPACT ?? "").trim().toLowerCase();
+  const raw = (env.RELAY_CLAUDE_AUTOCOMPACT ?? "").trim().toLowerCase();
   if (raw === "off") return null;
   if (raw === "auto") return "auto";
   const parsed = raw ? Number(raw) : DEFAULT_AUTOCOMPACT_TOKENS;
@@ -365,7 +365,7 @@ export function claudeCliUpdate(version: string | null, cli: string): ProviderSn
   const missing = (Object.keys(CLAUDE_FLAG_FLOORS) as (keyof typeof CLAUDE_FLAG_FLOORS)[])
     .filter((flag) => !claudeCliSupports(parsed, flag));
   const effects = [
-    ...(missing.includes("--autocompact") ? ["no compaction window picked by OpenMausBot"] : []),
+    ...(missing.includes("--autocompact") ? ["no compaction window picked by Relay"] : []),
     ...(missing.includes("--setting-sources") ? ["bots still see this machine's own Claude Code setup"] : []),
     ...(missing.includes("--system-prompt-snapshot") ? ["coordinated resumed turns cannot refresh stale system prompts"] : []),
   ];
@@ -512,17 +512,17 @@ type AskBehavior = "allow" | "deny" | "answer";
 type AskResolutionSource = "user" | "timeout" | "system";
 
 const DENY_TIMEOUT_NOTE =
-  "OpenMausBot: nobody answered this permission request in time. Skip this action and finish what you can without it.";
-const QUESTION_TIMEOUT_NOTE = "OpenMausBot: nobody answered in time. Use your best judgment and continue.";
-const DUPLICATE_ASK_ID_NOTE = "OpenMausBot: duplicate ask id — skipping this request.";
+  "Relay: nobody answered this permission request in time. Skip this action and finish what you can without it.";
+const QUESTION_TIMEOUT_NOTE = "Relay: nobody answered in time. Use your best judgment and continue.";
+const DUPLICATE_ASK_ID_NOTE = "Relay: duplicate ask id — skipping this request.";
 
 /** The system-source reply for an ask that outlives the turn — used both to
  * drain in-flight `pending` asks on close() and to answer one that arrives
  * on an already-closed broker (see the `closed` branch below). */
 function systemEndedReply(kind: Ask["kind"]): { behavior: AskBehavior; message: string } {
   return kind === "question"
-    ? { behavior: "answer", message: "OpenMausBot: the turn is ending — wrap up." }
-    : { behavior: "deny", message: "OpenMausBot: the turn ended" };
+    ? { behavior: "answer", message: "Relay: the turn is ending — wrap up." }
+    : { behavior: "deny", message: "Relay: the turn ended" };
 }
 
 /** The structured questions behind an ask, when it is one. Claude's own
@@ -556,7 +556,7 @@ export function claudeHookSettings(helperPath: string): Record<string, unknown> 
   // expand inside double quotes on POSIX. Windows paths come through env
   // variables so their backslashes are not JSON-escaped into the command.
   const command = process.platform === "win32"
-    ? '"%OMB_HOOK_NODE%" "%OMB_HOOK_HELPER%"'
+    ? '"%RELAY_HOOK_NODE%" "%RELAY_HOOK_HELPER%"'
     : [process.execPath, helperPath].map(path => `'${path.replace(/'/g, "'\\''")}'`).join(" ");
   const entry = [{ matcher: "", hooks: [{ type: "command", command, timeout: 5 }] }];
   return { PostToolUse: entry, PreCompact: entry, SessionStart: entry, Stop: entry };
@@ -599,7 +599,7 @@ export function brokerSocketCandidates(threadId: string, botId?: string): string
       .update(`${DATA_DIR}\0${process.pid}\0${botId ?? ""}\0${threadId}`)
       .digest("hex")
       .slice(0, 16);
-    return [base, join(tmpdir(), `omb-perm-${scope}.sock`)];
+    return [base, join(tmpdir(), `relay-perm-${scope}.sock`)];
   }
   return [
     base,
@@ -1058,7 +1058,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
     // Say it once where a headless or source run reads its logs; the Engines
     // page carries the same warning for the desktop (claudeInheritWarning).
     if (inheritsUserConfig(catalogEnv)) {
-      console.error(`claude (${instanceId}): OMB_CLAUDE_INHERIT_USER_CONFIG=1 — bots inherit this machine's Claude Code MCP servers, skills, hooks and CLAUDE.md on every turn; remove it unless a bot needs a user-scope server`);
+      console.error(`claude (${instanceId}): RELAY_CLAUDE_INHERIT_USER_CONFIG=1 — bots inherit this machine's Claude Code MCP servers, skills, hooks and CLAUDE.md on every turn; remove it unless a bot needs a user-scope server`);
     }
     let models = config.managedModels ? { default: config.managedModels[0], options: config.managedModels.map(id => ({ id, label: id })) } : STATIC_CLAUDE_MODELS;
     const refreshModels = async () => {
@@ -1334,7 +1334,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           env: local.env,
         };
         // The isolated Local VM preserves the established pre-allow behavior.
-        // Host tools always route through OpenMausBot's permission broker.
+        // Host tools always route through Relay's permission broker.
         if (!controlsHost) allowed.push("mcp__computer");
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
@@ -1424,7 +1424,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // is removed when the turn settles.
       let mcpConfigPath: string | null = null;
       if (Object.keys(mcpServers).length) {
-        mcpConfigPath = join(mkdtempSync(join(tmpdir(), "omb-mcp-")), "mcp.json");
+        mcpConfigPath = join(mkdtempSync(join(tmpdir(), "relay-mcp-")), "mcp.json");
         args.push("--mcp-config", mcpConfigPath);
         args.push("--allowedTools", allowed.join(","));
       }
@@ -1442,10 +1442,10 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (hooks && hookTokenPath) {
         mkdirSync(dirname(hookTokenPath), { recursive: true, mode: 0o700 });
         writeFileAtomic(hookTokenPath, hooks.token, { mode: 0o600 });
-        env.OMB_HOOK_URL = hooks.url;
-        env.OMB_HOOK_TOKEN_FILE = hookTokenPath;
-        env.OMB_HOOK_NODE = process.execPath;
-        env.OMB_HOOK_HELPER = HOOK_HELPER_PATH;
+        env.RELAY_HOOK_URL = hooks.url;
+        env.RELAY_HOOK_TOKEN_FILE = hookTokenPath;
+        env.RELAY_HOOK_NODE = process.execPath;
+        env.RELAY_HOOK_HELPER = HOOK_HELPER_PATH;
         // in the packaged app process.execPath is Electron — run the helper as node
         if (process.versions.electron) env.ELECTRON_RUN_AS_NODE = "1";
       }
@@ -1550,7 +1550,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // Create the prompt file only for a new process. A compatible live
         // session has already consumed the same system prompt at launch.
         if (turn.system) {
-          systemPromptPath = join(mkdtempSync(join(tmpdir(), "omb-system-")), "prompt.txt");
+          systemPromptPath = join(mkdtempSync(join(tmpdir(), "relay-system-")), "prompt.txt");
           writeFileSync(systemPromptPath, turn.system, { mode: 0o600 });
           args.push("--append-system-prompt-file", systemPromptPath);
         }

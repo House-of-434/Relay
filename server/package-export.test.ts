@@ -152,7 +152,7 @@ describe("package export", () => {
     expect(exported.package.routines?.[1]?.timeoutMinutes).toBe(20);
 
     expect(exported).toMatchObject({
-      format: "openmaus.package",
+      format: "relay.package",
       package: {
         chiefOfStaff: "lead",
         requirements: { apps: [{ slug: "github" }] },
@@ -291,7 +291,7 @@ describe("whole-team export (package v2)", () => {
   it("exports only the chosen team, whole, without chat history or authority", () => {
     const result = createTeamPackageExport(fixture());
     const pkg = result.document.package;
-    expect(result.document).toMatchObject({ format: "openmaus.package", version: 2 });
+    expect(result.document).toMatchObject({ format: "relay.package", version: 2 });
     expect(pkg.agents.map((agent) => agent.key)).toEqual(["morgan", "scout"]);
     expect(pkg.team).toEqual({ name: "Sales desk", brief: "Quote list prices only.", leader: "morgan" });
     expect(pkg.agents[0]).toMatchObject({
@@ -314,7 +314,7 @@ describe("whole-team export (package v2)", () => {
       { part: "connections[plain-http]", reason: "insecure_address" },
       { part: "routines[daily-digest].attachments", reason: "files_not_shared" },
     ]);
-    expect(result.filename).toBe("sales-desk-1.0.0.openmaus.json");
+    expect(result.filename).toBe("sales-desk-1.0.0.relay.json");
   });
 
   it("adds starter notes only when asked, within the caps", () => {
@@ -364,7 +364,7 @@ describe("whole-team export (package v2)", () => {
     expect(second.document.package.agents.map((agent) => agent.key)).toEqual(["morgan", "scout"]);
     expect(second.document.package.rooms?.map((room) => room.key)).toEqual(["deal-desk"]);
     expect(second.document.package.routines?.map((routine) => routine.key)).toEqual(["daily-digest", "weekly-review"]);
-    expect(second.filename).toBe("sales-desk-1.0.1.openmaus.json");
+    expect(second.filename).toBe("sales-desk-1.0.1.relay.json");
   });
 
   it("never gives a new bot a key recorded for one that left", () => {

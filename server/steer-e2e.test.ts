@@ -75,14 +75,14 @@ posixOnly("mid-turn steering e2e", () => {
     chmodSync(FAKE_CLAUDE, 0o755);
     chmodSync(FAKE_ACP, 0o755);
     chmodSync(FAKE_CODEX, 0o755);
-    home = mkdtempSync(join(tmpdir(), "omb-steer-"));
-    mkdirSync(join(home, ".openmausbot"), { recursive: true });
+    home = mkdtempSync(join(tmpdir(), "relay-steer-"));
+    mkdirSync(join(home, ".relay"), { recursive: true });
     steerGate = join(home, "delayed-steer.gate");
     steerFinishGate = join(home, "finish-steered-turn.gate");
     codexSteerGate = join(home, "codex-steer-refused.gate");
     writeFileSync(codexSteerGate, "refuse live steers until the queue test clears this gate");
     writeFileSync(
-      join(home, ".openmausbot", "config.json"),
+      join(home, ".relay", "config.json"),
       JSON.stringify({
         instances: {
           claude: { driver: "claudeAgent", environment: { FAKE_CLAUDE_MODE: "slow" }, config: { cli: FAKE_CLAUDE, permissionMode: "bypassPermissions" } },
@@ -115,7 +115,7 @@ posixOnly("mid-turn steering e2e", () => {
     );
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
-      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, OMB_PORT: String(PORT) },
+      env: { ...(process.env.PATH ? { PATH: process.env.PATH } : {}), HOME: home, USERPROFILE: home, RELAY_PORT: String(PORT) },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stderr!.on("data", (c) => (stderr += c));
@@ -200,7 +200,7 @@ posixOnly("mid-turn steering e2e", () => {
       "the image queue tool chip",
     );
 
-    const attachments = join(home, ".openmausbot", "attachments");
+    const attachments = join(home, ".relay", "attachments");
     mkdirSync(attachments, { recursive: true });
     const firstImagePath = join(attachments, "123e4567-e89b-42d3-a456-426614174000.png");
     const secondImagePath = join(attachments, "123e4567-e89b-42d3-a456-426614174001.png");
@@ -235,7 +235,7 @@ posixOnly("mid-turn steering e2e", () => {
     await waitFor(async () => (await getBot(created.id)).busy === false, "the attached follow-up to settle");
 
     const nativeRows = readFileSync(
-      join(home, ".openmausbot", "native", `${created.threadId}.ndjson`),
+      join(home, ".relay", "native", `${created.threadId}.ndjson`),
       "utf8",
     )
       .trim()
@@ -280,7 +280,7 @@ posixOnly("mid-turn steering e2e", () => {
     // burst comes from one paired person; the opener runs on the gated
     // slow instance, so it cannot settle until the test drops the gate.
     const person = await asPairedPerson();
-    const attachments = join(home, ".openmausbot", "attachments");
+    const attachments = join(home, ".relay", "attachments");
     mkdirSync(attachments, { recursive: true });
     const imagePath = join(attachments, "123e4567-e89b-42d3-a456-426614174004.png");
     writeFileSync(imagePath, "room png");
@@ -306,7 +306,7 @@ posixOnly("mid-turn steering e2e", () => {
     ).toHaveLength(2);
 
     const nativeRows = readFileSync(
-      join(home, ".openmausbot", "native", `${room.threadId}.ndjson`),
+      join(home, ".relay", "native", `${room.threadId}.ndjson`),
       "utf8",
     )
       .trim()
@@ -447,7 +447,7 @@ posixOnly("mid-turn steering e2e", () => {
     expect(steered.steered).toBe(true);
 
     // the fold reached the app-server as mid-turn input for the SAME turn
-    const nativeRows = readFileSync(join(home, ".openmausbot", "native", `${created.threadId}.ndjson`), "utf8")
+    const nativeRows = readFileSync(join(home, ".relay", "native", `${created.threadId}.ndjson`), "utf8")
       .trim().split("\n").map((line) => JSON.parse(line));
     const steerRow = nativeRows.find((row) => row.dir === "out" && row.msg?.method === "turn/steer")?.msg;
     expect(steerRow?.params).toMatchObject({
@@ -565,7 +565,7 @@ posixOnly("mid-turn steering e2e", () => {
     expect(folded?.sender).toEqual(PAIRED);
 
     // the fold reached the app-server as mid-turn input for the SAME turn
-    const nativeRows = readFileSync(join(home, ".openmausbot", "native", `${room.threadId}.ndjson`), "utf8")
+    const nativeRows = readFileSync(join(home, ".relay", "native", `${room.threadId}.ndjson`), "utf8")
       .trim().split("\n").map((line) => JSON.parse(line));
     const steerRow = nativeRows.find((row) => row.dir === "out" && row.msg?.method === "turn/steer")?.msg;
     expect(steerRow?.params).toMatchObject({ input: [{ type: "text", text: "steer these room words" }] });
@@ -653,7 +653,7 @@ posixOnly("mid-turn steering e2e", () => {
     expect(steered.body.steered).toBe(true);
     expect(steered.body.queueIds).toEqual([replying.body.queueId, plain.body.queueId]);
 
-    const nativeRows = readFileSync(join(home, ".openmausbot", "native", `${room.threadId}.ndjson`), "utf8")
+    const nativeRows = readFileSync(join(home, ".relay", "native", `${room.threadId}.ndjson`), "utf8")
       .trim().split("\n").map((line) => JSON.parse(line));
     const foldRow = nativeRows.find((row) => row.dir === "out" && row.msg?.method === "turn/steer")?.msg;
     const foldedText = foldRow?.params.input.map((block: any) => block.text).join("\n") ?? "";
@@ -685,7 +685,7 @@ posixOnly("mid-turn steering e2e", () => {
     await waitFor(async () => (await getGroup())?.busyBotId === created.id, "the room turn to start");
     await waitFor(async () => (await getGroup())?.messages.some((m: any) => m.card), "the room question card");
 
-    const attachments = join(home, ".openmausbot", "attachments");
+    const attachments = join(home, ".relay", "attachments");
     mkdirSync(attachments, { recursive: true });
     const imagePath = join(attachments, "123e4567-e89b-42d3-a456-426614174005.png");
     writeFileSync(imagePath, "clip png");
@@ -714,7 +714,7 @@ posixOnly("mid-turn steering e2e", () => {
     await api("POST", `/api/groups/${room.id}/interrupt`, {});
     await waitFor(async () => (await getGroup())?.working === false, "the drained attachment turn to settle");
 
-    const nativeRows = readFileSync(join(home, ".openmausbot", "native", `${room.threadId}.ndjson`), "utf8")
+    const nativeRows = readFileSync(join(home, ".relay", "native", `${room.threadId}.ndjson`), "utf8")
       .trim().split("\n").map((line) => JSON.parse(line));
     expect(nativeRows.filter((row) => row.dir === "out" && row.msg?.method === "turn/steer")).toHaveLength(0);
   }, 40_000);

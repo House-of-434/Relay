@@ -66,7 +66,7 @@ function harness(t, { fetchZip = true } = {}) {
   const warnings = [];
   updater.logger = { info() {}, warn(message) { warnings.push(message); }, error() {}, debug() {} };
   updater.autoInstallOnAppQuit = true;
-  const workspace = mkdtempSync(join(tmpdir(), "omb-native-stage-"));
+  const workspace = mkdtempSync(join(tmpdir(), "relay-native-stage-"));
   const zip = join(workspace, "update.zip");
   writeFileSync(zip, "fixture ZIP bytes");
   t.after(async () => {
