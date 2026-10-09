@@ -59,7 +59,7 @@ describe("the greeting beat", () => {
     for (const agent of ["Scout", "Mercury", "Curator"]) expect(html).toContain(agent);
     expect(html).toContain("sidebar");
     // the shared workspace says what to do first, not a bare Continue
-    expect(html).toContain("Start with Scout");
+    expect(html).toContain("Meet your team");
     const primary = nodes(tree).find((node) => typeof node.type === "function" && node.props.onClick);
     primary!.props.onClick!();
     expect(props.onNext).toHaveBeenCalledOnce();
@@ -69,6 +69,6 @@ describe("the greeting beat", () => {
   it("keeps a hosted workspace on its own copy, not the shared one", () => {
     const html = render({ hosted: true, sharedWorkspace: true }).html;
     expect(html).toContain("your administrator manages models");
-    expect(html).not.toContain("Start with Scout");
+    expect(html).not.toContain("Meet your team");
   });
 });

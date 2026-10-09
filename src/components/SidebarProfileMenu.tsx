@@ -13,26 +13,24 @@ import {
   ArrowDownToLine,
   Check,
   Info,
-  HelpCircle,
   Keyboard,
   Loader2,
+  LogOut,
   RefreshCw,
   Settings as SettingsIcon,
   Smartphone,
 } from "lucide-react";
 
 import { InitialsAvatar } from "./Avatar";
-import { DiscordIcon } from "./DiscordIcon";
 import { AboutDialog } from "./AboutDialog";
 import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
 import { ShortcutHint } from "./ShortcutHint";
 import { phoneSettingsAction, useSidebarPhoneStatus } from "./SidebarPhoneButton";
 import { useStore } from "@/state/store";
-import type { SessionState } from "@/lib/session";
+import { signOut, type SessionState } from "@/lib/session";
 import { useUpdaterState, type UpdaterState } from "@/lib/updater";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
-import { FEEDBACK_URL, HELP_CENTER_URL, openExternalLink } from "@/lib/app-links";
 
 /** "Milind Soni" → "MS", "milind" → "M", "you@x.dev" → "Y", unset → "?" */
 export function profileInitials(profile?: { name?: string; email?: string }): string {
@@ -302,16 +300,20 @@ export function SidebarProfileMenu() {
   const name = identity.name;
 
   const items: SidebarMenuItem[] = [
-    {
-      key: "phone",
-      label: phone.pairedCount ? t("sidebar.menu.yourPhone") : t("sidebar.menu.getIos"),
-      icon: <Smartphone size={18} />,
-      trailing:
-        phone.kind === "connected" ? (
-          <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-success" />
-        ) : undefined,
-      onSelect: () => dispatch(phoneSettingsAction()),
-    },
+    ...(phone.pairedCount
+      ? [
+          {
+            key: "phone",
+            label: t("sidebar.menu.yourPhone"),
+            icon: <Smartphone size={18} />,
+            trailing:
+              phone.kind === "connected" ? (
+                <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-success" />
+              ) : undefined,
+            onSelect: () => dispatch(phoneSettingsAction()),
+          } as SidebarMenuItem,
+        ]
+      : []),
     {
       key: "settings",
       label: t("sidebar.menu.settings"),
@@ -331,23 +333,17 @@ export function SidebarProfileMenu() {
     },
     ...(update ? [update.item] : []),
     {
+      key: "signOut",
+      label: t("sidebar.menu.signOut"),
+      icon: <LogOut size={18} />,
+      separatorBefore: true,
+      onSelect: () => void signOut(),
+    },
+    {
       key: "about",
       label: t("sidebar.menu.about"),
       icon: <Info size={18} />,
-      separatorBefore: true,
       onSelect: () => setAboutOpen(true),
-    },
-    {
-      key: "help",
-      label: t("sidebar.menu.help"),
-      icon: <HelpCircle size={18} />,
-      onSelect: () => void openExternalLink(HELP_CENTER_URL),
-    },
-    {
-      key: "feedback",
-      label: t("sidebar.menu.feedback"),
-      icon: <DiscordIcon size={17} />,
-      onSelect: () => void openExternalLink(FEEDBACK_URL),
     },
   ];
 

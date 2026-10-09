@@ -1,0 +1,113 @@
+
+ RUN  v4.1.10 /Users/pranamshetty/Work/434/Relay
+
+ ❯ server/index.test.ts (246 tests | 68 failed) 71758ms
+     × creates, patches, and deletes a bot 255ms
+     × clears an explicit computer to Auto and refuses passive Auto Boat provisioning 318ms
+     × refuses a Works-on This Computer turn for the box-native engine 25ms
+     × refuses a room Works-on This Computer turn for the box-native engine 24ms
+     × refuses a room Works-on Local VM turn for the box-native engine 26ms
+     × creates team computers only with consent, retains failed creates, and assigns safely 110ms
+     × shares one team computer across direct and room turns without overriding explicit destinations 169ms
+     × keeps the wait history when the wait ceiling gives up 1179ms
+     × blocks bot-scoped Boat lifecycle changes after a direct turn claims the bot 526ms
+     × blocks bot-scoped Boat lifecycle changes while the bot owns a room turn 588ms
+     × lists sanitized cloud computers and requires explicit safe lifecycle actions 312ms
+     × deletes a bot-owned Boat automatically even after the bot changes destination 284ms
+     × keeps the bot while an owned Boat deletion is pending and finishes on retry 306ms
+     × keeps a bot when its Boat provider is unavailable and fences deletion races 806ms
+     × keeps the bot owner while Boat creation recovery is unresolved 289ms
+     × finds and deletes a remembered Boat even while account LIST omits it 300ms
+     × limits paired profile writes to validated profile fields and broadcasts the result 231ms
+     × installs a complete bot package with a Chief, room, playbook, connector intent, and paused routine 246ms
+     × team import is additive-only: smuggled grants, claimed ids, and re-imports never touch existing records 427ms
+     × buzzes when a turn dies before it can start 239ms
+     × leaves a failed credential-card continuation on the card without buzzing twice 379ms
+     × keeps credential-card ownership stable while an encrypted phone save is in flight 2477ms
+     × reports a failed routine once, not twice 252ms
+     × grants Auto on this computer only through the warning acknowledgement 216ms
+     × offers an idempotent stop boundary for active local turns 2ms
+     × rejects an empty message and explains an unavailable provider 134ms
+     × clears incompatible default and per-agent voices when switching to fish 4ms
+     × clears incompatible default and per-agent voices when switching to xai 3ms
+     × does not switch voice providers when per-agent voices cannot be cleared 2ms
+     × keeps Boat resources attached while allowing a proven same-account token rotation 355ms
+     × replaces a rejected Boat key without losing remembered computers (provisioned=true) 281ms
+     × retires a journaled Boat proven gone before clearing and later restoring credentials 314ms
+     × pins where a conversation works from the composer, validates the place, and lets it follow the bot again 14ms
+     × dispatches the conversation's pinned computer, never advertises a phantom Auto Boat, and previews that same surface 10499ms
+     × excludes new Boat turns, lifecycle actions, and bot deletion while a token change validates 255ms
+     × rejects a Boat token change while create and rename own the lifecycle lane 297ms
+     × manages and probes custom MCP servers without returning secret values 2ms
+     × manages and probes a url MCP server, and the Claude Code servers switch 2ms
+     × mounts the verification skill into a real turn when its trigger appears 360ms
+     × Works on: Off withholds the computer and tells the model why 231ms
+     × mounts the verification skill only for the latest channel request 266ms
+     × creates, edits, lists, and deletes scheduled multi-bot calls 445ms
+     × opens one calendar room and posts the scheduled seed to everyone 45ms
+     × stops a local bot's exact channel and routine work through the emergency endpoint 250ms
+     × resolves the same computer paragraph in the settings preview and direct turns 435ms
+     × resolves the same computer paragraph in the settings preview and room turns 445ms
+     × keeps shared Local VM mode by default and resolves isolated targets per bot when enabled 413ms
+     × never removes an unmanaged container that squats on a bot's exact Local VM name 294ms
+     × removes a managed per-bot Local VM and its private files with the bot 371ms
+     × rejects oversized Boat console commands instead of executing a truncated prefix 2ms
+     × validates the non-secret VPS alias and keeps old bots on Boat by default 84ms
+     × validates a Composio project key, creates a Session, and keeps externally stored secrets off disk 3ms
+     × keeps second-account cards separate and waits for the requested alias, not an existing account 2ms
+     × does not relay a slow connector request after Connected Apps is disabled 218ms
+     × enforces per-bot connector tool grants on relayed tool calls 228ms
+     × refuses MULTI_EXECUTE shapes it cannot read and writes connector-scope denial rows 230ms
+     × validates connector grant patches against connected services and the catalog 3ms
+     × serves the grant editor's tool inventory grouped by service 14ms
+     × lets a bot attach a file it made, and serves it only through that message 274ms
+     × keeps mixed-request runtime revocations effective when profile persistence fails 234ms
+     × previews the system prompt the model will see, section by section 222ms
+     × starts disengaged 1ms
+     × take → held, broadcast on the wire, release → disengaged 1ms
+     × atomically owns and conditionally releases a workspace lease without returning its id 1ms
+     × rejects malformed workspace leases without echoing them 1ms
+     × refuses an unknown action and an unknown bot 0ms
+     × refuses a form-shaped POST — control mutations are JSON-only 0ms
+     × keeps the internal who-is-driving endpoint behind the boot token 0ms
+ ❯ server/group-local-vm.e2e.test.ts (34 tests | 34 failed) 13582ms
+     × provisions concurrent cold pool seats (existing per-bot desktops: false) 974ms
+     × provisions concurrent cold pool seats (existing per-bot desktops: true) 964ms
+     × recovers only previously provisioned Auto VMs after idle removal and server restart, within the instance cap 1413ms
+     × executes and attaches only for the current VM owner, respecting takeover and expiry 214ms
+     × claims an Auto VM on its first shell command without needing a screenshot 221ms
+     × holds a cloud turn for a marked output question and resumes after the person's reply 305ms
+     × does not stall an admitted turn waiting for another turn's shared computer 530ms
+     × chat selection starts or provisions a configured cloud computer (wake) only after selecting it 301ms
+     × chat selection starts or provisions a configured cloud computer (removed) only after selecting it 297ms
+     × chat selection starts or provisions a configured cloud computer (missing-auto) only after selecting it 577ms
+     × lets a chat tool select Auto, replaces tools after completion, and continues the same user message once 576ms
+     × does not continue a computer selection after stop 223ms
+     × does not continue a computer selection after failure 221ms
+     × does not continue a computer selection after off 419ms
+     × does not continue a computer selection after manual-selection 221ms
+     × does not continue a computer selection after new-request 225ms
+     × runs successive direct tasks on their pinned Local VM despite a Cloud profile default 220ms
+     × mounts a channel speaker's own This computer destination behind the control gate 210ms
+     × says why This computer cannot mount in a channel instead of dispatching without the promised tools 209ms
+     × carries the recorded macOS permission failure into the failed turn 220ms
+     × runs a channel speaker's own Cloud destination on its Boat, waking it first 209ms
+     × releases a failed readiness claim so the bot and room can run again 206ms
+     × does not dispatch after Stop during readiness and releases the old lease 209ms
+     × does not dispatch after a stall during delayed room setup and the room can run again 204ms
+     × revokes the previous member and rejects cross-bot control after a shared desktop handoff 214ms
+     × denies computer access when an otherwise active speaker's lease expires 202ms
+     × never trips the lazy first-screen-call claim on an eagerly claimed turn 213ms
+     × runs a screen-less Auto turn to completion while another thread holds the Local VM (issue #1361 AC1) 436ms
+     × claims a lazily attached Auto VM on the first screen call and proceeds on release (issue #1361 AC2) 436ms
+     × ends the turn with a terminal error after a rejected lazy claim (issues #1361 F1, #1369) 640ms
+     × lets an uncontended first screen call through with an honest answer (issue #1361 AC3) 417ms
+     × releases everything a rejected lazy claim took, so the next turn gets the VM (issue #1361 F2) 432ms
+     × releases timeout bookkeeping after the interrupt grace period 204ms
+     × releases stall bookkeeping after the interrupt grace period 208ms
+ ❯ server/cloud-lending-memory.e2e.test.ts (26 tests | 26 skipped) 1407ms
+ ❯ server/bot-visibility.e2e.test.ts (12 tests | 1 failed) 7869ms
+     × keeps a room fewer people can see out of a visible bot's recall, and refuses to mix audiences in a room 995ms
+[relay-mcp] MCP client initialized session
+ ❯ server/cli.test.ts (32 tests | 1 failed) 15768ms
+     × finds the server next to itself: bundled index.js in a package, the TypeScript source in a checkout 3ms

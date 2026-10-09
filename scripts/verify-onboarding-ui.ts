@@ -38,7 +38,7 @@ const screenshot = (name: string) => ui("screenshot", "--out", resolve(evidence,
 const openSettings = async () => {
   await click("Onboarding fixture");
   await click("Settings");
-  await textVisible("Replay welcome tour");
+  await textVisible("Replay app tour");
 };
 const holdConfigWrite = () => evaluate(`(() => {
   const original = window.fetch.bind(window);
@@ -138,7 +138,7 @@ console.log("PASS full guided tour, saved progress, reload stays dismissed");
 
 await openSettings();
 await click("Replay app tour");
-await textVisible("This is where you talk to your bots");
+await textVisible("This is where you talk to your agents");
 await holdConfigWrite();
 await click("Next");
 await poll(() => evaluate("window.heldWrites"), 1, "Next pending");
@@ -147,15 +147,8 @@ await poll(() => evaluate("document.querySelectorAll('[data-tour-card]').length"
 await evaluate("window.releaseWrite(); true");
 await poll(async () => (await config()).onboarding.hintsSeen.filter((id: string) => id.startsWith("tour.")).length, TOUR_STEPS.length, "Skip survives in-flight Next");
 console.log("PASS Settings replay and Skip queued behind slow Next");
-
-await openSettings();
-await click("Replay welcome tour");
-await textVisible("Your name");
-await holdConfigWrite();
-await click("Skip tour");
-await poll(() => evaluate("document.querySelectorAll('.welcome-card').length"), 0, "slow completion cannot trap welcome");
-await evaluate("window.releaseWrite(); true");
-console.log("PASS welcome replay can close while persistence is pending");
+// Settings keeps a single replay entry (the app tour); the welcome flow is
+// first-run only, so there is no welcome-replay path left to verify here.
 await poll(async () => Boolean((await config()).onboarding.completedAt), true, "welcome save completed");
 
 // An upgraded install can have only the legacy browser gate. Replay still

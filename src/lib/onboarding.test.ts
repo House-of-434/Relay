@@ -257,11 +257,11 @@ describe("beat machine", () => {
   it("gives a shared workspace the greeting and the roster, and nothing else", () => {
     // Guards the v0.1 trim in Relay-notes/todo.md. No name field, no bot to
     // create, and nothing about installing anything on this computer.
-    expect(beatsFor({ dictation: true, reel: true, sharedWorkspace: true })).toEqual(["hello", "team"]);
+    expect(beatsFor({ reel: true, sharedWorkspace: true })).toEqual(["hello", "team"]);
   });
 
   it("never offers a bot-creation beat on a shared workspace", () => {
-    const beats = beatsFor({ dictation: true, reel: true, sharedWorkspace: true });
+    const beats = beatsFor({ reel: true, sharedWorkspace: true });
     expect(beats).not.toContain("bot");
     expect(beats).not.toContain("engines");
     expect(beats).not.toContain("permissions");

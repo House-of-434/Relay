@@ -5,14 +5,8 @@
 // one CSS block plus one line in SKINS.
 
 export const SKIN_IDS = [
-  "midnight",
-  "atelier",
-  "foundry",
   "lagoon",
-  "graphite",
-  "linen",
-  "dusk",
-  "daylight",
+  "midnight",
 ] as const;
 export type SkinId = (typeof SKIN_IDS)[number];
 
@@ -24,17 +18,11 @@ export type Skin = {
 };
 
 export const SKINS: readonly Skin[] = [
-  { id: "midnight", name: "Midnight", tagline: "The original. Cool and dark." },
-  { id: "atelier", name: "Atelier", tagline: "Daylight on paper, warm and quiet." },
-  { id: "foundry", name: "Foundry", tagline: "Night shift. Dark, warm, lit in brass." },
-  { id: "lagoon", name: "Lagoon", tagline: "Cool daylight. Porcelain and deep teal." },
-  { id: "graphite", name: "Graphite", tagline: "Quiet charcoal and softened steel blue." },
-  { id: "linen", name: "Linen", tagline: "Clean daylight with a restrained navy accent." },
-  { id: "dusk", name: "Dusk", tagline: "Muted plum after dark, calm and low-key." },
-  { id: "daylight", name: "Daylight", tagline: "Midnight in reverse. Near-white, ink-black bubbles." },
+  { id: "lagoon", name: "Lagoon", tagline: "Light and cool, in the brand green." },
+  { id: "midnight", name: "Midnight", tagline: "Dark and cool, in the brand green." },
 ];
 
-export const DEFAULT_SKIN: SkinId = "midnight";
+export const DEFAULT_SKIN: SkinId = "lagoon";
 
 const KEY = "relay-skin";
 

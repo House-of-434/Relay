@@ -18,7 +18,7 @@ function Preview() {
       <button onClick={() => { setOnboarding(false); dispatch({ type: "toggleAppSettings", open: true, section: "engines" }); }}>Settings preview</button>
       <button onClick={() => { dispatch({ type: "toggleAppSettings", open: false }); setOnboarding(true); }}>Onboarding preview</button>
       <button onClick={() => applySkin("midnight")}>Dark</button>
-      <button onClick={() => applySkin("atelier")}>Light</button>
+      <button onClick={() => applySkin("lagoon")}>Light</button>
       <button onClick={async () => { await fetch("/__fixture/connect", { method: "POST" }); await refreshInstances(); }}>Toggle sample connection</button>
       <button onClick={async () => { await fetch("/__fixture/chatgpt", { method: "POST" }); await refreshInstances(); }}>Toggle sample ChatGPT plan</button>
     </nav>
