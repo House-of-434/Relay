@@ -79,7 +79,7 @@ jobs:
           net=$(docker inspect -f '{{range $k,$v := .NetworkSettings.Networks}}{{$k}} {{end}}' relay-app-1 | awk '{print $1}')
           test -n "$net"
           probe() { docker run --rm --network "$net" curlimages/curl:8.14.1 -s --max-time 3 "http://$1:$2/" >/dev/null; }
-          docker run -d --name leaky --entrypoint node relay-local:latest -e "require('http').createServer((q,s)=>s.end('leak')).listen(8799,'0.0.0.0')"
+          docker run -d --name leaky --network "$net" --entrypoint node relay-local:latest -e "require('http').createServer((q,s)=>s.end('leak')).listen(8799,'0.0.0.0')"
           sleep 2
           leaky_ip=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' leaky | awk '{print $1}')
           test -n "$leaky_ip"
