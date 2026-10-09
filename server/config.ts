@@ -750,6 +750,20 @@ export function loadConfig(): AppConfig {
     if (process.env.RELAY_SIGNIN_EMAILS !== undefined) cfg.signIn.admins = splitEmails(process.env.RELAY_SIGNIN_EMAILS);
     if (process.env.RELAY_SIGNIN_MEMBER_EMAILS !== undefined) cfg.signIn.members = splitEmails(process.env.RELAY_SIGNIN_MEMBER_EMAILS);
   }
+  // Centralized default model: the selection new bots inherit (and the one a
+  // bot with no selection of its own adopts). Env is the operator's source of
+  // truth on a managed deploy, so it wins over a value saved in Settings.
+  const defaultModel = process.env.RELAY_DEFAULT_MODEL?.trim();
+  if (defaultModel) {
+    const selection = defaultModelSelectionSchema.safeParse({
+      instanceId: process.env.RELAY_DEFAULT_INSTANCE?.trim() || "claude",
+      model: defaultModel,
+    });
+    if (!selection.success) {
+      throw new Error(`RELAY_DEFAULT_MODEL is invalid: ${selection.error.issues[0]?.message ?? "invalid value"}`);
+    }
+    cfg.defaultModelSelection = selection.data;
+  }
   return cfg;
 }
 

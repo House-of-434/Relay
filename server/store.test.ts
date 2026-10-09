@@ -28,6 +28,30 @@ describe("Store", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
+  it("heals a bot with no model selection to the workspace default, bot and tasks", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Scout", modelSelection: { instanceId: "", model: "" } });
+    expect(bot.modelSelection).toEqual({ instanceId: "", model: "" });
+    const healed = store.healEmptyModelSelections();
+    expect(healed.map((record) => record.id)).toEqual([bot.id]);
+    expect(store.bot(bot.id)!.modelSelection).toEqual(selection());
+    expect(store.bot(bot.id)!.tasks?.[0]?.modelSelection).toEqual(selection());
+  });
+
+  it("never overwrites an explicit model selection while healing", () => {
+    const store = new Store(selection);
+    const chosen = store.createBot({ name: "Custom", modelSelection: { instanceId: "codex", model: "gpt-x" } });
+    expect(store.healEmptyModelSelections()).toEqual([]);
+    expect(store.bot(chosen.id)!.modelSelection).toEqual({ instanceId: "codex", model: "gpt-x" });
+  });
+
+  it("leaves empty selections alone when no workspace default resolves", () => {
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    store.createBot({ name: "Scout", modelSelection: { instanceId: "", model: "" } });
+    expect(store.healEmptyModelSelections()).toEqual([]);
+    expect(store.bots[0]!.modelSelection).toEqual({ instanceId: "", model: "" });
+  });
+
   it("renames populated teams without changing members, conversations, grants or computer identity", () => {
     const store = new Store(selection);
     const chief = store.createBot({ section: "Delivery" });

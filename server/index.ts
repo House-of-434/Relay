@@ -3171,6 +3171,9 @@ if (RELAY_SHARED_WORKSPACE) {
   relayAgentBotIds(store.bots, process.env);
 }
 else store.seedIfEmpty();
+// Bots seeded before any engine was runnable carry an empty selection; adopt
+// the now-resolved workspace default so the shipped roster can run.
+store.healEmptyModelSelections();
 hostedModels?.reconcile(store);
 
 /** A bot as a client may see it: no provider session bookkeeping.

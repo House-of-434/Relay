@@ -799,6 +799,21 @@ describe("credential env preference", () => {
     expect(cfg.imageGen).toEqual({ key: "env-image" });
   });
 
+  it("seeds the workspace default model from RELAY_DEFAULT_MODEL, env over file", () => {
+    // A managed deploy pins the default model in env; it must win over a
+    // default saved in Settings.
+    writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ defaultModelSelection: { instanceId: "codex", model: "gpt-x" } }));
+    vi.stubEnv("RELAY_DEFAULT_MODEL", "claude-haiku-5-5");
+    try {
+      expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "claude", model: "claude-haiku-5-5" });
+      vi.stubEnv("RELAY_DEFAULT_INSTANCE", "opencodeGo");
+      expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "opencodeGo", model: "claude-haiku-5-5" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "codex", model: "gpt-x" });
+  });
+
   it("uses a preset voice only when the person has not chosen one or another provider", () => {
     process.env.RELAY_TTS_DEFAULT_VOICE = " preset-voice ";
     expect(loadConfig().tts?.voice).toBe("preset-voice");

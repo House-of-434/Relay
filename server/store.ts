@@ -1818,6 +1818,32 @@ export class Store {
     return next;
   }
 
+  /** A bot created while nothing was runnable keeps an empty selection (the
+   * Relay-agent seed deliberately omits it so the workspace default applies —
+   * relay-agents.ts). Once a default resolves, adopt it for every still-empty
+   * bot and task so the shipped roster can run. Explicit selections are never
+   * touched. A default that still resolves empty is a no-op. */
+  healEmptyModelSelections(): BotRecord[] {
+    const selection = this.newBotSelection();
+    if (!selection.instanceId) return [];
+    const healed: BotRecord[] = [];
+    for (const bot of this.bots) {
+      const botEmpty = !bot.modelSelection.instanceId;
+      const tasksEmpty = (bot.tasks ?? []).some((task) => !task.modelSelection?.instanceId);
+      if (!botEmpty && !tasksEmpty) continue;
+      if (botEmpty) bot.modelSelection = structuredClone(selection);
+      for (const task of bot.tasks ?? []) {
+        if (!task.modelSelection?.instanceId) task.modelSelection = structuredClone(selection);
+      }
+      healed.push(bot);
+    }
+    if (healed.length) {
+      this.saveBots();
+      for (const bot of healed) this.emit({ type: "bot", botId: bot.id });
+    }
+    return healed;
+  }
+
   deleteBot(id: string, setupRequest?: TeamSetupRequest): boolean {
     const bot = this.bot(id);
     if (!bot) return false;

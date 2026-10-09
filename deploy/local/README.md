@@ -42,7 +42,8 @@ Required for the deployment (see `.env.example` for the full list):
 | `RELAY_DB_URL` / `RELAY_DB_PROJECT_REF` / `RELAY_DB_SERVICE_ROLE_KEY` | Tool Layer database access |
 | `RELAY_TOOL_ACTOR_SECRET` | In `.env.secrets`; must match between harness and Tool Layer |
 | `RELAY_ALLOWED_EMAIL_DOMAINS` | Allowed sign-in domains |
-| `RELAY_ENGINES` | Optional: space-separated npm packages for engine CLIs the bots use |
+| `RELAY_ENGINES` | Space-separated npm packages for the engine CLIs baked into the image (e.g. `@anthropic-ai/claude-code`) |
+| `RELAY_DEFAULT_MODEL` | Centralized default model every new bot inherits (e.g. `claude-haiku-5-5`); `RELAY_DEFAULT_INSTANCE` overrides the instance id (default `claude`) |
 
 Supabase dashboard side: Site URL + Additional Redirect URLs must allow-list
 the public hostname, and the Google OAuth client must register
