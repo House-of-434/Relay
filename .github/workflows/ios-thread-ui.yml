@@ -7,8 +7,11 @@ name: iOS thread UI
 # night, after main pushes that touch the app, and by hand from the Actions tab.
 on:
   workflow_dispatch:
-  schedule:
-    - cron: "30 20 * * *"
+  # Nightly schedule disabled while the product is browser-only: the suite
+  # needs ~90 minutes of macOS runners and has been red since Oct 4.
+  # Re-enable when iOS work resumes.
+  # schedule:
+  #   - cron: "30 20 * * *"
   push:
     branches: [main]
     paths:
