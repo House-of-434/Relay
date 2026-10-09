@@ -122,7 +122,6 @@ async function createFixture(options: { gateway?: GoogleApiGateway; accounts?: S
       listAccounts: (userId) => store.list(userId),
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      isLoopbackPeer: () => true,
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -216,40 +215,6 @@ test("missing or invalid capability is rejected before any Google work happens",
   const wrong = await gmail(assertion, WRONG_CAPABILITY);
   assert.equal(wrong.status, 401);
   assert.equal(calls.length, 0);
-});
-
-test("a non-loopback caller is refused regardless of capability", async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "relay-gmail-loopback-"));
-  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
-  const store = new GoogleConnectionStore({ dataDir, encryptionKey: TOKEN_KEY });
-  await store.save({ userId: USER_ID, service: "gmail", googleSub: "sub", email: "one@example.com", refreshToken: "refresh" });
-
-  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void handleInternalGmail(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
-      googleApi: gmailGateway([]),
-      listAccounts: (userId) => store.list(userId),
-      capability: CAPABILITY,
-      actorSecret: ACTOR_SECRET,
-      isLoopbackPeer: () => false,
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  cleanups.push(() => new Promise<void>((resolve) => {
-    server.closeAllConnections();
-    server.close(() => resolve());
-  }));
-
-  const response = await fetch(new URL(INTERNAL_GMAIL_MESSAGES_LIST, `http://127.0.0.1:${port}`), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${CAPABILITY}`,
-      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ query: "is:unread" }),
-  });
-  assert.equal(response.status, 403);
 });
 
 test("an expired actor assertion is rejected", async () => {

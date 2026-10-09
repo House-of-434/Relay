@@ -46,7 +46,6 @@ export interface InternalGmailOptions {
   listAccounts: (userId: string) => Promise<GoogleConnectionMetadata[]>;
   capability: string;
   actorSecret: string | undefined;
-  isLoopbackPeer: (req: IncomingMessage) => boolean;
   now?: () => number;
 }
 
@@ -92,6 +91,10 @@ function headerString(value: string | string[] | undefined): string | undefined 
  * Gmail is reachable only for a verified actor, and only for the single Google
  * account that actor connected. No caller-supplied account, user, or scope is
  * honored, and no token or provider error ever crosses this boundary.
+ *
+ * The boundary is the shared capability plus the signed actor assertion, not
+ * the peer's address: in the compose deployment the Tool Layer is a separate
+ * container and is never a loopback peer.
  */
 async function resolveAccount(
   options: InternalGmailOptions,
@@ -112,10 +115,6 @@ export async function handleInternalGmail(
 ): Promise<void> {
   const expectedHash = hash(options.capability);
   req.resume();
-  if (!options.isLoopbackPeer(req)) {
-    json(res, 403, { error: "forbidden" });
-    return;
-  }
   if (!capabilityMatches(req, expectedHash)) {
     json(res, 401, { error: "unauthorized" });
     return;

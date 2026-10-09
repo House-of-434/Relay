@@ -722,13 +722,6 @@ function googleUserIdentity(value: unknown): { sub: string; email: string } | un
   return { sub, email };
 }
 
-function loopbackPeerAddress(req: IncomingMessage): boolean {
-  const address = req.socket?.remoteAddress;
-  if (!address) return false;
-  const normalized = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
-  return normalized === "127.0.0.1" || normalized === "::1" || normalized.startsWith("127.");
-}
-
 /** Sign-in and connector calls are the ones that fail silently, so record their
  * outcome. Only the path is ever logged: the query string carries OAuth codes. */
 const AUTH_LOG_PATHS = /^\/(?:auth|api\/google|api\/internal)\b/;
@@ -1362,7 +1355,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
-        isLoopbackPeer: loopbackPeerAddress,
         now,
       });
       return;
@@ -1374,7 +1366,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
-        isLoopbackPeer: loopbackPeerAddress,
         now,
       });
       return;
