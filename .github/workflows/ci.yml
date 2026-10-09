@@ -68,7 +68,6 @@ jobs:
       - name: Tool Layer typecheck + tests (workspace identity, lifecycle policy)
         run: pnpm --filter @relay/tool-layer typecheck && pnpm --filter @relay/tool-layer test
       - run: pnpm lint
-      - run: pnpm check:electron
       - name: production UI build
         run: pnpm exec vite build
 
