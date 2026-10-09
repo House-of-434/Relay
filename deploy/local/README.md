@@ -35,7 +35,7 @@ Required for the deployment (see `.env.example` for the full list):
 | `RELAY_BFF_PUBLIC_URL` | `https://<public-hostname>` (same origin; BFF is behind Caddy) |
 | `RELAY_HTTPS_HOST` | `<public-hostname>` (Caddy automatic HTTPS) |
 | `RELAY_BIND_ADDRESS` | `127.0.0.1` (compose refuses `RELAY_HTTPS_HOST` otherwise; TLS terminates at Caddy) |
-| `RELAY_LOOPBACK_TRUST` | `service` — no network request is ever trusted as owner |
+| `RELAY_LOOPBACK_TRUST` | `service` (required) — a local request without a session gets client-level service access only, never owner privileges |
 | `SUPABASE_PROJECT_URL` / `SUPABASE_ANON_KEY` | From the Supabase dashboard |
 | `RELAY_BFF_CAPABILITY` | Shared BFF capability (see `.env.example`) |
 | `RELAY_PORTAL_SESSIONS` | `1` — the BFF owns sign-in here; without it the harness refuses the session bridge and login fails |
@@ -44,6 +44,13 @@ Required for the deployment (see `.env.example` for the full list):
 | `RELAY_ALLOWED_EMAIL_DOMAINS` | Allowed sign-in domains |
 | `RELAY_ENGINES` | Space-separated npm packages for the engine CLIs baked into the image (e.g. `@anthropic-ai/claude-code`) |
 | `RELAY_DEFAULT_MODEL` | Centralized default model every new bot inherits (e.g. `claude-haiku-5-5`); `RELAY_DEFAULT_INSTANCE` overrides the instance id (default `claude`) |
+
+> **Local development:** the browser path always carries a BFF session, so
+> `service` changes nothing there. Only a developer who deliberately hits the
+> harness directly at `127.0.0.1:8799` without a session would notice; they may
+> set `RELAY_LOOPBACK_TRUST=owner` in a private environment they fully control.
+> Never do that on a shared host: any local process (a bot's shell, another
+> container) would then be the workspace owner.
 
 Supabase dashboard side: Site URL + Additional Redirect URLs must allow-list
 the public hostname, and the Google OAuth client must register
