@@ -48,13 +48,12 @@ jobs:
           # CI has no real Supabase or secrets: the harness boots on dummies
           # (it binds and serves), the BFF validates config shape at boot, and
           # tools must fail closed on the missing database settings (asserted
-          # below). Nothing here touches a real backend.
-          {
-            echo "SUPABASE_PROJECT_URL=https://ci-smoke.supabase.co"
-            echo "SUPABASE_ANON_KEY=ci-smoke-anon-key"
-            echo "RELAY_BFF_CAPABILITY=$(openssl rand -hex 32)"
-            echo "RELAY_BFF_PUBLIC_URL=http://localhost:8080"
-          } >> .env
+          # below). Nothing here touches a real backend. Values are replaced
+          # in place: appended duplicates would lose to the empty placeholders
+          # (.env.example documents every key), leaving the BFF unconfigured.
+          sed -i "s|^SUPABASE_PROJECT_URL=.*|SUPABASE_PROJECT_URL=https://ci-smoke.supabase.co|" .env
+          sed -i "s|^SUPABASE_ANON_KEY=.*|SUPABASE_ANON_KEY=ci-smoke-anon-key|" .env
+          sed -i "s|^RELAY_BFF_CAPABILITY=.*|RELAY_BFF_CAPABILITY=$(openssl rand -hex 32)|" .env
           touch .env.secrets
           docker compose up -d
           for i in $(seq 1 40); do
