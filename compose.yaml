@@ -17,6 +17,11 @@ services:
       - data:/data
     ports:
       - "${RELAY_BIND_ADDRESS:-127.0.0.1}:${RELAY_HTTP_PORT:-8080}:80"
+      # Public edge: container Caddy terminates TLS for RELAY_HTTPS_HOST
+      # (auto-issued cert via DNS + HTTP-01 on :80). The harness/BFF stay
+      # loopback-only behind it — see the bind-address guard on caddy below.
+      - "80:80"
+      - "443:443"
     env_file:
       - .env
       - .env.secrets
