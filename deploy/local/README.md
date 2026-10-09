@@ -94,6 +94,11 @@ only `docker volume rm` destroys it.
 | `tools` | Tool Layer `:8787` (Bladebro + Chrome) | `http://tools:8787` from `relay` only; not published |
 | `caddy` | TLS + reverse proxy | Shares `relay`'s network namespace |
 
+Gmail/Calendar tools in `tools` call the BFF's capability-gated
+`/api/internal/*` routes at `http://app:8798` (compose sets
+`RELAY_BFF_INTERNAL_URL`, and the BFF binds `RELAY_BFF_HOST=0.0.0.0`; the port
+is never published, so only compose-network peers can dial it).
+
 The Tool Layer listens on `0.0.0.0` here (`RELAY_TOOL_HOST`) because the
 harness reaches it over the compose network. Bare processes keep the
 `127.0.0.1` default. The HMAC actor assertion is the real boundary either way.

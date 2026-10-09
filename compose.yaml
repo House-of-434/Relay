@@ -33,6 +33,10 @@ services:
       # The Tool Layer runs as its own service; localhost here would point at
       # this container, not at it.
       RELAY_TOOL_URL: http://tools:8787
+      # The BFF's /api/internal Gmail/Calendar routes are capability-gated;
+      # bind its container interface so the separate tools container can reach
+      # them over the compose network. The port is never published.
+      RELAY_BFF_HOST: "0.0.0.0"
   tools:
     init: true
     build:
@@ -56,6 +60,9 @@ services:
       RELAY_TOOL_HOST: "0.0.0.0"
       RELAY_TOOL_PORT: "8787"
       RELAY_BLADE_ROOT: /data/blade
+      # Gmail/Calendar tools call the BFF's capability-gated internal routes.
+      # Default is loopback, which is this container — point at `app`.
+      RELAY_BFF_INTERNAL_URL: http://app:8798
     expose:
       - "8787"
     healthcheck:

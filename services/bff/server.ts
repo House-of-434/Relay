@@ -1460,9 +1460,13 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 export async function startRelayBff(env: NodeJS.ProcessEnv = process.env): Promise<RelayBffApplication> {
   const config = configFromEnvironment(env);
   const app = createRelayBff({ config });
+  // Loopback by default. A compose deployment overrides this so the separate
+  // Tool Layer container can reach the capability-gated /api/internal routes;
+  // the port is never published, so only compose-network peers can dial it.
+  const host = env.RELAY_BFF_HOST?.trim() || "127.0.0.1";
   await new Promise<void>((resolveListen, rejectListen) => {
     app.server.once("error", rejectListen);
-    app.server.listen(config.bffPort, "127.0.0.1", () => {
+    app.server.listen(config.bffPort, host, () => {
       app.server.off("error", rejectListen);
       resolveListen();
     });
@@ -1475,7 +1479,7 @@ if (invokedPath === import.meta.url) {
   void startRelayBff().then((app) => {
     process.once("SIGINT", () => { void app.close().finally(() => { process.exitCode = 0; }); });
     process.once("SIGTERM", () => { void app.close().finally(() => { process.exitCode = 0; }); });
-    console.log(`Relay BFF listening on http://127.0.0.1:${process.env.RELAY_BFF_PORT || DEFAULT_BFF_PORT}`);
+    console.log(`Relay BFF listening on http://${process.env.RELAY_BFF_HOST?.trim() || "127.0.0.1"}:${process.env.RELAY_BFF_PORT || DEFAULT_BFF_PORT}`);
   }).catch(() => {
     console.error("Relay BFF could not start; check required configuration and port availability.");
     process.exitCode = 1;
