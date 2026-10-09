@@ -73,7 +73,9 @@ describe("CI concurrency", () => {
     expect(workflow.jobs.ios.steps.some((step: { run?: string }) => step.run?.includes("verify-ios-thread-navigation"))).toBe(false);
     const ui = parse(readFileSync(new URL("../.github/workflows/ios-thread-ui.yml", import.meta.url), "utf8"));
     expect(ui.jobs["thread-ui"].steps.some((step: { run?: string }) => step.run === "bash scripts/verify-ios-thread-navigation-ci.sh")).toBe(true);
-    expect(Object.keys(ui.on).sort()).toEqual(["push", "schedule", "workflow_dispatch"]);
+    // Nightly schedule paused while the product is browser-only; manual and
+    // push-triggered runs stay available.
+    expect(Object.keys(ui.on).sort()).toEqual(["push", "workflow_dispatch"]);
   });
 
   it("makes a release wait for its commit's CI gate before any draft", () => {
