@@ -2715,10 +2715,19 @@ export class Store {
     role: RelayAgentRole;
     profile: NonNullable<Parameters<Store["createBot"]>[0]>;
   }[]) {
-    const present = new Set(this.bots.flatMap((bot) => bot.relayAgent ? [bot.relayAgent] : []));
+    const present = new Map(this.bots.flatMap((bot) => bot.relayAgent ? [[bot.relayAgent, bot] as const] : []));
     const created: BotRecord[] = [];
     for (const seed of seeds) {
-      if (present.has(seed.role)) continue;
+      const existing = present.get(seed.role);
+      if (existing) {
+        // Server-owned default: a seeded agent runs at Auto so its sandboxed
+        // tools do not stop to ask on every turn; outward actions keep their
+        // own confirmations (propose_*). A recorded choice is left alone.
+        if (existing.approvalMode === undefined && existing.autoApprove === undefined) {
+          this.patchBot(existing.id, { approvalMode: "auto" });
+        }
+        continue;
+      }
       const baseName = seed.profile.name?.trim() || seed.role;
       const taken = new Set(this.bots.map((bot) => bot.name.trim().toLocaleLowerCase()));
       let name = baseName;
@@ -2732,9 +2741,10 @@ export class Store {
         autoStartVps: false,
         voiceNotes: false,
         composio: false,
+        approvalMode: "auto",
       });
       created.push(bot);
-      present.add(seed.role);
+      present.set(seed.role, bot);
     }
     return created;
   }

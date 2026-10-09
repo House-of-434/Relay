@@ -19,7 +19,9 @@ export interface RelayAgentSeed {
  *
  * `relayAgent` (not `section`) is what marks them, and it stays server-owned —
  * it binds each role to its Tool Layer route. Model selection is intentionally
- * omitted so the workspace default applies unchanged. */
+ * omitted so the workspace default applies unchanged. The seed starts them at
+ * Auto (store.seedRelayAgentsIfMissing): sandboxed tool use runs unattended,
+ * while outward actions keep their own propose_* confirmations. */
 export const RELAY_AGENT_SEEDS: readonly RelayAgentSeed[] = [
   {
     role: "scout",

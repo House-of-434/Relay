@@ -52,6 +52,24 @@ describe("Store", () => {
     expect(store.bots[0]!.modelSelection).toEqual({ instanceId: "", model: "" });
   });
 
+  it("creates Relay agents at Auto", () => {
+    const store = new Store(selection);
+    const created = store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS);
+    expect(created.length).toBe(RELAY_AGENT_SEEDS.length);
+    for (const bot of created) expect(bot.approvalMode).toBe("auto");
+  });
+
+  it("adopts Auto for an untouched seeded agent but preserves an explicit choice", () => {
+    const store = new Store(selection);
+    const seeded = store.createBot({ name: "Scout" }, { relayAgent: "scout" });
+    expect(seeded.approvalMode).toBeUndefined();
+    store.seedRelayAgentsIfMissing([{ role: "scout", profile: { name: "Scout" } }]);
+    expect(store.bot(seeded.id)!.approvalMode).toBe("auto");
+    store.patchBot(seeded.id, { approvalMode: "ask" });
+    store.seedRelayAgentsIfMissing([{ role: "scout", profile: { name: "Scout" } }]);
+    expect(store.bot(seeded.id)!.approvalMode).toBe("ask");
+  });
+
   it("renames populated teams without changing members, conversations, grants or computer identity", () => {
     const store = new Store(selection);
     const chief = store.createBot({ section: "Delivery" });
