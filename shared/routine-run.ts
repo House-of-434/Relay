@@ -11,6 +11,10 @@ export interface RoutineRunCardData {
   routineName: string;
   scheduledFor?: number;
   status: "queued" | "running" | "waiting" | "completed" | "failed" | "cancelled" | "missed";
+  /** Which dispatcher owns the run. "research" marks a one-shot deep-research
+   * execution (no routine, no schedule); the card reads as research, not as
+   * a routine run. Absent means a routine or legacy run. */
+  triggerSource?: "schedule" | "manual" | "webhook" | "research";
   /** Present while a queued run is being held because its target bot or room
    * is busy. The status stays queued; this is the surfaced deferral fact. */
   deferredAt?: number;

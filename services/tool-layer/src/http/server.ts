@@ -50,7 +50,23 @@ export async function createRelayToolServer(
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/healthz") {
-        sendJson(response, 200, { app: "relay-tools", status: "ok" });
+        const searchConfigValue = searchConfig();
+        const searchProvider = new TinyFishSearchProvider({
+          binary: searchConfigValue.binary,
+          apiKey: searchConfigValue.apiKey,
+          home: searchConfigValue.home,
+        });
+        const search = await searchProvider.describe().catch(
+          (): import("../infra/search.js").ProviderReport => ({
+            requestedProvider: "tinyfish",
+            actualProvider: "none",
+            fallbackUsed: false,
+            providerStatus: "unavailable",
+            errorSummary: "provider probe failed",
+          }),
+        );
+        // Binary path only; apiKey/home never leave the process.
+        sendJson(response, 200, { app: "relay-tools", status: "ok", searchBinary: searchConfigValue.binary, search });
         return;
       }
 

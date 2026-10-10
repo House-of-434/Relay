@@ -957,6 +957,28 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       text: `This bot's routines (current time: ${now}; timezone: ${timeZone}):\n${JSON.stringify(routines, null, 2)}`,
     };
   }
+  if (name === "propose_deep_research") {
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    const brief = typeof args.brief === "string" ? args.brief.trim() : "";
+    const timeoutMinutes = args.timeout_minutes;
+    const idempotencyKey = typeof args.idempotency_key === "string" ? args.idempotency_key.trim() : "";
+    if (!title || title.length > 200 || !brief || brief.length > 24000
+      || (timeoutMinutes !== undefined && (!Number.isInteger(timeoutMinutes) || (timeoutMinutes as number) < 5 || (timeoutMinutes as number) > 1440))) {
+      return { text: "propose_deep_research needs a title (1-200 chars) and a brief (1-24000 chars), with optional timeout_minutes (5-1440).", isError: true };
+    }
+    const r = await api("/api/internal/research-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        fromBotId: BOT_ID,
+        fromThreadId: THREAD_ID,
+        title,
+        brief,
+        ...(timeoutMinutes !== undefined ? { timeoutMinutes } : {}),
+        ...(idempotencyKey ? { idempotencyKey: idempotencyKey.slice(0, 128) } : {}),
+      }),
+    });
+    return confirmationResult(r, `the research proposal “${title}”`, "research");
+  }
   if (name === "propose_routine") {
     const { fields: routine, error: scheduleError } = routineFields(args);
     if (scheduleError) return { text: scheduleError, isError: true };

@@ -117,13 +117,13 @@ function memoryEntryStat(path: string) {
  * independent working directories; the same bot can find its earlier output
  * without assuming that a file absent from the current directory was lost. */
 export function workspaceLocationsPrompt(botId: string, cwd: string | undefined, botCwd?: string): string {
-  return "\n\nFile locations for this bot (absolute paths): " + JSON.stringify({
+  return "\n\nFile locations for this bot (absolute paths, for tool inputs only): " + JSON.stringify({
     currentWorkingFolder: cwd ?? "Provider default; inspect the working directory before using relative paths",
     sharedBotFolder: workspaceDir(botId),
     otherThreadFiles: join(TASK_WORKSPACES_DIR, botId),
     ...(botCwd ? { configuredProjectFolder: botCwd } : {}),
   }) + ". Different conversations can have different working folders. For an existing file, use the exact path from the conversation; if missing here, check this bot's listed folders before saying it is gone or recreating it." +
-    " Follow an explicitly requested destination. Otherwise put new task output in the current working folder and report its absolute path so another thread or room can use it." +
+    " Follow an explicitly requested destination. Otherwise put new task output in the current working folder. Never paste filesystem paths in chat: refer to deliverables by filename and share them with attach_file, whose card is the download link. Another thread or room resolves the file server-side, so a pasted path helps nobody and only leaks internal layout." +
     " Do not move old files, edit another active thread's work, or read another bot's private folders without authorization. These paths do not grant additional access.";
 }
 

@@ -153,3 +153,29 @@ test("limit clamps to the provider maximum", async () => {
   const results = await provider.search("q", { limit: 100 });
   assert.equal(results.length, SEARCH_MAX_LIMIT);
 });
+
+test("describe() reports provider status without leaking credentials", async () => {
+  const offline = providerWith(makeSpawn(() => ({ exitCode: 1, stdout: "", stderr: "no auth" })));
+  assert.deepEqual(await offline.describe(), {
+    requestedProvider: "tinyfish",
+    actualProvider: "none",
+    fallbackUsed: false,
+    providerStatus: "unavailable",
+    errorSummary: "tinyfish CLI unavailable or unauthenticated on this host",
+  });
+
+  const online = providerWith(failingProbe(() => searchOk([])));
+  assert.deepEqual(await online.describe(), {
+    requestedProvider: "tinyfish",
+    actualProvider: "tinyfish",
+    fallbackUsed: false,
+    providerStatus: "available",
+  });
+});
+
+test("empty results are success, not failure", async () => {
+  const spawn = failingProbe(() => searchOk([]));
+  const provider = providerWith(spawn);
+  assert.deepEqual(await provider.search("q"), []);
+  assert.equal((await provider.describe()).providerStatus, "available");
+});

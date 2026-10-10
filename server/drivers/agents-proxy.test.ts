@@ -638,6 +638,7 @@ describe("agents-proxy MCP surface", () => {
       "session_read",
       "list_routines",
       "propose_routine",
+      "propose_deep_research",
       "propose_routine_action",
       "propose_profile",
       "propose_calendar_invite",

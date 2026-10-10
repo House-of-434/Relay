@@ -249,6 +249,57 @@ describe("propose_email_send", () => {
   });
 });
 
+describe("propose_deep_research", () => {
+  it("rejects an empty brief without proposing anything", async () => {
+    const calls: Array<{ path: string; body: any }> = [];
+    const ctx = context({
+      client: {
+        api: async (path, init) => {
+          calls.push({ path, body: JSON.parse(String(init?.body)) });
+          return {};
+        },
+        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
+      },
+    });
+    const result = await callTool("propose_deep_research", {
+      title: "Verify claims", brief: "   ",
+    }, ctx);
+    expect(result.isError).toBe(true);
+    expect(calls).toEqual([]);
+  });
+
+  it("posts the proposal and ends the turn awaiting the card", async () => {
+    const calls: Array<{ path: string; body: any }> = [];
+    const ctx = context({
+      client: {
+        api: async (path, init) => {
+          calls.push({ path, body: JSON.parse(String(init?.body)) });
+          return { requestId: "req-research", summary: "card-shown" };
+        },
+        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
+      },
+    });
+    const result = await callTool("propose_deep_research", {
+      title: "Verify Electron claims", brief: "Check the four headline claims.", timeout_minutes: 30, idempotency_key: "turn-1",
+    }, ctx);
+    expect(result.isError).toBeFalsy();
+    expect(calls).toEqual([
+      {
+        path: "/api/internal/research-requests",
+        body: {
+          fromBotId: "bot-voice",
+          fromThreadId: "thread-voice",
+          title: "Verify Electron claims",
+          brief: "Check the four headline claims.",
+          timeoutMinutes: 30,
+          idempotencyKey: "turn-1",
+        },
+      },
+    ]);
+    expect(result.text).toContain("not been applied yet");
+  });
+});
+
 describe("propose_email_send with cc and bcc", () => {
   it("rejects a non-address in bcc without proposing anything", async () => {
     const calls: Array<{ path: string; body: any }> = [];

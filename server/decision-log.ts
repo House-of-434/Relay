@@ -56,7 +56,8 @@ export type DecisionKind =
  * switch, `user` the human's answer, and
  * auto-review sources the isolated model reviewer. connector-scope rows
  * come from the connected-app grants verdict: the person pre-decided them
- * by editing a bot's connectorTools, so the call itself needed no card. */
+ * by editing a bot's connectorTools, so the call itself needed no card.
+ * `research` marks a one-shot deep-research proposal and its resolution. */
 export type DecisionSource =
   | AutoVerdictSource
   | "question"
@@ -68,6 +69,7 @@ export type DecisionSource =
   | "tightening"
   | "user"
   | "connector-scope"
+  | "research"
   | "auto-review"
   | "auto-review-shadow";
 

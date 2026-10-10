@@ -209,6 +209,7 @@ import {
 } from "./mcp-registry.ts";
 import { bindRelayMcpForBot, relayAgentBotIds, relayToolMcpServer, signedActorContext } from "./relay-mcp.ts";
 import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
+import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
 import {
   RELAY_COMPUTER_DISABLED,
@@ -5732,6 +5733,10 @@ function isInternalTurn(threadId: string): boolean {
 const personAskAt = new Map<string, number>();
 let routines: RoutineManager | null = null;
 let calendarCalls: CalendarCallManager | null = null;
+/** One-shot deep-research jobs. Server-side only; the card carries display
+ * text, never the brief's executable payload. Assigned beside
+ * connectorActions once the store exists. */
+let researchJobs: PendingResearchJobs | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
 const localVmLeases = new LocalVmLeasePool(30 * 60_000);
 // Pool mode (issue #1654) keeps the lease pool as the ownership fence and
@@ -9339,6 +9344,7 @@ function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
     routineName: redactSecretsInText(run.routineName),
     scheduledFor: run.scheduledFor,
     status: run.status,
+    ...(run.triggerSource !== undefined ? { triggerSource: run.triggerSource } : {}),
   };
   if (run.goalStatus) card.goalStatus = run.goalStatus;
   if (run.deferredAt != null && run.status === "queued") card.deferredAt = run.deferredAt;
@@ -9375,7 +9381,7 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
                 ? "deferred: target busy"
               : card.status
   );
-  return `Routine “${card.routineName}” ${state}`;
+  return `${card.triggerSource === "research" ? "Research" : "Routine"} “${card.routineName}” ${state}`;
 }
 
 /** Upsert one durable lifecycle card per run. Replaying the same transition,
@@ -9433,6 +9439,12 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
   if (statusChanged && ["waiting", "completed", "failed", "missed"].includes(run.status)) {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
     else store.patchTask(source.bot.id, sourceThreadId, { unread: true });
+  }
+  // Close the research job lifecycle from the run ledger's terminal truth:
+  // the registry moves proposed -> confirmed -> running, and the ledger
+  // reports running -> completed | failed | cancelled here.
+  if (run.triggerSource === "research" && ["completed", "failed", "cancelled"].includes(run.status)) {
+    researchJobs?.finish(run.routineId, run.status as "completed" | "failed" | "cancelled");
   }
   return sourceThreadId;
 }
@@ -10005,6 +10017,9 @@ const tighteningRequests = new TighteningRequestService({
 /** User-confirmed Google actions. The pending entry is server-side only; the
  * card the user sees carries display text, never the event or draft id. */
 const connectorActions = new PendingConnectorActions();
+/** One-shot research proposals live apart from routines: no schedule, no
+ * calendar entry, one execution per confirmation. */
+researchJobs = new PendingResearchJobs();
 const teamSetupTeams = () => [...new Set(["", ...readSections(), ...store.bots.map((bot) => sectionKey(bot.section)), ...store.groups.map((group) => sectionKey(group.section))])];
 const teamSetupRequests = new TeamSetupRequestService({
   store, teams: teamSetupTeams, canAccessTeam, canPersist: proposalPersistence, maxBots: MAX_WORKSPACE_BOTS,
@@ -14848,6 +14863,69 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           summary: display.detail, decision: "card-shown", source: "connector-scope",
         });
         return json(res, 201, { requestId: action.requestId, messageId: message.id, title: display.title, summary: display.detail });
+      }
+      if (method === "POST" && path === "/api/internal/research-requests") {
+        const parsed = z.object({
+          fromBotId: z.string().min(1).max(128),
+          fromThreadId: z.string().min(1).max(128),
+          title: z.unknown(),
+          brief: z.unknown(),
+          timeoutMinutes: z.unknown().optional(),
+          idempotencyKey: z.string().max(128).optional(),
+        }).strict().safeParse(await readInternalBody());
+        if (!parsed.success) return json(res, 400, { error: "invalid research proposal" });
+        const body = parsed.data;
+        const from = store.bot(body.fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const owner = connectorThread(from.id, body.fromThreadId);
+        if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
+        // Only a Relay agent with the Scout research role may propose deep
+        // research: the resolve step executes the brief as that bot.
+        const role = (Object.entries(relayAgentBotIds(store.bots)) as Array<[string, string | undefined]>)
+          .find(([, id]) => id === from.id)?.[0];
+        if (role !== "scout") return json(res, 403, { error: "only Scout may propose deep research" });
+        if (!researchJobs) return json(res, 503, { error: "research proposals are unavailable" });
+        let job;
+        try {
+          job = researchJobs.submit({
+            title: body.title,
+            brief: body.brief,
+            timeoutMinutes: body.timeoutMinutes,
+            idempotencyKey: body.idempotencyKey,
+            botId: from.id,
+            threadId: body.fromThreadId,
+          });
+        } catch (error) {
+          if (error instanceof ResearchJobError) return json(res, error.status, { error: error.message });
+          throw error;
+        }
+        // An idempotent resubmit answers with the live job, not a second
+        // card: one proposal, one confirmation, one execution.
+        const alreadyCarded = store.messagesFor(body.fromThreadId).some(
+          (message) => message.card?.requestId === job.researchId && message.kind === "options",
+        );
+        const display = researchDisplay(job);
+        let messageId: string | undefined;
+        if (!alreadyCarded) {
+          const message = store.appendMessage(body.fromThreadId, {
+            role: "bot",
+            kind: "options",
+            card: {
+              title: display.title,
+              subtitle: `${display.subtitle}\n\n${display.detail}`,
+              options: ["Confirm", "Cancel"],
+              requestId: job.researchId,
+              tool: "research_start",
+            },
+            from: owner.group ? { botId: from.id, name: from.name, color: from.color } : undefined,
+          });
+          messageId = message.id;
+        }
+        appendDecision(DATA_DIR, {
+          threadId: body.fromThreadId, requestId: job.researchId, botId: from.id, botName: from.name,
+          tool: "research_start", summary: display.detail, decision: "card-shown", source: "research",
+        });
+        return json(res, 201, { requestId: job.researchId, ...(messageId ? { messageId } : {}), title: display.title, summary: display.detail });
       }
       if (method === "POST" && path === "/api/internal/tightening-requests") {
         const parsed = z.object({
@@ -20068,6 +20146,78 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           connectorActions.settle(requestId, outcome);
           settleCard("allow");
           return json(res, 200, { ok: true, outcome });
+        }
+        // One-shot deep research: the pending job is server-side only, and
+        // confirming it starts exactly one execution — never a routine, never
+        // a calendar entry. A requestId with no live pending entry is not
+        // ours; fall through.
+        if (researchJobs) {
+          const researchPending = researchJobs.peek(requestId);
+          const researchReplayed = researchJobs.settledOutcome(requestId);
+          if (researchReplayed !== undefined) {
+            console.log(`[relay-research] resolve ${requestId} replay -> ${researchReplayed.outcome}`);
+            return json(res, 200, { ok: true, outcome: researchReplayed.outcome, ...(researchReplayed.runId ? { runId: researchReplayed.runId } : {}), replayed: true });
+          }
+          if (researchPending) {
+            const cardMessage = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
+            const card = cardMessage?.card;
+            const threadBotId = store.botByThread(threadId)?.id;
+            const settled = !card || card.answered || card.dismissed || card.expired
+              || researchPending.threadId !== threadId || threadBotId !== researchPending.botId;
+            if (settled) {
+              researchJobs.cancel(requestId);
+              return json(res, 410, { error: "this confirmation is no longer pending" });
+            }
+            const settleResearchCard = (answered: "allow" | "deny") => {
+              if (!cardMessage) return;
+              const live = store.messagesFor(threadId).find((message) => message.id === cardMessage.id)?.card;
+              if (live) store.patchMessage(threadId, cardMessage.id, { card: { ...live, answered } });
+            };
+            const bot = store.bot(researchPending.botId);
+            if (!bot) return json(res, 400, { error: "this confirmation has no valid owner" });
+            if (behavior !== "allow") {
+              appendDecision(DATA_DIR, {
+                threadId, requestId, botId: bot.id, botName: bot.name,
+                tool: "research_start",
+                summary: "user declined the research proposal", decision: "user-denied", source: "research",
+              });
+              researchJobs.cancel(requestId);
+              settleResearchCard("deny");
+              return json(res, 200, { ok: true, outcome: "cancelled" });
+            }
+            if (!routines) return json(res, 503, { error: "research execution is unavailable" });
+            const confirmed = researchJobs.confirm(requestId);
+            if (!confirmed) return json(res, 410, { error: "this confirmation is no longer pending" });
+            let runId: string;
+            try {
+              ({ id: runId } = routines.enqueueResearch({
+                researchId: requestId,
+                title: confirmed.title,
+                brief: `${confirmed.brief}\n\nResearch provider: TinyFish via the web_search tool for discovery, then browser_open/browser_read for real reading. If web_search reports it is unavailable, say so in the report's methodology section and record which provider actually answered (including any fallback) — never present fallback results as TinyFish results.`,
+                botId: confirmed.botId,
+                runOn: "maus",
+                sourceThreadId: confirmed.threadId,
+                ...(confirmed.timeoutMinutes !== undefined ? { timeoutMinutes: confirmed.timeoutMinutes } : {}),
+                requestedAt: Date.now(),
+              }));
+            } catch (error) {
+              return json(res, 502, { error: error instanceof Error ? error.message : "the research could not start" });
+            }
+            const started = researchJobs.start(requestId, runId);
+            if (!started) {
+              // A concurrent resolve won the race: answer with its run.
+              const winner = researchJobs.peek(requestId);
+              return json(res, 200, { ok: true, outcome: "started", runId: winner?.runId ?? runId, replayed: true });
+            }
+            appendDecision(DATA_DIR, {
+              threadId, requestId, botId: bot.id, botName: bot.name,
+              tool: "research_start",
+              summary: `research started: ${confirmed.title}`, decision: "user-approved", source: "research",
+            });
+            researchJobs.settle(requestId, "started", runId);
+            settleResearchCard("allow");
+            return json(res, 200, { ok: true, outcome: "started", runId });
+          }
         }
         const skillCard = store.messagesFor(threadId).find(
           (message) => message.card?.requestId === requestId && message.card.skillRequest,

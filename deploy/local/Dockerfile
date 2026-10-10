@@ -74,8 +74,9 @@ COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
 RUN npm install -g pnpm@10.33.0 \
   && pnpm install --prod --frozen-lockfile \
   && pnpm store prune \
-  && npm install -g bladebro@4.0.3 \
-  && bladebro --version
+  && npm install -g bladebro@4.0.3 @tiny-fish/cli@0.46.0 \
+  && bladebro --version \
+  && tinyfish --version
 # Optional engine CLIs baked into the image (space-separated npm packages).
 # The opencode CLI (opencodeGo instance) is an operator choice, not a default.
 ARG ENGINES=""

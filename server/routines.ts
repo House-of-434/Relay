@@ -66,7 +66,7 @@ export interface RoutineContextAttachment {
 
 const persistedSourceThreadId = z.string().trim().min(1).optional().catch(undefined);
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook";
+export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "research";
 
 export type RoutineRunStatus =
   | "queued"
@@ -1381,6 +1381,60 @@ export class RoutineManager {
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
+  }
+
+  /** Queue research work through the same dispatcher as scheduled routines.
+   * A research job owns no Routine record and no schedule: `routineId`
+   * carries the researchId so the run ledger, timeout handling, and report
+   * delivery all work unchanged, while the calendar (which lists routines,
+   * never runs) stays clean. Idempotent per researchId: confirming twice or
+   * retrying the resolve returns the existing run instead of queueing another.
+   * The prompt snapshot travels on the run itself, so there is no definition
+   * to be edited or deleted mid-flight. */
+  enqueueResearch(input: {
+    researchId: string;
+    title: string;
+    brief: string;
+    botId: string;
+    runOn: RoutineRunOn;
+    sourceThreadId: string;
+    timeoutMinutes?: number;
+    requestedAt: number;
+  }): { id: string } {
+    const active = this.runs.find((run) => run.routineId === input.researchId &&
+      run.triggerSource === "research" &&
+      ["queued", "running", "waiting"].includes(run.status));
+    if (active) return { id: active.id };
+    if (this.options.botState(input.botId) === "missing") {
+      throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
+    }
+    const run: RoutineRun = {
+      id: randomUUID(),
+      routineId: input.researchId,
+      routineName: input.title,
+      prompt: input.brief,
+      target: "bot",
+      botId: input.botId,
+      runOn: input.runOn,
+      scheduledFor: input.requestedAt,
+      status: "queued",
+      manual: true,
+      triggerSource: "research",
+      sourceThreadId: input.sourceThreadId,
+      attachments: [],
+      createdAt: this.now(),
+      ...(input.timeoutMinutes !== undefined ? { timeoutMinutes: input.timeoutMinutes } : {}),
+    };
+    const previousRuns = this.runs.slice();
+    this.runs.push(run);
+    try { this.save(); }
+    catch (error) {
+      this.runs = previousRuns;
+      throw error;
+    }
+    this.emitRun(run);
+    queueMicrotask(() => void this.tick());
+    return { id: run.id };
   }
 
   /** The most recent completed report for a continuity routine, or `null` when

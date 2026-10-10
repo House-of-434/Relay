@@ -659,7 +659,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "propose_routine",
     description:
-      "Prepare a new routine after the user explicitly asks to schedule recurring or future work — or a bounded one-shot investigation (a `once` schedule): the confirmation card shows the plan, and Confirm executes it exactly once. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. Convert calendar requests (monthly dates, last days, nth weekdays) into a validated five-field cron schedule with an explicit IANA timeZone; keep elapsed every-N-minutes work as interval. Never approximate unsupported requests with a different weekly schedule or an AI date-check routine; explain the limitation instead. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id; each run retains that bot's own permissions." + PROPOSAL_OUTCOME,
+      "Prepare a new routine after the user explicitly asks to schedule recurring or future work. The confirmation card shows the plan, and Confirm applies it. Call list_routines first for relative dates or times so you use its authoritative current time and timezone. Convert calendar requests (monthly dates, last days, nth weekdays) into a validated five-field cron schedule with an explicit IANA timeZone; keep elapsed every-N-minutes work as interval. Never approximate unsupported requests with a different weekly schedule or an AI date-check routine; explain the limitation instead. Resolve ambiguous dates, times, timezone, destination, or instructions with the user first, and always give one-time schedules an explicit RFC3339 offset. If the user asks for the routine to run as ANOTHER bot in your section, call list_bots and pass that bot's id as for_bot_id; each run retains that bot's own permissions." + PROPOSAL_OUTCOME,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -672,6 +672,22 @@ const toolDefinitions = (externalRuntime: boolean) => [
         },
       },
       required: ["name", "instructions", "schedule"],
+    },
+  },
+  {
+    name: "propose_deep_research",
+    description:
+      "Propose a bounded one-shot investigation: a thorough research task the person asked for, or a question complex enough that quick inline search cannot answer it. Pass a short title plus the full brief and plan preview (which sources to check and what to compare — not a rigid query list). The confirmation card shows the plan; Confirm runs it exactly once and delivers a cited report, Cancel runs nothing. This creates no routine, no schedule, and no calendar entry — never use propose_routine for one-shot research." + PROPOSAL_OUTCOME,
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        title: { type: "string", minLength: 1, maxLength: 200, description: "Short investigation title, shown on the confirmation card." },
+        brief: { type: "string", minLength: 1, maxLength: 24000, description: "Full investigation brief: goal, claims to verify with confidence labels, sources to check, comparison plan, and output format. The run executes this verbatim." },
+        timeout_minutes: { type: "integer", minimum: 5, maximum: 1440, description: "Safety cap for active work in minutes. Omit for the default." },
+        idempotency_key: { type: "string", maxLength: 128, description: "Stable key for this proposal (for example a turn-scoped uuid). Resubmits with the same key return the live proposal instead of creating a duplicate." },
+      },
+      required: ["title", "brief"],
     },
   },
   {
