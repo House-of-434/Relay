@@ -162,6 +162,14 @@ export function mailboxSystemPrompt(address: string | undefined, scribeEnabled: 
     (scribeEnabled ? " To have a meeting transcribed, add the shared address as an attendee." : "");
 }
 
+/** The "Relay mailbox" prompt section, built once so the preview, direct, and
+ * room paths cannot drift. server/index.ts uses this in all three arrays; a
+ * source-level parity test (server/mailbox-prompt-parity.test.ts) fails if any
+ * path stops including it. */
+export function mailboxPromptPart(address: string | undefined, scribeEnabled: boolean): PromptPart {
+  return { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(address, scribeEnabled) };
+}
+
 export const CREDENTIAL_PROMPT =
   " If a supported API key is missing for the service actually needed, use request_credential to create a secure credential request. Before requesting a computer-provider key, inspect the configured targets with select_computer; an existing self-hosted VPS does not need Boat credentials. Do not request a different provider's key merely because a task mentions cloud. A freshly QR-paired mobile app or the desktop app can show the secure entry card. Never claim it opened unless the request succeeded, and never ask the user to paste credentials into chat.";
 export const THREADS_PROMPT =
