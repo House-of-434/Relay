@@ -46,6 +46,9 @@ interface QueueEntry {
      * thread it opened on itself). The drained turn must inherit that:
      * a queue is a delay, not a person sitting down at the keyboard. */
     unattended?: boolean;
+    /** Routed mail and meeting runs settle without the workspace-wide
+     * completion banner; the wait for a slot must not change that. */
+    silentCompletion?: boolean;
     peerAsk?: Message["peerAsk"];
     /** The person who sent the words: a queue is a delay, not a change of
      * author, so the drained line names them like an immediate send would. */
@@ -60,7 +63,7 @@ interface QueueEntry {
 }
 
 /** The first waiting line of a drained batch: the one that starts the turn. */
-export type SteerQueueHead = Pick<QueueEntry["items"][number], "trigger" | "sender" | "peerAsk">;
+export type SteerQueueHead = Pick<QueueEntry["items"][number], "trigger" | "sender" | "peerAsk" | "silentCompletion">;
 
 const queues = new Map<string, QueueEntry>(); // threadId → waiting sends
 
@@ -121,7 +124,7 @@ export function queueSteeredMessage(
   botId: string,
   threadId: string,
   text: string,
-  options: { prompt?: string; replyToId?: string; sendId?: string; reason?: SteerQueueReason; unattended?: boolean; peerAsk?: Message["peerAsk"]; sender?: ResolvedSender; trigger?: UsageTrigger } = {},
+  options: { prompt?: string; replyToId?: string; sendId?: string; reason?: SteerQueueReason; unattended?: boolean; silentCompletion?: boolean; peerAsk?: Message["peerAsk"]; sender?: ResolvedSender; trigger?: UsageTrigger } = {},
 ): QueuedSteer {
   const id = newId();
   const entry = queues.get(threadId) ?? { botId, items: [] };
@@ -136,6 +139,7 @@ export function queueSteeredMessage(
     sendId: options.sendId,
     reason: options.reason,
     unattended: options.unattended,
+    silentCompletion: options.silentCompletion,
     peerAsk: options.peerAsk,
     sender: options.sender,
     trigger: options.trigger,
@@ -249,7 +253,7 @@ export function drainSteeredMessages(
       // person's words in the same group cannot re-attend a bot's own
       group.some((item) => item.unattended === true),
       // the first waiting line is the one that starts this turn
-      { trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk },
+      { trigger: group[0].trigger, sender: group[0].sender, peerAsk: group[0].peerAsk, silentCompletion: group[0].silentCompletion },
     );
     void Promise.resolve(running).then(
       () => settleChatFollowups(ids, null),
