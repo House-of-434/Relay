@@ -106,17 +106,18 @@ export function createAgentMcpServer(
     server.registerTool(
       "gmail_search",
       {
-        description: "Search the connected Gmail mailbox with Gmail query syntax, for example \"from:ana newer_than:7d\". Read-only.",
+        description: "Search the connected Gmail mailbox with Gmail query syntax, for example \"from:ana newer_than:7d\". Read-only. Set mailbox \"relay\" to search Relay's own team mailbox instead of the user's account.",
         inputSchema: {
           query: z.string().min(1).max(512),
           maxResults: z.number().int().min(1).max(50).optional(),
+          mailbox: z.enum(["own", "relay"]).optional(),
         },
         annotations: { readOnlyHint: true },
       },
-      async ({ query, maxResults }) => {
+      async ({ query, maxResults, mailbox }) => {
         try {
           authorizeGmail(agent, "search");
-          const result = await gmailContext.client.searchMessages(gmailContext.actorAssertion, { query, maxResults });
+          const result = await gmailContext.client.searchMessages(gmailContext.actorAssertion, { query, maxResults, mailbox });
           return { content: [{ type: "text", text: JSON.stringify(result) }] };
         } catch (error) {
           return toolError(error);
@@ -127,14 +128,14 @@ export function createAgentMcpServer(
     server.registerTool(
       "gmail_read",
       {
-        description: "Read one message from the connected Gmail mailbox by id returned from gmail_search. Read-only.",
-        inputSchema: { messageId: z.string().min(1).max(512) },
+        description: "Read one message from the connected Gmail mailbox by id returned from gmail_search, including its bounded text body and attachment metadata (names, types, sizes — not the attachment contents). Read-only. Set mailbox \"relay\" to read Relay's own team mailbox instead of the user's account.",
+        inputSchema: { messageId: z.string().min(1).max(512), mailbox: z.enum(["own", "relay"]).optional() },
         annotations: { readOnlyHint: true },
       },
-      async ({ messageId }) => {
+      async ({ messageId, mailbox }) => {
         try {
           authorizeGmail(agent, "read");
-          const result = await gmailContext.client.getMessage(gmailContext.actorAssertion, { messageId });
+          const result = await gmailContext.client.getMessage(gmailContext.actorAssertion, { messageId, mailbox });
           return { content: [{ type: "text", text: JSON.stringify(result) }] };
         } catch (error) {
           return toolError(error);

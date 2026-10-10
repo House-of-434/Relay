@@ -37,6 +37,14 @@ services:
       # bind its container interface so the separate tools container can reach
       # them over the compose network. The port is never published.
       RELAY_BFF_HOST: "0.0.0.0"
+      # Relay's own shared Gmail account. Set both in .env to enable the
+      # shared mailbox (BFF resolution + the harness monitor); explicit here
+      # because the session store is not a durable user directory.
+      RELAY_MAILBOX_ADDRESS: ${RELAY_MAILBOX_ADDRESS:-}
+      RELAY_MAILBOX_USER_ID: ${RELAY_MAILBOX_USER_ID:-}
+      RELAY_MAILBOX_POLL_MINUTES: ${RELAY_MAILBOX_POLL_MINUTES:-15}
+      RELAY_MAILBOX_NOTIFY: ${RELAY_MAILBOX_NOTIFY:-1}
+      RELAY_SCRIBE_ENABLED: ${RELAY_SCRIBE_ENABLED:-0}
   tools:
     init: true
     build:
