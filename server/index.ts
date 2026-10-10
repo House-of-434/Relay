@@ -487,6 +487,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
+import { mailboxReplyNeedsNoEmail, sendMailboxCompletionEmail } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -7171,6 +7172,24 @@ bus.subscribe((event: RuntimeEvent) => {
             : reply;
           const notificationBot = (routineRun && routineSourceOwner(routineRun)?.bot) || bot;
           notify(buildNotification("done", notificationBot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: notificationBot.avatarUrl }));
+        }
+        // Routed mail that finished quietly still reaches its person: the
+        // shared account emails a short result. Invitations and no-op replies
+        // (NO_ACTION) are not worth an email, and failures keep the normal
+        // turn-failed alert instead.
+        if (silentCompletion && event.ok !== false) {
+          const routed = settledTask?.mailRouted;
+          const detail = routineRun ? reply || routineRun.output || "" : reply;
+          if (routed && detail.trim() && !mailboxReplyNeedsNoEmail(detail)) {
+            void sendMailboxCompletionEmail({
+              capability: relayBffCapability,
+              email: routed.email,
+              title: settledTask?.title ?? "Your request",
+              detail,
+            }).catch((error) => {
+              console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+            });
+          }
         }
         void digestSettled.finally(() => settleDirectTurn(true));
       } else if (group && speaker) {
