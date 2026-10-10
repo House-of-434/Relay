@@ -51,7 +51,7 @@ import { configuredAccountDirectory, assertSeparateClaudeAccount, claudeAccountI
 import { providerIconPatchSchema, withInstanceIcon } from "./provider-icon.ts";
 import { providerIconError } from "../shared/provider-icon.ts";
 import * as checkpoints from "./checkpoints.ts";
-import { commandReceipt } from "./commands.ts";
+import { commandReceipt, runCommand } from "./commands.ts";
 import { buildTurnDigest, coverageForDriver, digestPromptLine, renderDigest, toolEvidence } from "./digest.ts";
 import { appendDecision, bindDecisionRetention, boundRetentionDays, decisionRetentionDays, decisionsCsv, flushDecisionLog, pruneDecisions, readDecisionRange, readDecisions, withDecisionActor, type DecisionActor } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
@@ -330,7 +330,7 @@ import {
   type TaskRecord,
   toWireTask,
 } from "./store.ts";
-import { inheritThreadOwner, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
+import { inheritThreadOwner, ownerByEmail, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
 import * as tts from "./tts/index.ts";
 import { createDecider, deciderIncludedHere, deciderReady, deciderSavePatch, describeDecider } from "./decider/index.ts";
 import { decideRoomResponder, type RoomRoutingInput } from "./decider/room-routing.ts";
@@ -481,6 +481,16 @@ import {
   isTurnAdmissionBlocked,
   isTurnEventQuarantined,
 } from "./turn-dispatch-guard.ts";
+import {
+  deliverRoutedMail,
+  MAILBOX_LIST_LIMIT,
+  MAILBOX_POLL_QUERY,
+  MailboxMonitor,
+  routedMailPrompt,
+  routedMailTitle,
+  type MailboxMessage,
+} from "./mailbox-monitor.ts";
+import { mailboxBffCall } from "./mailbox-bff.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionStatus, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, editionForMembers, LICENSE_WARN_DAYS, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type EditionStatus, type WorkspaceAccess } from "./enterprise.ts";
@@ -507,7 +517,7 @@ import {
   serializeSessionCookie,
   sessionCookieName,
 } from "./request-auth.ts";
-import { cookieMaxAgeSeconds, formatPairingCode, isUuidUserId, personKey, SessionRegistry, type Scope } from "./sessions.ts";
+import { cookieMaxAgeSeconds, formatPairingCode, isUuidUserId, personKey, personKeyForIdentity, SessionRegistry, type Scope } from "./sessions.ts";
 import { ThreadStarters } from "./thread-starters.ts";
 import {
   activityCsv,
@@ -5757,6 +5767,8 @@ function takeSilentCompletion(threadId: string): boolean {
 // such a turn finds in its thread may be hours old and its author gone.
 const personAskAt = new Map<string, number>();
 let routines: RoutineManager | null = null;
+/** Native poller for Relay's own shared Gmail account (server/mailbox-monitor.ts). */
+let mailboxMonitor: MailboxMonitor | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 /** One-shot deep-research jobs. Server-side only; the card carries display
  * text, never the brief's executable payload. Assigned beside
@@ -9664,6 +9676,119 @@ routines = new RoutineManager({
     notify(buildNotification("routine-deferred", notificationBot, routineSourceThread(run) ?? bot.threadId, detail));
   },
 });
+
+// ── shared mailbox monitor ──────────────────────────────────────────────
+// Native poll of Relay's own Gmail account (server/mailbox-monitor.ts). Dark
+// unless the address, the owning Supabase user id, and the BFF capability
+// are all present. The monitor talks to the BFF's internal Gmail routes
+// directly, signing a fresh actor assertion per call; the capability lives
+// only in this module and is never written back into process.env.
+const RELAY_MAILBOX_USER_ID = process.env.RELAY_MAILBOX_USER_ID?.trim() || undefined;
+
+const mailboxPollMs = (() => {
+  const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
+  const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
+  return minutes * 60_000;
+})();
+
+if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
+  const mercuryId = relayAgentBotIds(store.bots).mercury;
+  if (!mercuryId) {
+    console.warn("[mailbox] shared mailbox disabled: no Mercury bot is registered");
+  } else {
+    mailboxMonitor = new MailboxMonitor({
+      address: RELAY_MAILBOX_ADDRESS,
+      pollMs: mailboxPollMs,
+      list: async () => {
+        const result = await mailboxBffCall<{ messages: Array<{ id: string }> }>(
+          relayBffCapability,
+          "/api/internal/gmail/messages/list",
+          { query: MAILBOX_POLL_QUERY, maxResults: MAILBOX_LIST_LIMIT, mailbox: "relay" },
+        );
+        return result.messages ?? [];
+      },
+      read: async (messageId) => {
+        const result = await mailboxBffCall<{ message: MailboxMessage }>(
+          relayBffCapability,
+          "/api/internal/gmail/messages/get",
+          { messageId, mailbox: "relay" },
+        );
+        return result.message;
+      },
+      // Live sessions first, then the durable thread-owner directory: an
+      // expired session must not turn a known teammate into a stranger.
+      lookupPerson: (email) => {
+        const known = sessions.personByEmail(email) ?? ownerByEmail(DATA_DIR, email);
+        return known ? { userId: known.userId, email: known.email, name: known.email.split("@")[0] } : undefined;
+      },
+      hasReceipt: (kind, key) => commandReceipt(kind, key) !== null,
+      recordReceipt: async (kind, key, detail) => {
+        runCommand({ kind, key }, () => detail ?? null);
+      },
+      deliver: async (message, person) => {
+        const personKey = personKeyForIdentity(person.userId, person.email);
+        const title = routedMailTitle(message, person);
+        const prompt = routedMailPrompt(message, person, { scribeEnabled: RELAY_SCRIBE_ENABLED });
+        const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s); contents not available yet]` : ""}`;
+        await deliverRoutedMail({
+          botId: mercuryId,
+          // Reservation by message id: a retry lands in the same conversation.
+          threadFor: async (messageId) => {
+            const reserved = commandReceipt<{ threadId?: string }>("gmail.thread", messageId);
+            if (reserved?.result?.threadId) return reserved.result.threadId;
+            const task = store.createTask(mercuryId, title, false);
+            if (!task) throw new Error("could not open the routed conversation");
+            if (personKey) threadStarters.set(task.threadId, personKey);
+            store.patchTask(mercuryId, task.threadId, {
+              mailRouted: { userId: person.userId, email: person.email, messageId },
+            });
+            runCommand({ kind: "gmail.thread", key: messageId }, () => ({ threadId: task.threadId }));
+            return task.threadId;
+          },
+          isBlocked: () => botAtThreadCapacity(mercuryId) || Boolean(activeGroupTurnForBot(mercuryId)),
+          queue: (delivery) => {
+            // The queue is keyed by the routed thread and carries the
+            // teammate's sender stamp, so the wait can never move their mail
+            // onto another person's running conversation.
+            queueSteeredMessage(mercuryId, delivery.threadId, delivery.text, {
+              prompt: delivery.prompt,
+              reason: activeGroupTurnForBot(mercuryId) ? "group-turn" : "capacity",
+              sender: delivery.sender,
+              unattended: true,
+              silentCompletion: true,
+            });
+          },
+          run: async (delivery) => {
+            // Idempotent across retries: reuse an appended copy rather than
+            // posting the same mail twice into the reserved thread.
+            const existing = store.messagesFor(delivery.threadId)
+              .findLast((entry) => entry.role === "user" && entry.text === delivery.text);
+            const message = existing ?? store.appendMessage(delivery.threadId, {
+              role: "user",
+              kind: "text",
+              text: delivery.text,
+              sender: delivery.sender,
+            });
+            await startTurn(mercuryId, delivery.prompt, {
+              threadId: delivery.threadId,
+              userMessage: message,
+              sender: delivery.sender,
+              unattended: true,
+              silentCompletion: true,
+            });
+          },
+          isAdmissionBlocked: (error) => isTurnAdmissionBlocked(error),
+        }, { message, person, personKey, text, prompt });
+      },
+      log: (event) => {
+        const line = `[mailbox] ${JSON.stringify(event)}`;
+        if (event.event === "mailbox.tick") console.log(line);
+        else console.warn(line);
+      },
+    });
+  }
+}
+
 orgLibrary = new OrgLibrary({
   dataDir: DATA_DIR,
   store,
@@ -13685,8 +13810,8 @@ const workspaceBackupAccess = {
       teamComputers.list().every(computer => !teamComputerInUse(computer)) &&
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
-    pause: () => { routines?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    pause: () => { routines?.stop(); mailboxMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
+    resume: () => { routines?.start(); mailboxMonitor?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // With writers gated and work idle, release our WAL connection for the
@@ -22583,6 +22708,7 @@ server.listen(PORT, "127.0.0.1", () => {
   // ordinary chat. Start only once every registry is initialized and the
   // endpoint is listening; earlier dispatch can hit uninitialized bindings.
   routines!.start();
+  mailboxMonitor?.start();
   memoryUpkeep.start();
   const leftover = pendingThreads();
   if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
@@ -22631,6 +22757,7 @@ const gracefulShutdown = createGracefulShutdown({
       for (const idle of localVmIdles.values()) idle.cancel();
       vps.closeAllVpsDesktopTunnels();
       watchdog.stop();
+      mailboxMonitor?.stop();
       routines?.stop();
       calendarCalls?.stop();
       memoryUpkeep.stop();

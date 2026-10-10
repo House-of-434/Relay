@@ -611,6 +611,23 @@ export class SessionRegistry {
     return this.sessions.some((s) => s.id === sessionId);
   }
 
+  /** A live session's verified identity by email. Expired sessions are
+   * pruned and persisted away, so callers that need a durable directory
+   * (the shared-mailbox monitor) must also consult server-owned records
+   * such as thread owners. */
+  personByEmail(email: string): { userId: string; email: string } | undefined {
+    this.prune();
+    const target = email.trim().toLowerCase();
+    if (!target) return undefined;
+    for (const record of this.sessions) {
+      const address = record.email?.trim();
+      if (isUuidUserId(record.userId) && address && address.toLowerCase() === target) {
+        return { userId: record.userId, email: address };
+      }
+    }
+    return undefined;
+  }
+
   list(): PublicSession[] {
     this.prune();
     return this.sessions.map(publicSession);
