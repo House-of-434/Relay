@@ -392,6 +392,7 @@ import {
   computerPrompt,
   composioSystemPrompt,
   customMcpPrompt,
+  mailboxSystemPrompt,
   CREDENTIAL_PROMPT,
   mentionPrompt,
   THREADS_PROMPT,
@@ -618,6 +619,12 @@ const sharedComputers = new SharedComputers(id => sessions.isLive(id));
 // OMB Cloud Pro home machine (server/cloud-home.ts, docs/cloud-pro.md). A
 // partial or invalid boot contract stops the server here, before it serves.
 const CLOUD_HOME = cloudHomeConfiguration();
+/** Relay's own shared Gmail account (the mailbox monitor and the prompt
+ * paragraph). Feature is dark when unset. */
+const RELAY_MAILBOX_ADDRESS = process.env.RELAY_MAILBOX_ADDRESS?.trim() || undefined;
+/** Scribe (meeting transcription) has not shipped: until it does, no prompt
+ * may promise that adding the shared address gets a meeting transcribed. */
+const RELAY_SCRIBE_ENABLED = process.env.RELAY_SCRIBE_ENABLED === "1";
 /** Lending a computer to this server (the shared-computer routes, the two
  * agent tools, the advertised capability): the maintainer flag anywhere, and
  * always on an OMB Cloud home, where it is the person's own Mac lent to their
@@ -3300,6 +3307,7 @@ function previewSystemPrompt(bot: BotRecord) {
     }, { note: previewPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
     { id: "composio", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? composioSystemPrompt(bot.connectorTools) : "" },
+    { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(engineMcpServers(bot))) : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
@@ -9099,6 +9107,7 @@ async function startTurn(
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
         { id: "composio", label: "Connected apps", text: integrations.composio ? composioSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) : "" },
+        { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
         { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
@@ -11167,6 +11176,7 @@ async function runGroupMemberTurn(
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer ?? undefined) },
     { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
+    { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
     { id: "recent", label: "Recent work", text: recentWorkPrompt(recentLines) },
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },

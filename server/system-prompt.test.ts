@@ -15,6 +15,7 @@ import {
   COMPOSIO_PROMPT,
   composioSystemPrompt,
   customMcpPrompt,
+  mailboxSystemPrompt,
   CREDENTIAL_PROMPT,
   LEARN_PROMPT,
   PROFILE_PROMPT,
@@ -291,5 +292,26 @@ describe("cloudHomePrompt", () => {
     expect(cloudHomePrompt(true)).toContain("turn on Let my Cloud use this Mac under Settings → OMB Cloud in the desktop app on that Mac");
     expect(cloudHomePrompt(false)).not.toMatch(/shared_computer|list_shared_computers/);
     expect(cloudHomePrompt(false)).toContain("You cannot see or use their Mac or PC, its screen or its files from here.");
+  });
+});
+
+describe("mailboxSystemPrompt", () => {
+  it("stays silent until a shared address is configured", () => {
+    expect(mailboxSystemPrompt(undefined, false)).toBe("");
+    expect(mailboxSystemPrompt("  ", false)).toBe("");
+  });
+
+  it("names the account and how to read it for every bot", () => {
+    const text = mailboxSystemPrompt("relay@houseof434.com", false);
+    expect(text).toContain("relay@houseof434.com");
+    expect(text).toContain('mailbox "relay"');
+    expect(text).toContain("visible to the workspace");
+    expect(text).toContain("sending from it is reserved");
+    expect(text).not.toContain("Scribe");
+  });
+
+  it("gates the Scribe transcription line until the feature ships", () => {
+    expect(mailboxSystemPrompt("relay@houseof434.com", true)).toContain("To have a meeting transcribed, add the shared address as an attendee.");
+    expect(mailboxSystemPrompt("relay@houseof434.com", false)).not.toContain("meeting transcribed");
   });
 });

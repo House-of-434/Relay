@@ -17,7 +17,16 @@ export interface GmailMessage {
   subject?: string;
   date?: string;
   snippet?: string;
+  /** Extracted plain-text body, bounded by the BFF. */
+  body?: string;
+  bodyTruncated?: boolean;
+  /** Attachment metadata only; fetching bytes is a separate route. */
+  attachments?: Array<{ id: string; filename: string; mimeType: string; size?: number }>;
 }
+
+/** Which connected mailbox a read means: the actor's own account, or Relay's
+ * shared mailbox. Sending is never exposed for the shared mailbox to a model. */
+export type GmailMailbox = "own" | "relay";
 
 export interface GmailSentMessage {
   id?: string | null;
@@ -81,7 +90,7 @@ export class RelayGmailClient {
     return await response.json() as Result;
   }
 
-  searchMessages(actorAssertion: string, input: { query: string; maxResults?: number }) {
+  searchMessages(actorAssertion: string, input: { query: string; maxResults?: number; mailbox?: GmailMailbox }) {
     return this.call<{ account: { email: string }; messages: GmailMessageSummary[] }>(
       GMAIL_INTERNAL_PATHS.messagesList,
       actorAssertion,
@@ -89,7 +98,7 @@ export class RelayGmailClient {
     );
   }
 
-  getMessage(actorAssertion: string, input: { messageId: string }) {
+  getMessage(actorAssertion: string, input: { messageId: string; mailbox?: GmailMailbox }) {
     return this.call<{ account: { email: string }; message: GmailMessage }>(
       GMAIL_INTERNAL_PATHS.messagesGet,
       actorAssertion,

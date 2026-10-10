@@ -1,0 +1,65 @@
+Delivered-To: relay@houseof434.com
+Return-Path: <pranam@houseof434.com>
+Received: by 2002:a05:6a00:1a0b:b0:7a1:2c3d:4e5f with SMTP id abc123;
+        Tue, 6 Oct 2026 09:15:04 -0700 (PDT)
+From: "Pranam Shetty" <pranam@houseof434.com>
+Sender: Google Calendar <calendar-notification@google.com>
+Reply-To: pranam@houseof434.com
+To: relay@houseof434.com
+Subject: Invitation: Weekly sync @ Thu Oct 8, 2026 10am - 10:30am (PDT) (relay@houseof434.com)
+MIME-Version: 1.0
+Content-Type: multipart/mixed; boundary="000000000000a1b2c3"
+Date: Tue, 6 Oct 2026 09:15:03 -0700
+Message-ID: <CALfixture-invite-0001@mail.gmail.com>
+
+--000000000000a1b2c3
+Content-Type: multipart/alternative; boundary="000000000000d4e5f6"
+
+--000000000000d4e5f6
+Content-Type: text/plain; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+You have been invited to the following event.
+
+Weekly sync
+Thursday Oct 8, 2026 =C2=B7 10:00 =E2=80=93 10:30am (Pacific Time - Los Angel=
+es)
+
+Google Meet joining info
+Video call link: https://meet.google.com/xxx-yyyy-zzz
+
+Organizer: pranam@houseof434.com
+Guests: relay@houseof434.com
+
+--000000000000d4e5f6
+Content-Type: text/html; charset="UTF-8"
+Content-Transfer-Encoding: quoted-printable
+
+<html><body><p>You have been invited to the following event.</p><p><b>Weekl=
+y sync</b><br>Thursday Oct 8, 2026 =C2=B7 10:00 =E2=80=93 10:30am</p></body=
+></html>
+
+--000000000000d4e5f6--
+--000000000000a1b2c3
+Content-Type: text/calendar; charset="UTF-8"; method=REQUEST
+Content-Transfer-Encoding: 7bit
+Content-Disposition: attachment; filename="invite.ics"
+
+BEGIN:VCALENDAR
+PRODID:-//Google Inc//Google Calendar 70.9054//EN
+VERSION:2.0
+CALSCALE:GREGORIAN
+METHOD:REQUEST
+BEGIN:VEVENT
+DTSTART;TZID=America/Los_Angeles:20261008T100000
+DTEND;TZID=America/Los_Angeles:20261008T103000
+ORGANIZER;CN=Pranam Shetty:mailto:pranam@houseof434.com
+ATTENDEE;CN=relay@houseof434.com;ROLE=REQ-PARTICIPANT;PARTSTAT=NEEDS-ACTION;RSVP=TRUE:mailto:relay@houseof434.com
+SUMMARY:Weekly sync
+UID:fixture-invite-0001@houseof434.com
+SEQUENCE:0
+STATUS:CONFIRMED
+TRANSP:OPAQUE
+END:VEVENT
+END:VCALENDAR
+--000000000000a1b2c3--

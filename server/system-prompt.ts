@@ -150,6 +150,18 @@ export function customMcpPrompt(names: string[]): string {
   const list = names.map((name) => `"${name}"`).join(", ");
   return ` The user also added ${names.length === 1 ? "an MCP server" : "MCP servers"} for you: ${list}. Use their available tools under the engine's normal approval rules.`;
 }
+/** Relay's own shared mailbox paragraph: every bot is told the account
+ * exists so none claims it has no access; only Mercury holds the Tool Layer's
+ * Gmail grant, so the others reach it by asking Mercury. The Scribe line is
+ * gated until the meeting feature ships: a promise the product cannot keep is
+ * worse than saying nothing. */
+export function mailboxSystemPrompt(address: string | undefined, scribeEnabled: boolean): string {
+  const trimmed = address?.trim();
+  if (!trimmed) return "";
+  return ` Relay has its own shared Gmail account at ${trimmed}. Mercury can search and read it with mailbox "relay"; other bots can ask Mercury to check it. It is a team mailbox: its contents are visible to the workspace, not private. Read and search it freely; sending from it is reserved for Relay's own notifications.` +
+    (scribeEnabled ? " To have a meeting transcribed, add the shared address as an attendee." : "");
+}
+
 export const CREDENTIAL_PROMPT =
   " If a supported API key is missing for the service actually needed, use request_credential to create a secure credential request. Before requesting a computer-provider key, inspect the configured targets with select_computer; an existing self-hosted VPS does not need Boat credentials. Do not request a different provider's key merely because a task mentions cloud. A freshly QR-paired mobile app or the desktop app can show the secure entry card. Never claim it opened unless the request succeeded, and never ask the user to paste credentials into chat.";
 export const THREADS_PROMPT =
