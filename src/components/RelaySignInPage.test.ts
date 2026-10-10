@@ -8,10 +8,11 @@ it("shows a company Google sign-in and nothing more", () => {
   vi.stubGlobal("window", {});
   try {
     const html = renderToStaticMarkup(createElement(RelaySignInPage));
-    expect(html).toContain("Sign in to Relay");
-    expect(html).toContain("House of 434 Google account");
+    expect(html).toContain(">Relay<");
+    expect(html).toContain("House of 434");
     expect(html).toContain('href="/auth/login"');
     expect(html).toContain("Continue with Google");
+    expect(html).toContain("#9AD7B2");
     expect(html).not.toContain("GOCSPX");
     // the card answers "how do I get in", and stops there
     for (const agent of ["Scout", "Mercury", "Curator"]) expect(html).not.toContain(agent);

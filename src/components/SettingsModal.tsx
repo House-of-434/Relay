@@ -5,9 +5,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Coins, FlaskConical, KeyRound, Monitor, Palette, ScrollText, Search, TabletSmartphone, Terminal, User, X, Building2, Zap } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus, ApiError } from "@/state/store";
-import { analyticsEnabled, setAnalyticsEnabled } from "@/lib/analytics";
 import { routinesInConversationEnabled, showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
-import { localeChoices, type LocaleKey } from "@/locales";
+import { type LocaleKey } from "@/locales";
 import { t } from "@/lib/i18n";
 import { withTourReset } from "@/lib/guided-tour";
 import { clearTourSeen, tourStorage } from "@/lib/first-run";
@@ -42,7 +41,6 @@ import { ThreadCleanupSettings } from "./ThreadCleanupSettings";
 import { DefaultBotSettings } from "./NewBotDialog";
 import { cn } from "@/lib/cn";
 import { setNotificationSounds, useNotificationSounds } from "@/lib/notification-preferences";
-import { effectiveLanguage, setLanguageChoice, useLanguageChoice } from "@/lib/language-preference";
 
 // `labelKey`, not a label: t() reads the active pack when it is called, so a
 // label resolved here at module scope would freeze the language the app booted
@@ -54,7 +52,7 @@ export const SECTIONS: Array<{
   icon: typeof User;
   keywords: string[];
 }> = [
-  { id: "general", labelKey: "settings.section.general", icon: User, keywords: ["profile", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "analytics", "updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule"] },
+  { id: "general", labelKey: "settings.section.general", icon: User, keywords: ["profile", "name", "email", "about me", "about", "suggestions", "suggested", "memory", "updates", "effort", "new bots", "reasoning", "threads", "parallel", "concurrency", "cleanup", "retention", "event log", "event-log", "log size", "automatic recovery", "backup model", "fallback", "routines", "conversation", "schedule"] },
   { id: "desktopWorkspaces", labelKey: "settings.section.desktopWorkspaces", icon: Building2, keywords: ["workspace", "cloud", "hosted", "vps", "server", "servers", "connect", "pair", "switch", "local"] },
   { id: "appearance", labelKey: "settings.section.appearance", icon: Palette, keywords: ["skin", "theme", "appearance", "tools", "tool calls", "sidebar", "display", "notifications", "sound", "sounds", "mute", "silent", "chime"] },
   { id: "experimental", labelKey: "settings.section.experimental", icon: FlaskConical, keywords: ["early", "preview", "learn", "skill", "authoring"] },
@@ -158,10 +156,6 @@ function UpdatesRow() {
   );
 }
 
-/** Usage analytics, on by default and switchable here. Naming what is sent
- * matters more than the switch: people who cannot see the scope assume the
- * worst, and the worst — conversation text — is exactly what this never
- * sends (autocapture is off; see lib/analytics.ts). */
 /** The effort every new bot starts with. The server skips a level the new
  * bot's engine does not offer, and a bot's own choice always wins. */
 function NewBotEffortRow() {
@@ -207,23 +201,6 @@ function NewBotEffortRow() {
           </option>
         ))}
       </select>
-    </SettingRow>
-  );
-}
-
-function AnalyticsRow() {
-  const [on, setOn] = useState(analyticsEnabled);
-  return (
-    <SettingRow title={t("settings.analytics.title")} subtitle={t("settings.analytics.subtitle")}>
-      <Switch
-        checked={on}
-        aria-label={t("settings.analytics.aria")}
-        onClick={() => {
-          const next = !on;
-          setAnalyticsEnabled(next);
-          setOn(next);
-        }}
-      />
     </SettingRow>
   );
 }
@@ -285,35 +262,6 @@ function ReplayTourRow() {
       <div className="flex flex-wrap justify-end gap-2">
         <ReplayAppTourButton />
       </div>
-    </SettingRow>
-  );
-}
-
-function LanguageRow() {
-  const { state } = useStore();
-  // Saved on this device only: anyone can switch, including a chat-only
-  // teammate, and nobody changes another person's screen. The server's
-  // language is the default until this device picks one.
-  const current = effectiveLanguage(useLanguageChoice(), state.config?.language);
-
-  return (
-    <SettingRow
-      title={t("settings.language.title")}
-      subtitle={t("settings.language.subtitle")}
-    >
-      <select
-        value={current}
-        aria-label={t("settings.language.aria")}
-        onChange={(event) => setLanguageChoice(event.target.value)}
-        className="min-h-8 w-full max-w-[240px] rounded-lg border border-hairline/40 bg-inset px-2.5 py-1.5 text-[13px] text-ink focus:border-focus disabled:cursor-wait disabled:opacity-50"
-      >
-        <option value="">{t("settings.language.system")}</option>
-        {localeChoices.map(({ code, label }) => (
-          <option key={code} value={code}>
-            {label}
-          </option>
-        ))}
-      </select>
     </SettingRow>
   );
 }
@@ -476,49 +424,6 @@ function ExperimentalFeaturesRow() {
       </div>
       {error ? <p role="alert" className="mt-2 text-[12px] text-danger">{error}</p> : null}
     </Card>
-  );
-}
-
-/** Writes a redacted diagnostics file to a location the user picks. The
- * report holds versions, configured-or-not booleans and the server.log tail —
- * never credential values (the desktop shell does not read secret fields). */
-function DiagnosticsRow() {
-  const [exporting, setExporting] = useState(false);
-  const [result, setResult] = useState<{ kind: "success" | "error"; message: string } | null>(null);
-
-  const exportDiagnostics = async () => {
-    if (!window.ogb?.exportDiagnostics || exporting) return;
-    setExporting(true);
-    setResult(null);
-    try {
-      const path = await window.ogb.exportDiagnostics();
-      if (path) setResult({ kind: "success", message: t("settings.diagnostics.saved", { path }) });
-    } catch (e) {
-      setResult({ kind: "error", message: e instanceof Error ? e.message : String(e) });
-    } finally {
-      setExporting(false);
-    }
-  };
-
-  return (
-    <SettingRow
-      title={t("settings.diagnostics.title")}
-      subtitle={t("settings.diagnostics.subtitle")}
-      message={result ? (
-        <p role={result.kind === "error" ? "alert" : "status"} className={cn("break-all", result.kind === "error" ? "text-danger" : "text-success")}>
-          {result.message}
-        </p>
-      ) : null}
-    >
-      <button
-        onClick={() => void exportDiagnostics()}
-        disabled={exporting}
-        aria-label={t("settings.diagnostics.aria")}
-        className="ui-button"
-      >
-        {exporting ? t("settings.diagnostics.exporting") : t("settings.diagnostics.export")}
-      </button>
-    </SettingRow>
   );
 }
 
@@ -694,9 +599,7 @@ export function SettingsModal() {
                   <ProfileFields />
                 </Card>
                 <div>
-                  <LanguageRow />
                   <NewBotEffortRow />
-                  <AnalyticsRow />
                   <DefaultBotSettings />
                 </div>
                 <Card title={t("settings.roomTurns.title")} subtitle={t("settings.roomTurns.subtitle")}>
@@ -709,7 +612,6 @@ export function SettingsModal() {
                 <div>
                   {!remoteActive && <ReplayTourRow />}
                   <UpdatesRow />
-                  <DiagnosticsRow />
                 </div>
               </>
             )}

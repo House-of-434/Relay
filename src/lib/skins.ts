@@ -50,7 +50,18 @@ function getStore(): Storage | undefined {
 export function readSkin(): SkinId {
   try {
     const stored = getStore()?.getItem(KEY);
-    return isSkinId(stored) ? stored : DEFAULT_SKIN;
+    if (isSkinId(stored)) return stored;
+    // No saved choice: follow the device theme so the sign-in page and the
+    // chat UI match what the OS is already doing. Guarded for SSR/tests.
+    try {
+      if (typeof globalThis.matchMedia === "function" &&
+        globalThis.matchMedia("(prefers-color-scheme: dark)").matches) {
+        return "midnight";
+      }
+    } catch {
+      /* no media query — fall through to the default */
+    }
+    return DEFAULT_SKIN;
   } catch {
     return DEFAULT_SKIN;
   }

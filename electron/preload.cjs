@@ -47,7 +47,7 @@ const COMPANY_BACKUP_CLIENT_KEYS = [
   "relay-drafts", "relay-draft-attachments", "relay-draft-send-ids", "relay-draft-channel-modes",
   "relay-skin", "relay-show-threads", "relay.sidebarDensity",
   "relay.sidebarCollapsedSections.v1", "relay.sidebarSectionOrder.v1",
-  "relay-analytics-opt-out", "relay.remote-voice.v1",
+  "relay.remote-voice.v1",
 ];
 if (isLocalPage && !desktopRemoteClient && process.argv.includes("--relay-company-desktop=1")) {
   ipcRenderer.on("company-backups:collect-client-state", (_event, request) => {

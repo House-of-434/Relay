@@ -25,7 +25,6 @@ vi.mock("@/lib/notification-preferences", () => ({
   useNotificationSounds: () => fixture.notificationSounds,
   setNotificationSounds: fixture.setNotificationSounds,
 }));
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: vi.fn() }));
 vi.mock("./SettingsPrimitives", async (importOriginal) => {
   const original = await importOriginal<typeof import("./SettingsPrimitives")>();
   return {
@@ -85,8 +84,9 @@ describe("Settings → Appearance", () => {
     expect(html).toContain("Maximum turn length");
     expect(html).toContain("Maximum running threads per bot");
     expect(html).toContain("Automatic recovery");
-    expect(html).toContain('aria-label="App language"');
-    expect(html).toContain("Diagnostics");
+    // language picker and diagnostics export retired from General settings
+    expect(html).not.toContain('aria-label="App language"');
+    expect(html).not.toContain("Diagnostics");
     expect(html).not.toContain('aria-label="Show tool calls in chat"');
     expect(html).not.toContain("Midnight");
   });

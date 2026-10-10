@@ -1,5 +1,5 @@
 // Beat 1: who you are. Name and email go to the workspace profile (the
-// sidebar footer reads them back) and to analytics identity. Both optional;
+// sidebar footer reads them back). Both optional;
 // "Maybe later" moves on without either.
 //
 // A hosted team workspace asks for neither: its profile is shared by
@@ -10,7 +10,6 @@
 // sign-in already knows the person, so there is nothing to ask, and the beat's
 // job is to say who is in the sidebar and that they are the point of Relay.
 import { useRef, useState } from "react";
-import { identifyEmail, track } from "@/lib/analytics";
 import { t } from "@/lib/i18n";
 import { api, useStore } from "@/state/store";
 import { inputClass, PrimaryButton, QuietButton, staggerIndex, type BeatProps } from "./shared";
@@ -39,7 +38,6 @@ export function HelloBeat({ onNext, onSkip, hosted = false, sharedWorkspace = fa
         signal: AbortSignal.timeout(10_000),
       });
       dispatch({ type: "configStatus", config });
-      identifyEmail(trimmedEmail);
       onNext();
     } catch {
       setFailed(true);
@@ -96,7 +94,6 @@ export function HelloBeat({ onNext, onSkip, hosted = false, sharedWorkspace = fa
       </PrimaryButton>
       <QuietButton
         onClick={() => {
-          track("email_skipped");
           onSkip();
         }}
         className="animate-rise mt-3"
