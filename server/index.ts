@@ -243,7 +243,7 @@ const RELAY_TOOL_URL = process.env.RELAY_TOOL_URL?.trim() ||
 if (RELAY_TOOL_URL) relayToolMcpServer("scout", RELAY_TOOL_URL);
 // Hold the BFF capability in the harness only, never in environments passed
 // to provider or tool subprocesses.
-let relayBffCapability = process.env.RELAY_BFF_CAPABILITY;
+const relayBffCapability = process.env.RELAY_BFF_CAPABILITY;
 delete process.env.RELAY_BFF_CAPABILITY;
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -5720,6 +5720,23 @@ function clearInternalTurn(threadId: string) {
 function isInternalTurn(threadId: string): boolean {
   return internalTurnThreads.has(threadId);
 }
+// A turn whose completion must not raise the workspace-wide "done" banner
+// (mail routed from the shared mailbox, Scribe meeting runs). Unlike an
+// internal turn, the thread still goes unread so the person sees it in the
+// app; only the notification is withheld. Rewritten at every dispatch like
+// the internal flag, so a dead turn cannot silence the next one.
+const silentCompletionThreads = new Set<string>();
+
+function markSilentCompletion(threadId: string) {
+  silentCompletionThreads.add(threadId);
+}
+function clearSilentCompletion(threadId: string) {
+  silentCompletionThreads.delete(threadId);
+}
+/** Consume the flag: a settle releases it, so the next turn is heard. */
+function takeSilentCompletion(threadId: string): boolean {
+  return silentCompletionThreads.delete(threadId);
+}
 // When the person last wrote into each thread with a turn in flight — but
 // only for turns THEY started. post_to_room's ceiling counts the bot posts
 // nobody has answered, and "answered" used to mean a person writing in the
@@ -6912,6 +6929,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // thread nobody types in again (a deleted bot's) is not held forever.
       const internal = isInternalTurn(event.threadId);
       clearInternalTurn(event.threadId);
+      // Routed mail and meeting runs settle quietly: the thread still goes
+      // unread, but no workspace-wide banner fires for every message.
+      const silentCompletion = takeSilentCompletion(event.threadId);
       const generatedKey = turnAttachmentKey(event.threadId, event.turnId);
       const generated = turnAttachmentsByTurn.get(generatedKey) ?? [];
       turnAttachmentsByTurn.delete(generatedKey);
@@ -7099,7 +7119,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // A failed peer turn stays a chip too. The bot that delegated is woken
         // with the failure and answers the person in its own thread — buzzing
         // here as well would ring twice for one piece of news.
-        if ((!routineRun || routineRun.status === "completed") && !internal && !computerSelectionTurns.get(event.threadId)?.selected) {
+        if ((!routineRun || routineRun.status === "completed") && !internal && !silentCompletion && !computerSelectionTurns.get(event.threadId)?.selected) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun
@@ -7831,6 +7851,7 @@ function drainQueuedSends() {
       // The drained turn is booked to whoever sent the first waiting line.
       void startTurn(botId, prompt, {
         threadId, userMessage, excludeMessageIds: excludeIds, unattended, onTurnSettled: resolve,
+        silentCompletion: head.silentCompletion === true,
         trigger: queuedTurnTrigger(head),
       }).catch((err) => {
         store.appendMessage(threadId, {
@@ -8049,6 +8070,11 @@ async function startTurn(
     automationSource?: RoutineRunTrigger;
     /** the caller was already running unattended, so this turn is too */
     unattended?: boolean;
+    /** Withhold only the workspace-wide completion banner for this turn's
+     * thread (routed mail, Scribe meeting runs). The thread still goes
+     * unread; the person finds it in the app. Harness-only, never a client
+     * option. */
+    silentCompletion?: boolean;
     /** Bot delivery (including self-opened jobs): whose words this line carries,
      * recorded on the message itself (Message.peerAsk). */
     peerAsk?: Message["peerAsk"];
@@ -8174,6 +8200,10 @@ async function startTurn(
   // time it settles, the fold has only a thread id to go on.
   if (commsDepth > 0) markInternalTurn(threadId);
   else clearInternalTurn(threadId);
+  // Same rewrite discipline for the quiet-completion flag: every dispatch
+  // decides for itself, so a settled or dead turn cannot silence the next.
+  if (opts?.silentCompletion) markSilentCompletion(threadId);
+  else clearSilentCompletion(threadId);
   // a task takes its name from the first thing you asked it to do
   if (resolvedImages.text.trim() && !opts?.cardContinuation) {
     const titled = store.titleTaskFromFirstMessage(bot.id, resolvedImages.text, threadId);
@@ -13692,7 +13722,10 @@ ROUTES.push(createPortalSessionRoutes({
     sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
   }),
 }));
-relayBffCapability = undefined;
+// The BFF capability is captured at the top of this module and kept there
+// for the process lifetime: the shared-mailbox monitor and Scribe call the
+// BFF's internal routes directly. It is never written back into
+// process.env, which engine driver child processes inherit.
 // Install statuses come from the organization library's own state, never
 // its file, so New bot cannot disagree with it. No organization: none.
 const orgInstallStatuses = () => orgLibrary?.installStatuses() ?? new Map();
