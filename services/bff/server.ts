@@ -1475,6 +1475,20 @@ export async function startRelayBff(env: NodeJS.ProcessEnv = process.env): Promi
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
 if (invokedPath === import.meta.url) {
+  // A process that dies with no stack (an OOM kill, a signal, a rejected
+  // promise nobody awaited) looks identical from the outside. Log the two
+  // Node-level failures we can see here and exit non-zero, so a supervisor
+  // (compose `restart: unless-stopped`, systemd `Restart=`) brings the BFF
+  // back and the next occurrence is diagnosable. An OOM SIGKILL still needs
+  // a per-container memory limit to be attributed to the right service.
+  process.on("uncaughtException", (error) => {
+    console.error("[relay-bff] fatal: uncaught exception", error);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error("[relay-bff] fatal: unhandled rejection", reason);
+    process.exit(1);
+  });
   void startRelayBff().then((app) => {
     process.once("SIGINT", () => { void app.close().finally(() => { process.exitCode = 0; }); });
     process.once("SIGTERM", () => { void app.close().finally(() => { process.exitCode = 0; }); });
