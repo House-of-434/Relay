@@ -6,7 +6,6 @@ import { cloudSignInDue, spotlightsQuiet, type WelcomeViewer } from "@/lib/onboa
 import { FirstConversationTour } from "@/components/onboarding/FirstConversationTour";
 import { GuidedTour } from "@/components/onboarding/GuidedTour";
 import { ThreadRefsProvider } from "@/components/ThreadRefs";
-import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
@@ -429,9 +428,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
 }
 
 function Application({ session }: { session?: SessionState | null }) {
-  useEffect(() => {
-    initAnalytics();
-  }, []);
   const viewer = useWelcomeViewer();
   return (
     <SessionIdentityProvider session={session}>

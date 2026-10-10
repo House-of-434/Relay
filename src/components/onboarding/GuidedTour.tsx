@@ -10,10 +10,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ANCHOR_EFFECTS, currentStep, stepNumber, TOUR_STEPS, withTourFinished, type TourEffect, type TourStep } from "@/lib/guided-tour";
 import { t } from "@/lib/i18n";
-import { emailGateDone } from "@/lib/analytics";
+import { emailGateDone, readTourSeen, tourStorage, writeTourSeen } from "@/lib/first-run";
 import type { MausState } from "@/lib/mascot";
 import { EMPTY_ONBOARDING, hintSeenPatch, type OnboardingStatus } from "@/lib/onboarding";
-import { readTourSeen, tourStorage, writeTourSeen } from "@/lib/first-run";
 import type { LocaleKey } from "@/locales";
 import { api, useStore } from "@/state/store";
 import { Spotlight } from "./Spotlight";

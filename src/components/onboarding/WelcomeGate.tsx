@@ -9,7 +9,7 @@
 // finish, except in Relay's shared workspace, whose members all sign in with
 // client scope and keep their first-run state in the browser instead.
 import { useEffect, useState } from "react";
-import { emailGateDone } from "@/lib/analytics";
+import { emailGateDone } from "@/lib/first-run";
 import { hostedMember, LOCAL_VIEWER, welcomeDue, welcomeViewer, type BeatId, type WelcomeViewer } from "@/lib/onboarding";
 import { api, useStore } from "@/state/store";
 import { SharedWorkspaceHint } from "./SharedWorkspaceHint";
@@ -93,7 +93,6 @@ export function WelcomeGate({ viewer }: { viewer: WelcomeViewer | null }) {
   return (
     <WelcomeFlow
       bot={bot}
-      replay={replay}
       hosted={viewer.hosted}
       sharedWorkspace={sharedWorkspace}
       initialBeat={resumeAt}

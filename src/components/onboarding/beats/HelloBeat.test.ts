@@ -5,7 +5,6 @@ import { setLocale } from "@/lib/i18n";
 
 const store = vi.hoisted(() => ({ api: vi.fn() }));
 vi.mock("@/state/store", () => ({ api: store.api, useStore: () => ({ state: {}, dispatch: vi.fn() }) }));
-vi.mock("@/lib/analytics", () => ({ identifyEmail: vi.fn(), track: vi.fn() }));
 import { HelloBeat } from "./HelloBeat";
 
 type Node = ReactElement<{ children?: ReactNode; onClick?: () => void }>;
@@ -52,12 +51,14 @@ describe("the greeting beat", () => {
     }
   });
 
-  it("introduces the three agents to a shared workspace, and asks for nothing", () => {
+  it("keeps the shared workspace greeting concise, and asks for nothing", () => {
     const { html, tree } = render({ sharedWorkspace: true });
     expect(html).not.toContain("<input");
     expect(html).not.toContain("you@example.com");
-    for (const agent of ["Scout", "Mercury", "Curator"]) expect(html).toContain(agent);
-    expect(html).toContain("sidebar");
+    // the team beat introduces the agents — the greeting stays concise
+    for (const agent of ["Scout", "Mercury", "Curator"]) expect(html).not.toContain(agent);
+    expect(html).not.toContain("sidebar");
+    expect(html).toContain("background tasks");
     // the shared workspace says what to do first, not a bare Continue
     expect(html).toContain("Meet your team");
     const primary = nodes(tree).find((node) => typeof node.type === "function" && node.props.onClick);

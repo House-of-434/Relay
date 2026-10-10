@@ -30,7 +30,10 @@ const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, api: vi.
 vi.mock("@/state/store", () => ({ api: store.api, useStore: () => ({ state: store.state, dispatch: store.dispatch }) }));
 // the browser's own one-time gate, as the welcome flow leaves it
 const gate = vi.hoisted(() => ({ done: false }));
-vi.mock("@/lib/analytics", () => ({ emailGateDone: () => gate.done }));
+vi.mock("@/lib/first-run", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/first-run")>()),
+  emailGateDone: () => gate.done,
+}));
 // The real Spotlight portals onto the document; stand in for it with a node
 // that renders its copy, so a step's text and progress can be asserted.
 vi.mock("./Spotlight", () => ({

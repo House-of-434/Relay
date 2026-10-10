@@ -6,7 +6,7 @@
 // cannot.
 //
 // The welcome flow already keeps its one-time state this way, in the same
-// storage and under the same rule (`emailGateDone` in lib/analytics). This is
+// storage and under the same rule (`emailGateDone` below). This is
 // the next piece of first-run state to need it, not a second identity system:
 // there is no account here, no key per user, and nothing that decides who
 // somebody is. A second browser is a first visit again, which is the truth of
@@ -91,4 +91,25 @@ export function clearTourSeen(storage: StorageLike | null): void {
 export function tourSeenComplete(storage: StorageLike | null, steps: readonly string[]): boolean {
   const seen = readTourSeen(storage);
   return steps.every((id) => seen.includes(id));
+}
+
+// First-run email gate: the welcome flow's one-time record that the profile
+// email step was submitted or skipped. Purely local first-run state —
+// nothing here is ever sent anywhere.
+const GATE_KEY = "relay-email-gate";
+
+export function emailGateDone(): boolean {
+  try {
+    return Boolean(globalThis.localStorage?.getItem(GATE_KEY));
+  } catch {
+    return false;
+  }
+}
+
+export function setEmailGateDone(status: "submitted" | "skipped"): void {
+  try {
+    globalThis.localStorage?.setItem(GATE_KEY, status);
+  } catch {
+    // Private window or blocked storage: the flow still completes this visit.
+  }
 }

@@ -1,4 +1,3 @@
-import { track } from "@/lib/analytics";
 import { OrganizationIdentity } from "./OrganizationIdentity";
 import { approvalCardOutcome } from "./ApprovalCard";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -425,7 +424,6 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       name: name.trim() || undefined,
       section: section.trim() || undefined,
     });
-    track("room_created", { members: picked.size, context: Boolean(section.trim()) });
     onClose();
   };
   return (
@@ -1759,7 +1757,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 >
                   <FolderPlus size={16} className="text-ink-secondary" /> {t("team.create")}
                 </button>}
-                {!remoteClient && <>
+                {/* Team library (templates) needs reworking — dev builds only. */}
+                {import.meta.env.DEV && !remoteClient && (
                 <button
                   onClick={() => {
                     setPlusOpen(false);
@@ -1770,7 +1769,8 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                   <Library size={16} className="text-ink-secondary" />
                   {t("sidebar.teamLibrary")}
                 </button>
-                {archivedBots.length > 0 && (
+                )}
+                {!remoteClient && archivedBots.length > 0 && (
                   <button
                     onClick={() => {
                       setPlusOpen(false);
@@ -1783,7 +1783,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     <span className="text-[11.5px] text-ink-secondary">{archivedBots.length}</span>
                   </button>
                 )}
-                </>}
               </div>
             </>
           )}
