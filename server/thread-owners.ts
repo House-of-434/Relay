@@ -78,6 +78,19 @@ export function threadOwner(dataDir: string, threadId: string): ThreadOwner | un
   return load(dataDir).get(threadId);
 }
 
+/** A durable identity lookup by verified email, for callers with no live
+ * session to read (the shared-mailbox monitor): any thread ever owned by
+ * that person carries their verified user id. Expired sessions do not erase
+ * this, which is exactly why it is the fallback directory. */
+export function ownerByEmail(dataDir: string, email: string): { userId: string; email: string } | undefined {
+  const target = email.trim().toLowerCase();
+  if (!target) return undefined;
+  for (const owner of load(dataDir).values()) {
+    if (owner.email && owner.email.toLowerCase() === target) return { userId: owner.userId, email: owner.email };
+  }
+  return undefined;
+}
+
 /**
  * Record the owner of a thread. Returns true when this call created the
  * record. First-writer-wins: an existing owner is never overwritten.

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
-import { clearThreadOwnerCache, inheritThreadOwner, recordThreadOwner, threadOwner } from "./thread-owners.ts";
+import { clearThreadOwnerCache, inheritThreadOwner, ownerByEmail, recordThreadOwner, threadOwner } from "./thread-owners.ts";
 
 const USER_A = "11111111-1111-4111-8111-111111111111";
 const USER_B = "22222222-2222-4222-8222-222222222222";
@@ -38,6 +38,14 @@ describe("thread owners", () => {
       expect(recordThreadOwner(dir, "thread-1", bad as string)).toBe(false);
     }
     expect(threadOwner(dir, "thread-1")).toBeUndefined();
+  });
+
+  it("finds a durable person by verified email without any live session", () => {
+    const dir = freshDir();
+    recordThreadOwner(dir, "thread-1", USER_A, "a@houseof434.com");
+    expect(ownerByEmail(dir, "A@HouseOf434.com")).toEqual({ userId: USER_A, email: "a@houseof434.com" });
+    expect(ownerByEmail(dir, "nobody@houseof434.com")).toBeUndefined();
+    expect(ownerByEmail(dir, "")).toBeUndefined();
   });
 
   it("rejects empty thread ids", () => {
