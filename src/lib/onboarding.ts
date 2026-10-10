@@ -78,14 +78,30 @@ export function welcomeViewer(session: unknown): WelcomeViewer {
  * fail to save and come back on every visit. On a hosted workspace the tour
  * waits until the session is known to be an admin's. A Cloud home opens on
  * its engine sign-in instead (cloudSignInDue); the flow can still be replayed
- * from Settings. Callers that pass none of these fields keep the old answer. */
+ * from Settings. Callers that pass none of these fields keep the old answer.
+ *
+ * Relay's shared workspace is the exception: its members sign in with client
+ * scope, so none of them can write the record, and every one of them would
+ * otherwise be refused. Because the record is the workspace's and not theirs,
+ * it must not decide their first run either — an owner's copy must never
+ * silence a colleague who has not seen it. This browser decides alone, on the
+ * same gate the welcome flow has always used (`emailGateDone`); the tour's
+ * steps live in the browser for the same reason (lib/first-run). */
 export function welcomeDue(
   config: { onboarding?: OnboardingStatus } | null | undefined,
-  options: { remoteClient: boolean; legacyDone: boolean; hosted?: boolean; canSave?: boolean; cloudHome?: boolean },
+  options: { remoteClient: boolean; legacyDone: boolean; hosted?: boolean; canSave?: boolean; cloudHome?: boolean; sharedWorkspace?: boolean },
 ): boolean {
   if (options.remoteClient || options.cloudHome) return false;
-  if (options.canSave === false) return false;
+  // An OMB hosted member belongs to an organisation's own deployment, which
+  // still waits for an admin's record. Relay's colleague is not that.
   if (options.hosted && options.canSave !== true) return false;
+  const member = options.canSave === false && options.sharedWorkspace === true;
+  // Anyone else without admin scope is the owner's own paired browser: it
+  // must never be shown a tour it could not save.
+  if (options.canSave === false && !member) return false;
+  // Their own browser is the whole record, so this never waits on the config
+  // and never reads it.
+  if (member) return !options.legacyDone;
   if (!config) return false;
   const record = config.onboarding ?? EMPTY_ONBOARDING;
   if (record.completedAt && record.version >= WELCOME_VERSION) return false;
@@ -117,7 +133,7 @@ export function hintSeenPatch(
 
 // ── beats ──────────────────────────────────────────────────────────────
 
-export type BeatId = "hello" | "reel" | "engines" | "permissions" | "phone" | "bot";
+export type BeatId = "hello" | "team" | "reel" | "engines" | "permissions" | "phone" | "bot";
 
 export interface BeatOptions {
   /** The desktop app can ask for the microphone; a browser cannot. */
@@ -136,9 +152,11 @@ export interface BeatOptions {
  * seeded bot is named even when everything else was skipped. A hosted
  * workspace gets a greeting and the bot: its organisation assigns the models,
  * and the reel, engines, microphone and phone beats all describe this
- * computer, which a hosted workspace is not. */
+ * computer, which a hosted workspace is not. A shared workspace gets the
+ * greeting and then the roster it was provisioned with, which is the one thing
+ * worth walking through before the first message. */
 export function beatsFor(options: BeatOptions): BeatId[] {
-  if (options.sharedWorkspace) return ["hello"];
+  if (options.sharedWorkspace) return ["hello", "team"];
   if (options.hosted) return ["hello", "bot"];
   const beats: BeatId[] = ["hello"];
   if (options.reel) beats.push("reel");
@@ -171,11 +189,43 @@ export function beatWidth(beat: BeatId): number {
       return 620;
     case "reel":
       return 720;
+    case "team":
+      return 560;
     case "bot":
       return 520;
     default:
       return 460;
   }
+}
+
+// ── the roster a shared workspace is provisioned with ──────────────────
+
+/** One row of the roster beat: who this is and what they are for. Both come
+ * from the bot record the server seeded, so the beat describes the agents
+ * this workspace actually has — including any a teammate added — and never a
+ * list written here that could drift from it. */
+export interface RosterEntry {
+  id: string;
+  name: string;
+  /** The seeded role line, e.g. "Research". Absent on a bot nobody titled. */
+  title: string;
+  description: string;
+}
+
+/** The bots the sidebar lists, in the order it lists them. Hidden bots are
+ * left out because the beat is a preview of the sidebar, and a bot the
+ * person hid should not be introduced to them. */
+export function agentRoster(
+  bots: readonly { id: string; name: string; title?: string; description?: string; hidden?: boolean }[],
+): RosterEntry[] {
+  return bots
+    .filter((bot) => !bot.hidden)
+    .map((bot) => ({
+      id: bot.id,
+      name: bot.name.trim(),
+      title: (bot.title ?? "").trim(),
+      description: (bot.description ?? "").trim(),
+    }));
 }
 
 // ── engines and organisation sign-in ───────────────────────────────────

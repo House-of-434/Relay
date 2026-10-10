@@ -20,7 +20,7 @@ function Fixture() {
       <button onClick={() => setRoom(false)}>Direct chat</button>
       <button onClick={() => { setRoom(true); setDmPreview(true); }}>DM renderer preview</button>
       <button onClick={() => applySkin("midnight")}>Dark</button>
-      <button onClick={() => applySkin("atelier")}>Light</button>
+      <button onClick={() => applySkin("lagoon")}>Light</button>
     </nav>
     <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
       {room && group ? <GroupView group={dmPreview ? { ...group, dm: true } : group} /> : bot ? <ChatView bot={bot} /> : <p>Loading fixture…</p>}

@@ -10,7 +10,6 @@ export const WORKSPACE_BACKUP_CLIENT_KEYS = [
   "relay.sidebarDensity",
   "relay.sidebarCollapsedSections.v1",
   "relay.sidebarSectionOrder.v1",
-  "relay-analytics-opt-out",
   "relay.remote-voice.v1",
 ] as const;
 

@@ -1,14 +1,18 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  appSettingsLabels,
   profileInitials,
   profileLabel,
+  sessionIdentity,
+  sidebarIdentity,
   updateBusy,
   updateNoteworthy,
   updateLabel,
   updatePhase,
 } from "./SidebarProfileMenu";
-import { DOCS_URL, FEEDBACK_URL, HELP_CENTER_URL, platformLabel } from "@/lib/app-links";
+import { APP_REPOSITORY, DOCS_URL, platformLabel } from "@/lib/app-links";
+import type { SessionState } from "@/lib/session";
 import type { UpdaterState } from "@/lib/updater";
 
 const state = (patch: Partial<UpdaterState>): UpdaterState => ({ status: "idle", ...patch }) as UpdaterState;
@@ -35,6 +39,65 @@ describe("profileLabel", () => {
     expect(profileLabel({ name: "Omkar", email: "o@x.dev" })).toBe("Omkar");
     expect(profileLabel({ email: "o@x.dev" })).toBe("o@x.dev");
     expect(profileLabel(undefined)).toBe("You");
+  });
+});
+
+describe("sidebarIdentity", () => {
+  const photo = "https://lh3.googleusercontent.com/a";
+  it("keeps an intentional Relay name ahead of the login name", () => {
+    expect(sidebarIdentity({ name: "Bubbles", email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo }))
+      .toEqual({ name: "Bubbles", person: "Bubbles", avatarUrl: photo });
+  });
+
+  it("falls back to the login name, then email, then You", () => {
+    expect(sidebarIdentity({ email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo }))
+      .toEqual({ name: "Ada Lovelace", person: "Ada Lovelace", avatarUrl: photo });
+    expect(sidebarIdentity({ email: "b@x.dev" }, null)).toEqual({ name: "b@x.dev", person: "b@x.dev" });
+    expect(sidebarIdentity(undefined, null)).toEqual({ name: "You", person: null });
+  });
+});
+
+// the icons-density tile shows the photo but no name, so its labels are the
+// only place the person is said out loud — and they say who and what together
+describe("appSettingsLabels", () => {
+  const photo = "https://lh3.googleusercontent.com/a";
+
+  it("names the signed-in person and the action they get", () => {
+    expect(appSettingsLabels(sidebarIdentity({ email: "b@x.dev" }, { displayName: "Ada Lovelace", avatarUrl: photo })))
+      .toEqual({ title: "Ada Lovelace — App settings", ariaLabel: "App settings for Ada Lovelace" });
+  });
+
+  it("still announces the action when nobody is signed in", () => {
+    expect(appSettingsLabels(sidebarIdentity(undefined, null)))
+      .toEqual({ title: "App settings", ariaLabel: "App settings" });
+  });
+});
+
+describe("sessionIdentity", () => {
+  const photo = "https://lh3.googleusercontent.com/a";
+  const session = (claims: { displayName?: string; avatarUrl?: string }): SessionState =>
+    ({ kind: "session", id: "s1", label: "Mac", scopes: ["client"], expiresAt: 1, ...claims }) as SessionState;
+
+  // what the sidebar renders comes from the read main.tsx already made
+  it("carries the login's claims out of a signed-in session", () => {
+    expect(sessionIdentity(session({ displayName: "  Ada Lovelace  ", avatarUrl: photo })))
+      .toEqual({ displayName: "Ada Lovelace", avatarUrl: photo });
+  });
+
+  it("keeps whichever claim the login did give", () => {
+    expect(sessionIdentity(session({ avatarUrl: photo }))).toEqual({ avatarUrl: photo });
+    expect(sessionIdentity(session({ displayName: "Ada Lovelace" }))).toEqual({ displayName: "Ada Lovelace" });
+  });
+
+  // an owner on their own machine, a claim-less session and an unanswered
+  // server all leave the row on the typed name and initials
+  it("has nothing to show without a signed-in Google session", () => {
+    expect(sessionIdentity(session({}))).toBeNull();
+    expect(sessionIdentity({ kind: "loopback" })).toBeNull();
+    expect(sessionIdentity({ kind: "loopback", trust: "service" })).toBeNull();
+    expect(sessionIdentity({ kind: "unreachable", error: "500" })).toBeNull();
+    expect(sessionIdentity(null)).toBeNull();
+    expect(sessionIdentity(undefined)).toBeNull();
   });
 });
 
@@ -156,14 +219,10 @@ describe("updateNoteworthy", () => {
 });
 
 describe("outward links", () => {
-  // both were pointed somewhere else once; pin them so a future tidy-up of
-  // app-links does not quietly send Help back to the README
-  it("sends Help Center to the docs the website also links to", () => {
-    expect(HELP_CENTER_URL).toBe(DOCS_URL);
-    expect(DOCS_URL).toBe("https://github.com/milind-soni/Relay/tree/main/docs");
-  });
-
-  it("sends Send Feedback to the Discord community", () => {
-    expect(FEEDBACK_URL).toBe("https://discord.gg/9Wb8MEpXRs");
+  // every outward link lives under the House of 434 repo; pin them so a
+  // future tidy-up does not quietly send one back to a fork or Discord
+  it("points GitHub, docs, releases and license at the House of 434 repo", () => {
+    expect(APP_REPOSITORY).toBe("https://github.com/House-of-434/Relay");
+    expect(DOCS_URL).toBe("https://github.com/House-of-434/Relay/tree/main/docs");
   });
 });

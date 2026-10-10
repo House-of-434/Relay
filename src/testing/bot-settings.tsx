@@ -26,7 +26,7 @@ function Fixture() {
       const response = await realFetch.call(window, input, init);
       const url = input instanceof Request ? input.url : String(input);
       const method = (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase();
-      if (slowReads && /\/(history|overview|soul)(?:\?|$)/.test(url) && method === "GET") {
+      if (slowReads && /\/(history|soul)(?:\?|$)/.test(url) && method === "GET") {
         await new Promise((resolve) => setTimeout(resolve, readDelayMs));
       }
       return response;

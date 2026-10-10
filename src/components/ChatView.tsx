@@ -9,7 +9,6 @@ import {
   Copy,
   Crown,
   MessageSquareReply,
-  Monitor,
   Pencil,
   Pin,
   PinOff,
@@ -23,7 +22,7 @@ import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
 import { useSpeech } from "@/lib/tts/useSpeech";
 import { useCaptionChrome, useDesktopCapabilities } from "@/components/DesktopCapabilities";
-import { contextChip, contextDetail, contextShare, costCaption, formatUsd, hasFiniteCost, lastTurnDetail, usageChip, usageDetail } from "@/lib/usage";
+import { contextChip, contextDetail, contextShare, lastTurnDetail, usageDetail } from "@/lib/usage";
 import {
   api,
   currentTaskBot,
@@ -53,7 +52,6 @@ import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { VoiceNoteBubble, type VoiceNoteAttachment } from "./VoiceNoteBubble";
-import { RawMarkdownView, RawToggleAction } from "./RawMarkdownToggle";
 import { ThreadChip } from "./ThreadChip";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
@@ -336,7 +334,6 @@ function Bubble({
   const user = message.role === "user" && !peer;
   const mentionPeers = useMemo(() => state.bots.filter((peer) => peer.id !== bot.id), [state.bots, bot.id]);
   const [expanded, setExpanded] = useState(false);
-  const [viewRaw, setViewRaw] = useState(false);
   const speech = useSpeech();
   const speaking = speech.messageId === message.id && speech.status !== "idle";
   const text = peer ? peer.body : (message.text ?? "");
@@ -488,7 +485,7 @@ function Bubble({
               )}
             </>
           ) : (
-            <MessageBoundary key={viewRaw ? "raw" : "rendered"} fallbackText={text || t("chat.generatedImage")}>
+            <MessageBoundary key="rendered" fallbackText={text || t("chat.generatedImage")}>
               {voiceNotes.length > 0 && (
                 <div className={cn("flex flex-col", (text || generatedPaths.length > 0 || linkedFiles.length > 0) && "mb-2")}>
                   {voiceNotes.map((note) => (
@@ -496,9 +493,8 @@ function Bubble({
                   ))}
                 </div>
               )}
-              {viewRaw && text ? (
-                <RawMarkdownView text={text} />
-              ) : text ? (
+              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? undefined : "mb-0"} eager={eagerAttachments} />
+              {text ? (
                 <ChatMarkdown text={text} mentionPeers={mentionPeers} message={{ threadId: bot.threadId, messageId: message.id }} />
               ) : null}
               <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : undefined} eager={eagerAttachments} />
@@ -506,9 +502,8 @@ function Bubble({
           )}
         </div>
         {!user && (
-          <MessageActions side="bot" forceOpen={viewRaw || speaking}>
+          <MessageActions side="bot" forceOpen={speaking}>
             {text && <CopyButton text={text} className="opacity-100" />}
-            {text && <RawToggleAction active={viewRaw} onToggle={() => setViewRaw((r) => !r)} className="opacity-100" />}
             {message.kind === "text" && text && !peer && (
               <SpeakButton text={text} botId={bot.id} messageId={message.id} voiceId={bot.voice} className="opacity-100" />
             )}
@@ -1261,12 +1256,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             header wraps: name line on top, chips underneath on the right. */}
         <div data-chathead-row className="flex items-center justify-between @max-[30rem]/chathead:flex-wrap @max-[30rem]/chathead:gap-y-1">
         <div data-chathead-identity className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
-          <button
-            onClick={() => dispatch({ type: "toggleSettings", open: true })}
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50"
-            title={t("chat.openProfile")}
-            aria-label={t("chat.openProfileAria", { name: bot.name })}
-          >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg">
             <BotAvatar
               bot={bot}
               state={stateForBot({ ...bot, messages })}
@@ -1274,23 +1264,10 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
               motion={mascotMotion?.kind ?? "none"}
               motionKey={mascotMotion?.nonce ?? 0}
             />
-          </button>
-          <RenameTitle
-            value={bot.name}
-            onCommit={(name) => {
-              if (window.ogb?.remoteClient?.active) {
-                void api(`/api/bots/${bot.id}/profile`, { method: "PATCH", body: JSON.stringify({ name }) })
-                  .then(({ bot: updated }) => dispatch({ type: "botPatched", bot: updated }))
-                  .catch((cause) => dispatch({ type: "error", message: cause instanceof Error ? cause.message : String(cause) }));
-              } else {
-                dispatch({ type: "updateBot", botId: bot.id, patch: { name } });
-              }
-            }}
-            onActivate={() => dispatch({ type: "toggleSettings", open: true })}
-            showEditButton
-            className="truncate text-[15px] font-semibold text-ink"
-            inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
-          />
+          </span>
+          <span className="truncate text-[15px] font-semibold text-ink">
+            {bot.name}
+          </span>
           {bot.chiefOfStaff && (
             // One line, never shrinking with the name (it wrapped "Chief / of /
             // Staff", #1871); folds to the crown like the chips beside it do,
@@ -1343,20 +1320,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
           {!remoteClient && !computerComingSoon && <CallButton bot={bot} />}
-          {!remoteClient && <button
-            data-tour="computer"
-            type="button"
-            disabled={computerComingSoon}
-            onClick={() => dispatch({ type: "toggleComputer" })}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-35",
-              state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            aria-label={computerComingSoon ? "Computer tools coming soon" : t("chat.computer")}
-            title={computerComingSoon ? "Coming soon" : t("chat.computer")}
-          >
-            <Monitor size={18} />
-          </button>}
           {!remoteClient && <button
             onClick={() => dispatch({ type: "toggleInspector" })}
             aria-label={t("chat.inspector")}
@@ -1608,14 +1571,15 @@ export function NewConversationInstead({ onNew }: { onNew: () => void }) {
   );
 }
 
-/** What the open task has spent — quiet until the first turn settles.
- * Click opens the bot's settings, where the Usage card has the breakdown. */
+/** Context-window pressure for the open task — quiet until it matters.
+ * Cost is deliberately never shown here: spend lives in the logs, not in
+ * the header. Click opens the bot's settings, where the Usage card has
+ * the breakdown. */
 function UsageChip({ bot }: { bot: Bot }) {
-  const { state, dispatch } = useStore();
+  const { dispatch } = useStore();
   const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
-  const text = usage ? usageChip(usage) : "";
-  if (!usage || !text) return null;
-  const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
+  const ctx = usage ? contextChip(usage) : null;
+  if (!usage || !ctx) return null;
   const share = contextShare(usage);
   const detail = [
     usage.turns === 1 ? t("chat.usage.turnsOne") : t("chat.usage.turnsMany", { count: usage.turns }),
@@ -1626,13 +1590,9 @@ function UsageChip({ bot }: { bot: Bot }) {
     // model re-reading what it already saw — say so, or the figure reads as
     // a bug (issue #527); past 80% of the window the fix is a new thread
     share?.tone === "danger" ? t("chat.usage.contextNudge") : null,
-    hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
   ]
     .filter(Boolean)
     .join("\n");
-  // Keep the unit visible in the compact header too.
-  const short = text;
-  const ctx = contextChip(usage);
   return (
     <button
       onClick={() => dispatch({ type: "toggleSettings", open: true, section: "usage" })}
@@ -1640,9 +1600,7 @@ function UsageChip({ bot }: { bot: Bot }) {
       title={detail}
       data-testid="usage-chip"
     >
-      <span className="@max-4xl/chathead:hidden">{text}</span>
-      <span className="hidden @max-4xl/chathead:inline">{short}</span>
-      {ctx && <span className={cn("ml-1.5 @max-4xl/chathead:hidden", share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>}
+      <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
     </button>
   );
 }

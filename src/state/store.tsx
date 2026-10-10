@@ -435,8 +435,7 @@ export interface Bot {
    * pause and ask the user first. Off by default. */
   approvePeerComms?: boolean;
   /** Explicit peer allow-list (bot ids); absent = every bot in its section,
-   * `[]` = none. Read-only on the web today; here so the settings dialog can
-   * refetch the overview when the server changes it. */
+   * `[]` = none. Read-only on the web today. */
   peers?: string[];
   /** Whether this bot may use the workspace's connected apps. Unset means
    * allowed for existing bots; imported bots start with this disabled. */
@@ -824,13 +823,10 @@ export type AppSettingsSection =
   | "remote"
   | "computer"
   | "usage"
-  | "people"
   | "activity"
-  | "backups"
   | "workspaces";
 
 export type BotSettingsSection =
-  | "overview"
   | "identity"
   | "slack"
   | "soul"
@@ -894,8 +890,6 @@ export interface AppState {
   /** the guided tour on the live interface that follows the welcome flow */
   tourOpen: boolean;
   botSettingsSection: BotSettingsSection;
-  /** True only when the open action named a section — accordion expands that row. */
-  botSettingsExpandAccordion: boolean;
   /** bots whose cloud computer is being provisioned */
   provisioning: Record<string, boolean>;
   /** Bot removals waiting for the server to verify that no persistent
@@ -1548,7 +1542,7 @@ export function reducer(state: AppState, action: Action): AppState {
           ...state,
           activeView: "chat",
           selectedId: action.id,
-          botSettingsSection: action.id !== state.selectedId ? "overview" : state.botSettingsSection,
+          botSettingsSection: action.id !== state.selectedId ? "identity" : state.botSettingsSection,
           groups: state.groups.map((g) => (g.id === action.id ? { ...g, unread: false } : g)),
         };
       }
@@ -1558,7 +1552,7 @@ export function reducer(state: AppState, action: Action): AppState {
             ...state,
             activeView: "chat",
             selectedId: action.id,
-            botSettingsSection: action.id !== state.selectedId ? "overview" : state.botSettingsSection,
+            botSettingsSection: action.id !== state.selectedId ? "identity" : state.botSettingsSection,
           },
           action.id,
           "switch",
@@ -1889,10 +1883,7 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         selectedId,
         settingsOpen: open,
-        botSettingsSection: action.section ?? (selectedId !== state.selectedId ? "overview" : state.botSettingsSection),
-        // Mascot / bare open omits `section` → accordion stays fully collapsed.
-        // Deep links expand that row even when the panel is already open.
-        botSettingsExpandAccordion: open ? action.section !== undefined : false,
+        botSettingsSection: action.section ?? (selectedId !== state.selectedId ? "identity" : state.botSettingsSection),
         // Preserve the computer and inspector surfaces; their own controls
         // can open bot settings. App settings are mutually exclusive.
         appSettingsOpen: open ? false : state.appSettingsOpen,
@@ -2291,8 +2282,7 @@ export const initialState: AppState = {
   shortcutsOpen: false,
   welcomeOpen: false,
   tourOpen: false,
-  botSettingsSection: "overview",
-  botSettingsExpandAccordion: false,
+  botSettingsSection: "identity",
   provisioning: {},
   deletingBots: {},
   computerControl: {},

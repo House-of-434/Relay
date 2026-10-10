@@ -6,9 +6,6 @@ import { useEffect, useRef } from "react";
 import {
   APP_NAME,
   APP_REPOSITORY,
-  DOCS_URL,
-  LICENSE_URL,
-  RELEASES_URL,
   appVersion,
   openExternalLink,
   platformLabel,
@@ -49,19 +46,14 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
         <h2 id="about-dialog-title" className="mt-3 text-[17px] font-semibold text-ink">
           {APP_NAME}
         </h2>
-        <p className="mt-1 text-[13px] text-ink-secondary">
-          Version {appVersion()}
-          {platform ? ` · ${platform}` : ""}
-        </p>
-        <p className="mt-3 text-[13px] leading-relaxed text-ink-secondary">
-          An open-source desktop home for your agents. Apache 2.0 licensed.
-        </p>
-        <div className="mt-4 flex flex-wrap justify-center gap-x-4 gap-y-1.5 text-[13px]">
+        <p className="mt-1 flex items-center justify-center gap-1.5 text-[13px] text-ink-secondary">
+          <span>
+            Version {appVersion()}
+            {platform ? ` · ${platform}` : ""}
+          </span>
+          <span aria-hidden="true">·</span>
           <AboutLink href={APP_REPOSITORY} label="GitHub" />
-          <AboutLink href={DOCS_URL} label="Docs" />
-          <AboutLink href={RELEASES_URL} label="Releases" />
-          <AboutLink href={LICENSE_URL} label="License" />
-        </div>
+        </p>
         <button
           ref={closeRef}
           type="button"

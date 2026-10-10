@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  agentRoster,
   beatWidth,
   beatsFor,
   cloudSignInDue,
@@ -63,8 +64,37 @@ describe("welcomeDue", () => {
       { who: "member of a self-hosted server", options: { remoteClient: false, legacyDone: false, hosted: false, canSave: false }, due: false },
       // a hosted session that has not proved it may save waits
       { who: "hosted, scope unknown", options: { remoteClient: false, legacyDone: false, hosted: true }, due: false },
+      // Relay's shared workspace: everyone signs in with client scope, so
+      // without the exception nobody would ever see the flow
+      {
+        who: "shared workspace member",
+        options: { remoteClient: false, legacyDone: false, hosted: false, canSave: false, sharedWorkspace: true },
+        due: true,
+      },
+      {
+        who: "shared workspace member, second visit",
+        options: { remoteClient: false, legacyDone: true, hosted: false, canSave: false, sharedWorkspace: true },
+        due: false,
+      },
+      // the workspace record belongs to whoever could write it, so it must
+      // not silence a colleague who has not seen the flow in this browser
+      {
+        who: "shared workspace member, owner already finished",
+        options: { remoteClient: false, legacyDone: false, hosted: false, canSave: false, sharedWorkspace: true },
+        due: true,
+        config: { onboarding: done },
+      },
+      // a genuinely hosted workspace still waits for an admin
+      {
+        who: "hosted member of a shared deployment",
+        options: { remoteClient: false, legacyDone: false, hosted: true, canSave: false, sharedWorkspace: true },
+        due: false,
+      },
     ];
-    for (const { who, options, due } of cases) expect(welcomeDue(fresh, options), who).toBe(due);
+    for (const { who, options, due, ...rest } of cases) {
+      const config = "config" in rest ? rest.config : fresh;
+      expect(welcomeDue(config, options), who).toBe(due);
+    }
   });
 });
 
@@ -230,6 +260,25 @@ describe("beat machine", () => {
     expect(beatsFor({ dictation: true, reel: true, hosted: false })).toEqual(["hello", "reel", "engines", "permissions", "phone", "bot"]);
   });
 
+  it("gives a shared workspace the greeting and the roster, and nothing else", () => {
+    // Guards the v0.1 trim in Relay-notes/todo.md. No name field, no bot to
+    // create, and nothing about installing anything on this computer.
+    expect(beatsFor({ dictation: true, reel: true, sharedWorkspace: true })).toEqual(["hello", "team"]);
+  });
+
+  it("never offers a bot-creation beat on a shared workspace", () => {
+    const beats = beatsFor({ dictation: true, reel: true, sharedWorkspace: true });
+    expect(beats).not.toContain("bot");
+    expect(beats).not.toContain("engines");
+    expect(beats).not.toContain("permissions");
+    expect(beats).not.toContain("phone");
+    expect(beats).not.toContain("reel");
+  });
+
+  it("gives the roster beat room for three descriptions", () => {
+    expect(beatWidth("team")).toBeGreaterThan(beatWidth("hello"));
+  });
+
   it("walks forward and back and stops at the ends", () => {
     const beats = beatsFor({ dictation: true, reel: false });
     expect(nextBeat(beats, "hello")).toBe("engines");
@@ -242,5 +291,45 @@ describe("beat machine", () => {
   it("gives the engines beat the widest card", () => {
     expect(beatWidth("engines")).toBeGreaterThan(beatWidth("hello"));
     expect(beatWidth("bot")).toBeGreaterThan(beatWidth("hello"));
+  });
+});
+
+describe("the roster the beat walks through", () => {
+  const scout = { id: "a", name: "Scout", title: "Research", description: "Research companies and people." };
+  const mercury = { id: "b", name: "Mercury", title: "Inbox & Calendar", description: "Triage Gmail." };
+  const curator = { id: "c", name: "Curator", title: "Briefs", description: "Write the brief." };
+
+  it("lists the provisioned agents in the order it is given them", () => {
+    expect(agentRoster([scout, mercury, curator]).map((entry) => entry.name)).toEqual(["Scout", "Mercury", "Curator"]);
+  });
+
+  it("carries the role line and the server's own description", () => {
+    expect(agentRoster([mercury])).toEqual([
+      { id: "b", name: "Mercury", title: "Inbox & Calendar", description: "Triage Gmail." },
+    ]);
+  });
+
+  it("leaves out a bot the person hid, as the sidebar does", () => {
+    expect(agentRoster([scout, { ...mercury, hidden: true }]).map((e) => e.name)).toEqual(["Scout"]);
+  });
+
+  it("copes with a bot nobody titled or described", () => {
+    expect(agentRoster([{ id: "z", name: "New bot" }])).toEqual([{ id: "z", name: "New bot", title: "", description: "" }]);
+  });
+
+  it("trims what it shows, and never invents a title", () => {
+    const [entry] = agentRoster([{ id: "a", name: "  Scout  ", title: "  Research  ", description: "  Finds things.  " }]);
+    expect(entry).toEqual({ id: "a", name: "Scout", title: "Research", description: "Finds things." });
+    const [bare] = agentRoster([{ id: "a", name: "Bot" }]);
+    expect(bare.title).toBe("");
+  });
+
+  it("is empty for an empty workspace, which the beat says out loud", () => {
+    expect(agentRoster([])).toEqual([]);
+  });
+
+  it("includes a bot a teammate added, because it reads the live roster", () => {
+    expect(agentRoster([scout, { id: "new", name: "Legal", title: "Contracts", description: "Reads contracts." }]).map((e) => e.name))
+      .toEqual(["Scout", "Legal"]);
   });
 });

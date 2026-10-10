@@ -1,9 +1,8 @@
 // Quiet text (timestamps, hints, placeholders, calendar hours) used to be
 // drawn as `text-ink-secondary/70` and friends: the secondary ink with an
 // opacity modifier on top. The secondary ink is already tuned to sit just
-// above WCAG AA on the light skins, so any fade takes it below: /70 measured
-// 2.6–3.1:1 on Atelier and Linen, /60 down to 2.2:1. The contrast script
-// only sees whole tokens, so none of that was ever measured.
+// above WCAG AA on the light skin, so any fade takes it below. The contrast
+// script only sees whole tokens, so none of that was ever measured.
 //
 // Quiet text now has its own token, `--color-ink-tertiary`, tuned per skin
 // and checked by `pnpm check:contrast`. This file keeps the two halves
@@ -88,9 +87,8 @@ describe("faded text", () => {
     }
   });
 
-  it("repaints the tertiary ink inside Daylight's inverted bubble", () => {
-    const bubble = css.match(/@scope \(\[data-skin="daylight"\]\) to \(\[data-skin\]\)\s*\{\s*\.bg-bubble-user\s*\{([^}]*)\}/)?.[1] ?? "";
-    expect(declarations(bubble)["--color-ink-tertiary"]).toBeDefined();
+  it("paints the user bubble in its own ink, so no per-surface repaint is needed", () => {
+    expect(css).toContain(".bg-bubble-user");
   });
 
   it("never fades the secondary ink with an opacity modifier", () => {

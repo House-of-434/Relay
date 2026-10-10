@@ -25,7 +25,6 @@ vi.mock("@/lib/notification-preferences", () => ({
   useNotificationSounds: () => fixture.notificationSounds,
   setNotificationSounds: fixture.setNotificationSounds,
 }));
-vi.mock("@/lib/analytics", () => ({ analyticsEnabled: () => false, setAnalyticsEnabled: vi.fn() }));
 vi.mock("./SettingsPrimitives", async (importOriginal) => {
   const original = await importOriginal<typeof import("./SettingsPrimitives")>();
   return {
@@ -85,8 +84,9 @@ describe("Settings → Appearance", () => {
     expect(html).toContain("Maximum turn length");
     expect(html).toContain("Maximum running threads per bot");
     expect(html).toContain("Automatic recovery");
-    expect(html).toContain('aria-label="App language"');
-    expect(html).toContain("Diagnostics");
+    // language picker and diagnostics export retired from General settings
+    expect(html).not.toContain('aria-label="App language"');
+    expect(html).not.toContain("Diagnostics");
     expect(html).not.toContain('aria-label="Show tool calls in chat"');
     expect(html).not.toContain("Midnight");
   });
@@ -106,13 +106,13 @@ describe("Settings → Appearance", () => {
     expect(html).not.toContain('aria-label="Show tool calls in chat"');
   });
 
-  it("offers full backups in local Settings", () => {
-    fixture.section = "backups";
+  it("retired the People and Backups sections from Settings", () => {
+    fixture.section = "general";
     const html = render();
-    expect(html).toContain('<option value="backups" selected="">Backups</option>');
-    expect(html).toContain("Export full backup");
-    expect(html).toContain('type="file" accept=".ombbackup"');
-    expect(html).toContain("Older team backups and shareable templates");
+    expect(html).not.toContain('<option value="people"');
+    expect(html).not.toContain('<option value="backups"');
+    expect(html).not.toContain(">People</button>");
+    expect(html).not.toContain(">Backups</button>");
   });
 
   it("uses English fallback for new keys in untranslated languages", () => {

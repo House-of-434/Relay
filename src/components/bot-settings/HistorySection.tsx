@@ -7,8 +7,8 @@
 // Pure presentational: the dialog owns the fetch, the reload after rollback,
 // and the loading/error split — a first-load failure never reaches this
 // component (the dialog shows "Couldn't load history." instead); a failed
-// reload with rows already on screen arrives as refreshError, the same
-// data-wins precedence OverviewSection gets one level up.
+// reload with rows already on screen arrives as refreshError, keeping the
+// rows with a quiet note rather than replacing them with an error.
 import { whenLabel } from "@/lib/schedule-label";
 
 export interface HistoryRow {

@@ -6,7 +6,6 @@ import { cloudSignInDue, spotlightsQuiet, type WelcomeViewer } from "@/lib/onboa
 import { FirstConversationTour } from "@/components/onboarding/FirstConversationTour";
 import { GuidedTour } from "@/components/onboarding/GuidedTour";
 import { ThreadRefsProvider } from "@/components/ThreadRefs";
-import { initAnalytics } from "@/lib/analytics";
 import { Sidebar } from "@/components/Sidebar";
 import { ChatView } from "@/components/ChatView";
 import { GroupView } from "@/components/GroupView";
@@ -31,6 +30,8 @@ import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { setLocale } from "@/lib/i18n";
 import { shouldOpenKeyboardShortcuts } from "@/lib/keyboard-shortcuts";
 import { effectiveLanguage, useLanguageChoice } from "@/lib/language-preference";
+import type { SessionState } from "@/lib/session";
+import { SessionIdentityProvider } from "@/components/SidebarProfileMenu";
 import {
   GOOGLE_CALENDAR_CONNECTIONS_CHANGED_EVENT,
   type GoogleCalendarAccountSnapshot,
@@ -92,13 +93,24 @@ function GoogleConnectionsDialog() {
     window.location.assign(authorizationUrl.toString());
   };
 
-  const disconnect = async (account: ConnectionAccount) => {
-    const response = await fetch(`/api/google/connections/${encodeURIComponent(account.service)}/${encodeURIComponent(account.id)}`, {
-      method: "DELETE",
-      credentials: "same-origin",
-    });
-    if (!response.ok) throw new Error(response.status === 404 ? "That Google account is no longer connected." : "Could not disconnect the Google account.");
+  // One row per service, so Disconnect means the service: every grant held on
+  // it is revoked. A grant that is already gone is the outcome we wanted, and
+  // the list is read back either way so a partial failure cannot leave a
+  // surviving account hidden behind a service the user believes is gone.
+  const disconnect = async (accounts: readonly ConnectionAccount[]) => {
+    const revoked = await Promise.all(accounts.map(async (account) => {
+      try {
+        const response = await fetch(`/api/google/connections/${encodeURIComponent(account.service)}/${encodeURIComponent(account.id)}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        return response.ok || response.status === 404;
+      } catch {
+        return false;
+      }
+    }));
     await refresh();
+    if (revoked.includes(false)) throw new Error("Could not disconnect every Google account for this service.");
   };
 
   return state.pluginsOpen ? (
@@ -415,25 +427,24 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   );
 }
 
-function Application() {
-  useEffect(() => {
-    initAnalytics();
-  }, []);
+function Application({ session }: { session?: SessionState | null }) {
   const viewer = useWelcomeViewer();
   return (
-    <DesktopCapabilitiesProvider>
-      <StoreProvider>
-        <ThreadRefsProvider>
-          <Shell viewer={viewer} />
-        </ThreadRefsProvider>
-        <WelcomeGate viewer={viewer} />
-        <GuidedTour />
-        <FirstConversationTour quiet={spotlightsQuiet(viewer)} />
-      </StoreProvider>
-    </DesktopCapabilitiesProvider>
+    <SessionIdentityProvider session={session}>
+      <DesktopCapabilitiesProvider>
+        <StoreProvider>
+          <ThreadRefsProvider>
+            <Shell viewer={viewer} />
+          </ThreadRefsProvider>
+          <WelcomeGate viewer={viewer} />
+          <GuidedTour />
+          <FirstConversationTour quiet={spotlightsQuiet(viewer)} />
+        </StoreProvider>
+      </DesktopCapabilitiesProvider>
+    </SessionIdentityProvider>
   );
 }
 
-export default function App() {
-  return <WorkspaceBackupRecovery><Application /></WorkspaceBackupRecovery>;
+export default function App({ session }: { session?: SessionState | null }) {
+  return <WorkspaceBackupRecovery><Application session={session} /></WorkspaceBackupRecovery>;
 }

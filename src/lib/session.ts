@@ -15,7 +15,9 @@ export type SessionState =
   | { kind: "loopback"; trust?: "service" }
   // `cloudGuest`: on an OMB Cloud home, a device that is not one of the
   // owner's own; it writes only in `openedThreads`, the conversations it opened.
-  | { kind: "session"; id: string; label: string; scopes: string[]; expiresAt: number; cloudGuest?: true; openedThreads?: string[] }
+  // `displayName`/`avatarUrl` are what the identity provider said at sign-in:
+  // display-only, never access-relevant.
+  | { kind: "session"; id: string; label: string; scopes: string[]; expiresAt: number; cloudGuest?: true; openedThreads?: string[]; displayName?: string; avatarUrl?: string }
   | { kind: "unauthenticated"; error: string }
   | { kind: "unreachable"; error: string };
 
@@ -41,6 +43,8 @@ export async function readSessionState(fetchImpl: typeof fetch = fetch): Promise
       label: typeof record.label === "string" ? record.label : "",
       scopes: Array.isArray(record.scopes) ? record.scopes.filter((s): s is string => typeof s === "string") : [],
       expiresAt: typeof record.expiresAt === "number" ? record.expiresAt : 0,
+      ...(typeof record.displayName === "string" && record.displayName.trim() ? { displayName: record.displayName.trim() } : {}),
+      ...(typeof record.avatarUrl === "string" && record.avatarUrl ? { avatarUrl: record.avatarUrl } : {}),
       ...(record.cloudGuest === true ? {
         cloudGuest: true as const,
         openedThreads: Array.isArray(record.openedThreads) ? record.openedThreads.filter((id): id is string => typeof id === "string") : [],
@@ -191,6 +195,18 @@ export function startEmailSignIn(email: string, fetchImpl: typeof fetch = fetch)
 /** Exchange the emailed code for a session cookie. */
 export function verifyEmailSignIn(input: { email: string; code: string; label: string }, fetchImpl: typeof fetch = fetch): Promise<{ ok: true } | { ok: false; error: string }> {
   return postAuth("/api/auth/email/verify", { email: input.email, code: input.code, label: input.label }, fetchImpl);
+}
+
+/** End the Relay session on the server, then reload so boot re-reads the
+ * session and lands on sign-in. Reloading even when the call fails is the
+ * honest outcome: boot reports whatever session is actually left. */
+export async function signOut(fetchImpl: typeof fetch = fetch, reload: () => void = (): void => window.location.reload()): Promise<void> {
+  try {
+    await fetchImpl("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+  } catch {
+    // unreachable server: boot below reports that instead of pretending
+  }
+  reload();
 }
 
 /** The gate's ordinary "you have no session" wording is why the pair page is

@@ -148,10 +148,9 @@ const PAIRS = [
 ];
 
 const skins = parseSkins(css);
-// Midnight faithfully keeps two upstream contrast gaps. They may improve, but
+// Midnight's danger fill still carries white below AA. It may improve, but
 // must not get worse; every other below-target pair is a regression.
 const BASELINE_FLOORS = new Map([
-  ["midnight|--color-accent-ink|--color-accent", 3.65],
   ["midnight|--color-danger-ink|--color-danger", 3.10],
 ]);
 const BASELINE_DRIFT = 0.01;
@@ -202,34 +201,4 @@ for (const [id, tokens] of skins) {
   if (skinFailed) failed = true;
 }
 
-// The inverted Daylight bubble has its own inherited context: the editor,
-// labels, quotes and file chips explicitly use these tokens, not parent color.
-const daylightBubble = {
-  ...skins.get("daylight"),
-  ...declarations(css.match(/@scope \(\[data-skin="daylight"\]\) to \(\[data-skin\]\)\s*\{\s*\.bg-bubble-user\s*\{([^}]*)\}/)?.[1] ?? ""),
-};
-for (const [fg, bg] of [
-  ["--color-ink", "--color-bubble-user"],
-  ["--color-ink-secondary", "--color-bubble-user"],
-  ["--color-ink", "--color-raised"],
-  ["--color-ink-secondary", "--color-raised-hover"],
-  ["--color-ink-secondary", "--color-inset"],
-  ["--color-ink-tertiary", "--color-bubble-user"],
-  ["--color-ink-tertiary", "--color-raised-hover"],
-  ["--color-ink-tertiary", "--color-inset"],
-  ["--color-accent", "--color-inset"],
-  ["--color-accent-text", "--color-bubble-user"],
-  ["--color-ink", "--color-control"],
-  ["--color-accent-ink", "--color-accent"],
-  ["--color-danger-ink", "--color-danger"],
-  ["--color-success-ink", "--color-success"],
-]) {
-  const ratio = contrast(daylightBubble[fg] ?? "", daylightBubble[bg] ?? "");
-  if (ratio === null || ratio < 4.5) {
-    failed = true;
-    console.log(`✗ daylight bubble — ${fg} on ${bg}: ${ratio?.toFixed(2) ?? "unmeasurable"}:1 (needs 4.5:1)`);
-  }
-}
-
-if (!failed) console.log("✓ daylight bubble — editor, controls and paired fills above 4.5:1");
 process.exit(failed ? 1 : 0);

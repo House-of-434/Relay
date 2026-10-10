@@ -1,4 +1,3 @@
-import { track } from "@/lib/analytics";
 import { OrganizationIdentity } from "./OrganizationIdentity";
 import { approvalCardOutcome } from "./ApprovalCard";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
@@ -34,7 +33,7 @@ import {
 import { api, useStore, formatTime, visibleMessages, type Bot, type Group } from "@/state/store";
 import { peerLine } from "@/lib/peer-message";
 
-import { BotAvatar, InitialsAvatar } from "./Avatar";
+import { BotAvatar } from "./Avatar";
 import { stateForBot } from "@/lib/mascot";
 import { cn } from "@/lib/cn";
 import { useHeldMenuMotion, useMenuMotion } from "./MenuMotion";
@@ -88,7 +87,7 @@ import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
-import { profileInitials, SidebarProfileMenu } from "./SidebarProfileMenu";
+import { appSettingsLabels, IdentityAvatar, SidebarProfileMenu, useSidebarIdentity } from "./SidebarProfileMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ShortcutHint } from "./ShortcutHint";
 
@@ -312,7 +311,7 @@ function RoomContextMenu({
       data-room-menu
       data-sidebar
       style={{ top, left }}
-      className={cn("fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
     >
       {!remoteClient && (renaming ? (
         <div className="flex items-center gap-1 px-2 py-1">
@@ -360,7 +359,7 @@ function RoomContextMenu({
             setDraft(group.name);
             setRenaming(true);
           }}
-          className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+          className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <Pencil size={16} className="text-ink-secondary" />
           {isBotChat ? t("sidebar.room.renameChat") : t("sidebar.room.renameChannel")}
@@ -372,7 +371,7 @@ function RoomContextMenu({
             onClose();
             onMoveToSection(group.id);
           }}
-          className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+          className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
         >
           <FolderPlus size={16} className="text-ink-secondary" />
           {t("sidebar.section.moveToContext")}
@@ -383,7 +382,7 @@ function RoomContextMenu({
           void navigator.clipboard?.writeText(group.threadId);
           onClose();
         }}
-        className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+        className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
       >
         <ClipboardCopy size={16} className="text-ink-secondary" />
         {t("sidebar.copyConversationId")}
@@ -393,7 +392,7 @@ function RoomContextMenu({
           dispatch({ type: "deleteGroup", groupId: group.id });
           onClose();
         }}
-        className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger hover:bg-raised/70"
+        className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-danger hover:bg-raised/70"
       >
         <Trash2 size={16} />
         {isBotChat ? t("sidebar.room.deleteChat") : t("sidebar.room.deleteChannel")}
@@ -425,7 +424,6 @@ function NewRoomPanel({ onClose }: { onClose: () => void }) {
       name: name.trim() || undefined,
       section: section.trim() || undefined,
     });
-    track("room_created", { members: picked.size, context: Boolean(section.trim()) });
     onClose();
   };
   return (
@@ -546,7 +544,7 @@ function SectionPicker({
     <div
       data-section-picker
       style={{ top, left }}
-      className={cn("fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-menu py-2 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-2 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
         {t("sidebar.section.moveToContext")}
@@ -559,7 +557,7 @@ function SectionPicker({
               onClick={() => assign(section)}
               className={cn(
                 "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
-                section === sectionCurrent ? "bg-raised text-ink" : "text-ink hover:bg-raised/70",
+                section === sectionCurrent ? "bg-raised text-ink" : "text-ink hover:bg-raised/70 rounded-lg",
               )}
             >
               <span className="truncate">{section}</span>
@@ -601,7 +599,7 @@ function SectionPicker({
           <div className="mx-2 my-1 border-t border-hairline/40" />
           <button
             onClick={() => assign("")}
-            className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
+            className="flex w-full items-center gap-3 rounded-lg px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
           >
             <FolderMinus size={15} />
             {t("sidebar.section.removeFromContext")}
@@ -700,7 +698,7 @@ export function BotContextMenu({
       className={cn(
         "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px]",
         opts?.danger ? "text-danger" : "text-ink",
-        opts?.disabled ? "cursor-default opacity-40" : "hover:bg-raised/70",
+        opts?.disabled ? "cursor-default opacity-40" : "rounded-lg hover:bg-raised/70",
       )}
     >
       {icon}
@@ -718,7 +716,7 @@ export function BotContextMenu({
       aria-label={t("sidebar.bot.actions", { name: bot.name })}
       onKeyDown={navigateSidebarMenu}
       style={{ top: shown.y, left: shown.x }}
-      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[228px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[228px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
     >
       {remoteClient ? [
         item(<FolderPlus size={16} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
@@ -839,7 +837,7 @@ export function BotDeleteMenuItem({ deleting, onClick }: { deleting: boolean; on
       title={deleting ? t("sidebar.bot.deleteCheckingTitle") : undefined}
       className={cn(
         "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger",
-        deleting ? "cursor-default opacity-40" : "hover:bg-raised/70",
+        deleting ? "cursor-default opacity-40" : "rounded-lg hover:bg-raised/70",
       )}
     >
       {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
@@ -1311,6 +1309,8 @@ export function TeamMenuItems({ onAddBots, onRename, onShare, onDelete }: {
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { state, dispatch } = useStore();
   const cloudOwner = useCloudOwner(state.config?.cloudHome === true);
+  const identity = useSidebarIdentity();
+  const identityLabels = appSettingsLabels(identity);
   const remoteClient = window.ogb?.remoteClient?.active === true;
   const { capabilities } = useDesktopCapabilities();
   const importReturnRef = useRef<HTMLButtonElement>(null);
@@ -1687,7 +1687,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               <>
                 <div className={cn("fixed inset-0 z-30", densityMotion.closing && "pointer-events-none")} onMouseDown={() => setDensityOpen(false)} />
                 <div className={cn(
-                  "absolute top-full z-40 mt-1 w-40 overflow-hidden rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/60",
+                  "absolute top-full z-40 mt-1 w-40 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60",
                   density === "icons" ? "left-0" : "right-0",
                   densityMotion.className,
                 )} {...densityMotion.exitProps}>
@@ -1697,7 +1697,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                       type="button"
                       onClick={() => setDensity(option)}
                       className={cn(
-                        "flex w-full items-center justify-between px-3 py-2 text-left text-[13px] hover:bg-raised/70",
+                        "flex w-full items-center justify-between px-3 py-2 rounded-lg text-left text-[13px] hover:bg-raised/70",
                         density === option ? "text-accent" : "text-ink",
                       )}
                     >
@@ -1726,7 +1726,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <>
               <div className={cn("fixed inset-0 z-30", plusMotion.closing && "pointer-events-none")} onMouseDown={() => setPlusOpen(false)} />
               <div className={cn(
-                "absolute top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu py-1.5 shadow-2xl shadow-black/60",
+                "absolute top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60",
                 density === "icons" ? "left-0" : "right-0",
                 plusMotion.className,
               )} {...plusMotion.exitProps}>
@@ -1735,7 +1735,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     setPlusOpen(false);
                     dispatch({ type: "toggleNewBot", open: true });
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <BotIcon size={16} className="text-ink-secondary" />
                   <span className="flex-1">{t("sidebar.newBot")}</span>
@@ -1746,42 +1746,43 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                     setPlusOpen(false);
                     setNewRoom(true);
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Users size={16} className="text-ink-secondary" />
                   {t("sidebar.newChannel.title")}
                 </button>
                 {!remoteClient && <button
                   onClick={() => { setPlusOpen(false); setNewTeam(true); }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <FolderPlus size={16} className="text-ink-secondary" /> {t("team.create")}
                 </button>}
-                {!remoteClient && <>
+                {/* Team library (templates) needs reworking — dev builds only. */}
+                {import.meta.env.DEV && !remoteClient && (
                 <button
                   onClick={() => {
                     setPlusOpen(false);
                     setTeamLibraryOpen(true);
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
                 >
                   <Library size={16} className="text-ink-secondary" />
                   {t("sidebar.teamLibrary")}
                 </button>
-                {archivedBots.length > 0 && (
+                )}
+                {!remoteClient && archivedBots.length > 0 && (
                   <button
                     onClick={() => {
                       setPlusOpen(false);
                       setArchivedBotsOpen(true);
                     }}
-                    className="flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-ink hover:bg-raised/70"
+                    className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
                   >
                     <Archive size={16} className="text-ink-secondary" />
                     <span className="flex-1">{t("sidebar.archived.title")}</span>
                     <span className="text-[11.5px] text-ink-secondary">{archivedBots.length}</span>
                   </button>
                 )}
-                </>}
               </div>
             </>
           )}
@@ -2011,10 +2012,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <button
               onClick={() => dispatch({ type: "toggleAppSettings" })}
               className="flex min-w-0 items-center justify-center rounded-xl px-2 py-2 text-left hover:bg-raised/50"
-              aria-label={t("sidebar.appSettings")}
-              title={state.config?.profile?.name?.trim() || t("sidebar.appSettings")}
+              aria-label={identityLabels.ariaLabel}
+              title={identityLabels.title}
             >
-              <InitialsAvatar initials={profileInitials(state.config?.profile)} size={28} />
+              <IdentityAvatar identity={identity} size={28} />
             </button>
           </div>
         ) : (
