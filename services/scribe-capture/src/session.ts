@@ -1,0 +1,285 @@
+import { mkdirSync } from "node:fs";
+import { dirname, join as joinPath } from "node:path";
+import { fileURLToPath } from "node:url";
+import { chromium, type BrowserContext, type Page } from "playwright";
+
+import type { WorkerConfig } from "./config.js";
+import { CAPTURE_INIT_SCRIPT } from "./capture-init.js";
+import { IngestClient, IngestConflictError } from "./ingest-client.js";
+import { SegmentSpool } from "./spool.js";
+import { HttpSttClient, pcm16ToWav } from "./stt-client.js";
+import { hostAllowed, nativeIdFor } from "./urls.js";
+import { describeJoinFailure } from "./errors.js";
+import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
+
+/** The vendored Vexa join layer. Loaded lazily with a computed specifier so it
+ * is not pulled into our typecheck (it is third-party code) while still
+ * resolving at runtime through tsx. */
+interface VexaJoin {
+  joinMeeting: (page: unknown, opts: Record<string, unknown>) => Promise<{ admitted: boolean }>;
+  leaveGoogleMeet: (page: unknown) => Promise<void>;
+  leaveMicrosoftTeams: (page: unknown) => Promise<void>;
+  leaveZoomMeeting: (page: unknown) => Promise<void>;
+  getJoinBrowserArgs: () => string[];
+}
+let vexaJoinCache: VexaJoin | null = null;
+async function loadVexaJoin(): Promise<VexaJoin> {
+  if (vexaJoinCache) return vexaJoinCache;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const spec = joinPath(here, "../../../third_party/vexa-capture/core/meetings/modules/join/src/index.js");
+  vexaJoinCache = (await import(spec)) as unknown as VexaJoin;
+  return vexaJoinCache;
+}
+
+const VEXA_SCREENSHOT_DIR = "/app/storage/screenshots";
+
+/** Leave using the platform's own flow. */
+async function leaveFor(page: Page, platform: string): Promise<void> {
+  const vexa = await loadVexaJoin();
+  if (platform === "teams") return vexa.leaveMicrosoftTeams(page);
+  if (platform === "zoom") return vexa.leaveZoomMeeting(page);
+  return vexa.leaveGoogleMeet(page);
+}
+
+class MeetSession {
+  status: CaptureStatus = "joining";
+  captureStartedAt: string | null = null;
+  error: string | null = null;
+  private context: BrowserContext | null = null;
+  private page: Page | null = null;
+  private stopped = false;
+  private seq = 0;
+  private lastEnd = 0;
+  private readonly spool: SegmentSpool;
+  private readonly stt: HttpSttClient;
+  private readonly ingest: IngestClient;
+
+  constructor(private readonly descriptor: JoinDescriptor, private readonly config: WorkerConfig) {
+    this.spool = new SegmentSpool(config.flushSegments, config.flushMs, Date.now());
+    this.stt = new HttpSttClient({ baseUrl: config.sttUrl });
+    this.ingest = new IngestClient({ url: config.ingestUrl, capability: config.ingestCapability });
+  }
+
+  private meetingRow(status: CaptureStatus, extra: Partial<MeetingRow> = {}): MeetingRow {
+    const d = this.descriptor;
+    return {
+      platform: d.platform,
+      instance_id: d.instance_id,
+      calendar_event_id: d.calendar_event_id ?? null,
+      native_id: nativeIdFor(d.platform, d.meeting_url),
+      title: d.title ?? null,
+      scheduled_start: d.scheduled_start ?? null,
+      scheduled_end: d.scheduled_end ?? null,
+      actual_start: this.captureStartedAt,
+      actual_end: null,
+      status,
+      error: this.error,
+      organizer_email: d.organizer_email ?? null,
+      invited_by: d.invited_by ?? null,
+      invitees: d.invitees ?? [],
+      segment_count: this.spool.added,
+      duration_seconds: this.lastEnd > 0 ? this.lastEnd : null,
+      ...extra,
+    };
+  }
+
+  private async flush(force: boolean, status: CaptureStatus): Promise<void> {
+    const due = force || this.spool.shouldFlush(Date.now());
+    if (!due) return;
+    const segments = this.spool.drain(Date.now());
+    if (segments.length === 0 && !force) return;
+    try {
+      await this.ingest.post(this.meetingRow(status), segments);
+    } catch (e) {
+      if (e instanceof IngestConflictError) {
+        this.status = "skipped";
+        this.error = "live meeting conflict";
+        this.stopped = true;
+        return;
+      }
+      throw e;
+    }
+  }
+
+  async run(): Promise<void> {
+    try {
+      mkdirSync(VEXA_SCREENSHOT_DIR, { recursive: true });
+    } catch { /* image provides it; best-effort here */ }
+
+    try {
+      const { getJoinBrowserArgs } = await loadVexaJoin();
+      const args = getJoinBrowserArgs().filter((a) => a !== "--incognito");
+      this.context = await chromium.launchPersistentContext(this.config.profileDir, {
+        headless: true,
+        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        locale: "en-US",
+      });
+      await this.context.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+      this.page = this.context.pages()[0] ?? await this.context.newPage();
+
+      this.status = "joining";
+      const { joinMeeting } = await loadVexaJoin();
+      const result = await joinMeeting(this.page, {
+        meetingUrl: this.descriptor.meeting_url,
+        platform: this.descriptor.platform,
+        botName: "Relay Scribe",
+        passcode: this.descriptor.passcode,
+        // Meet joins as relay@ (signed-in profile); Zoom/Teams join anonymously.
+        authenticated: this.descriptor.platform === "google_meet",
+        waitingRoomTimeoutMs: 600_000,
+      });
+      if (!result.admitted) {
+        this.status = "awaiting_admission";
+        this.error = "not admitted within the waiting-room timeout";
+        await this.finalize("failed");
+        return;
+      }
+
+      // Time zero is the start of capture.
+      this.captureStartedAt = new Date().toISOString();
+      this.status = "active";
+      await this.ingest.post(this.meetingRow("active"), []);
+
+      const deadline = Date.now() + this.config.maxMeetingMs;
+      while (!this.stopped && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 6000));
+        if (this.stopped) break;
+        await this.captureOnce();
+        await this.flush(false, "active");
+      }
+      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped ? "partial" : "completed");
+    } catch (e) {
+      this.error = describeJoinFailure(e);
+      await this.finalize("failed");
+    }
+  }
+
+  /** Read the field without TS control-flow narrowing it to the last assignment. */
+  private get current(): CaptureStatus {
+    return this.status;
+  }
+
+  private async captureOnce(): Promise<void> {
+    if (!this.page) return;
+    const drain = await this.page.evaluate(() => (window as any).__scribePcm.drain()) as {
+      b64: string; count: number; sampleRate: number;
+    };
+    if (drain.count < 8000) return; // <0.5s of audio; skip silence jitter
+    const pcm = Buffer.from(drain.b64, "base64");
+    const chunkSeconds = drain.count / 16_000;
+    const startAt = this.lastEnd;
+    const endAt = startAt + chunkSeconds;
+    this.lastEnd = endAt;
+    let text = "";
+    try {
+      const out = await this.stt.transcribe(pcm16ToWav(pcm));
+      text = out.text.trim();
+    } catch (e) {
+      this.error = e instanceof Error ? e.message.slice(0, 200) : "stt error";
+      return;
+    }
+    if (!text) return;
+    this.seq += 1;
+    const segment: Segment = {
+      segment_key: `turn:${this.seq}`,
+      speaker: null,
+      start_seconds: Number(startAt.toFixed(2)),
+      end_seconds: Number(endAt.toFixed(2)),
+      text,
+      language: "en",
+    };
+    this.spool.add(segment);
+  }
+
+  private async finalize(status: CaptureStatus): Promise<void> {
+    this.status = status;
+    try {
+      if (this.page) {
+        try {
+          await leaveFor(this.page, this.descriptor.platform);
+        } catch { /* best effort */ }
+      }
+    } finally {
+      await this.context?.close().catch(() => {});
+    }
+    try {
+      await this.flush(true, status);
+    } catch (e) {
+      this.error = e instanceof Error ? e.message.slice(0, 200) : "final ingest failed";
+      this.status = "partial";
+    }
+  }
+
+  requestStop(): void {
+    this.stopped = true;
+  }
+
+  outcome(): StatusOutcome {
+    return {
+      instance_id: this.descriptor.instance_id,
+      status: this.status,
+      segment_count: this.spool.added,
+      capture_started_at: this.captureStartedAt ?? undefined,
+      error: this.error ?? undefined,
+    };
+  }
+}
+
+/** Owns one session per instance_id. join is idempotent by instance_id. */
+export class SessionController implements JoinController {
+  private readonly sessions = new Map<string, MeetSession>();
+
+  constructor(private readonly config: WorkerConfig) {}
+
+  async join(descriptor: JoinDescriptor): Promise<JoinOutcome> {
+    const existing = this.sessions.get(descriptor.instance_id);
+    if (existing) {
+      const s = existing.outcome();
+      return { instance_id: s.instance_id, status: s.status, capture_started_at: s.capture_started_at, error: s.error };
+    }
+
+    // Reject path: monitor validation failed or we are at capacity — write a
+    // failed row without attempting a join.
+    let reject = descriptor.reject_reason;
+    const live = [...this.sessions.values()].filter((s) => s.status === "joining" || s.status === "awaiting_admission" || s.status === "active").length;
+    if (!reject && live >= this.config.maxConcurrent) reject = "at capacity";
+    if (!reject && !hostAllowed(descriptor.platform, descriptor.meeting_url)) reject = "meeting host is not an allowed provider domain";
+    if (reject) {
+      const ingest = new IngestClient({ url: this.config.ingestUrl, capability: this.config.ingestCapability });
+      const row: MeetingRow = {
+        platform: descriptor.platform,
+        instance_id: descriptor.instance_id,
+        title: descriptor.title ?? null,
+        scheduled_start: descriptor.scheduled_start ?? null,
+        scheduled_end: descriptor.scheduled_end ?? null,
+        organizer_email: descriptor.organizer_email ?? null,
+        invited_by: descriptor.invited_by ?? null,
+        invitees: descriptor.invitees ?? [],
+        status: "failed",
+        error: reject,
+        segment_count: 0,
+      };
+      await ingest.post(row, []).catch(() => { /* surfaced via status below */ });
+      return { instance_id: descriptor.instance_id, status: "failed", error: reject };
+    }
+
+    const session = new MeetSession(descriptor, this.config);
+    this.sessions.set(descriptor.instance_id, session);
+    void session.run();
+    return { instance_id: descriptor.instance_id, status: session.status };
+  }
+
+  async status(instanceId: string): Promise<StatusOutcome> {
+    const session = this.sessions.get(instanceId);
+    if (!session) return { instance_id: instanceId, status: "unknown", segment_count: 0 };
+    return session.outcome();
+  }
+
+  async stop(instanceId: string): Promise<JoinOutcome> {
+    const session = this.sessions.get(instanceId);
+    if (!session) return { instance_id: instanceId, status: "unknown" };
+    session.requestStop();
+    const s = session.outcome();
+    return { instance_id: s.instance_id, status: s.status, capture_started_at: s.capture_started_at, error: s.error };
+  }
+}
