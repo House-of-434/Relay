@@ -16,6 +16,9 @@ import {
   safeDownloadFilename,
   wrappedImageIndex,
 } from "./AttachmentPreview";
+import { renderStatic } from "./test-render";
+
+const markupButtons = (html: string): string[] => html.match(/type="button"/g) ?? [];
 
 describe("attachment image navigation", () => {
   it("wraps previous and next navigation", () => {
@@ -144,22 +147,61 @@ describe("attachment preview surfaces", () => {
   });
 
   it("keeps legacy transcript file chips visible but inert", () => {
-    const html = renderToStaticMarkup(createElement(AttachedFileChips, {
+    const html = renderStatic(createElement(AttachedFileChips, {
       files: [{ path: "/store/123e4567-e89b-42d3-a456-426614174000.pdf", name: "Final report.pdf", private: true }],
     }));
 
     expect(html).toContain("Final report.pdf");
     expect(html).toContain("Unavailable");
+    expect(html).toContain("PDF");
     expect(html).not.toContain("type=\"button\"");
   });
 
   it("makes message-authorized transcript files explicit save actions", () => {
-    const html = renderToStaticMarkup(createElement(AttachedFileChips, {
+    const html = renderStatic(createElement(AttachedFileChips, {
       files: [{ path: "/store/123e4567-e89b-42d3-a456-426614174000.pdf", name: "Final report.pdf", private: true }],
       message: { threadId: "thread-1", messageId: "message-1" },
     }));
     expect(html).toContain("Save a copy of Final report.pdf");
     expect(html).toContain("type=\"button\"");
+  });
+
+  it("previews markdown on select and keeps a separate download button", () => {
+    const html = renderStatic(createElement(AttachedFileChips, {
+      files: [{ path: "/workspace/report.md", name: "Q3 report.md", private: true }],
+      message: { threadId: "thread-1", messageId: "message-1" },
+    }));
+    expect(html).toContain('aria-label="Preview Q3 report.md"');
+    expect(html).toContain('aria-label="Save a copy of Q3 report.md"');
+    expect(html).toContain('title="Download"');
+    expect(html).toContain("Markdown");
+    expect(html).toContain("Open file");
+    expect(html).toContain("opacity-0");
+    expect(html).toContain("max-w-[320px]");
+    expect(markupButtons(html)).toHaveLength(2);
+  });
+
+  it("previews scripts on select with the same split as markdown", () => {
+    const html = renderStatic(createElement(AttachedFileChips, {
+      files: [{ path: "/workspace/run.py", name: "run.py", private: true }],
+      message: { threadId: "thread-1", messageId: "message-1" },
+    }));
+    expect(html).toContain('aria-label="Preview run.py"');
+    expect(html).toContain('aria-label="Save a copy of run.py"');
+    expect(html).toContain('title="Download"');
+    expect(html).toContain("Python");
+    expect(markupButtons(html)).toHaveLength(2);
+  });
+
+  it("keeps non-markdown files on the single download button", () => {
+    const html = renderStatic(createElement(AttachedFileChips, {
+      files: [{ path: "/workspace/report.pdf", name: "Q3 report.pdf", private: true }],
+      message: { threadId: "thread-1", messageId: "message-1" },
+    }));
+    expect(html).toContain('aria-label="Save a copy of Q3 report.pdf"');
+    expect(html).not.toContain("Preview Q3 report.pdf");
+    expect(html).toContain("PDF");
+    expect(markupButtons(html)).toHaveLength(1);
   });
 });
 

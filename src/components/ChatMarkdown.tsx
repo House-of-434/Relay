@@ -33,6 +33,8 @@ import {
 import { repairMarkdownTables } from "../lib/markdown-tables";
 import { windowsPathDestinations } from "../../shared/markdown-windows-paths";
 import { looksLikeThreadRefUrl, parseThreadRefUrl, resolveThreadRefAddress, remarkThreadRefs } from "../lib/thread-refs";
+import { looksLikeDocRefUrl, parseDocRefUrl } from "../lib/doc-refs";
+import { DocLink } from "./DocLink";
 import { MarkdownImagePreview, useLocalFileSave, type MessageAttachmentContext } from "./AttachmentPreview";
 import { ThreadLink, threadLinkFromProps, useThreadRefs } from "./ThreadRefs";
 
@@ -108,6 +110,9 @@ export function chatUrlTransform(value: string): string {
   // thread links render as chips below, never as external anchors; the
   // scheme must survive the allow-list so the anchor component sees it
   if (looksLikeThreadRefUrl(value)) return value;
+  // document links open in the doc pane, never as external anchors; the
+  // scheme must survive the allow-list so the anchor component sees it
+  if (looksLikeDocRefUrl(value)) return value;
   // Markdown-to-HTML percent-encodes a destination's backslashes, so
   // C:\Users\Maus\report.md arrives as C:%5CUsers%5CMaus%5Creport.md and no
   // longer looked like a drive path: the link rendered dead and the image as
@@ -840,6 +845,12 @@ function ChatMarkdownComponent({ text, streaming = false, message, mentionPeers 
             const ref = address ? resolveThreadRefAddress(threads, address, currentBotId) : null;
             if (ref) return <ThreadLink target={ref} ambiguous={ref.ambiguous}>{children}</ThreadLink>;
             if (address || (href && looksLikeThreadRefUrl(href))) return <span className="break-words">{children}</span>;
+            // a canonical document link opens in the doc pane; a dead one
+            // keeps its label as plain text rather than handing the app's
+            // own scheme to the shell
+            const doc = href ? parseDocRefUrl(href) : null;
+            if (doc) return <DocLink target={doc}>{children}</DocLink>;
+            if (href && looksLikeDocRefUrl(href)) return <span className="break-words">{children}</span>;
             const localPath = localFilePath(href);
             if (localPath) return <LocalFileLink filePath={localPath} message={message}>{children}</LocalFileLink>;
             return (

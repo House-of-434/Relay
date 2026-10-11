@@ -261,7 +261,8 @@
 
 /* Shiki emits both palettes so cached blocks follow the nearest skin without
    re-tokenizing. Scope the scheme to code; native controls keep their styling. */
-.chat-md .shiki {
+.chat-md .shiki,
+.doc-pane-code .shiki {
   color-scheme: var(--code-color-scheme);
 }
 

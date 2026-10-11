@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { BotVisibility, CloudBackend, ConnectorToolGrant, EffortLevel, InstalledPackageMetadata, ServerFrame, GroupThreadUsage, SteerQueueReason } from "../../shared/wire";
+import type { BotVisibility, CloudBackend, ConnectorToolGrant, EffortLevel, InstalledPackageMetadata, ServerFrame, GroupThreadUsage, SteerQueueReason, WireDocRef } from "../../shared/wire";
 import type { TurnDigest } from "../../shared/digest";
 import type { ModelVariantOption, RuntimeEvent } from "../../shared/runtime-events";
 import type { MausColor, MausMotion } from "@/lib/mascot";
@@ -854,6 +854,9 @@ export interface AppState {
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
   inspectorOpen: boolean;
+  /** document open in the right-side pane; null = closed. The granting
+   * message (threadId + messageId) is the fetch capability. */
+  docPane: WireDocRef | null;
   appSettingsOpen: boolean;
   appSettingsSection: AppSettingsSection;
   /** Non-zero while Settings → OMB Cloud is open because of the Cloud page's
@@ -1126,6 +1129,8 @@ export type Action =
   | { type: "toggleNewBot"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
+  | { type: "openDocPane"; ref: WireDocRef }
+  | { type: "closeDocPane" }
   | { type: "focusMessage"; threadId: string; messageId: string }
   | { type: "focusMessageConsumed"; nonce: number }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection; cloudLink?: boolean }
@@ -1426,6 +1431,7 @@ export function reducer(state: AppState, action: Action): AppState {
         settingsOpen: false,
         computerOpen: false,
         inspectorOpen: false,
+        docPane: null,
         appSettingsOpen: false,
         pluginsOpen: false,
       };
@@ -1906,6 +1912,7 @@ export function reducer(state: AppState, action: Action): AppState {
         computerOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
+        docPane: open ? null : state.docPane,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
@@ -1916,8 +1923,22 @@ export function reducer(state: AppState, action: Action): AppState {
         inspectorOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
+        docPane: open ? null : state.docPane,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
+    }
+    case "openDocPane": {
+      return {
+        ...state,
+        docPane: action.ref,
+        settingsOpen: false,
+        computerOpen: false,
+        inspectorOpen: false,
+        appSettingsOpen: false,
+      };
+    }
+    case "closeDocPane": {
+      return { ...state, docPane: null };
     }
     case "toggleAppSettings": {
       const open = action.open ?? !state.appSettingsOpen;
@@ -1929,6 +1950,7 @@ export function reducer(state: AppState, action: Action): AppState {
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
+        docPane: open ? null : state.docPane,
         pluginsOpen: open ? false : state.pluginsOpen,
       };
     }
@@ -2252,6 +2274,7 @@ export const initialState: AppState = {
   botCreationPending: false,
   computerOpen: false,
   inspectorOpen: false,
+  docPane: null,
   appSettingsOpen: false,
   appSettingsSection: "general",
   appSettingsCloudLink: 0,

@@ -14,6 +14,7 @@ import { RemoteAgentSettingsPanel } from "@/components/RemoteAgentSettingsPanel"
 import { NewBotDialog } from "@/components/NewBotDialog";
 import { PluginsPanel, type ConnectionAccount, type ConnectionService } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
+import { DocPane } from "@/components/DocPane";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { WorkspaceBackupRecovery } from "@/components/WorkspaceBackupSettings";
@@ -281,6 +282,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
     state.settingsOpen ||
     state.computerOpen ||
     state.inspectorOpen ||
+    state.docPane !== null ||
     state.appSettingsOpen ||
     state.pluginsOpen;
 
@@ -400,6 +402,12 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
         />
       )}
       {!remoteClient && state.inspectorOpen && bot && <InspectorPanel key={bot.threadId} bot={bot} />}
+      {!remoteClient && state.docPane && (
+        <DocPane
+          key={`doc:${state.docPane.threadId}:${state.docPane.messageId}:${state.docPane.path}`}
+          docRef={state.docPane}
+        />
+      )}
       {state.appSettingsOpen && <SettingsModal />}
       <GoogleConnectionsDialog />
       {state.newBotOpen && <NewBotDialog />}

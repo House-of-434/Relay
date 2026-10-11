@@ -616,6 +616,25 @@ export interface WireGroup {
   working: boolean;
 }
 
+// ── doc pane ─────────────────────────────────────────────────────────
+// A document opened in the right-side pane. markdown renders as rich text;
+// code covers plain-text sources (scripts, .txt) rendered through the
+// shared highlighted code block. The pane fetches the bytes through the
+// existing message-scoped file route — the granting message is the
+// capability, so this needs no new backend. Future types (meeting, notes)
+// extend DocPaneType with their own fetchers behind the same registry.
+export type DocPaneType = "markdown" | "code";
+
+export interface WireDocRef {
+  type: DocPaneType;
+  threadId: string;
+  messageId: string;
+  /** The file path as the granting message links it. */
+  path: string;
+  /** Display title; absent falls back to the path basename. */
+  title?: string;
+}
+
 // ── live wire frames ───────────────────────────────────────────────────
 // Derived from the client's frame switch (src/state/store.tsx handleFrame)
 // cross-checked against every server broadcast site: one member per kind

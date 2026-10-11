@@ -477,13 +477,14 @@ function Bubble({
               )}
             </>
           ) : (
+<<<<<<< HEAD
             <MessageBoundary key={viewRaw ? "raw" : "rendered"} fallbackText={text || t("chat.generatedImage")}>
               {viewRaw && text ? (
                 <RawMarkdownView text={text} />
               ) : text ? (
                 <ChatMarkdown text={text} mentionPeers={mentionPeers} message={{ threadId: bot.threadId, messageId: message.id }} />
               ) : null}
-              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : undefined} eager={eagerAttachments} />
+              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : "mb-0"} eager={eagerAttachments} />
             </MessageBoundary>
           )}
         </div>
