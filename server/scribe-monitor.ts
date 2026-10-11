@@ -55,14 +55,39 @@ export interface ReceiptStore {
   record(kind: string, key: string, result: string, at: number): void;
 }
 
+/** The worker's /status answer for one instance. */
+export interface ScribeWorkerStatus {
+  status: string;
+  segment_count?: number;
+  error?: string;
+}
+
+/** A terminal notice handed to the harness to email. The monitor decides the
+ *  kind and the recipients (organizer-first-known-member, admins on signed-out);
+ *  the harness owns the actual send. */
+export interface ScribeNotice {
+  instance_id: string;
+  kind: "completed" | "failed" | "unreachable";
+  reason?: string;
+  /** True when the failure is a signed-out profile, so admins must be told to
+   *  re-authenticate (in addition to the organizer's plain notice). */
+  signedOut: boolean;
+  title?: string;
+  organizer_email?: string;
+  creator_email?: string;
+  scheduled_end?: string;
+  segment_count?: number;
+}
+
 export interface ScribeMonitorDeps {
   listEvents: (timeMinIso: string, timeMaxIso: string) => Promise<CalendarEvent[]>;
   joinWorker: (descriptor: ScribeDescriptor) => Promise<{ status: string }>;
+  /** The worker /status; used to reconcile armed meetings into a notice. */
+  status: (instanceId: string) => Promise<ScribeWorkerStatus>;
   receipts: ReceiptStore;
-  /** Sent from the harness when a joinable meeting could not be handed to the
-   * worker at all (e.g. the capture service was unreachable for the whole
-   * window). The email wiring is slice 4; default logs. */
-  notify?: (input: { instance_id: string; reason: string }) => void | Promise<void>;
+  /** Sent from the harness on a terminal meeting state (or a joinable meeting
+   *  that never reached the worker). The harness owns the email wiring. */
+  notify?: (notice: ScribeNotice) => void | Promise<void>;
   /** relay@'s own address; meetings it organizes are skipped quietly. */
   selfAddress?: string;
   now?: () => number;
@@ -78,6 +103,20 @@ export interface ScribeMonitorConfig {
   /** Accept a start up to this late. */
   lateMaxMs: number;
   maxResults: number;
+  /** After scheduled_end, give the worker record this long before giving up on
+   *  reconciliation (write the receipt, log, stop polling). */
+  reconcileGraceMs: number;
+  /** Rate limit for signed-out admin alerts (one per this window). */
+  adminAlertIntervalMs: number;
+}
+
+/** Terminal capture states (per §6.9): completed/partial → ready, failed →
+ *  failure, skipped → quiet. */
+export const TERMINAL_SCRIBE_STATES = ["completed", "partial", "failed", "skipped"] as const;
+
+/** The worker's signed-out reason (services/scribe-capture/src/errors.ts). */
+export function isSignedOutReason(error: string | undefined): boolean {
+  return typeof error === "string" && /signed out/i.test(error);
 }
 
 export function scribeMonitorConfig(env: NodeJS.ProcessEnv = process.env): ScribeMonitorConfig {
@@ -92,6 +131,8 @@ export function scribeMonitorConfig(env: NodeJS.ProcessEnv = process.env): Scrib
     armLeadMs: num(env.RELAY_SCRIBE_ARM_LEAD_MS, 60_000),
     lateMaxMs: num(env.RELAY_SCRIBE_LATE_MAX_MS, 5 * 60 * 1000),
     maxResults: num(env.RELAY_SCRIBE_MAX_RESULTS, 250),
+    reconcileGraceMs: num(env.RELAY_SCRIBE_RECONCILE_GRACE_MS, 30 * 60 * 1000),
+    adminAlertIntervalMs: num(env.RELAY_SCRIBE_ADMIN_ALERT_INTERVAL_MS, 3 * 60 * 60 * 1000),
   };
 }
 
@@ -132,6 +173,14 @@ export function meetingUrlFor(event: CalendarEvent): string | null {
 }
 
 /** Event start in ms, or null for an all-day / unparseable event. */
+/** Event end in ms, or null when absent/unparseable. */
+export function eventEndMs(event: CalendarEvent): number | null {
+  const dt = event.end?.dateTime;
+  if (typeof dt !== "string") return null;
+  const ms = Date.parse(dt);
+  return Number.isFinite(ms) ? ms : null;
+}
+
 export function eventStartMs(event: CalendarEvent): number | null {
   const dt = event.start?.dateTime;
   if (typeof dt !== "string") return null;
@@ -180,6 +229,9 @@ export function buildDescriptor(event: CalendarEvent, url: string, platform: Scr
 export class ScribeMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
+  /** Last time a signed-out admin alert was emitted (rate limit). In-memory: a
+   *  restart resets it, which is acceptable for an operator alert. */
+  private lastSignedOutAlertMs = Number.NEGATIVE_INFINITY;
 
   constructor(
     private readonly deps: ScribeMonitorDeps,
@@ -228,43 +280,124 @@ export class ScribeMonitor {
           this.log(`scribe: skipping ${event.id}: meeting host is not a provider domain`);
           continue;
         }
-        const key = armKey(event);
-        if (!key) continue;
+
+        // Already handed to the worker (or terminally unreachable): reconcile a
+        // notice from the worker's /status instead of arming again.
+        if (this.hasArmReceipt(event)) {
+          await this.reconcile(event, now);
+          continue;
+        }
+
         if (now < start - this.config.armLeadMs) continue; // not yet
-        if (this.deps.receipts.has("scribe.arm", key)) continue; // already handled
 
         if (now <= start + this.config.lateMaxMs) {
-          const descriptor = buildDescriptor(event, url, platform);
-          let result: { status: string };
-          try {
-            result = await this.deps.joinWorker(descriptor);
-          } catch (error) {
-            // Worker unreachable: no receipt, so the next tick retries.
-            this.log(`scribe: worker join failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
-            continue;
-          }
-          // A worker refusal (e.g. "at capacity" -> status failed) is terminal:
-          // record the receipt so it is not retried, and let reconciliation
-          // (slice 4) send the failure notice.
-          this.deps.receipts.record("scribe.arm", key, result.status ?? "armed", now);
-          this.log(`scribe: armed ${event.id} (${platform}) -> ${result.status ?? "armed"}`);
+          await this.arm(event, url, platform, now);
         } else {
-          // Join window closed with no receipt: the capture service never
+          // Join window closed with no arm receipt: the capture service never
           // accepted this meeting. Terminal + notify once, so the loop stops.
-          this.deps.receipts.record("scribe.arm", key, "unreachable", now);
-          this.deps.receipts.record("scribe.notify", key, "sent", now);
+          // The arm receipt marks it handled so the next tick reconciles (and
+          // short-circuits on the notify receipt) instead of re-notifying.
+          const key = armKey(event);
+          if (key) this.deps.receipts.record("scribe.arm", key, "unreachable", now);
           this.log(`scribe: capture service unreachable for ${event.id}; window closed`);
-          try {
-            await this.deps.notify?.({ instance_id: event.id, reason: "capture service unreachable" });
-          } catch (error) {
-            this.log(`scribe: notify failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
-          }
+          this.recordNotify(event, "unreachable", now);
+          await this.emit(event, { kind: "unreachable", reason: "capture service unreachable", signedOut: false });
         }
       }
     } catch (error) {
       this.log(`scribe: poll failed: ${error instanceof Error ? error.message : "unknown"}`);
     } finally {
       this.ticking = false;
+    }
+  }
+
+  private hasArmReceipt(event: CalendarEvent): boolean {
+    const key = armKey(event);
+    return key !== null && this.deps.receipts.has("scribe.arm", key);
+  }
+
+  /** Hand a due meeting to the worker. A crash between the POST and the receipt
+   *  write just re-posts onto the idempotent /join next tick. */
+  private async arm(event: CalendarEvent, url: string, platform: ScribeDescriptor["platform"], now: number): Promise<void> {
+    const key = armKey(event);
+    if (!key) return;
+    const descriptor = buildDescriptor(event, url, platform);
+    let result: { status: string };
+    try {
+      result = await this.deps.joinWorker(descriptor);
+    } catch (error) {
+      // Worker unreachable: no receipt, so the next tick retries.
+      this.log(`scribe: worker join failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
+      return;
+    }
+    // A worker refusal (e.g. "at capacity" -> status failed) is terminal:
+    // record the receipt so it is not retried, and let reconciliation send the
+    // failure notice.
+    this.deps.receipts.record("scribe.arm", key, result.status ?? "armed", now);
+    this.log(`scribe: armed ${event.id} (${platform}) -> ${result.status ?? "armed"}`);
+  }
+
+  /** A meeting already handed to the worker: turn the terminal /status into one
+   *  notice. Non-terminal states are re-checked next tick, with an exit after
+   *  the grace window so a meeting the worker never recorded stops polling. */
+  private async reconcile(event: CalendarEvent, now: number): Promise<void> {
+    if (this.deps.receipts.has("scribe.notify", event.id)) return;
+    let status: ScribeWorkerStatus;
+    try {
+      status = await this.deps.status(event.id);
+    } catch (error) {
+      // Transient: no receipt, retried next tick.
+      this.log(`scribe: worker status failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
+      return;
+    }
+    if (!(TERMINAL_SCRIBE_STATES as readonly string[]).includes(status.status)) {
+      const endMs = eventEndMs(event);
+      if (endMs !== null && now > endMs + this.config.reconcileGraceMs) {
+        this.recordNotify(event, "expired", now);
+        this.log(`scribe: no worker record for ${event.id} after the grace window; giving up`);
+      }
+      return;
+    }
+    if (status.status === "skipped") {
+      this.recordNotify(event, "skipped", now);
+      this.log(`scribe: ${event.id} skipped by the worker; no notice`);
+      return;
+    }
+    const signedOut = status.status === "failed" && isSignedOutReason(status.error);
+    // Rate-limit the signed-out ADMIN alert; the organizer's plain failure notice
+    // still sends. When suppressed, signedOut=false so only the organizer hears.
+    const alertAdmins = signedOut && now - this.lastSignedOutAlertMs >= this.config.adminAlertIntervalMs;
+    if (alertAdmins) this.lastSignedOutAlertMs = now;
+    else if (signedOut) this.log(`scribe: signed-out admin alert for ${event.id} suppressed (rate limit)`);
+    await this.emit(event, {
+      kind: status.status === "failed" ? "failed" : "completed",
+      reason: status.error,
+      signedOut: alertAdmins,
+      segment_count: status.segment_count,
+    });
+    this.recordNotify(event, status.status, now);
+  }
+
+  private recordNotify(event: CalendarEvent, result: string, now: number): void {
+    this.deps.receipts.record("scribe.notify", event.id, result, now);
+  }
+
+  private async emit(
+    event: CalendarEvent,
+    notice: { kind: ScribeNotice["kind"]; reason?: string; signedOut: boolean; segment_count?: number },
+  ): Promise<void> {
+    const full: ScribeNotice = {
+      instance_id: event.id,
+      title: event.summary,
+      organizer_email: event.organizer?.email,
+      creator_email: event.creator?.email,
+      scheduled_end: event.end?.dateTime,
+      ...notice,
+    };
+    try {
+      await this.deps.notify?.(full);
+    } catch (error) {
+      this.log(`scribe: notify failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
     }
   }
 

@@ -12,10 +12,13 @@ import {
   type ReceiptStore,
   type ScribeDescriptor,
   type ScribeMonitorConfig,
+  type ScribeNotice,
+  type ScribeWorkerStatus,
 } from "./scribe-monitor.ts";
 
 const NOW = Date.parse("2026-10-11T12:00:00Z");
-const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, maxResults: 250 };
+const THREE_HOURS = 3 * 60 * 60 * 1000;
+const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
 const SELF = "relay@houseof434.com";
 
 function fakeReceipts(): ReceiptStore & { keys: Set<string> } {
@@ -50,19 +53,21 @@ function buildMonitor(input: {
   events: CalendarEvent[];
   receipts: ReceiptStore;
   joinWorker?: (d: ScribeDescriptor) => Promise<{ status: string }>;
-  notify?: (i: { instance_id: string; reason: string }) => void;
+  status?: (instanceId: string) => Promise<ScribeWorkerStatus>;
+  notify?: (n: ScribeNotice) => void;
   now?: number;
   logs?: string[];
 }) {
   const joins: ScribeDescriptor[] = [];
-  const notified: Array<{ instance_id: string; reason: string }> = [];
+  const notified: ScribeNotice[] = [];
   const logs = input.logs ?? [];
   const m = new ScribeMonitor(
     {
       listEvents: async () => input.events,
       joinWorker: input.joinWorker ?? (async (d) => { joins.push(d); return { status: "joining" }; }),
+      status: input.status ?? (async () => ({ status: "unknown" })),
       receipts: input.receipts,
-      notify: (i) => { notified.push(i); input.notify?.(i); },
+      notify: (n) => { notified.push(n); input.notify?.(n); },
       selfAddress: SELF,
       now: () => input.now ?? NOW,
       log: (msg) => logs.push(msg),
@@ -209,5 +214,77 @@ describe("scribe monitor helpers", () => {
     expect(d.invitees).toEqual(["host@houseof434.com", "guest@example.com"]);
     expect(d.organizer_email).toBe("host@houseof434.com");
     expect(eventStartMs(meetingEvent())).toBe(NOW + 30_000);
+  });
+});
+
+describe("scribe monitor reconciliation", () => {
+  const seedArmed = (receipts: ReceiptStore, event: CalendarEvent): void => {
+    receipts.record("scribe.arm", armKey(event)!, "armed", NOW);
+  };
+
+  it("sends a ready notice once for a completed meeting", async () => {
+    const receipts = fakeReceipts();
+    const event = meetingEvent();
+    seedArmed(receipts, event);
+    const { m, notified } = monitor([event], receipts, {
+      status: async () => ({ status: "completed", segment_count: 12 }),
+    });
+    await m.tick();
+    await m.tick();
+    expect(notified).toHaveLength(1);
+    expect(notified[0]).toMatchObject({ instance_id: "inst-1", kind: "completed", signedOut: false, segment_count: 12 });
+    expect(receipts.keys.has("scribe.notify:inst-1")).toBe(true);
+  });
+
+  it("sends a failure notice, and flags admins when the profile is signed out", async () => {
+    const receipts = fakeReceipts();
+    const event = meetingEvent();
+    seedArmed(receipts, event);
+    const { m, notified } = monitor([event], receipts, {
+      status: async () => ({ status: "failed", error: "relay@ browser profile is signed out — re-authenticate the Scribe profile" }),
+    });
+    await m.tick();
+    expect(notified).toHaveLength(1);
+    expect(notified[0]).toMatchObject({ kind: "failed", signedOut: true });
+  });
+
+  it("rate-limits the signed-out admin alert across meetings, but still notifies each organizer", async () => {
+    const receipts = fakeReceipts();
+    const a = meetingEvent({ id: "a" });
+    const b = meetingEvent({ id: "b" });
+    seedArmed(receipts, a);
+    seedArmed(receipts, b);
+    const { m, notified } = monitor([a, b], receipts, {
+      status: async () => ({ status: "failed", error: "profile is signed out" }),
+    });
+    await m.tick();
+    // Only the first meeting escalates to admins; both get the organizer notice.
+    expect(notified.filter((n) => n.signedOut)).toHaveLength(1);
+    expect(notified.filter((n) => n.kind === "failed")).toHaveLength(2);
+  });
+
+  it("writes a receipt but sends nothing for a skipped meeting", async () => {
+    const receipts = fakeReceipts();
+    const event = meetingEvent();
+    seedArmed(receipts, event);
+    const { m, notified } = monitor([event], receipts, { status: async () => ({ status: "skipped" }) });
+    await m.tick();
+    expect(notified).toHaveLength(0);
+    expect(receipts.keys.has("scribe.notify:inst-1")).toBe(true);
+  });
+
+  it("keeps polling an unknown status, then gives up after the grace window", async () => {
+    const receipts = fakeReceipts();
+    const event = meetingEvent(); // ends NOW + 30.5 min; grace is 30 min
+    seedArmed(receipts, event);
+    const early = monitor([event], receipts, { status: async () => ({ status: "unknown" }) });
+    await early.m.tick();
+    expect(receipts.keys.has("scribe.notify:inst-1")).toBe(false);
+    expect(early.notified).toHaveLength(0);
+    // Past scheduled_end + grace: stop polling (receipt), still no notice.
+    const late = monitor([event], receipts, { status: async () => ({ status: "unknown" }), now: NOW + 3_700_000 });
+    await late.m.tick();
+    expect(receipts.keys.has("scribe.notify:inst-1")).toBe(true);
+    expect(late.notified).toHaveLength(0);
   });
 });

@@ -485,8 +485,9 @@ import { mailboxBffCall } from "./mailbox-bff.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
-import { createWorkerJoinClient } from "./scribe-worker-client.ts";
+import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
 import { commandReceipts } from "./scribe-receipts.ts";
+import { parseAdminEmails, scribeAdminEmail, scribeOrganizerEmail, sendScribeEmail } from "./scribe-notice.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionStatus, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, editionForMembers, LICENSE_WARN_DAYS, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type EditionStatus, type WorkspaceAccess } from "./enterprise.ts";
@@ -9848,12 +9849,45 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
 // lives only in this module and is never written back into process.env.
 if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELAY_MAILBOX_ADDRESS) {
   const scribeConfig = scribeMonitorConfig();
+  // Organizer-first, only if the address belongs to a known member.
+  const knownScribeRecipient = (email: string | undefined): string | undefined => {
+    const e = email?.trim().toLowerCase();
+    if (!e) return undefined;
+    return sessions.personByEmail(e) ?? ownerByEmail(DATA_DIR, e) ? e : undefined;
+  };
+  // Admins for the signed-out case: RELAY_SCRIBE_ADMIN_EMAILS, kept only if a
+  // configured address belongs to a known member. Never an invented list.
+  const configuredAdmins = parseAdminEmails(process.env.RELAY_SCRIBE_ADMIN_EMAILS);
+  const scribeAdminEmails = configuredAdmins.filter((email) => knownScribeRecipient(email) !== undefined);
+  if (configuredAdmins.length > 0 && scribeAdminEmails.length === 0) {
+    console.warn(
+      "[scribe] RELAY_SCRIBE_ADMIN_EMAILS is set but none of its addresses belong to a known member; signed-out alerts have no admin recipient",
+    );
+  }
   scribeMonitor = new ScribeMonitor(
     {
       listEvents: createCalendarEventLister({ capability: relayBffCapability, maxResults: scribeConfig.maxResults }),
       joinWorker: createWorkerJoinClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+      status: createWorkerStatusClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
       receipts: commandReceipts(),
       selfAddress: RELAY_MAILBOX_ADDRESS,
+      notify: async (notice) => {
+        const recipient = knownScribeRecipient(notice.organizer_email) ?? knownScribeRecipient(notice.creator_email);
+        if (recipient) {
+          await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice));
+        } else {
+          console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
+        }
+        if (notice.signedOut) {
+          if (scribeAdminEmails.length === 0) {
+            console.error(
+              `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
+            );
+          } else {
+            for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail());
+          }
+        }
+      },
       log: (message) => console.log(message),
     },
     scribeConfig,

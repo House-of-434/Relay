@@ -1,4 +1,4 @@
-import type { ScribeDescriptor } from "./scribe-monitor.ts";
+import type { ScribeDescriptor, ScribeWorkerStatus } from "./scribe-monitor.ts";
 
 /** Posts a descriptor to the capture worker's /join. The worker capability is
  * held in memory by the harness (PR 0 pattern) and passed in here — never an
@@ -22,5 +22,28 @@ export function createWorkerJoinClient(options: {
     });
     if (!response.ok) throw new Error(`worker join failed (${response.status})`);
     return await response.json() as { status: string };
+  };
+}
+
+/** Reads the worker's /status for one instance. Same capability, held in memory. */
+export function createWorkerStatusClient(options: {
+  url: string;
+  capability: string | undefined;
+  fetcher?: typeof fetch;
+}): (instanceId: string) => Promise<ScribeWorkerStatus> {
+  const fetcher = options.fetcher ?? fetch;
+  const statusUrl = new URL("/status", options.url).toString();
+  return async (instanceId: string) => {
+    if (typeof options.capability !== "string" || options.capability.length === 0) {
+      throw new Error("the scribe worker capability is not configured");
+    }
+    const response = await fetcher(statusUrl, {
+      method: "POST",
+      redirect: "error",
+      headers: { authorization: `Bearer ${options.capability}`, "content-type": "application/json" },
+      body: JSON.stringify({ instance_id: instanceId }),
+    });
+    if (!response.ok) throw new Error(`worker status failed (${response.status})`);
+    return await response.json() as ScribeWorkerStatus;
   };
 }

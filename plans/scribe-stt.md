@@ -895,6 +895,28 @@ Admitted ~22 s, `active`, 3 remote speakers, 155.6 s, 17 mixed segments.
 - Monitor startup now logs either `monitor enabled -> <url>`, a warn naming the
   exact missing variable(s), or `monitor disabled (RELAY_SCRIBE_ENABLED != 1)`.
 
+#### 6.13.6 Failure notices (2026-10-11, item 4)
+- Reconciliation in `ScribeMonitor.tick`: for each armed event with no
+  `scribe.notify` receipt, read the worker `/status`. Terminal states →
+  completed/partial = ready notice, failed = failure notice, **skipped = receipt
+  with no email**; non-terminal keeps polling, and after `scheduled_end` + a
+  30 min grace with no worker record it writes the receipt and gives up.
+  Every notice sends once (`scribe.notify` keyed on `instance_id`).
+- **Admin decision:** signed-out alerts go to `RELAY_SCRIBE_ADMIN_EMAILS`
+  (comma-separated), each resolved against known members (`personByEmail` →
+  `ownerByEmail`); only known members are kept. If unset/none resolve, the alert
+  falls back to the organizer only and logs loudly. Signed-out admin alerts are
+  rate-limited to one per 3 h (`RELAY_SCRIBE_ADMIN_ALERT_INTERVAL_MS`); the
+  organizer still gets a plain couldn't-join for every affected meeting, and the
+  re-authentication text goes only to admins (organizers cannot act on it).
+- Email via `server/scribe-notice.ts` (fixed templates, no model call) over the
+  capability-gated relay@ mailbox route — same transport as PR 3 but with
+  correct subjects (`sendMailboxCompletionEmail`'s "finished in Relay" framing is
+  wrong for failures). Kill-switched by `RELAY_MAILBOX_NOTIFY`.
+- Tests: monitor reconciliation (completed / failed-signed-out rate limit /
+  skipped / unknown-grace), notice templates + admin-list parsing, capability
+  scrub, compose separation.
+
 ## 7. Identity + calendar runbook (one-time, operator)
 1. Create the relay@ Google account (new account, owned by the team).
 2. Sign in once as relay@ in the Relay web UI; complete Google OAuth.
