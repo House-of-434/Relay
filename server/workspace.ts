@@ -123,7 +123,7 @@ export function workspaceLocationsPrompt(botId: string, cwd: string | undefined,
     otherThreadFiles: join(TASK_WORKSPACES_DIR, botId),
     ...(botCwd ? { configuredProjectFolder: botCwd } : {}),
   }) + ". Different conversations can have different working folders. For an existing file, use the exact path from the conversation; if missing here, check this bot's listed folders before saying it is gone or recreating it." +
-    " Follow an explicitly requested destination. Otherwise put new task output in the current working folder. Never paste filesystem paths in chat: refer to deliverables by filename and share them with attach_file, whose card is the download link. Another thread or room resolves the file server-side, so a pasted path helps nobody and only leaks internal layout." +
+    " Follow an explicitly requested destination. Otherwise put new task output in the current working folder. Never paste filesystem paths in chat: refer to deliverables by filename and share them with attach_file, whose card is the download link. Do not quote an attached file's contents in chat either: the card already previews them, so name the file and summarize instead of repeating it. Another thread or room resolves the file server-side, so a pasted path helps nobody and only leaks internal layout." +
     " Do not move old files, edit another active thread's work, or read another bot's private folders without authorization. These paths do not grant additional access.";
 }
 

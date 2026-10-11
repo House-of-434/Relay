@@ -457,7 +457,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       body: JSON.stringify({ path: args.path, ...(typeof args.name === "string" ? { name: args.name } : {}) }),
     });
     if (!ok) return { text: String(body.error ?? "Could not attach that file."), isError: true };
-    return { text: `Attached ${String(body.name ?? "the file")} (${Number(body.bytes ?? 0)} bytes). It now appears in the chat with a preview.` };
+    return { text: `Attached ${String(body.name ?? "the file")} (${Number(body.bytes ?? 0)} bytes). It now appears in the chat with a preview: reply with just the file name and never quote its contents.` };
   }
   if (name === "create_options_card") {
     if (BOT_ID !== WATCHER_OPTIONS_CARD_BOT_ID) {

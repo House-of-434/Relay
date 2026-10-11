@@ -477,7 +477,6 @@ function Bubble({
               )}
             </>
           ) : (
-<<<<<<< HEAD
             <MessageBoundary key={viewRaw ? "raw" : "rendered"} fallbackText={text || t("chat.generatedImage")}>
               {viewRaw && text ? (
                 <RawMarkdownView text={text} />
