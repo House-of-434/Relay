@@ -5,6 +5,7 @@ import { validateAttribution } from "./lib/attribution.ts";
 import { canonicalizeUrl, stubProvider } from "./lib/discovery.ts";
 import { freshnessBucket } from "./lib/freshness.ts";
 import { loadRedditFixture } from "./lib/reddit-live.ts";
+import { loadScribeFixture } from "./lib/scribe.ts";
 
 const ALICE = "123e4567-e89b-42d3-a456-426614174000";
 const BOB = "123e4567-e89b-42d3-a456-426614174001";
@@ -52,5 +53,18 @@ describe("offline research contract", () => {
     const fixture = loadRedditFixture();
     expect(fixture.url).toMatch(/^https:\/\//);
     expect(fixture.expectedFields.length).toBeGreaterThan(0);
+  });
+
+  it("keeps the scribe capture fixture well-formed and monotonic", () => {
+    const fixture = loadScribeFixture();
+    expect(fixture.provenance.platform).toBe("google_meet");
+    expect(fixture.segments.length).toBeGreaterThan(0);
+    let cursor = 0;
+    for (const segment of fixture.segments) {
+      expect(segment.start).toBeGreaterThanOrEqual(cursor);
+      expect(segment.end).toBeGreaterThan(segment.start);
+      expect(segment.text.trim().length).toBeGreaterThan(0);
+      cursor = segment.start;
+    }
   });
 });

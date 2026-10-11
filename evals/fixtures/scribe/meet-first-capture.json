@@ -1,0 +1,93 @@
+{
+  "provenance": {
+    "platform": "google_meet",
+    "capturedAt": "2026-10-10",
+    "recorder": "authenticated persistent-context join (relay@) on Oracle VPS",
+    "stt": "Parakeet TDT 0.6B int8 (sherpa-onnx), 16kHz mono, greedy",
+    "capture": "in-page AudioContext tap on mirrored remote WebRTC tracks",
+    "redaction": "No participant names present; content is a public topic (automotive history). Reviewer: confirm before widening use.",
+    "knownErrors": [
+      "'New York Central Exchange' should be 'New York Stock Exchange' (proper-noun slip; feeds the Canary-vs-Parakeet head-to-head)"
+    ]
+  },
+  "segments": [
+    {
+      "start": 0,
+      "end": 12.29,
+      "speaker": "Unknown",
+      "text": "Hey, all seal. Are you good? You play your strap."
+    },
+    {
+      "start": 12.29,
+      "end": 19.97,
+      "speaker": "Unknown",
+      "text": "Oh my god, my gosh, we need something down there."
+    },
+    {
+      "start": 19.97,
+      "end": 27.14,
+      "speaker": "Unknown",
+      "text": "Auto and aviation construction, which is what you"
+    },
+    {
+      "start": 27.14,
+      "end": 34.05,
+      "speaker": "Unknown",
+      "text": "Steeps that auto in there because not really supposed to be building cars and racing them, but like I'm doing other stuff too."
+    },
+    {
+      "start": 34.05,
+      "end": 40.96,
+      "speaker": "Unknown",
+      "text": "Yeah, it's not called Ferrari. It's not called Ferrari, but this same company is better known today as Ferrari."
+    },
+    {
+      "start": 40.96,
+      "end": 47.87,
+      "speaker": "Unknown",
+      "text": "Associate of Per Azioni or Ferrari SPA, the Ferrari joint stock company that is"
+    },
+    {
+      "start": 47.87,
+      "end": 54.78,
+      "speaker": "Unknown",
+      "text": "Publicly traded by the New York Central Exchange under the ticker race. Yes. Best stock ticker ever. Best stock ticker ever."
+    },
+    {
+      "start": 54.78,
+      "end": 61.7,
+      "speaker": "Unknown",
+      "text": "Indeed. So what is this company doing? They're not making cars, even though auto is in the name. They're making machine tools."
+    },
+    {
+      "start": 61.7,
+      "end": 68.61,
+      "speaker": "Unknown",
+      "text": "In the workshops of the essentially factory that Enzo has created there in Modena. And on each tool, throughout."
+    },
+    {
+      "start": 68.61,
+      "end": 75.78,
+      "speaker": "Unknown",
+      "text": "The war effort that they make. Enzo has them stamp a prancing horse during Ferrari Mott."
+    },
+    {
+      "start": 75.78,
+      "end": 82.69,
+      "speaker": "Unknown",
+      "text": "Clearly signaling his intentions after the war, of what he's going to do. And those are some very valuable."
+    },
+    {
+      "start": 82.69,
+      "end": 89.6,
+      "speaker": "Unknown",
+      "text": "collectors items if you can find them. So anyway, Enzo and his factory are pretty good at making these machines."
+    },
+    {
+      "start": 89.6,
+      "end": 96.51,
+      "speaker": "Unknown",
+      "text": "Tools they become part of the war effort. So, as the war wears on and the Allies push into Europe."
+    }
+  ]
+}
