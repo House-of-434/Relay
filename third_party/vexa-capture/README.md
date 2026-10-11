@@ -28,7 +28,10 @@ Third-party artifacts these sources depend on (not vendored here):
 | `core/meetings/modules/mixed-capture-core/` | WebRTC remote-audio hook, Teams main-audio tap, CSRC transport poll |
 | `core/meetings/modules/mixed-pipeline/` | Mixed-lane (Zoom/Teams) chunked transcription + hints-based speaker binder |
 | `core/meetings/modules/gmeet-pipeline/` | Per-channel Meet lane (named audio, no diarizer) |
+| `core/meetings/modules/gmeet-capture/` | **Meet page-side capture** (browser): per-participant PCM (`gmeet-capture`, AudioWorklet `pcm-capture`) + glow speaker naming (`gmeet-speakers`, `gmeet-channel-binder`) + the `capture.v1` producer (`gmeet-capture-v1`) |
+| `core/meetings/modules/buffer/` | `@vexa/transcribe-buffer`: LocalAgreement-N confirm core + `GmeetCompatibleBuffer` (the pipeline's confirmation primitive) |
 | `core/meetings/modules/whisper/` | `stt.v1` multipart-WAV client contract + confidence filter |
+| `core/meetings/contracts/transcript.v1/` | The SEALED `transcript.v1` schema (+ golden) the pipeline conformance golden validates against |
 | `core/meetings/modules/join/` | Deterministic Meet/Zoom/Teams selectors (`googlemeet`, `zoom`, `msteams`, `shared`, root `_host`/`browser-args`/`index`) — plus the `jitsi` lane, included although Scribe never instantiates it, because `index.ts` imports it and the package must stay coherent |
 | `core/meetings/services/bot/src/{capture-bridge,pipeline,join-driver}.ts` | Orchestration seam — **adapt, don't copy wholesale** |
 
@@ -45,18 +48,39 @@ Those stay upstream reference material only.
 
 ## Verification
 
-These files are byte-identical to the pinned upstream commit (121 `.ts` /
-`package.json` files plus `LICENSE`, verified 2026-10-10). Layout note: each
-module's `src/` contents live directly under the module directory here
-(e.g. `mixed-pipeline/chunked-transcriber.ts`, not
-`mixed-pipeline/src/chunked-transcriber.ts`); the `join` lane keeps its
-`src/` level because only four of its subdirectories were taken. Relative
-imports are unaffected either way. Per-file SHA-256 hashes: `HASHES`.
-Re-verify with `git show <UPSTREAM_COMMIT>:<upstream path>` per the mapping
-above, or `diff -r` against a fresh checkout with the `src/` level accounted
-for.
+Vendored sources are byte-identical to the pinned upstream commit; per-file
+SHA-256 hashes are in `HASHES`. Re-verify with
+`git show <UPSTREAM_COMMIT>:<upstream path>` per the mapping above.
+
+**Layout.** Most modules are flattened: their upstream `src/` contents live
+directly under the module directory here (e.g.
+`mixed-pipeline/chunked-transcriber.ts`, not
+`mixed-pipeline/src/chunked-transcriber.ts`); their vendored `README.md` is the
+upstream `src/README.md`. Two modules keep their `src/` level because code in
+them resolves files by relative path above `src/`:
+- `join/` — only four subdirectories were taken.
+- `gmeet-pipeline/` — `pipeline-conformance.test.ts` reads the sealed schema at
+  `../../../contracts/transcript.v1/transcript.schema.json`, which only resolves
+  from `gmeet-pipeline/src/`. `contracts/transcript.v1/` is vendored at its
+  upstream-relative location for the same reason.
+
+Relative imports within a module are unaffected by flattening. The vendored
+golden tests are run UNMODIFIED by
+`pnpm --filter @relay/scribe-capture test:vendored`.
 
 ## Adaptations
 
-None yet. Record each future adaptation here as:
-`<file> — <date> — <what changed and why>`.
+Only the documented changes below deviate from upstream. No vendored source
+(`*.ts`) was edited.
+
+- `package.json` (added for `gmeet-capture`, `gmeet-pipeline`, `buffer`,
+  `whisper`) — 2026-10-10 — Upstream ships no in-tree package manifest for these
+  (its packages are build outputs). Added so the vendored modules resolve as
+  pnpm workspace packages: `exports` points at the flattened `index.ts`, and
+  `gmeet-pipeline` declares its `@vexa/transcribe-buffer` /
+  `@vexa/transcribe-whisper` siblings so their bare specifiers resolve without
+  editing the vendored import lines. `gmeet-capture`'s type-only
+  `@vexa/capture-codec` dependency is not vendored (it is erased at build; the
+  value it backs, `createGmeetCaptureV1`, is not on Scribe's path).
+- `gmeet-pipeline/*` — 2026-10-10 — Re-laid out to keep the upstream `src/`
+  level (see Layout) so the conformance golden runs unmodified.

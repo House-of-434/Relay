@@ -1,16 +1,58 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
 import { chromium, type BrowserContext, type Page } from "playwright";
 
 import type { WorkerConfig } from "./config.js";
 import { CAPTURE_INIT_SCRIPT } from "./capture-init.js";
+import { REMOTE_AUDIO_HOOK } from "./vexa-remote-audio-hook.js";
 import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
-import { HttpSttClient, pcm16ToWav } from "./stt-client.js";
+import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
+import { toSegment } from "./gmeet-segment.js";
 import { hostAllowed, nativeIdFor } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
+
+/** One confirmed segment from the vendored gmeet pipeline (transcript.v1 view). */
+interface GmeetSeg {
+  speaker: string;
+  speaker_key?: string;
+  text: string;
+  start: number;
+  end: number;
+  language?: string | null;
+  confidence?: number;
+  source?: string;
+}
+interface GmeetPipeline {
+  feedAudio(channel: number, glowName: string | undefined, pcm: Float32Array, ts: number): void;
+  flush(): Promise<void>;
+  dispose(): Promise<void>;
+}
+interface VexaGmeetModule {
+  createGmeetPipeline(opts: {
+    transcribe: (
+      pcm: Float32Array,
+      prompt?: string,
+    ) => Promise<{ text: string; language?: string; segments?: Array<{ start: number; end: number; text: string }> }>;
+    sink: { segment: (s: GmeetSeg) => void; draft?: (s: GmeetSeg) => void; finalize: () => void | Promise<void> };
+    unknownLabel?: string;
+    onError?: (e: unknown) => void;
+  }): GmeetPipeline;
+}
+let vexaGmeetCache: VexaGmeetModule | null = null;
+/** Vendored per-channel Meet pipeline, loaded lazily so third-party code stays
+ *  out of our typecheck (mirrors loadVexaJoin). */
+async function loadGmeetPipeline(): Promise<VexaGmeetModule> {
+  if (vexaGmeetCache) return vexaGmeetCache;
+  const here = dirname(fileURLToPath(import.meta.url));
+  const spec = joinPath(here, "../../../third_party/vexa-capture/core/meetings/modules/gmeet-pipeline/src/index.js");
+  vexaGmeetCache = (await import(spec)) as unknown as VexaGmeetModule;
+  return vexaGmeetCache;
+}
+
+
 
 /** The vendored Vexa join layer. Loaded lazily with a computed specifier so it
  * is not pulled into our typecheck (it is third-party code) while still
@@ -33,6 +75,39 @@ async function loadVexaJoin(): Promise<VexaJoin> {
 
 const VEXA_SCREENSHOT_DIR = "/app/storage/screenshots";
 
+/** Per-channel Meet lane bundle (built by scripts/build-capture.mjs). */
+const HERE = dirname(fileURLToPath(import.meta.url));
+const DEFAULT_GMEET_BUNDLE = joinPath(HERE, "../dist/gmeet-capture.bundle.js");
+
+interface ProbeFrame {
+  t: number;
+  channel: number;
+  name: string | null;
+  energy: number;
+}
+
+/** Derive per-channel name-bind transitions from the frame stream (the vendored
+ *  binder emits no events; the resolved name per channel IS the binding). */
+function discoverBindTransitions(
+  frames: ProbeFrame[],
+): Array<{ t: number; channel: number; from: string | null; to: string | null }> {
+  const last = new Map<number, string | null>();
+  const out: Array<{ t: number; channel: number; from: string | null; to: string | null }> = [];
+  for (const f of frames) {
+    if (!last.has(f.channel)) {
+      last.set(f.channel, f.name);
+      if (f.name) out.push({ t: f.t, channel: f.channel, from: null, to: f.name });
+      continue;
+    }
+    const prev = last.get(f.channel) ?? null;
+    if (prev !== f.name) {
+      out.push({ t: f.t, channel: f.channel, from: prev, to: f.name });
+      last.set(f.channel, f.name);
+    }
+  }
+  return out;
+}
+
 /** Leave using the platform's own flow. */
 async function leaveFor(page: Page, platform: string): Promise<void> {
   const vexa = await loadVexaJoin();
@@ -53,6 +128,15 @@ class MeetSession {
   private readonly spool: SegmentSpool;
   private readonly stt: HttpSttClient;
   private readonly ingest: IngestClient;
+  private gmeet: GmeetPipeline | null = null;
+  private captureStartMs = 0;
+  private probeFrames: ProbeFrame[] = [];
+  private probeSegments: Segment[] = [];
+  private probeTiles: Array<Record<string, unknown>> = [];
+  private probePath: string | null = null;
+  private probeStreams = 0;
+  private probeDomStart: unknown = null;
+  private probeDomEnd: unknown = null;
 
   constructor(private readonly descriptor: JoinDescriptor, private readonly config: WorkerConfig) {
     this.spool = new SegmentSpool(config.flushSegments, config.flushMs, Date.now());
@@ -88,6 +172,9 @@ class MeetSession {
     if (!due) return;
     const segments = this.spool.drain(Date.now());
     if (segments.length === 0 && !force) return;
+    // GATE probe writes no rows: the store contract is already proven, and the
+    // probe must not depend on a deployed ingest route.
+    if (this.config.gmeetProbe) return;
     try {
       await this.ingest.post(this.meetingRow(status), segments);
     } catch (e) {
@@ -114,7 +201,27 @@ class MeetSession {
         args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         locale: "en-US",
       });
-      await this.context.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+      const isMeet = this.descriptor.platform === "google_meet";
+      if (isMeet) {
+        // Per-channel Meet lane: the remote-audio hook (so elements exist even if
+        // Meet hides them — the entry dedupes by audio track id) + the capture
+        // bundle. The mixed tap is NOT installed for Meet.
+        const bundle = this.config.gmeetBundlePath ?? DEFAULT_GMEET_BUNDLE;
+        if (!existsSync(bundle)) {
+          throw new Error(`gmeet capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
+        }
+        await this.context.addInitScript({ content: REMOTE_AUDIO_HOOK });
+        await this.context.addInitScript({ path: bundle });
+        await this.context.addInitScript({
+          content: `window.__scribeGmeetConfig = ${JSON.stringify({
+            selfName: this.config.selfName,
+            maxStreams: this.config.maxStreams,
+            debug: false,
+          })};`,
+        });
+      } else {
+        await this.context.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+      }
       this.page = this.context.pages()[0] ?? await this.context.newPage();
 
       this.status = "joining";
@@ -137,15 +244,23 @@ class MeetSession {
 
       // Time zero is the start of capture.
       this.captureStartedAt = new Date().toISOString();
+      this.captureStartMs = Date.now();
       this.status = "active";
-      await this.ingest.post(this.meetingRow("active"), []);
+      if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
+
+      if (isMeet) {
+        await this.gmeetStart();
+        if (this.config.gmeetProbe) await this.probeStart();
+      }
 
       const deadline = Date.now() + this.config.maxMeetingMs;
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
-        await this.captureOnce();
+        if (isMeet) await this.gmeetFeedOnce();
+        else await this.captureOnce();
         await this.flush(false, "active");
+        if (isMeet && this.config.gmeetProbe) await this.probeTick();
       }
       await this.finalize(this.current === "skipped" ? "skipped" : this.stopped ? "partial" : "completed");
     } catch (e) {
@@ -191,9 +306,154 @@ class MeetSession {
     this.spool.add(segment);
   }
 
+  // ── Per-channel Meet lane (vendored gmeet-pipeline) ──
+
+  private async gmeetStart(): Promise<void> {
+    if (!this.page) return;
+    const mod = await loadGmeetPipeline();
+    const captureStartSec = this.captureStartMs / 1000;
+    const transcribe = async (
+      pcm: Float32Array,
+    ): Promise<{ text: string; language?: string; segments?: Array<{ start: number; end: number; text: string }> }> => {
+      const out = await this.stt.transcribe(pcm16ToWav(float32ToPcm16(pcm)));
+      const text = out.text.trim();
+      const dur = out.audio_seconds ?? pcm.length / 16_000;
+      return { text, language: "en", segments: text ? [{ start: 0, end: dur, text }] : [] };
+    };
+    const sink = {
+      segment: (s: GmeetSeg): void => {
+        const seg = toSegment(s, captureStartSec);
+        this.spool.add(seg);
+        if (this.config.gmeetProbe) this.probeSegments.push(seg);
+      },
+      draft: (): void => {
+        /* MVP persists confirmed segments only */
+      },
+      finalize: (): void => {
+        /* no-op */
+      },
+    };
+    this.gmeet = mod.createGmeetPipeline({
+      transcribe,
+      sink,
+      onError: (e: unknown) => {
+        this.error = (e instanceof Error ? e.message : "gmeet pipeline error").slice(0, 200);
+      },
+    });
+    await this.page.evaluate(async () => {
+      await (window as any).__scribeGmeet?.start?.();
+    });
+  }
+
+  private async gmeetFeedOnce(): Promise<void> {
+    if (!this.page || !this.gmeet) return;
+    let frames: Array<{ channel: number; name: string | null; energy: number; ts: number; pcm?: number[] }>;
+    try {
+      frames = await this.page.evaluate(() => (window as any).__scribeGmeet?.drain?.(true) ?? []);
+    } catch {
+      return;
+    }
+    for (const f of frames) {
+      if (!f.pcm) continue;
+      this.gmeet.feedAudio(f.channel, f.name ?? undefined, Float32Array.from(f.pcm), f.ts);
+      if (this.config.gmeetProbe) {
+        this.probeFrames.push({
+          t: Number(((f.ts - this.captureStartMs) / 1000).toFixed(2)),
+          channel: f.channel,
+          name: f.name,
+          energy: f.energy,
+        });
+      }
+    }
+  }
+
+  // ── GATE probe artifact (debug; VPS-local, never committed) ──
+
+  private async probeStart(): Promise<void> {
+    if (!this.page) return;
+    try {
+      this.probeDomStart = await this.page.evaluate(() => (window as any).__scribeGmeet?.probeDom?.() ?? null);
+    } catch (e) {
+      this.error = (e instanceof Error ? `probe start: ${e.message}` : "probe start failed").slice(0, 200);
+    }
+  }
+
+  private async probeTick(): Promise<void> {
+    if (!this.page) return;
+    try {
+      const state = (await this.page.evaluate(() => (window as any).__scribeGmeet?.state?.() ?? null)) as
+        | { path?: string; streams?: number }
+        | null;
+      if (state?.path) this.probePath = state.path;
+      if (typeof state?.streams === "number") this.probeStreams = state.streams;
+      const tiles = await this.page.evaluate(() => (window as any).__scribeGmeet?.tiles?.() ?? { tiles: [], labels: {} });
+      this.probeTiles.push({ t: Number(((Date.now() - this.captureStartMs) / 1000).toFixed(2)), ...(tiles as object) });
+    } catch {
+      /* probe logging must never break capture */
+    }
+  }
+
+  private async probeFinish(): Promise<void> {
+    if (!this.page) return;
+    try {
+      this.probeDomEnd = await this.page.evaluate(() => (window as any).__scribeGmeet?.probeDom?.() ?? null);
+    } catch {
+      /* best effort */
+    }
+    this.writeProbeArtifact();
+  }
+
+  private writeProbeArtifact(): void {
+    try {
+      mkdirSync(this.config.probeDir, { recursive: true });
+      const artifact = {
+        kind: "scribe-gmeet-probe",
+        generated_at: new Date().toISOString(),
+        instance_id: this.descriptor.instance_id,
+        platform: this.descriptor.platform,
+        title: this.descriptor.title ?? null,
+        capture_start: this.captureStartedAt,
+        duration_seconds: this.lastEnd > 0 ? Number(this.lastEnd.toFixed(1)) : null,
+        stream_count: this.probeStreams,
+        path: this.probePath,
+        bind_transitions: discoverBindTransitions(this.probeFrames),
+        segments: this.probeSegments,
+        tile_snapshots: this.probeTiles,
+        dom_start: this.probeDomStart,
+        dom_end: this.probeDomEnd,
+        frames: this.probeFrames,
+      };
+      writeFileSync(
+        joinPath(this.config.probeDir, `${this.descriptor.instance_id}.json`),
+        JSON.stringify(artifact, null, 2),
+      );
+    } catch (e) {
+      this.error = (e instanceof Error ? `probe artifact: ${e.message}` : "probe artifact failed").slice(0, 200);
+    }
+  }
+
   private async finalize(status: CaptureStatus): Promise<void> {
     this.status = status;
+    if (this.descriptor.platform === "google_meet" && this.captureStartMs > 0) {
+      this.lastEnd = (Date.now() - this.captureStartMs) / 1000;
+    }
     try {
+      // Flush every open turn through the lane BEFORE the final spool flush, so
+      // the meeting's tail is emitted (never lost).
+      if (this.gmeet) {
+        await this.gmeet.dispose().catch(() => { /* best effort */ });
+        this.gmeet = null;
+      }
+      if (this.page && this.descriptor.platform === "google_meet") {
+        try {
+          await this.page.evaluate(() => {
+            (window as any).__scribeGmeet?.stop?.();
+          });
+        } catch { /* best effort */ }
+      }
+      if (this.config.gmeetProbe && this.descriptor.platform === "google_meet") {
+        await this.probeFinish();
+      }
       if (this.page) {
         try {
           await leaveFor(this.page, this.descriptor.platform);

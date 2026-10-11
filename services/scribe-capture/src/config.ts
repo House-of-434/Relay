@@ -22,10 +22,24 @@ export interface WorkerConfig {
   flushMs: number;
   /** Concurrency cap; a meeting beyond this becomes failed "at capacity". */
   maxConcurrent: number;
-  /** Feature gate. */
+  /** Action gate: /join is refused unless RELAY_SCRIBE_ENABLED=1. Default off,
+   *  matching the harness monitor gate, so a stray join cannot capture merely by
+   *  deploying the worker. */
   enabled: boolean;
   /** A meeting longer than this is force-ended (safety). */
   maxMeetingMs: number;
+  /** Per-channel Meet lane: cap on concurrent speaker streams (each extra stream
+   *  is another STT call site). */
+  maxStreams: number;
+  /** The bot's own display name, excluded from glow binding. */
+  selfName: string;
+  /** GATE probe: run the per-channel Meet lane and write a naming artifact
+   *  (also feeds the pipeline; skips ingest). */
+  gmeetProbe: boolean;
+  /** Directory for probe artifacts (privacy: VPS-local, never committed). */
+  probeDir: string;
+  /** Injected bundle for the per-channel Meet lane; default resolved next to src. */
+  gmeetBundlePath: string | undefined;
   /** Scribe state root: spool, failures, status files, profile. */
   dataDir: string;
   /** Retention for failure screenshots and status files. */
@@ -53,8 +67,13 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     flushSegments: num(env.RELAY_SCRIBE_FLUSH_SEGMENTS, 50),
     flushMs: num(env.RELAY_SCRIBE_FLUSH_MS, 17_500),
     maxConcurrent: num(env.RELAY_SCRIBE_MAX_CONCURRENT, 2),
-    enabled: (env.RELAY_SCRIBE_ENABLED ?? "1") !== "0",
+    enabled: env.RELAY_SCRIBE_ENABLED === "1",
     maxMeetingMs: num(env.RELAY_SCRIBE_MAX_MEETING_MS, 4 * 60 * 60 * 1000),
+    maxStreams: num(env.RELAY_SCRIBE_MAX_STREAMS, 12),
+    selfName: (env.RELAY_SCRIBE_SELF_NAME ?? "Relay Scribe").trim(),
+    gmeetProbe: (env.RELAY_SCRIBE_GMEET_PROBE ?? "0") === "1",
+    probeDir: (env.RELAY_SCRIBE_PROBE_DIR ?? "/data/scribe/probes").trim(),
+    gmeetBundlePath: env.RELAY_SCRIBE_GMEET_BUNDLE?.trim() || undefined,
     dataDir: (env.RELAY_SCRIBE_DATA_DIR ?? "/data/scribe").trim(),
     retentionMs: num(env.RELAY_SCRIBE_RETENTION_MS, 14 * 24 * 60 * 60 * 1000),
     diskMinBytes: num(env.RELAY_SCRIBE_DISK_MIN_BYTES, 1024 * 1024 * 1024),

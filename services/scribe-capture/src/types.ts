@@ -29,13 +29,18 @@ export interface JoinDescriptor {
   reject_reason?: string;
 }
 
-/** One confirmed transcript segment. `segment_key` is stable per meeting. */
+/** One confirmed transcript segment. `segment_key` is stable per meeting
+ *  (`ch<channel>:<start_ms>`), so a re-flush upserts the same row. */
 export interface Segment {
   segment_key: string;
   speaker: string | null;
   start_seconds: number;
   end_seconds: number;
   text: string;
+  /** Per-channel lane provenance; absent on the mixed lane. */
+  channel?: number | null;
+  speaker_key?: string | null;
+  source?: string | null;
   confidence?: number | null;
   language?: string | null;
 }

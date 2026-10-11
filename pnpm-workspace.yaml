@@ -3,3 +3,14 @@ packages:
   - "."
   - "services/*"
   - "packages/*"
+  # Vendored Vexa capture bricks, registered so their bare `@vexa/*` specifiers
+  # resolve without editing the (unmodified) vendored import lines.
+  - "third_party/vexa-capture/core/meetings/modules/gmeet-capture"
+  - "third_party/vexa-capture/core/meetings/modules/gmeet-pipeline"
+  - "third_party/vexa-capture/core/meetings/modules/buffer"
+  - "third_party/vexa-capture/core/meetings/modules/whisper"
+
+# esbuild's postinstall fetches its platform binary; it is required to build the
+# injected Meet capture bundle (services/scribe-capture/scripts/build-capture.mjs).
+onlyBuiltDependencies:
+  - esbuild

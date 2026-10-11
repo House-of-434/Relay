@@ -1,47 +1,18 @@
 /** Injected before any page script in the capture browser.
  *
- * 1. Mirrors every remote WebRTC audio track into a hidden <audio> element
- *    (the vendored Vexa hook, inlined — Meet hides per-participant audio).
+ * 1. Installs the remote-audio hook (mirrors every remote WebRTC audio track into
+ *    a hidden <audio> element — Meet hides per-participant audio).
  * 2. Taps every audio.srcObject through a 16 kHz AudioContext into one mono
  *    PCM ring the driver drains over CDP. Captures the REMOTE participants.
  *
  * Slice 1 captures the mixed remote stream (speaker = Unknown). Per-channel
  * naming (Vexa's binder / DOM hints) is a later slice. */
-export const CAPTURE_INIT_SCRIPT = String.raw`
+import { REMOTE_AUDIO_HOOK } from "./vexa-remote-audio-hook.js";
+
+export const CAPTURE_INIT_SCRIPT = REMOTE_AUDIO_HOOK + String.raw`
 (function () {
   if (window.__scribeInstalled) return;
   window.__scribeInstalled = true;
-
-  try {
-    if (typeof RTCPeerConnection === "function" && !window.__vexaRemoteAudioHookInstalled) {
-      window.__vexaRemoteAudioHookInstalled = true;
-      window.__vexaMirroredTrackIds = new Set();
-      const OriginalPC = RTCPeerConnection;
-      const handleTrack = function (event) {
-        try {
-          if (!event.track || event.track.kind !== "audio") return;
-          if (window.__vexaMirroredTrackIds.has(event.track.id)) return;
-          window.__vexaMirroredTrackIds.add(event.track.id);
-          const stream = (event.streams && event.streams[0]) || new MediaStream([event.track]);
-          const el = document.createElement("audio");
-          el.autoplay = true; el.muted = false; el.volume = 1.0;
-          el.dataset.vexaInjected = "true";
-          el.style.position = "absolute"; el.style.left = "-9999px";
-          el.style.width = "1px"; el.style.height = "1px";
-          el.srcObject = stream;
-          if (el.play) el.play().catch(function () {});
-          (document.body || document.documentElement).appendChild(el);
-        } catch (e) {}
-      };
-      function WrappedPC() {
-        const pc = new OriginalPC(...arguments);
-        pc.addEventListener("track", handleTrack);
-        return pc;
-      }
-      WrappedPC.prototype = OriginalPC.prototype;
-      try { window.RTCPeerConnection = WrappedPC; } catch (e) {}
-    }
-  } catch (e) {}
 
   const CAP_SAMPLES = 16000 * 180;
   let chunks = [];

@@ -1,0 +1,14 @@
+{
+  "name": "@vexa/gmeet-pipeline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored @vexa/gmeet-pipeline: channel-routed Meet transcription. ADAPTED for Relay: exports resolve to the flattened .ts sources; declares its two @vexa sibling deps so their bare specifiers resolve from this package's node_modules without editing the vendored import lines.",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./src/index.ts", "default": "./src/index.ts" }
+  },
+  "dependencies": {
+    "@vexa/transcribe-buffer": "workspace:*",
+    "@vexa/transcribe-whisper": "workspace:*"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "@vexa/transcribe-buffer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored @vexa/transcribe-buffer: LocalAgreement-N confirm core + GmeetCompatibleBuffer. ADAPTED for Relay: exports resolve to the flattened .ts sources (no build step).",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.ts", "default": "./index.ts" }
+  }
+}

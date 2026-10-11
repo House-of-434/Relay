@@ -53,6 +53,16 @@ export class HttpSttClient implements SttClient {
   }
 }
 
+/** Float32 PCM in [-1,1] → little-endian int16 PCM bytes (16 kHz mono). */
+export function float32ToPcm16(pcm: Float32Array): Buffer {
+  const i16 = new Int16Array(pcm.length);
+  for (let i = 0; i < pcm.length; i++) {
+    const s = Math.max(-1, Math.min(1, pcm[i]));
+    i16[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return Buffer.from(i16.buffer, i16.byteOffset, i16.byteLength);
+}
+
 /** Wrap raw 16 kHz mono int16 PCM as a WAV container. */
 export function pcm16ToWav(pcm: Buffer, sampleRate = 16_000): Buffer {
   const header = Buffer.alloc(44);

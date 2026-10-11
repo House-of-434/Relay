@@ -1,0 +1,10 @@
+{
+  "name": "@vexa/gmeet-capture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored @vexa/gmeet-capture (browser): per-participant PCM + glow speaker naming. ADAPTED for Relay: exports resolve to the flattened .ts sources; the type-only @vexa/capture-codec dependency (gmeet-capture-v1.ts) is not vendored because it is erased at build.",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.ts", "default": "./index.ts" }
+  }
+}

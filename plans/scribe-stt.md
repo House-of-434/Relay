@@ -752,6 +752,149 @@ Slices 2–4 (monitor, Zoom/Teams, notices/compose) still pending.
 (`third_party/vexa-capture` `gmeet-pipeline` + `speaker-streams`) so the
 speaker column carries names, before anything is wired into production. This
 also changes the per-bot resource numbers, so compose limits wait on it.
+
+### 6.13 Gate probe — offline slice built (2026-10-11, Phase A)
+The per-channel Meet lane's offline parts are built; the live probe is the gate
+run. What exists now:
+- **Vendored** (Apache-2.0, pinned `18e7ac1`): `gmeet-capture` (page-side
+  per-participant PCM + AudioWorklet + glow speaker naming + the energy↔glow
+  `GmeetChannelBinder`), `buffer` (`@vexa/transcribe-buffer`), and the sealed
+  `contracts/transcript.v1` schema. `gmeet-pipeline` was re-laid out to keep its
+  `src/` level so its conformance golden resolves the schema. All vendored
+  goldens run UNMODIFIED via `pnpm --filter @relay/scribe-capture test:vendored`
+  (16 files). See `third_party/vexa-capture/README.md` for the layout +
+  adaptation record.
+- **Page glue** `services/scribe-capture/src/capture-gmeet.entry.ts` (bundled by
+  `scripts/build-capture.mjs` → `dist/gmeet-capture.bundle.js`, injected via
+  `addInitScript`): composes the vendored bricks and exposes
+  `window.__scribeGmeet` (`start/stop/drain/state/tiles/probeDom`). **Adaptation:**
+  one shared `AudioContext` for all streams (upstream creates one per stream,
+  which Chromium caps at ~6 → larger meetings would lose audio silently).
+- **Probe mode** (`RELAY_SCRIBE_GMEET_PROBE=1`, Meet only): runs the per-channel
+  lane ALONGSIDE the mixed tap for one session and writes a naming artifact
+  (`<probeDir>/<instance_id>.json`: per-channel frames with meeting-relative
+  timestamps, derived bind transitions, tile snapshots incl. the bot's own tile,
+  `dom_start/dom_end` probes, and `path` = `dom`|`hook`). Default `probeDir` is
+  `/data/scribe/probes`. **Privacy:** artifacts contain participant names +
+  meeting content — VPS-local only, deleted after review, never committed; only a
+  redacted summary belongs in `evals/fixtures/scribe/`.
+- **Duplicate display names (limitation):** two participants who share a display
+  name cannot be told apart from the DOM. `src/gmeet-labels.ts` disambiguates by
+  tile identity — the first tile keeps the name, later same-named tiles become
+  `"Dana (2)"`, `"Dana (3)"` — so the binder never merges or picks one. It can
+  never emit a WRONG name; if a tile is unnamed its channel stays `Unknown`.
+  Pinned by `src/gmeet-labels.test.ts`.
+- **Decision rule:** if most turns carry the correct name in the 3-person probe,
+  ship the per-channel lane (Phase B: feed `gmeet-pipeline`, stable
+  `ch<n>:<start_ms>` segment keys, VAD gate, stream cap). Otherwise fall back to
+  the vendored mixed lane + pyannote + hints binder.
+
+#### 6.13.1 Live probe result (2026-10-11, VPS, 3-person Meet)
+Admitted ~22 s, `active`, 3 remote speakers, 155.6 s, 17 mixed segments.
+- **`path=dom`** — Meet exposes native `<audio>` elements with live `srcObject`;
+  the hook was not needed. **No structural audio↔tile link**: every probed audio
+  element had `participantId=null`/`tileName=null`, so glow↔energy correlation is
+  the only naming path — and it worked.
+- **Names resolved correctly per channel** — `Pranam Shetty`, `Hotel Pancharatna`,
+  `Miguel O'Hara` (the 3 roster tiles). 135/864 frames were `Unknown` (uncertain)
+  — never a wrong name. Transitions bound each channel to the matching tile.
+- **Bug found + fixed (harness artifact):** the mixed tap's remote-audio hook ran
+  alongside the lane, mirroring each remote track into a second `<audio>` → **6
+  channels for 3 speakers** (3 native + 3 mirrored, same track ids). The duplicate
+  pair made the binder's 1:1 rule thrash on the long speaker (116 null↔name
+  transitions). Root cause: dedupe by `stream.id` (mirrors get a new stream id).
+  Fixed in `capture-gmeet.entry.ts` to dedupe by **audio track id**.
+- **Dedupe fix confirmed live** (second run, 3-person Meet, 189.7 s): 
+  `stream_count=3`, three stable channels (ch0→Pranam, ch1→Miguel, ch2→Hotel),
+  only 19 transitions total (brief `Unknown` gaps at turns/crosstalk), no
+  cross-assignment. `dom_start` still showed 6 audio elements (3 native + 3 hook
+  mirrors, same track ids) — the track-id dedupe collapsed them to 3.
+- **Self tile not detected** (no `data-self-name`; the bot's tile had name `null`).
+  Likely a Google-assigned display name / absent marker on a Workspace account
+  without a set name. `setSelfName` never fired; the bot is muted so no self glow
+  in these runs. Phase-B robustness item: identify self structurally (or from the
+  bot's own `data-self-name`/participant id) so a speaking bot can't bind a remote
+  channel.
+- **Decision: PASS — proceed with the per-channel lane (Phase B).**
+- Artifact: `<probeDir>/probe-irk-*.json` (kept on the VPS; redacted summary only
+  into `evals/fixtures/scribe/`).
+
+#### 6.13.2 Phase B — per-channel Meet lane built + live-verified (2026-10-11)
+- **Meet capture is now the per-channel lane** (`session.ts`): inject the
+  remote-audio hook + the entry bundle, feed frames to the vendored
+  `createGmeetPipeline` (loaded lazily by relative specifier, like the join
+  layer), map emitted `TranscriptSegment`s → store rows. The mixed tap remains
+  for Zoom/Teams (unchanged); Meet no longer uses it.
+- **Mapping** (`gmeet-segment.ts`, pure + tested): times become meeting-relative
+  seconds from capture start; `segment_key = ch<channel>:<start_ms>` (stable, so a
+  re-flush upserts the same row); the pipeline's `Speaker` placeholder → `null`;
+  `channel`/`speaker_key`/`source`/`confidence` persisted (the ingest route
+  spreads segment fields onto the table).
+- **Silence gate + stream cap**: the entry drop-gates near-silent frames and caps
+  concurrent streams (`RELAY_SCRIBE_MAX_STREAMS`, default 12); `selfName` via
+  `RELAY_SCRIBE_SELF_NAME`.
+- **Live end-to-end (VPS, real ingest → Supabase)**: 3-speaker Meet, 26 rows
+  written with real names (`Hotel Pancharatna`, `Pranam Shetty`, `Miguel O'Hara`),
+  `source=glow-bound`, `confidence=1`, channels 0–2, meeting-relative times
+  `1.05`→`146.8`s, keys `ch<n>:<epoch_ms>`; meeting row `partial`,
+  `segment_count=26`, `duration≈154`s.
+- **Caveat (owed):** the opening ~4 s settled after two channels briefly shared a
+  name before re-binding — confirm against a roster whether any single speaker's
+  continuous talk was split across two channels (needs a roster-annotated run).
+  Self-tile detection still open (see above).
+- Verification: worker 27/27, vendored 16/16, monitor 12/12, evals 6/6, lint +
+  server tsc clean.
+
+#### 6.13.3 Compose + images built (2026-10-11, item 6)
+- `deploy/local/Dockerfile.scribe`: Node + Playwright Chromium, filtered
+  workspace install (scribe-capture + the vendored `@vexa/*` modules), bundle
+  built in-image; runs the worker via tsx. `deploy/local/start-scribe.sh` execs
+  so a fatal exit trips `restart: unless-stopped`.
+- `deploy/local/Dockerfile.stt`: Python + sherpa-onnx + Parakeet TDT 0.6B v2 int8
+  (model baked, ~480 MB build download); attribution in `STT-NOTICE.md`.
+- `compose.yaml`: `scribe` (`:8791`, `scribe_data` volume mounted ONLY here, no
+  published ports, mem_limit, healthcheck) and `stt` (`:8090`, mem_limit,
+  healthcheck); `app` gains `.env.scribe` + `RELAY_SCRIBE_WORKER_URL`, `tools`
+  gains `.env.ingest`.
+- `.env.ingest` / `.env.scribe` split capabilities + gitignored; examples added;
+  `.env.example` + `deploy/local/README.md` document the config, the one-time
+  relay@ login, and the deploy order (Tool Layer → worker+STT with
+  `RELAY_SCRIBE_ENABLED=0` → verify → enable).
+- Verified: both images build; `docker compose config` clean; `scribe`
+  smoke-tested (healthz OK, `/join` 401 without capability, bundle + Chromium
+  present); `stt` smoke-tested (model loads, `/transcribe` returns text).
+
+#### 6.13.4 Monitor wired into the harness (2026-10-11, item 2)
+- `server/index.ts`: `RELAY_SCRIBE_WORKER_CAPABILITY` read into a module const and
+  deleted from `process.env` (mirrors `relayBffCapability`); `RELAY_SCRIBE_WORKER_URL`
+  default `http://127.0.0.1:8791`. The `ScribeMonitor` is constructed only when
+  `RELAY_SCRIBE_ENABLED=1` **and** the BFF capability, worker capability, and
+  `RELAY_MAILBOX_ADDRESS` are present (`selfAddress`), with
+  `createCalendarEventLister` + `createWorkerJoinClient` + `commandReceipts()`.
+  Started/stopped with the mailbox hooks (boot start, graceful stop, and the
+  workspace-maintenance pause/resume set). Notices (`notify`) are still slice 4.
+- **Gate rationale:** `RELAY_SCRIBE_ENABLED` is an action-safety/deploy switch,
+  not a feature flag — enabling it makes the bot join real meetings and spend
+  STT CPU, so it must not turn on merely by deploying the branch. Default off.
+- Verified: server tsc + lint clean; monitor 12/12; BFF 77/77; evals 6/6.
+
+#### 6.13.5 Capability-scrub boot test (2026-10-11, item 3)
+- `server/boot-capabilities.ts`: `holdHarnessCapabilities()` reads
+  `RELAY_BFF_CAPABILITY` + `RELAY_SCRIBE_WORKER_CAPABILITY` into memory and
+  deletes them (plus `RELAY_INGEST_CAPABILITY` defensively) — called at module
+  top, before the monitors or any engine. Scope stated honestly: stops
+  inheritance, not a `/proc/<pid>/environ` boundary.
+- `server/scribe-capability-scrub.test.ts`: spawns a real child **through the
+  actual `spawnCli` seam** and has it dump `process.env` — asserting no
+  capability is visible whether the env is passed directly, spread
+  (`{ ...process.env }`), or inherited. Must pass before enabling.
+- `server/deploy-compose.test.ts`: parses `compose.yaml` and pins capability
+  separation — `app` never loads `.env.ingest`, `tools` never loads
+  `.env.scribe`, `scribe` loads both, and `app` reaches the worker at
+  `http://scribe:8791` (not loopback).
+- Monitor startup now logs either `monitor enabled -> <url>`, a warn naming the
+  exact missing variable(s), or `monitor disabled (RELAY_SCRIBE_ENABLED != 1)`.
+
 ## 7. Identity + calendar runbook (one-time, operator)
 1. Create the relay@ Google account (new account, owned by the team).
 2. Sign in once as relay@ in the Relay web UI; complete Google OAuth.
