@@ -200,11 +200,12 @@ function claudeEnvironment(
   // The harness process may hold workspace credentials (xai/box/voice keys,
   // env-injected at boot); none of them are this CLI's to see.
   stripWorkspaceCredentialEnv(env);
-  const applied = applyClaudeInject(env, model);
-  // A key set on purpose for this workspace (Settings → Connections, carried
-  // in the instance environment) stays. One riding along in the parent's
-  // env never does: it would flip a subscription login to pay-as-you-go.
-  if (!applied.injected && !instanceEnvironment.ANTHROPIC_API_KEY) delete env.ANTHROPIC_API_KEY;
+  applyClaudeInject(env, model);
+  // Like prod, the operator's own ANTHROPIC_API_KEY (.env) funds Claude Code
+  // when the subscription login is out of credits: with the key present the
+  // CLI bills pay-as-you-go and reports an api-key login. A workspace-level
+  // key (instance environment) still wins — the source merge layered it over
+  // the parent env above.
   return env;
 }
 
