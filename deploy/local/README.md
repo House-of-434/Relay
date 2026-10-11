@@ -141,13 +141,26 @@ capability; `tools` holds the ingest capability. The harness monitor arms
 captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
 `RELAY_SCRIBE_ENABLED` gates the whole feature.
 
-### One-time relay@ browser login (on the host that runs `scribe`)
+### One-time browser logins (on the host that runs `scribe`)
 
-Google binds sessions to egress IP, so the login must happen **in this compose
-host/container**, never copied from a laptop. Run a headful Chromium on Xvfb
-inside `scribe`, expose VNC on loopback, tunnel to it, sign in as relay@
-(Workspace + 2FA), open Meet once, close. Cookies persist in the `scribe_data`
-volume. Full steps: `plans/scribe-stt.md` §7.
+Providers bind sessions to egress IP, so logins must happen **in this compose
+host/container**, never copied from a laptop, and **headful** under Xvfb (the
+image ships Xvfb; `start-scribe.sh` runs the display). Two independent sessions
+live in the `scribe_data` volume's profile:
+
+- **relay@ (Google) — required for Meet.** Run a headful Chromium on the worker
+  display, expose VNC on loopback (`x11vnc -display :99 -localhost -rfbport
+  5901`), tunnel to it, sign in as relay@ (Workspace + 2FA), open Meet once,
+  then **close the browser gracefully** (a `kill -9` does not flush the profile
+  and the session is lost).
+- **Zoom — required for Zoom.** Same profile, sign in at `zoom.us/signin`,
+  preferably **Sign in with Google** with the same account. Zoom's web client
+  walls anonymous/automated joins ("automated bots aren't allowed … must use
+  Zoom RTMS") and it **detects a headless browser**, so it needs both a
+  signed-in session AND a headful browser. With both, the bot joins as the
+  account identity.
+
+Full steps: `plans/scribe-stt.md` §7.
 
 ### Deploy order (feature is off by default)
 

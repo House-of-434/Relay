@@ -33,6 +33,9 @@ export interface WorkerConfig {
   maxStreams: number;
   /** The bot's own display name, excluded from glow binding. */
   selfName: string;
+  /** Run the browser headless. Set RELAY_SCRIBE_HEADLESS=0 to run headful under
+   *  Xvfb — some providers (Zoom) detect headless and serve an anti-bot wall. */
+  headless: boolean;
   /** GATE probe: run the per-channel Meet lane and write a naming artifact
    *  (also feeds the pipeline; skips ingest). */
   gmeetProbe: boolean;
@@ -71,6 +74,7 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     maxMeetingMs: num(env.RELAY_SCRIBE_MAX_MEETING_MS, 4 * 60 * 60 * 1000),
     maxStreams: num(env.RELAY_SCRIBE_MAX_STREAMS, 12),
     selfName: (env.RELAY_SCRIBE_SELF_NAME ?? "Relay Scribe").trim(),
+    headless: (env.RELAY_SCRIBE_HEADLESS ?? "1") !== "0",
     gmeetProbe: (env.RELAY_SCRIBE_GMEET_PROBE ?? "0") === "1",
     probeDir: (env.RELAY_SCRIBE_PROBE_DIR ?? "/data/scribe/probes").trim(),
     gmeetBundlePath: env.RELAY_SCRIBE_GMEET_BUNDLE?.trim() || undefined,

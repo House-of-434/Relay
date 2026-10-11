@@ -917,6 +917,32 @@ Admitted ~22 s, `active`, 3 remote speakers, 155.6 s, 17 mixed segments.
   skipped / unknown-grace), notice templates + admin-list parsing, capability
   scrub, compose separation.
 
+#### 6.13.7 Live Zoom result (2026-10-11)
+- **The anonymous web lane is hard-walled by Zoom**: after Join, Zoom serves
+  `We detected you may be a bot … automated bots aren't allowed … must use Zoom
+  RTMS` (reason `zoom_requires_rtms`). Vexa detects this and fails fast; it has
+  **no RTMS / native-SDK path** at the pinned commit (web-client only,
+  "deliberately not promoted"). So Vexa would hit the same wall.
+- **What clears it — two things together: (1) a signed-in Zoom session in the
+  persistent profile, and (2) a HEADFUL browser.** Proven live:
+  - anonymous + headful → walled;
+  - signed-in + **headless** → "Signed-in name field empty" → walled (Zoom
+    detects headless);
+  - signed-in + **headful under Xvfb** → `Signed-in name pre-filled ("434's
+    Relay AI")` → **admitted**, captured real audio (segments → Supabase,
+    `platform=zoom`, mixed lane so `speaker=null`).
+- **Session persistence:** the profile must be closed **gracefully** — a
+  `kill -9` of the sign-in browser does not flush Chrome's profile and the
+  session is lost on the next launch.
+- **Deploy impact:** the `scribe` image now ships Xvfb (+x11-utils/x11vnc) and
+  `start-scribe.sh` runs headful (`RELAY_SCRIBE_HEADLESS=0`); the worker joins
+  Zoom authenticated (relay@-style session, `authenticated: true` for
+  `google_meet` **and** `zoom`). Two one-time logins now live in the profile:
+  relay@ Google (Meet) and a Zoom account (Zoom), both headful via VNC.
+- **Still owed:** Zoom speaker naming (the lane is the mixed tap → `speaker:
+  null`; the vendored `zoom-capture` per-track resolver is the follow-up), and a
+  Teams run.
+
 ## 7. Identity + calendar runbook (one-time, operator)
 1. Create the relay@ Google account (new account, owned by the team).
 2. Sign in once as relay@ in the Relay web UI; complete Google OAuth.

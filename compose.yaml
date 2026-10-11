@@ -121,6 +121,9 @@ services:
       RELAY_SCRIBE_MAX_CONCURRENT: ${RELAY_SCRIBE_MAX_CONCURRENT:-2}
       RELAY_SCRIBE_MAX_STREAMS: ${RELAY_SCRIBE_MAX_STREAMS:-12}
       RELAY_SCRIBE_SELF_NAME: ${RELAY_SCRIBE_SELF_NAME:-Relay Scribe}
+      # Headful under Xvfb (the image + start-scribe.sh provide it): Zoom walls
+      # a headless browser even with a signed-in profile.
+      RELAY_SCRIBE_HEADLESS: ${RELAY_SCRIBE_HEADLESS:-0}
       RELAY_SCRIBE_ENABLED: ${RELAY_SCRIBE_ENABLED:-0}
     volumes:
       - scribe_data:/data

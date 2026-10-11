@@ -34,9 +34,13 @@ RUN pnpm --filter @relay/scribe-capture build:capture
 
 FROM node:24-bookworm-slim AS runtime
 # Shared libraries Chromium needs at runtime (Playwright's --with-deps installs
-# the browser + the rest); curl for the healthcheck.
+# the browser + the rest); curl for the healthcheck. Xvfb (+ xdpyinfo) run the
+# browser HEADFUL: Zoom detects headless and serves an anti-bot wall even with a
+# signed-in profile, so the worker must render to a virtual display. x11vnc
+# serves the one-time Meet/Zoom sign-in into the persistent profile.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git \
+     xvfb x11-utils x11vnc \
      libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
      libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
      libgbm1 libasound2 libpango-1.0-0 libcairo2 libatspi2.0-0 \

@@ -197,7 +197,7 @@ class MeetSession {
       const { getJoinBrowserArgs } = await loadVexaJoin();
       const args = getJoinBrowserArgs().filter((a) => a !== "--incognito");
       this.context = await chromium.launchPersistentContext(this.config.profileDir, {
-        headless: true,
+        headless: this.config.headless,
         args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         locale: "en-US",
       });
@@ -231,8 +231,10 @@ class MeetSession {
         platform: this.descriptor.platform,
         botName: "Relay Scribe",
         passcode: this.descriptor.passcode,
-        // Meet joins as relay@ (signed-in profile); Zoom/Teams join anonymously.
-        authenticated: this.descriptor.platform === "google_meet",
+        // Join with the persistent (signed-in) profile. Meet needs it (relay@
+        // Google session); Zoom is tried authenticated too — its anti-bot wall
+        // asks a guest to "sign in to join", so a signed-in web client may pass.
+        authenticated: this.descriptor.platform === "google_meet" || this.descriptor.platform === "zoom",
         waitingRoomTimeoutMs: 600_000,
       });
       if (!result.admitted) {
