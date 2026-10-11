@@ -63,6 +63,25 @@ function supabaseError(error: { code?: string; message?: string } | null): never
   if (error) throw new Error(`Database request failed${error.code ? ` (${error.code})` : ""}: ${error.message ?? "unknown error"}`);
 }
 
+/**
+ * Distinguishable ingest conflict: the meetings_live_once partial unique
+ * index fired (two calendar events pointing at the same live Meet link).
+ * The route maps this to 409 live_meeting_conflict so the worker writes a
+ * skipped row instead of treating it as an ingest error.
+ */
+export class IngestConflictError extends Error {
+  readonly instanceId: string;
+  constructor(instanceId: string) {
+    super(`live meeting conflict for ${shortInstanceId(instanceId)}`);
+    this.name = "IngestConflictError";
+    this.instanceId = instanceId;
+  }
+}
+
+function shortInstanceId(value: string): string {
+  return value.length > 24 ? `${value.slice(0, 24)}…` : value;
+}
+
 function applyFilters(query: any, filters: Filter[]): any {
   for (const filter of filters) {
     switch (filter.operator) {
@@ -195,6 +214,104 @@ export class RelayDatabase {
     const entityType = entityTypeForTable(table);
     if (entityType) return this.readEntity(client, entityType, data[0]!.id);
     return data[0];
+  }
+
+  /**
+   * Capture-ingest upsert for one meeting row, keyed by instance_id.
+   * Segments may be empty: status-only transitions (joining,
+   * awaiting_admission, failed) all happen before any segments exist.
+   */
+  async ingestMeeting(values: Record<string, unknown>): Promise<Record<string, unknown>> {
+    if (typeof values.instance_id !== "string" || values.instance_id.length === 0) {
+      throw new Error("ingest meeting requires instance_id");
+    }
+    const client = this.client("relay");
+    const { data, error } = await client.schema("transcripts").from("meetings")
+      .upsert({ ...values, updated_at: new Date().toISOString() }, { onConflict: "instance_id" })
+      .select("*");
+    if (error?.code === "23505") throw new IngestConflictError(values.instance_id);
+    supabaseError(error);
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row || typeof row.id !== "string") throw new Error("ingest meeting did not return the meeting row");
+    return row as Record<string, unknown>;
+  }
+
+  /**
+   * Capture-ingest upsert for segments, keyed by (meeting_id, segment_key).
+   * Callers chunk large batches; this method upserts exactly what it gets.
+   */
+  async ingestSegments(meetingId: string, segments: Record<string, unknown>[]): Promise<number> {
+    if (segments.length === 0) return 0;
+    for (const segment of segments) {
+      if (typeof segment.segment_key !== "string" || typeof segment.text !== "string" ||
+          typeof segment.start_seconds !== "number" || typeof segment.end_seconds !== "number") {
+        throw new Error("ingest segment requires segment_key, text, start_seconds, end_seconds");
+      }
+    }
+    const client = this.client("relay");
+    const { error } = await client.schema("transcripts").from("meeting_segments")
+      .upsert(
+        segments.map((segment) => ({ ...segment, meeting_id: meetingId })),
+        { onConflict: "meeting_id,segment_key" },
+      );
+    if (error?.code === "23505") throw new IngestConflictError(meetingId);
+    supabaseError(error);
+    return segments.length;
+  }
+
+  /**
+   * Ordered, paged transcript read for agents. Segments come back ordered by
+   * start_seconds; complete is false while the meeting is still live, so
+   * readers can mark in-progress transcripts incomplete.
+   */
+  async getMeetingTranscript(meetingId: string, offset: number, limit: number): Promise<{
+    meeting: Record<string, unknown>;
+    segments: Record<string, unknown>[];
+    total_length: number;
+    complete: boolean;
+  }> {
+    if (!meetingId) throw new Error("meeting_id is required");
+    const safeOffset = Math.max(0, Math.floor(offset));
+    const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
+    const client = this.client("relay");
+    const { data: meeting, error: meetingError } = await client.schema("transcripts").from("meetings")
+      .select("*").eq("id", meetingId).maybeSingle();
+    supabaseError(meetingError);
+    if (!meeting) throw new Error("meeting not found");
+    // Project only what a reader needs. select("*") would also ship id,
+    // segment_key, speaker_key, channel, language, is_final, created_at and the
+    // generated search_vector (a long word-position string) — pure token bloat.
+    const { data: segments, error: segmentsError } = await client.schema("transcripts").from("meeting_segments")
+      .select("speaker, start_seconds, end_seconds, text, confidence")
+      .eq("meeting_id", meetingId)
+      .order("start_seconds", { ascending: true })
+      .range(safeOffset, safeOffset + safeLimit - 1);
+    supabaseError(segmentsError);
+    const { count, error: countError } = await client.schema("transcripts").from("meeting_segments")
+      .select("*", { count: "exact", head: true }).eq("meeting_id", meetingId);
+    supabaseError(countError);
+    const row = meeting as Record<string, unknown>;
+    return {
+      meeting: row,
+      segments: (segments ?? []) as Record<string, unknown>[],
+      total_length: count ?? 0,
+      complete: row.status === "completed",
+    };
+  }
+
+  /**
+   * Ranked full-text search over transcript segments, joined back to the
+   * meeting. Served by the transcripts.search_meetings SQL function.
+   */
+  async searchMeetings(query: string, limit: number): Promise<unknown[]> {
+    const trimmed = query.trim().slice(0, 512);
+    if (!trimmed) throw new Error("query is required");
+    const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 50);
+    const client = this.client("relay");
+    const { data, error } = await client.schema("transcripts")
+      .rpc("search_meetings", { q: trimmed, lim: safeLimit });
+    supabaseError(error);
+    return data ?? [];
   }
 
   /**

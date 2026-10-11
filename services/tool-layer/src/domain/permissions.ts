@@ -10,6 +10,7 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "relay/app.people",
       "relay/app.events",
       "relay/history.conversations",
+      "relay/transcripts.meetings",
       "newsletter/public.invitation_requests",
     ],
     write: [
@@ -24,6 +25,7 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "relay/app.people",
       "relay/app.events",
       "relay/history.conversations",
+      "relay/transcripts.meetings",
       "newsletter/public.newsletter_subscribers",
       "newsletter/public.suppressed_emails",
       "newsletter/public.email_send_log",
@@ -41,6 +43,7 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "relay/app.people",
       "relay/app.events",
       "relay/history.conversations",
+      "relay/transcripts.meetings",
     ],
     write: [],
   },
@@ -159,6 +162,26 @@ export const SEARCH_PERMISSIONS: Record<Agent, readonly SearchCapability[]> = {
 export function authorizeSearch(agent: Agent, capability: SearchCapability): void {
   if (!SEARCH_PERMISSIONS[agent].includes(capability)) {
     throw new Error(`${capability} access denied for ${agent}`);
+  }
+}
+
+/**
+ * Capture-ingest writes: the only path that may touch transcript tables.
+ * There is deliberately no agent in the signature — no agent route may ever
+ * reach these tables, not even through a future grant. The loopback ingest
+ * route is the sole caller, and it authenticates with the shared ingest
+ * capability before reaching this allowlist.
+ */
+export type IngestOperation = "insert" | "update" | "upsert";
+
+const INGEST_WRITES: Record<string, readonly IngestOperation[]> = {
+  "transcripts.meetings": ["insert", "update", "upsert"],
+  "transcripts.meeting_segments": ["insert", "update", "upsert"],
+};
+
+export function authorizeIngest(table: string, operation: IngestOperation): void {
+  if (!(INGEST_WRITES[table] ?? []).includes(operation)) {
+    throw new Error(`${operation} access denied for ${table}`);
   }
 }
 

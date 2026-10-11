@@ -116,8 +116,10 @@ test("authenticated scout sees browser tools; others do not", async () => {
     "browser_extract",
     "browser_open",
     "browser_read",
+    "get_meeting_transcript",
     "relay_read",
     "relay_write",
+    "search_meetings",
     "web_search",
   ]);
   for (const agent of ["mercury", "curator"]) {

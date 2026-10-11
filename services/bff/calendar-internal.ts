@@ -189,12 +189,45 @@ function safePrincipal(raw: unknown): { email?: string; self?: boolean } | undef
   return shaped.email || shaped.self !== undefined ? shaped : undefined;
 }
 
+const MAX_URI = 2048;
+const MAX_LABEL = 256;
+
+/**
+ * The join surface the capture pipeline needs: dial-in entry points with
+ * their URIs and passcodes, bounded like every other field. The passcode
+ * travels only as far as the join descriptor the monitor builds — it is
+ * never logged and never persisted (see plans/scribe-stt.md §6.4).
+ */
+function safeConferenceData(raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const data = raw as Record<string, unknown>;
+  if (!Array.isArray(data.entryPoints)) return undefined;
+  const entryPoints = data.entryPoints.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const point = entry as Record<string, unknown>;
+    if (typeof point.uri !== "string") return [];
+    return [{
+      ...(typeof point.entryPointType === "string" ? { entryPointType: point.entryPointType.slice(0, MAX_LABEL) } : {}),
+      uri: point.uri.slice(0, MAX_URI),
+      ...(typeof point.label === "string" ? { label: point.label.slice(0, MAX_LABEL) } : {}),
+      ...(typeof point.passcode === "string" ? { passcode: point.passcode.slice(0, MAX_LABEL) } : {}),
+    }];
+  });
+  return entryPoints.length > 0 ? { entryPoints } : undefined;
+}
+
 function safeEvent(raw: unknown, accountEmail: string): Record<string, unknown> | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const event = raw as Record<string, unknown>;
   const start = safeEventTime(event.start);
   const end = safeEventTime(event.end);
   if (typeof event.id !== "string" || !start || !end) return undefined;
+  const conferenceData = safeConferenceData(event.conferenceData);
+  const originalStart = event.originalStartTime;
+  const originalStartTime = originalStart && typeof originalStart === "object" &&
+    typeof (originalStart as Record<string, unknown>).dateTime === "string"
+    ? (originalStart as Record<string, unknown>).dateTime as string
+    : undefined;
   return {
     id: event.id,
     accountEmail,
@@ -206,6 +239,10 @@ function safeEvent(raw: unknown, accountEmail: string): Record<string, unknown> 
     end,
     htmlLink: typeof event.htmlLink === "string" ? event.htmlLink.slice(0, 1024) : undefined,
     updated: typeof event.updated === "string" ? event.updated : undefined,
+    hangoutLink: typeof event.hangoutLink === "string" ? event.hangoutLink.slice(0, MAX_URI) : undefined,
+    ...(conferenceData ? { conferenceData } : {}),
+    ...(typeof event.recurringEventId === "string" ? { recurringEventId: event.recurringEventId.slice(0, 512) } : {}),
+    ...(originalStartTime ? { originalStartTime } : {}),
     ...(safePrincipal(event.organizer) ? { organizer: safePrincipal(event.organizer) } : {}),
     ...(safePrincipal(event.creator) ? { creator: safePrincipal(event.creator) } : {}),
     attendees: safeAttendees(event.attendees),

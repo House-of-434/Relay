@@ -8,7 +8,8 @@ const source = (path: string) => readFileSync(new URL(path, import.meta.url), "u
 const init = source("../../../supabase/migrations/0001_init.sql");
 const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
-const migrations = `${init}\n${stores}`;
+const transcripts = source("../../../supabase/migrations/0004_transcripts.sql");
+const migrations = `${init}\n${stores}\n${transcripts}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
 // model. It does not prove Postgres accepts the SQL or that the constraints and
@@ -23,6 +24,8 @@ test("exactly the frozen tables are created", () => {
     "app.people",
     "history.conversations",
     "logs.tool_calls",
+    "transcripts.meeting_segments",
+    "transcripts.meetings",
   ]);
 });
 
@@ -38,7 +41,6 @@ test("deliberately deferred tables and workflows are absent", () => {
   }
   assert.doesNotMatch(migrations, /create table \w+\.(agent_runs|messages)\b/);
   assert.doesNotMatch(migrations, /capture_entity_provenance|activate_entity_after_capture/);
-  assert.doesNotMatch(migrations, /create schema if not exists transcripts/);
   // No approval or promotion step remains anywhere in the schema.
   assert.doesNotMatch(migrations, /\bapproveSuggestion\b|\bsuggestion\b/);
 });

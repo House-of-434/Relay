@@ -1,16 +1,17 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
-import { RelayDatabase } from "../infra/database.js";
+import { IngestConflictError, RelayDatabase } from "../infra/database.js";
 import type { RelayActorContext } from "../infra/actor-assertion.js";
-import { isAgent } from "../domain/permissions.js";
+import { authorizeIngest, isAgent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
 import { databaseToolCallLogger } from "../mcp/tool-log.js";
-import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolHost, toolPort } from "../config.js";
+import { assertValidPort, bffConfig, bladeConfig, ingestCapability, searchConfig, toolHost, toolPort } from "../config.js";
 
 function mcpActor(request: IncomingMessage, database: RelayDatabase): {
   actor: RelayActorContext | undefined;
@@ -27,6 +28,111 @@ function mcpActor(request: IncomingMessage, database: RelayDatabase): {
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
   response.writeHead(status, { "content-type": "application/json; charset=utf-8" });
   response.end(JSON.stringify(body));
+}
+
+const INGEST_MAX_BODY_BYTES = 1024 * 1024;
+
+function ingestCapabilityMatches(provided: string | null, expected: string | undefined): boolean {
+  if (!provided || !expected) return false;
+  const a = createHash("sha256").update(provided).digest();
+  const b = createHash("sha256").update(expected).digest();
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+async function readIngestBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    size += bytes.byteLength;
+    if (size > INGEST_MAX_BODY_BYTES) throw new Error("ingest body exceeds 1 MB");
+    chunks.push(bytes);
+  }
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function ingestBearerToken(request: IncomingMessage): string | null {
+  const authorization = request.headers.authorization;
+  if (typeof authorization !== "string") return null;
+  const match = /^Bearer\s+(\S+)$/i.exec(authorization.trim());
+  return match ? match[1]! : null;
+}
+
+/**
+ * Capture-ingest route: the only writer of transcript tables. Capability-bound
+ * (never loopback-gated, never actor-gated — there is no agent here), then
+ * allowlisted per table/operation by authorizeIngest. A post may carry a
+ * meeting with zero segments: status-only transitions (joining,
+ * awaiting_admission, failed) all happen before any segments exist.
+ */
+async function handleIngest(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: RelayDatabase,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    sendJson(response, 405, { error: "method not allowed" });
+    return;
+  }
+  const capability = ingestCapability();
+  if (!capability) {
+    sendJson(response, 503, { error: "transcript ingest is not configured" });
+    return;
+  }
+  if (!ingestCapabilityMatches(ingestBearerToken(request), capability)) {
+    sendJson(response, 401, { error: "unauthorized" });
+    return;
+  }
+  if (!/^application\/json\b/i.test(typeof request.headers["content-type"] === "string" ? request.headers["content-type"] : "")) {
+    sendJson(response, 415, { error: "send the request as JSON" });
+    return;
+  }
+  let raw: unknown;
+  try {
+    raw = await readIngestBody(request);
+  } catch {
+    sendJson(response, 400, { error: "invalid ingest body" });
+    return;
+  }
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    sendJson(response, 400, { error: "ingest body must be an object" });
+    return;
+  }
+  const { meeting, segments } = raw as { meeting?: unknown; segments?: unknown };
+  if (!meeting || typeof meeting !== "object" || Array.isArray(meeting)) {
+    sendJson(response, 400, { error: "ingest body requires a meeting object" });
+    return;
+  }
+  if (segments !== undefined && !Array.isArray(segments)) {
+    sendJson(response, 400, { error: "ingest segments must be an array" });
+    return;
+  }
+  try {
+    authorizeIngest("transcripts.meetings", "upsert");
+    const row = await database.ingestMeeting(meeting as Record<string, unknown>);
+    if (typeof row.id !== "string") {
+      sendJson(response, 500, { error: "ingest failed" });
+      return;
+    }
+    let upserted = 0;
+    const list = (segments ?? []) as Record<string, unknown>[];
+    if (list.length > 0) {
+      authorizeIngest("transcripts.meeting_segments", "upsert");
+      upserted = await database.ingestSegments(row.id, list);
+    }
+    sendJson(response, 200, { meeting_id: row.id, upserted });
+  } catch (error) {
+    if (error instanceof IngestConflictError) {
+      sendJson(response, 409, { error: "live_meeting_conflict", instance_id: error.instanceId });
+      return;
+    }
+    if (error instanceof Error && error.message.startsWith("ingest ")) {
+      sendJson(response, 400, { error: error.message });
+      return;
+    }
+    sendJson(response, 500, { error: "ingest failed" });
+  }
 }
 
 let sharedBladePool: BladeBrowserPool | null = null;
@@ -62,6 +168,10 @@ export async function createRelayToolServer(
       }
 
       const match = /^\/mcp\/(scout|mercury|curator)$/.exec(url.pathname);
+      if (url.pathname === "/internal/transcripts") {
+        await handleIngest(request, response, database);
+        return;
+      }
       if (request.method !== "POST" || !match) {
         sendJson(response, 404, { error: "not found" });
         return;

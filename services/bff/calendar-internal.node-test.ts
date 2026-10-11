@@ -192,8 +192,50 @@ test("the BFF derives the calendar from the verified actor and refuses one named
   assert.equal(calls.every((call) => call.userId === "" || call.userId === USER_ID), true);
 });
 
-test("every calendar route is addressed to the owner's primary calendar only", async () => {
-  const { post, calls } = await createFixture({
+test("listed events carry the join surface the capture pipeline needs, bounded", async () => {
+  const richItem = {
+    id: "instance-abc123",
+    summary: "QBR",
+    start: { dateTime: "2026-01-05T09:00:00Z" },
+    end: { dateTime: "2026-01-05T09:30:00Z" },
+    hangoutLink: "https://meet.google.com/abc-defg-hij",
+    conferenceData: {
+      entryPoints: [
+        { entryPointType: "video", uri: "https://meet.google.com/abc-defg-hij", label: "Meet" },
+        { entryPointType: "phone", uri: "tel:+1-555-0100", label: "Phone", passcode: "123 456 789" },
+        { uri: "x".repeat(5000) },
+        "not-an-entry",
+      ],
+    },
+    recurringEventId: "series-1",
+    originalStartTime: { dateTime: "2026-01-05T09:00:00Z" },
+  };
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation({ events: { list: async () => ({ data: { items: [richItem] } }) } }),
+  } as unknown as GoogleApiGateway;
+  const { list } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+  const response = await list();
+  assert.equal(response.status, 200);
+  const [event] = (await response.json() as { events: Array<Record<string, unknown>> }).events;
+  assert.equal(event!.hangoutLink, "https://meet.google.com/abc-defg-hij");
+  assert.equal(event!.recurringEventId, "series-1");
+  assert.equal(event!.originalStartTime, "2026-01-05T09:00:00Z");
+  const entryPoints = (event!.conferenceData as { entryPoints: Array<Record<string, unknown>> }).entryPoints;
+  assert.equal(entryPoints.length, 3);
+  assert.equal(entryPoints[1]!.passcode, "123 456 789");
+  assert.equal((entryPoints[2]!.uri as string).length, 2048);
+});
+
+test("every calendar route is addressed to the owner's primary calendar only", async () => {  const { post, calls } = await createFixture({
     accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
   });
   const assertion = actorAssertion(USER_ID, USER_EMAIL);

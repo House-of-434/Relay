@@ -9,6 +9,7 @@ import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
+import { registerTranscriptTools } from "./transcript-server.js";
 import { instrumentToolCalls, type ToolCallLogger } from "./tool-log.js";
 
 export interface RelayGmailContext {
@@ -112,6 +113,13 @@ export function createAgentMcpServer(
   // caller identity required. Visibility still matches authorization.
   if (search && userId && SEARCH_PERMISSIONS[agent].length > 0) {
     registerSearchTools(server, agent, search);
+  }
+
+  // Transcript tools need no per-user state, but listing them still requires
+  // an authenticated actor — same rule as search. All three agents hold the
+  // transcripts read grant; the handlers re-check it per call.
+  if (userId) {
+    registerTranscriptTools(server, agent, database, userId);
   }
 
   if (gmail && GMAIL_PERMISSIONS[agent].length > 0) {

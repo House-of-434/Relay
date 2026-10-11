@@ -45,7 +45,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["browser_extract", "browser_open", "browser_read", "relay_read", "relay_write", "web_search"]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["browser_extract", "browser_open", "browser_read", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_search"]);
 
     const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
     assert.equal(read.isError, undefined);
@@ -84,6 +84,83 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
     } finally {
       await mercuryClient.close();
     }
+  } finally {
+    await client.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("transcript tables are readable but never writable through agent tools", async () => {
+  const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
+  const issuedAt = Math.floor(Date.now() / 1000);
+  const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
+    .update(JSON.stringify([userId, "person@example.test", issuedAt])).digest("base64url");
+  const assertion = JSON.stringify({ userId, email: "person@example.test", issuedAt, signature });
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+  const database = {
+    async verifyRelayProject() {},
+    async authenticateActorAssertion(value: string) {
+      assert.equal(value, assertion);
+      return userId;
+    },
+    async read(...args: unknown[]) {
+      calls.push({ method: "read", args });
+      return [{ id: "meeting-1", title: "Weekly sync", status: "completed" }];
+    },
+    async write(...args: unknown[]) {
+      calls.push({ method: "write", args });
+      return { id: "meeting-1" };
+    },
+    async getMeetingTranscript(...args: unknown[]) {
+      calls.push({ method: "getMeetingTranscript", args });
+      return { meeting: { id: "meeting-1" }, segments: [], total_length: 0, complete: true };
+    },
+    async searchMeetings(...args: unknown[]) {
+      calls.push({ method: "search", args });
+      return [];
+    },
+  } as unknown as RelayDatabase;
+
+  const server = await createRelayToolServer(database, 0);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const client = new Client({ name: "relay-transcripts-test", version: "0.1.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/curator`), {
+    requestInit: { headers: { "x-relay-actor-user": assertion } },
+  });
+
+  try {
+    await client.connect(transport);
+
+    const listed = await client.callTool({
+      name: "relay_read",
+      arguments: { table: "transcripts.meetings", filters: { status: "completed" }, limit: 10 },
+    });
+    assert.equal(listed.isError, undefined);
+    assert.equal(calls.some((call) => call.method === "read"), true);
+
+    for (const table of ["transcripts.meetings", "transcripts.meeting_segments"]) {
+      const denied = await client.callTool({
+        name: "relay_write",
+        arguments: { table, operation: "insert", data: { title: "forged" } },
+      });
+      assert.equal(denied.isError, true, table);
+    }
+    assert.equal(calls.some((call) => call.method === "write"), false);
+
+    const transcript = await client.callTool({
+      name: "get_meeting_transcript",
+      arguments: { meeting_id: "meeting-1" },
+    });
+    assert.equal(transcript.isError, undefined);
+    assert.equal(calls.some((call) => call.method === "getMeetingTranscript"), true);
+
+    const search = await client.callTool({
+      name: "search_meetings",
+      arguments: { query: "revenue" },
+    });
+    assert.equal(search.isError, undefined);
+    assert.equal(calls.some((call) => call.method === "search"), true);
   } finally {
     await client.close();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -131,11 +208,13 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
     "browser_extract",
     "browser_open",
     "browser_read",
+    "get_meeting_transcript",
     "relay_read",
     "relay_write",
+    "search_meetings",
     "web_search",
   ]);
-  assert.deepEqual(await names("curator"), ["relay_read", "relay_write"], "curator");
+  assert.deepEqual(await names("curator"), ["get_meeting_transcript", "relay_read", "relay_write", "search_meetings"], "curator");
 });
 
 test("unauthenticated MCP callers cannot reach relay data", async () => {
