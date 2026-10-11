@@ -229,10 +229,15 @@ const RELAY_PORTAL_SESSIONS = process.env.RELAY_PORTAL_SESSIONS === "1";
 const RELAY_TOOL_URL = process.env.RELAY_TOOL_URL?.trim() ||
   (RELAY_SHARED_WORKSPACE ? "http://127.0.0.1:8787" : undefined);
 if (RELAY_TOOL_URL) relayToolMcpServer("scout", RELAY_TOOL_URL);
-// Hold the BFF capability in the harness only, never in environments passed
-// to provider or tool subprocesses.
-const relayBffCapability = process.env.RELAY_BFF_CAPABILITY;
-delete process.env.RELAY_BFF_CAPABILITY;
+// Capabilities the harness holds in memory only: read out of the environment
+// and deleted HERE, at module top, before any monitor or engine can spawn — so
+// a child that inherits the environment (or a driver that spreads
+// `{ ...process.env }`) cannot receive them. Not a boundary; see
+// boot-capabilities.ts.
+const heldCapabilities = holdHarnessCapabilities();
+const relayBffCapability = heldCapabilities.bffCapability;
+const scribeWorkerCapability = heldCapabilities.scribeWorkerCapability;
+const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "http://127.0.0.1:8791";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
@@ -477,6 +482,11 @@ import {
   type MailboxMessage,
 } from "./mailbox-monitor.ts";
 import { mailboxBffCall } from "./mailbox-bff.ts";
+import { holdHarnessCapabilities } from "./boot-capabilities.ts";
+import { ScribeMonitor, scribeMonitorConfig } from "./scribe-monitor.ts";
+import { createCalendarEventLister } from "./scribe-calendar.ts";
+import { createWorkerJoinClient } from "./scribe-worker-client.ts";
+import { commandReceipts } from "./scribe-receipts.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionStatus, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, editionForMembers, LICENSE_WARN_DAYS, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type EditionStatus, type WorkspaceAccess } from "./enterprise.ts";
@@ -5794,6 +5804,8 @@ const personAskAt = new Map<string, number>();
 let routines: RoutineManager | null = null;
 /** Native poller for Relay's own shared Gmail account (server/mailbox-monitor.ts). */
 let mailboxMonitor: MailboxMonitor | null = null;
+/** Arms Scribe captures from relay@'s calendar (server/scribe-monitor.ts). */
+let scribeMonitor: ScribeMonitor | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 /** One-shot deep-research jobs. Server-side only; the card carries display
  * text, never the brief's executable payload. Assigned beside
@@ -9829,6 +9841,35 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
   }
 }
 
+// ── Scribe capture monitor ──────────────────────────────────────────────
+// Dark until the operator enables it AND the worker capability + relay@'s
+// mailbox identity are configured. Every tick lists relay@'s calendar over the
+// BFF internal route and arms captures on the worker; the worker capability
+// lives only in this module and is never written back into process.env.
+if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELAY_MAILBOX_ADDRESS) {
+  const scribeConfig = scribeMonitorConfig();
+  scribeMonitor = new ScribeMonitor(
+    {
+      listEvents: createCalendarEventLister({ capability: relayBffCapability, maxResults: scribeConfig.maxResults }),
+      joinWorker: createWorkerJoinClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+      receipts: commandReceipts(),
+      selfAddress: RELAY_MAILBOX_ADDRESS,
+      log: (message) => console.log(message),
+    },
+    scribeConfig,
+  );
+  console.log(`[scribe] monitor enabled -> ${RELAY_SCRIBE_WORKER_URL}`);
+} else if (RELAY_SCRIBE_ENABLED) {
+  const missing = [
+    relayBffCapability ? null : "RELAY_BFF_CAPABILITY",
+    scribeWorkerCapability ? null : "RELAY_SCRIBE_WORKER_CAPABILITY",
+    RELAY_MAILBOX_ADDRESS ? null : "RELAY_MAILBOX_ADDRESS",
+  ].filter((name): name is string => name !== null);
+  console.warn(`[scribe] RELAY_SCRIBE_ENABLED=1 but monitor disabled: missing ${missing.join(", ")}`);
+} else {
+  console.log("[scribe] monitor disabled (RELAY_SCRIBE_ENABLED != 1)");
+}
+
 orgLibrary = new OrgLibrary({
   dataDir: DATA_DIR,
   store,
@@ -13820,8 +13861,8 @@ const workspaceBackupAccess = {
       teamComputers.list().every(computer => !teamComputerInUse(computer)) &&
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
-    pause: () => { routines?.stop(); mailboxMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); mailboxMonitor?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    pause: () => { routines?.stop(); mailboxMonitor?.stop(); scribeMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
+    resume: () => { routines?.start(); mailboxMonitor?.start(); scribeMonitor?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // With writers gated and work idle, release our WAL connection for the
@@ -22472,6 +22513,7 @@ server.listen(PORT, "127.0.0.1", () => {
   // endpoint is listening; earlier dispatch can hit uninitialized bindings.
   routines!.start();
   mailboxMonitor?.start();
+  scribeMonitor?.start();
   memoryUpkeep.start();
   const leftover = pendingThreads();
   if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
@@ -22521,6 +22563,7 @@ const gracefulShutdown = createGracefulShutdown({
       vps.closeAllVpsDesktopTunnels();
       watchdog.stop();
       mailboxMonitor?.stop();
+      scribeMonitor?.stop();
       routines?.stop();
       calendarCalls?.stop();
       memoryUpkeep.stop();
