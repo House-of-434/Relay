@@ -1,0 +1,79 @@
+# Relay Scribe worker image: per-channel Meet/Zoom/Teams capture + ingest client.
+#
+# Runs services/scribe-capture (tsx, because the vendored third_party capture
+# bricks are TypeScript loaded lazily by relative specifier), headless Chromium
+# via Playwright, and the vendored code under third_party/. Holds only its own
+# endpoint capability (.env.scribe) and the ingest capability (.env.ingest) —
+# never the BFF secrets.
+#
+# Build from the repo root:
+#   docker compose build scribe
+# or: docker build -f deploy/local/Dockerfile.scribe -t relay-scribe:local .
+
+# syntax=docker/dockerfile:1
+FROM node:24-bookworm-slim AS build
+WORKDIR /src
+RUN npm install -g pnpm@10.33.0
+ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
+# Every workspace manifest must exist before the filtered install resolves the
+# lockfile (the root + the Scribe subtree + the vendored @vexa modules).
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY services/scribe-capture/package.json ./services/scribe-capture/package.json
+COPY services/tool-layer/package.json ./services/tool-layer/package.json
+COPY packages/relay-shared/package.json ./packages/relay-shared/package.json
+COPY third_party/vexa-capture/core/meetings/modules/gmeet-capture/package.json ./third_party/vexa-capture/core/meetings/modules/gmeet-capture/package.json
+COPY third_party/vexa-capture/core/meetings/modules/gmeet-pipeline/package.json ./third_party/vexa-capture/core/meetings/modules/gmeet-pipeline/package.json
+COPY third_party/vexa-capture/core/meetings/modules/buffer/package.json ./third_party/vexa-capture/core/meetings/modules/buffer/package.json
+COPY third_party/vexa-capture/core/meetings/modules/whisper/package.json ./third_party/vexa-capture/core/meetings/modules/whisper/package.json
+COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
+RUN pnpm install --frozen-lockfile --filter @relay/scribe-capture...
+COPY services/scribe-capture ./services/scribe-capture
+COPY third_party/vexa-capture ./third_party/vexa-capture
+# Bundle the page-side Meet capture glue (esbuild) → dist/gmeet-capture.bundle.js.
+RUN pnpm --filter @relay/scribe-capture build:capture
+
+FROM node:24-bookworm-slim AS runtime
+# Shared libraries Chromium needs at runtime (Playwright's --with-deps installs
+# the browser + the rest); curl for the healthcheck.
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl git \
+     libnss3 libnspr4 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 \
+     libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 \
+     libgbm1 libasound2 libpango-1.0-0 libcairo2 libatspi2.0-0 \
+     fonts-noto-color-emoji fonts-freefont-ttf \
+  && rm -rf /var/lib/apt/lists/* \
+  && npm install -g pnpm@10.33.0 \
+  && useradd --create-home --home-dir /data --shell /bin/bash scribe
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+WORKDIR /app
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+COPY services/scribe-capture/package.json ./services/scribe-capture/package.json
+COPY services/tool-layer/package.json ./services/tool-layer/package.json
+COPY packages/relay-shared/package.json ./packages/relay-shared/package.json
+COPY third_party/vexa-capture/core/meetings/modules/gmeet-capture/package.json ./third_party/vexa-capture/core/meetings/modules/gmeet-capture/package.json
+COPY third_party/vexa-capture/core/meetings/modules/gmeet-pipeline/package.json ./third_party/vexa-capture/core/meetings/modules/gmeet-pipeline/package.json
+COPY third_party/vexa-capture/core/meetings/modules/buffer/package.json ./third_party/vexa-capture/core/meetings/modules/buffer/package.json
+COPY third_party/vexa-capture/core/meetings/modules/whisper/package.json ./third_party/vexa-capture/core/meetings/modules/whisper/package.json
+COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
+# Dev deps are needed at runtime: tsx executes the TS worker, and the vendored
+# capture bricks are TS loaded lazily.
+RUN pnpm install --frozen-lockfile --filter @relay/scribe-capture... \
+  && pnpm --filter @relay/scribe-capture exec playwright install --with-deps chromium \
+  && pnpm store prune
+COPY --from=build /src/services/scribe-capture/dist ./services/scribe-capture/dist
+COPY services/scribe-capture/src ./services/scribe-capture/src
+COPY services/scribe-capture/stt ./services/scribe-capture/stt
+COPY third_party/vexa-capture ./third_party/vexa-capture
+# Vexa hardcodes /app/storage/screenshots for join checkpoints; the worker owns
+# /data/scribe. Both must be writable by the run user.
+RUN mkdir -p /app/storage/screenshots /data/scribe \
+  && chown -R scribe:scribe /app /data /ms-playwright
+COPY deploy/local/start-scribe.sh /usr/local/bin/start-scribe.sh
+RUN chmod +x /usr/local/bin/start-scribe.sh
+ENV NODE_ENV=production \
+    HOME=/data
+USER scribe
+VOLUME ["/data"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=20s --retries=5 \
+  CMD curl -sf http://127.0.0.1:8791/healthz || exit 1
+CMD ["/usr/local/bin/start-scribe.sh"]

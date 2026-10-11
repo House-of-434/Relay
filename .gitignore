@@ -1,5 +1,8 @@
 # Shared internal service secrets.
 .env.secrets
+# Split Scribe capabilities (see .env.ingest.example / .env.scribe.example).
+.env.ingest
+.env.scribe
 Relay-notes/
 docs/
 todo.md

@@ -25,6 +25,9 @@ services:
     env_file:
       - .env
       - .env.secrets
+      # The harness monitor holds the worker capability to arm captures; the app
+      # must never hold the ingest capability (that is tools + scribe only).
+      - .env.scribe
     environment:
       RELAY_PORT: "8799"
       RELAY_WEBHOOK_PORT: "8800"
@@ -45,6 +48,9 @@ services:
       RELAY_MAILBOX_POLL_MINUTES: ${RELAY_MAILBOX_POLL_MINUTES:-15}
       RELAY_MAILBOX_NOTIFY: ${RELAY_MAILBOX_NOTIFY:-1}
       RELAY_SCRIBE_ENABLED: ${RELAY_SCRIBE_ENABLED:-0}
+      # The harness monitor arms captures by calling the worker over the compose
+      # network (capability from .env.scribe, in-memory only).
+      RELAY_SCRIBE_WORKER_URL: http://scribe:8791
   tools:
     init: true
     build:
@@ -61,6 +67,9 @@ services:
     env_file:
       - .env
       - .env.secrets
+      # The Tool Layer owns the transcript ingest route and holds the ingest
+      # capability; it must never hold the worker capability.
+      - .env.ingest
     environment:
       # Listen on the container interface so the harness can reach this
       # service over the compose network. The HMAC actor assertion stays the
@@ -83,6 +92,82 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
+  # Scribe: joins relay@'s meetings, captures per-channel audio, transcribes via
+  # the shared `stt` service, and writes rows through the Tool Layer ingest
+  # route. Holds only .env.scribe (its endpoint capability) and .env.ingest
+  # (the ingest capability) — never the BFF secrets. Signed-in profile + spool
+  # + failures + probes persist on scribe_data (mounted ONLY here). No published
+  # ports: the harness reaches it over the compose network.
+  scribe:
+    init: true
+    build:
+      context: .
+      dockerfile: deploy/local/Dockerfile.scribe
+    image: ${RELAY_SCRIBE_IMAGE:-relay-scribe:latest}
+    restart: unless-stopped
+    env_file:
+      - .env.ingest
+      - .env.scribe
+    environment:
+      RELAY_SCRIBE_HOST: "0.0.0.0"
+      RELAY_SCRIBE_PORT: "8791"
+      RELAY_SCRIBE_PROFILE_DIR: /data/scribe/profile
+      RELAY_SCRIBE_DATA_DIR: /data/scribe
+      RELAY_SCRIBE_PROBE_DIR: /data/scribe/probes
+      RELAY_STT_URL: http://stt:8090
+      RELAY_INGEST_URL: http://tools:8787/internal/transcripts
+      # Join policy: 2 captures max (a third meeting becomes a `failed`
+      # "at capacity" row with a notice, never a silent drop).
+      RELAY_SCRIBE_MAX_CONCURRENT: ${RELAY_SCRIBE_MAX_CONCURRENT:-2}
+      RELAY_SCRIBE_MAX_STREAMS: ${RELAY_SCRIBE_MAX_STREAMS:-12}
+      RELAY_SCRIBE_SELF_NAME: ${RELAY_SCRIBE_SELF_NAME:-Relay Scribe}
+      RELAY_SCRIBE_ENABLED: ${RELAY_SCRIBE_ENABLED:-0}
+    volumes:
+      - scribe_data:/data
+    expose:
+      - "8791"
+    depends_on:
+      stt:
+        condition: service_healthy
+      tools:
+        condition: service_healthy
+    # CPU is the tighter limit (2 vCPU shared with STT + Chrome video decode);
+    # the memory cap bounds a runaway Chrome. Measure before raising concurrency.
+    mem_limit: ${RELAY_SCRIBE_MEM_LIMIT:-4g}
+    pids_limit: 2048
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8791/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
+
+  # Shared STT server (§6.6): one process serves every capture bot. Model loaded
+  # once; the worker speaks only the HTTP contract. Reached over the compose
+  # network; no published ports.
+  stt:
+    init: true
+    build:
+      context: .
+      dockerfile: deploy/local/Dockerfile.stt
+    image: ${RELAY_STT_IMAGE:-relay-stt:latest}
+    restart: unless-stopped
+    environment:
+      RELAY_STT_HOST: "0.0.0.0"
+      RELAY_STT_PORT: "8090"
+      RELAY_STT_MODEL_DIR: /models/parakeet
+      RELAY_STT_THREADS: ${RELAY_STT_THREADS:-2}
+    expose:
+      - "8090"
+    # Parakeet int8 sits ~1.1 GB resident; headroom for concurrent streams.
+    mem_limit: ${RELAY_STT_MEM_LIMIT:-3g}
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8090/health', timeout=4)"]
+      interval: 20s
+      timeout: 5s
+      start_period: 40s
+      retries: 5
+
   caddy:
     image: ${CADDY_IMAGE:-caddy:2}
     restart: unless-stopped
@@ -116,5 +201,9 @@ volumes:
   data:
     external: ${RELAY_DATA_EXTERNAL:-false}
     name: ${RELAY_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-relay}_data}
+  # Scribe-only: the signed-in relay@ browser profile is a full Google session,
+  # so it must never be mounted into app/tools. Also holds spool/failures/probes.
+  scribe_data:
+    name: ${RELAY_SCRIBE_DATA_VOLUME:-${COMPOSE_PROJECT_NAME:-relay}_scribe_data}
   caddy_data:
   caddy_config:

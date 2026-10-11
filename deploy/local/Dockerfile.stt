@@ -1,0 +1,37 @@
+# Relay shared STT server image (plans/scribe-stt.md §6.6): one process serves
+# every capture bot. Parakeet TDT 0.6B int8 via sherpa-onnx, 16 kHz mono WAV in
+# → text out (POST /transcribe). Swapping the model means rebuilding this image
+# with a different MODEL_URL — the worker only speaks the HTTP contract.
+#
+# Model: nvidia/parakeet-tdt-0.6b-v2 int8, redistributed by the sherpa-onnx
+# project. NVIDIA NeMo models are CC-BY-4.0 (attribution required); see NOTICE.
+#
+# Build: docker compose build stt
+#   docker build -f deploy/local/Dockerfile.stt -t relay-stt:local .
+# The model download is ~0.6 GB; override MODEL_URL to pin/change the checkpoint.
+
+FROM python:3.12-slim
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends ca-certificates curl bzip2 \
+  && rm -rf /var/lib/apt/lists/*
+RUN pip install --no-cache-dir sherpa-onnx numpy
+
+ARG MODEL_URL=https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8.tar.bz2
+RUN mkdir -p /models \
+  && curl -fSL "$MODEL_URL" -o /tmp/model.tar.bz2 \
+  && tar -xjf /tmp/model.tar.bz2 -C /models \
+  && d="$(dirname "$(find /models -name encoder.int8.onnx | head -1)")" \
+  && mv "$d" /models/parakeet \
+  && rm /tmp/model.tar.bz2
+
+COPY services/scribe-capture/stt/parakeet_server.py /app/parakeet_server.py
+COPY deploy/local/STT-NOTICE.md /app/NOTICE.md
+
+ENV RELAY_STT_MODEL_DIR=/models/parakeet \
+    RELAY_STT_HOST=0.0.0.0 \
+    RELAY_STT_PORT=8090 \
+    RELAY_STT_THREADS=2
+EXPOSE 8090
+HEALTHCHECK --interval=20s --timeout=5s --start-period=40s --retries=5 \
+  CMD python -c "import urllib.request as u; u.urlopen('http://127.0.0.1:8090/health', timeout=4)" || exit 1
+CMD ["python3", "/app/parakeet_server.py"]
