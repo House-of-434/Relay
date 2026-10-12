@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
-  BROWSER_SIGN_IN_FAILED, cloudOwnerOf, isConnected, isOwnerOrAdmin, previewBrowserSignIn, readSessionState, reasonWorthShowing, SERVICE_TRUST_REASON, signInWithBrowserGrant,
+  BROWSER_SIGN_IN_FAILED, cloudOwnerOf, isConnected, isOwnerOrAdmin, previewBrowserSignIn, readSessionState, reasonWorthShowing, SERVICE_TRUST_REASON, signInWithBrowserGrant, signOut,
   takeBrowserSignInFromLocation, takeInvitedEmailFromLocation, takePairingCodeFromLocation,
 } from "./session";
 
@@ -114,5 +114,34 @@ describe("an SSH tunnel to a server that treats local requests as a service", ()
     expect(isConnected({ kind: "unauthenticated", error: "pair" })).toBe(false);
     expect(isConnected(null)).toBe(false);
     expect(reasonWorthShowing(SERVICE_TRUST_REASON)).toBe(SERVICE_TRUST_REASON);
+  });
+});
+
+describe("signing out", () => {
+  it("ends the server session, then reloads so boot lands on sign-in", async () => {
+    const fetchImpl = vi.fn(async () => new Response("{}", { status: 200 })) as unknown as typeof fetch;
+    const reload = vi.fn();
+    await signOut(fetchImpl, reload);
+    expect(fetchImpl).toHaveBeenCalledWith("/api/auth/logout", { method: "POST", credentials: "same-origin" });
+    expect(reload).toHaveBeenCalledOnce();
+  });
+
+  it("still reloads when the server cannot be reached, so boot reports the true state", async () => {
+    const fetchImpl = vi.fn(async () => { throw new Error("down"); }) as unknown as typeof fetch;
+    const reload = vi.fn();
+    await signOut(fetchImpl, reload);
+    expect(reload).toHaveBeenCalledOnce();
+  });
+});
+
+describe("login-derived display claims on a session", () => {
+  const answer = (body: unknown) => (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch;
+  const base = { kind: "session", id: "s", label: "l", scopes: ["client"], expiresAt: 1 };
+  it("carries the provider name and photo through, and drops malformed ones", async () => {
+    expect(await readSessionState(answer({ ...base, displayName: "Ada", avatarUrl: "https://lh3.googleusercontent.com/a" })))
+      .toMatchObject({ displayName: "Ada", avatarUrl: "https://lh3.googleusercontent.com/a" });
+    // Display-only: absent or malformed claims leave a plain session behind.
+    expect(await readSessionState(answer(base))).not.toHaveProperty("displayName");
+    expect(await readSessionState(answer({ ...base, displayName: "  ", avatarUrl: 7 }))).not.toHaveProperty("avatarUrl");
   });
 });

@@ -1,10 +1,10 @@
-// The picker that switches the language sits inside this screen, so the screen
-// has to answer to it while it is open. The trap is module scope: SECTIONS is
-// built once at import time, and a label resolved there would keep the language
-// the app booted in no matter what the picker says.
+// Settings renders in the active locale while open, so the screen has to
+// answer to locale switches without a reload. The trap is module scope:
+// SECTIONS is built once at import time, and a label resolved there would
+// keep the language the app booted in no matter what the picker says.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { setLocale } from "@/lib/i18n";
 import { StoreProvider } from "@/state/store";
@@ -16,12 +16,6 @@ beforeAll(() => {
   // the skin picker reads the attribute main.tsx stamps before first paint
   (globalThis as { document?: unknown }).document ??= { documentElement: { dataset: {} } };
 });
-
-// Analytics boots PostHog on import, which wants a real browser.
-vi.mock("@/lib/analytics", () => ({
-  analyticsEnabled: () => false,
-  setAnalyticsEnabled: () => {},
-}));
 
 async function renderSettings(): Promise<string> {
   const { SettingsModal } = await import("./SettingsModal");
@@ -38,7 +32,6 @@ describe("Settings → General", () => {
     const pt = await renderSettings();
     expect(pt).toContain("Configurações");
     expect(pt).toContain("Mecanismos");
-    expect(pt).toContain("Idioma do app");
     expect(pt).toContain("Duração máxima do turno");
 
     // same module instance, no reload: a frozen label would still say

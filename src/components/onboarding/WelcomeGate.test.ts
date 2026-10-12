@@ -20,7 +20,7 @@ vi.mock("react", async (original) => ({
 }));
 const store = vi.hoisted(() => ({ state: {} as Record<string, unknown>, dispatch: vi.fn(), api: vi.fn() }));
 vi.mock("@/state/store", () => ({ api: store.api, useStore: () => ({ state: store.state, dispatch: store.dispatch }) }));
-vi.mock("@/lib/analytics", () => ({ emailGateDone: () => false }));
+vi.mock("@/lib/first-run", () => ({ emailGateDone: () => false }));
 // The gate's job is choosing; the flow itself has its own recipe.
 vi.mock("./WelcomeFlow", () => ({ WelcomeFlow: () => null }));
 vi.mock("@/components/Avatar", () => ({ MausAvatar: () => null }));
@@ -81,7 +81,7 @@ describe("who gets the welcome flow", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
     const { tree } = gate(LOCAL_VIEWER);
     expect(tree?.type).toBe(WelcomeFlow);
-    expect(tree?.props).toMatchObject({ hosted: false, initialBeat: undefined, replay: false });
+    expect(tree?.props).toMatchObject({ hosted: false, initialBeat: undefined });
   });
 
   it("opens the hosted beat set for a hosted workspace's admin", () => {
@@ -138,6 +138,18 @@ describe("who gets the welcome flow", () => {
     expect(store.dispatch).toHaveBeenCalledWith({ type: "toggleWelcome", open: false });
   });
 
+  it("opens the flow for a shared workspace's member, who signs in with client scope", () => {
+    store.state = { ...store.state, config: { ...fresh, sharedWorkspace: true } };
+    const { tree } = gate({ hosted: false, canSave: false });
+    expect(tree?.type).toBe(WelcomeFlow);
+    expect(tree?.props).toMatchObject({ hosted: false, sharedWorkspace: true });
+  });
+
+  it("adds nothing for a member of a server that is neither hosted nor shared", () => {
+    store.state = { ...store.state, config: { ...fresh, sharedWorkspace: false } };
+    expect(gate({ hosted: false, canSave: false }).tree).toBeNull();
+  });
+
   it("adds nothing for a member of a server that is not hosted, such as the owner's own paired browser", () => {
     // no note: the team copy would be false there, and it would be new UI
     const { tree, html } = gate({ hosted: false, canSave: false });
@@ -147,7 +159,7 @@ describe("who gets the welcome flow", () => {
     store.state = { ...store.state, welcomeOpen: true };
     const replay = gate({ hosted: false, canSave: false }).tree!;
     expect(replay.type).toBe(WelcomeFlow);
-    expect(replay.props).toMatchObject({ hosted: false, replay: true });
+    expect(replay.props).toMatchObject({ hosted: false });
   });
 
   it("treats a hosted workspace opened inside the desktop app like a browser", () => {

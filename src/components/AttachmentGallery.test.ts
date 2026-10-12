@@ -1,8 +1,8 @@
 import { createElement } from "react";
-import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { FILE_MAX_BYTES } from "@/lib/composer-attachments";
 import { AttachmentGallery, collectMessageFiles, isAudioAttachment, isVideoAttachment, loadMessageAudio, loadMessageVideo, MessageAttachmentGallery, splitMessageAttachments } from "./AttachmentGallery";
+import { renderStatic } from "./test-render";
 
 const message = { threadId: "thread/one", messageId: "message two" };
 const file = { path: "/workspace/demo.mp4", name: "demo.mp4", linked: true };
@@ -32,7 +32,8 @@ describe("bot-attached files", () => {
   });
 
   it("shows an attached clip as a play button and a deck as a save chip, without repeating a linked one", () => {
-    const render = (text: string) => renderToStaticMarkup(createElement(MessageAttachmentGallery, { text, attachments, message }));
+    const render = (text: string) => renderStatic(
+      createElement(MessageAttachmentGallery, { text, attachments, message }));
     const html = render("");
     expect(html).toContain("song.mp3");
     expect(html).toContain("deck.pptx");
@@ -42,7 +43,7 @@ describe("bot-attached files", () => {
   });
 
   it("does not turn an unattached audio path into a player", () => {
-    const html = renderToStaticMarkup(createElement(AttachmentGallery, { files: [{ path: "/store/x.mp3", name: "x.mp3" }], message }));
+    const html = renderStatic(createElement(AttachmentGallery, { files: [{ path: "/store/x.mp3", name: "x.mp3" }], message }));
     expect(html).not.toContain("Play x.mp3");
   });
 });
@@ -136,7 +137,7 @@ describe("message gallery", () => {
   });
 
   it("shows one compact collection, keeps file actions explicit, and never eagerly loads videos", () => {
-    const markup = renderToStaticMarkup(createElement(AttachmentGallery, {
+    const markup = renderStatic(createElement(AttachmentGallery, {
       images: [image], files: [file, { path: "/workspace/report.pdf", name: "report.pdf", linked: true }], message,
     }));
     expect(markup).toContain("3 attachments");
@@ -144,13 +145,30 @@ describe("message gallery", () => {
     expect(markup).toContain("Load video");
     expect(markup).toContain("Save a copy of demo.mp4");
     expect(markup).toContain("Save a copy of report.pdf");
+    expect(markup).toContain("divide-y");
+    expect(markup).not.toContain("Open file");
     expect(markup).toContain("loading=\"lazy\"");
     expect(markup).not.toContain("<video");
     expect(markup).not.toContain("src=\"/workspace/");
   });
 
+  it("groups previewable files into one divided container", () => {
+    const markup = renderStatic(createElement(AttachmentGallery, {
+      files: [
+        { path: "/workspace/report.md", name: "report.md", linked: true },
+        { path: "/workspace/run.py", name: "run.py", linked: true },
+      ],
+      message,
+    }));
+    expect(markup).toContain("2 attachments");
+    expect(markup).toContain("divide-y");
+    expect(markup).toContain("Markdown");
+    expect(markup).toContain("Python");
+    expect(markup).toContain("Open file");
+  });
+
   it("collapses large collections and deduplicates paths", () => {
-    const markup = renderToStaticMarkup(createElement(AttachmentGallery, {
+    const markup = renderStatic(createElement(AttachmentGallery, {
       images: [image, image],
       files: Array.from({ length: 5 }, (_, index) => ({ path: `./file${index}.pdf`, name: `file${index}.pdf`, linked: true })),
       message,
@@ -163,7 +181,7 @@ describe("message gallery", () => {
   });
 
   it("keeps legacy attachments visible but inert and does not expose a video preview without message context", () => {
-    const markup = renderToStaticMarkup(createElement(AttachmentGallery, { images: [{ path: "/old/image.png", name: "Old.png" }], files: [file] }));
+    const markup = renderStatic(createElement(AttachmentGallery, { images: [{ path: "/old/image.png", name: "Old.png" }], files: [file] }));
     expect(markup).toContain("Old.png");
     expect(markup).toContain("demo.mp4");
     expect(markup).toContain("Unavailable");

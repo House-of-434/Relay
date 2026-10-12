@@ -229,7 +229,7 @@ function VideoAttachment({ file, message }: { file: GalleryFile; message: Messag
         {!preview && !loading && <Film size={13} className="pointer-events-none absolute left-2 top-2 text-ink-secondary/50" />}
       </div>
       {error && <p role="alert" className="px-3 py-2 text-[11px] text-danger">{error}</p>}
-      <AttachedFileChip file={file} linked={file.linked} message={message} className="max-w-none rounded-none border-0 border-t border-hairline/30 bg-transparent" />
+      <AttachedFileChip bare file={file} linked={file.linked} message={message} className="border-t border-hairline/30" />
     </div>
   );
 }
@@ -360,7 +360,8 @@ export function AttachmentGallery({ images = [], files = [], message, eager = fa
   if (!items.length) return null;
   const shown = expanded ? items : items.slice(0, 4);
   const media = shown.filter((item) => item.kind === "image" || item.kind === "video");
-  const documents = shown.filter((item) => item.kind === "file" || item.kind === "audio");
+  const audio = shown.filter((item) => item.kind === "audio");
+  const fileRows = shown.filter((item) => item.kind === "file");
   const previews = items.flatMap((item) => item.kind === "image" ? [item.image] : []);
 
   return (
@@ -376,11 +377,18 @@ export function AttachmentGallery({ images = [], files = [], message, eager = fa
           ) : null)}
         </div>
       )}
-      {documents.length > 0 && (
+      {audio.length > 0 && (
         <div className="flex flex-col items-start gap-1.5">
-          {documents.map((item) => item.kind === "audio" && message
+          {audio.map((item) => item.kind === "audio" && message
             ? <AudioAttachment key={`${message.threadId}:${message.messageId}:${item.key}`} file={item.file} message={message} />
-            : item.kind === "file" && <AttachedFileChip key={item.key} file={item.file} linked={item.file.linked} message={message} className="max-w-none rounded-xl border-hairline/25 bg-transparent" />)}
+            : null)}
+        </div>
+      )}
+      {fileRows.length > 0 && (
+        <div className="w-full max-w-[320px] divide-y divide-hairline/30 overflow-hidden rounded-xl border border-hairline/40 bg-inset">
+          {fileRows.map((item) => item.kind === "file" && (
+            <AttachedFileChip key={item.key} bare file={item.file} linked={item.file.linked} message={message} />
+          ))}
         </div>
       )}
       {items.length > 4 && (

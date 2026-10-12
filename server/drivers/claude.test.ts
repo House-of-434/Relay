@@ -570,15 +570,26 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(recorder.events.some((event) => event.type === "turn.retrying")).toBe(false);
   });
 
-  it("keeps a workspace Anthropic key set on purpose while still dropping one from the parent env", async () => {
+  it("prefers a workspace Anthropic key while the operator .env key still funds turns like prod", async () => {
     await create(undefined, { ANTHROPIC_API_KEY: "sk-ant-workspace-fixture" });
     const dump = join(scratch, "dump-workspace-key.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
+    process.env.ANTHROPIC_API_KEY = "sk-ant-operator-fixture";
     await instance.adapter.sendTurn({ threadId: "t-workspace-key", text: "hello" });
     await recorder.until((e) => e.type === "turn.completed");
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.env.ANTHROPIC_API_KEY).toBe("sk-ant-workspace-fixture");
+  });
+
+  it("funds turns from the operator .env key when no workspace key is set", async () => {
+    await create();
+    const dump = join(scratch, "dump-operator-key.json");
+    process.env.FAKE_CLAUDE_DUMP = dump;
+    process.env.ANTHROPIC_API_KEY = "sk-ant-operator-fixture";
+    await instance.adapter.sendTurn({ threadId: "t-operator-key", text: "hello" });
+    await recorder.until((e) => e.type === "turn.completed");
+    const seen = JSON.parse(readFileSync(dump, "utf8"));
+    expect(seen.env.ANTHROPIC_API_KEY).toBe("sk-ant-operator-fixture");
   });
 
   it("hands a hosted tenant's CLI the hosted model token but none of the operator's control-plane secrets", async () => {
@@ -595,11 +606,13 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) expect(seen.env[name]).toBeUndefined();
   });
 
-  it("keeps user and system prompts off argv and strips identity env vars", async () => {
+  it("keeps user and system prompts off argv and workspace credentials out of the child env", async () => {
     await create();
     const dump = join(scratch, "dump.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
+    // the operator's own key funds the turn like prod; only the workspace
+    // credentials the harness holds must never ride into the CLI child
+    process.env.ANTHROPIC_API_KEY = "sk-ant-operator-fixture";
     // workspace credentials the harness may hold (env-injected at boot by
     // the desktop shell) must never ride into the CLI child
     process.env.XAI_API_KEY = "xai-should-not-leak";
@@ -617,7 +630,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.systemPrompt).toBe("You are Testy.");
     expect(existsSync(seen.argv[seen.argv.indexOf("--append-system-prompt-file") + 1])).toBe(false);
     expect(seen.argv).toContain("--session-id");
-    expect(seen.env.ANTHROPIC_API_KEY).toBeUndefined();
+    expect(seen.env.ANTHROPIC_API_KEY).toBe("sk-ant-operator-fixture");
     expect(seen.env.CLAUDECODE).toBeUndefined();
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
     expect(seen.env.XAI_API_KEY).toBeUndefined();
@@ -3062,11 +3075,14 @@ describe("ClaudeDriver snapshot auth (fake CLI)", () => {
 
     process.env.FAKE_CLAUDE_AUTH = "malformed";
     expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+  });
 
-    // The real turn removes inherited API keys, so the auth probe must do the
-    // same or setup can report a login the turn cannot use.
+  it("reports the operator-key login the turn itself uses", async () => {
+    // Probe and turn share one env builder, so setup can never report a
+    // login the turn cannot use — in either direction.
+    await create();
     process.env.FAKE_CLAUDE_AUTH = "inherited-api-key";
-    process.env.ANTHROPIC_API_KEY = "sk-should-not-leak";
-    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: false });
+    process.env.ANTHROPIC_API_KEY = "sk-ant-operator-fixture";
+    expect(await instance.snapshot()).toMatchObject({ state: "available", authenticated: true });
   });
 });

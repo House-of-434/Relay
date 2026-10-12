@@ -18,6 +18,10 @@ const ALLOWED = new Set([
   "onboarding.hosted.intro",
   "onboarding.shared.title",
   "onboarding.shared.body",
+  "onboarding.shared.welcome",
+  "signIn.workspace.title",
+  "signIn.workspace.body",
+  "signIn.workspace.denied",
   "settings.welcome.subtitle",
   "connectors.notConfiguredYet",
 ]);

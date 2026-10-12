@@ -893,6 +893,7 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBeFalsy();
     expect(res.result.content[0].text).toContain("Attached report.pdf");
     expect(res.result.content[0].text).toContain("48639 bytes");
+    expect(res.result.content[0].text).toContain("never quote its contents");
     // who is attaching comes from the harness capability, never from arguments
     expect(lastAttachBody).toEqual({ path: "/home/cua/workspace/report.pdf", name: "Q3 report.pdf" });
     await callTool("attach_file", { path: "clip.mp4" });

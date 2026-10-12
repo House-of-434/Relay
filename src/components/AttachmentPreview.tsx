@@ -30,6 +30,8 @@ import {
   type TranscriptFileAttachment,
   type TranscriptImageAttachment,
 } from "@/lib/composer-attachments";
+import { previewableDocType, docTypeLabel } from "@/lib/doc-refs";
+import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 
@@ -758,67 +760,122 @@ export function MarkdownImagePreview({
   );
 }
 
-export function AttachedFileChip({ file, message, linked = false, className }: {
+export function AttachedFileChip({ file, message, linked = false, bare = false, className }: {
   file: TranscriptFileAttachment;
   message?: MessageAttachmentContext;
   /** A rendered bot-authored Markdown link, still checked by the server on click. */
   linked?: boolean;
+  /** A row inside a shared container (gallery file list): no border, rounding
+   * or background of its own — the container and its dividers draw those. */
+  bare?: boolean;
   className?: string;
 }) {
   const save = useLocalFileSave(file.path, file.name, message);
+  const { dispatch } = useStore();
   const failed = save.state === "failed";
+  // Standalone pill chrome; bare rows let the parent container draw the
+  // border, rounding and background, separated by its dividers.
+  const shell = bare
+    ? "min-w-0 text-[12px] text-ink-secondary"
+    : "max-w-[320px] overflow-hidden rounded-lg border border-hairline/40 bg-inset text-[12px] text-ink-secondary";
   if (!message || (!file.private && !linked)) {
     return (
-      <div title={t("attach.legacyFile", { name: file.name })} className={cn("flex max-w-[280px] items-center gap-2 overflow-hidden rounded-lg border border-hairline/40 bg-inset/70 px-2.5 py-2 text-[12px] text-ink-secondary", className)}>
+      <div title={t("attach.legacyFile", { name: file.name })} className={cn(shell, "flex items-center gap-2 px-2.5 py-1.5", className)}>
         <FileText size={14} className="shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-ink">{file.name}</span>
-        <span className="text-[10.5px]">{t("attach.unavailable")}</span>
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-ink">{file.name}</span>
+          <span className="block text-[10.5px] text-ink-secondary">{docTypeLabel(file.path)}</span>
+        </span>
+        <span className="shrink-0 text-[10.5px]">{t("attach.unavailable")}</span>
+      </div>
+    );
+  }
+  const saveLabel = failed
+    ? t("attach.retrySaveAria", { name: file.name })
+    : t("attach.saveAria", { name: file.name });
+  const saveIcon = save.state === "saving" ? (
+    <LoaderCircle size={13} className="shrink-0 animate-spin" />
+  ) : save.state === "saved" ? (
+    <Check size={13} className="shrink-0 text-success" />
+  ) : save.state === "failed" ? (
+    <RotateCcw size={13} className="shrink-0 text-danger" />
+  ) : (
+    <Download size={13} className="shrink-0" />
+  );
+  // Finished and in-flight saves need no status strip — the check and the
+  // spinner say it. The strip only appears when the save failed with a reason.
+  const saveStatus = failed && (
+    <div
+      role="alert"
+      className="border-t border-hairline/30 px-2.5 py-1.5 text-[10.5px] text-danger"
+    >
+      {save.reason}
+    </div>
+  );
+  // Selecting a previewable file (markdown, scripts, text) opens it in
+  // the doc pane; the bare download glyph at the edge keeps save-a-copy.
+  // Every other file keeps the single download button it always had.
+  const docType = previewableDocType(file.path);
+  if (docType) {
+    return (
+      <div
+        title={save.state === "saved" && save.savedTo ? t("attach.savedTo", { path: save.savedTo }) : file.name}
+        className={cn("group", shell, className)}
+      >
+        <div className="flex items-center transition-colors hover:bg-raised/70">
+          <button
+            type="button"
+            onClick={() => dispatch({
+              type: "openDocPane",
+              ref: { type: docType, threadId: message.threadId, messageId: message.messageId, path: file.path, title: file.name },
+            })}
+            aria-label={t("attach.previewAria", { name: file.name })}
+            className="flex min-h-12 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
+          >
+            <FileText size={14} className="shrink-0" aria-hidden="true" />
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-ink">{file.name}</span>
+              <span className="block text-[10.5px]">
+                <span className="block text-ink-secondary group-hover:hidden">{docTypeLabel(file.path)}</span>
+                <span className="hidden text-ink-secondary group-hover:block">Open file</span>
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => void save.save()}
+            disabled={save.state === "saving"}
+            aria-label={saveLabel}
+            title={t("attach.download")}
+            className="mr-2 shrink-0 rounded p-1 text-ink-secondary opacity-0 transition-all hover:text-ink focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 group-hover:opacity-100 disabled:cursor-wait"
+          >
+            {saveIcon}
+          </button>
+        </div>
+        {saveStatus}
       </div>
     );
   }
   return (
     <div
       title={save.state === "saved" && save.savedTo ? t("attach.savedTo", { path: save.savedTo }) : file.name}
-      className={cn("max-w-[280px] overflow-hidden rounded-lg border border-hairline/40 bg-inset/70 text-[12px] text-ink-secondary", className)}
+      className={cn(shell, className)}
     >
       <button
         type="button"
         onClick={() => void save.save()}
         disabled={save.state === "saving"}
-        aria-label={
-          failed
-            ? t("attach.retrySaveAria", { name: file.name })
-            : t("attach.saveAria", { name: file.name })
-        }
-        className="flex min-h-10 w-full items-center gap-2 px-2.5 py-2 text-left transition-colors hover:bg-raised/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-wait disabled:hover:bg-transparent"
+        aria-label={saveLabel}
+        className="flex min-h-12 w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-raised/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-wait disabled:hover:bg-transparent"
       >
         <FileText size={14} className="shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1 truncate text-ink">{file.name}</span>
-        {save.state === "saving" ? (
-          <LoaderCircle size={13} className="shrink-0 animate-spin" />
-        ) : save.state === "saved" ? (
-          <Check size={13} className="shrink-0 text-success" />
-        ) : save.state === "failed" ? (
-          <RotateCcw size={13} className="shrink-0 text-danger" />
-        ) : (
-          <Download size={13} className="shrink-0" />
-        )}
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-ink">{file.name}</span>
+          <span className="block text-[10.5px] text-ink-secondary">{docTypeLabel(file.path)}</span>
+        </span>
+        {saveIcon}
       </button>
-      {save.state !== "idle" && (
-        <div
-          role={failed ? "alert" : "status"}
-          className={cn(
-            "border-t border-hairline/30 px-2.5 py-1.5 text-[10.5px]",
-            failed ? "text-danger" : save.state === "saved" ? "text-success" : "text-ink-secondary",
-          )}
-        >
-          {save.state === "saving"
-            ? t("attach.downloading")
-            : save.state === "saved"
-              ? t("attach.downloaded")
-              : save.reason}
-        </div>
-      )}
+      {saveStatus}
     </div>
   );
 }

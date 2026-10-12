@@ -14,7 +14,7 @@ import {
   normalizeMathDelimiters,
   textDirection,
 } from "./ChatMarkdown";
-import { StoreProvider } from "@/state/store";
+import { renderStatic } from "./test-render";
 import { ThreadRefsContext } from "./ThreadRefs";
 import * as AttachmentPreview from "./AttachmentPreview";
 
@@ -204,8 +204,8 @@ describe("#Title thread links in markdown", () => {
     { botId: "scout", botName: "Scout", threadId: "qa-245", title: "QA PR 245", activeAt: 2 },
     { botId: "scout", botName: "Scout", threadId: "short", title: "QA", activeAt: 1 },
   ];
-  const render = (text: string) => renderToStaticMarkup(createElement(StoreProvider, null,
-    createElement(ThreadRefsContext.Provider, { value: { threads, currentBotId: "scout" } }, createElement(ChatMarkdown, { text }))));
+  const render = (text: string) => renderStatic(
+    createElement(ThreadRefsContext.Provider, { value: { threads, currentBotId: "scout" } }, createElement(ChatMarkdown, { text })));
 
   it("links a known title in prose as a button that opens the thread", () => {
     const markup = render("I opened #QA PR 245 for the review.");
@@ -224,7 +224,7 @@ describe("#Title thread links in markdown", () => {
   });
 
   it("does nothing without any visible threads", () => {
-    const markup = renderToStaticMarkup(createElement(StoreProvider, null, createElement(ChatMarkdown, { text: "#QA PR 245" })));
+    const markup = renderStatic(createElement(ChatMarkdown, { text: "#QA PR 245" }));
     expect(markup).not.toContain("data-thread-link");
     expect(markup).toContain("#QA PR 245");
   });
@@ -240,6 +240,29 @@ describe("#Title thread links in markdown", () => {
     const markup = render("see [Gone](relay://thread/dead?bot=scout)");
     expect(markup).toContain(">Gone<");
     expect(markup).not.toContain("data-thread-link");
+    expect(markup).not.toContain('href="relay://');
+    expect(markup).not.toContain('target="_blank"');
+  });
+});
+
+describe("document links in markdown", () => {
+  const threads = [
+    { botId: "scout", botName: "Scout", threadId: "qa-245", title: "QA PR 245", activeAt: 2 },
+  ];
+  const render = (text: string) => renderStatic(
+    createElement(ThreadRefsContext.Provider, { value: { threads, currentBotId: "scout" } }, createElement(ChatMarkdown, { text })));
+
+  it("renders a document link as a button that opens the pane", () => {
+    const markup = render("read [Q3 report](relay://doc/thread-1/message-1?path=%2Fworkspace%2Freport.md&title=Q3%20report) today");
+    expect(markup).toContain('<button type="button" data-doc-link="thread-1/message-1"');
+    expect(markup).toContain(">Q3 report</button>");
+    expect(markup).not.toContain('href="relay://');
+  });
+
+  it("keeps a dead document link as plain text, never an external anchor", () => {
+    const markup = render("see [Notes](relay://doc/thread-1/message-1/extra?path=%2Fa.md)");
+    expect(markup).toContain(">Notes<");
+    expect(markup).not.toContain("data-doc-link");
     expect(markup).not.toContain('href="relay://');
     expect(markup).not.toContain('target="_blank"');
   });

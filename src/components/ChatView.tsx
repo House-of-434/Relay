@@ -5,16 +5,14 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Bug,
   Copy,
   Crown,
   MessageSquareReply,
-  Monitor,
   Pencil,
   Pin,
   PinOff,
+  Plus,
   RefreshCw,
-  Search,
   Square,
   Webhook,
   X,
@@ -22,7 +20,7 @@ import {
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
 import { useCaptionChrome, useDesktopCapabilities } from "@/components/DesktopCapabilities";
-import { contextChip, contextDetail, contextShare, costCaption, formatUsd, hasFiniteCost, lastTurnDetail, usageChip, usageDetail } from "@/lib/usage";
+import { contextChip, contextDetail, contextShare, lastTurnDetail, usageDetail } from "@/lib/usage";
 import {
   api,
   currentTaskBot,
@@ -53,6 +51,8 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { RawMarkdownView, RawToggleAction } from "./RawMarkdownToggle";
 import { ThreadChip } from "./ThreadChip";
+import { ThreadSwitcher } from "./ThreadSwitcher";
+import { useMenuMotion } from "./MenuMotion";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
 import { ToolActivity } from "./ToolActivity";
@@ -61,7 +61,6 @@ import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
 import { Composer } from "./Composer";
-import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -484,7 +483,7 @@ function Bubble({
               ) : text ? (
                 <ChatMarkdown text={text} mentionPeers={mentionPeers} message={{ threadId: bot.threadId, messageId: message.id }} />
               ) : null}
-              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : undefined} eager={eagerAttachments} />
+              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : "mb-0"} eager={eagerAttachments} />
             </MessageBoundary>
           )}
         </div>
@@ -913,7 +912,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const bot = useMemo(() => currentTaskBot(profile), [profile]);
   const { state, dispatch } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
-  const computerComingSoon = state.config?.sharedWorkspace === true || state.config?.computerDisabled === true;
   // Windows has no native caption buttons (renderer-drawn, see
   // WindowCaptionButtons); this header is the window drag region, and the
   // icon row shifts below the 26px-tall corner the buttons occupy.
@@ -930,24 +928,11 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const reasoning = stream.reasoning[bot.threadId];
   const provisioning = state.provisioning[bot.id];
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
-  const [findOpen, setFindOpen] = useState(false);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     bot.threadId,
     `bot:${bot.id}:${bot.threadId}`,
     bot.messages,
   );
-  useEffect(() => setFindOpen(false), [bot.threadId]);
-  useEffect(() => {
-    const onFind = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onFind);
-    return () => window.removeEventListener("keydown", onFind);
-  }, []);
-
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
   // The bot's run in the current ask — every command it ran, the control-CLI
@@ -1239,12 +1224,7 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             header wraps: name line on top, chips underneath on the right. */}
         <div data-chathead-row className="flex items-center justify-between @max-[30rem]/chathead:flex-wrap @max-[30rem]/chathead:gap-y-1">
         <div data-chathead-identity className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
-          <button
-            onClick={() => dispatch({ type: "toggleSettings", open: true })}
-            className="flex size-10 shrink-0 items-center justify-center rounded-lg hover:bg-raised/50"
-            title={t("chat.openProfile")}
-            aria-label={t("chat.openProfileAria", { name: bot.name })}
-          >
+          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg">
             <BotAvatar
               bot={bot}
               state={stateForBot({ ...bot, messages })}
@@ -1252,22 +1232,24 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
               motion={mascotMotion?.kind ?? "none"}
               motionKey={mascotMotion?.nonce ?? 0}
             />
-          </button>
-          <RenameTitle
-            value={bot.name}
-            onCommit={(name) => {
-              if (window.ogb?.remoteClient?.active) {
-                void api(`/api/bots/${bot.id}/profile`, { method: "PATCH", body: JSON.stringify({ name }) })
-                  .then(({ bot: updated }) => dispatch({ type: "botPatched", bot: updated }))
-                  .catch((cause) => dispatch({ type: "error", message: cause instanceof Error ? cause.message : String(cause) }));
-              } else {
-                dispatch({ type: "updateBot", botId: bot.id, patch: { name } });
-              }
-            }}
-            onActivate={() => dispatch({ type: "toggleSettings", open: true })}
-            showEditButton
-            className="truncate text-[15px] font-semibold text-ink"
-            inputClassName="max-w-[220px] rounded bg-inset px-1.5 py-0.5 text-[15px] font-semibold"
+          </span>
+          <span className="truncate text-[15px] font-semibold text-ink">
+            {bot.name}
+          </span>
+          <span aria-hidden="true" className="shrink-0 text-[15px] text-ink-tertiary">/</span>
+          <ThreadSwitcher
+            currentThreadId={bot.threadId}
+            currentTitle={bot.tasks?.find((task) => task.threadId === bot.threadId)?.title ?? bot.name}
+            entries={(bot.tasks ?? []).map((task) => ({
+              threadId: task.threadId,
+              title: task.title,
+              createdAt: task.createdAt,
+              updatedAt: task.updatedAt,
+              unread: task.unread,
+              openedByName: task.openedBy?.name,
+              hidden: task.routineRunId != null || task.closedBy != null || task.archivedAt != null,
+            }))}
+            onSelect={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
           />
           {bot.chiefOfStaff && (
             // One line, never shrinking with the name (it wrapped "Chief / of /
@@ -1288,18 +1270,26 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
-          <button
-            onClick={() => setFindOpen((open) => !open)}
-            aria-label={t("chat.find")}
-            aria-pressed={findOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("chat.findShortcut")}
-          >
-            <Search size={18} />
-          </button>
+          {!remoteClient && (
+            <button
+              type="button"
+              onClick={() => {
+                // The current thread is already blank: creating another would
+                // pile up empties, so stay and hand the writer the composer.
+                // An unloaded thread counts as non-empty — + must still work.
+                if (!bot.awaitingThreadSnapshot && visibleMessages(bot).length === 0 && !bot.hasMore) {
+                  document.querySelector<HTMLTextAreaElement>("[data-composer-input]")?.focus();
+                  return;
+                }
+                dispatch({ type: "newTask", botId: bot.id });
+              }}
+              aria-label={t("thread.new")}
+              title={t("thread.new")}
+              className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <Plus size={18} />
+            </button>
+          )}
           <ExportTranscriptMenu
             title={bot.name}
             messages={messages}
@@ -1320,32 +1310,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
-          {!remoteClient && <button
-            data-tour="computer"
-            type="button"
-            disabled={computerComingSoon}
-            onClick={() => dispatch({ type: "toggleComputer" })}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised disabled:cursor-not-allowed disabled:opacity-35",
-              state.computerOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            aria-label={computerComingSoon ? "Computer tools coming soon" : t("chat.computer")}
-            title={computerComingSoon ? "Coming soon" : t("chat.computer")}
-          >
-            <Monitor size={18} />
-          </button>}
-          {!remoteClient && <button
-            onClick={() => dispatch({ type: "toggleInspector" })}
-            aria-label={t("chat.inspector")}
-            aria-pressed={state.inspectorOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              state.inspectorOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("chat.inspectorHint")}
-          >
-            <Bug size={18} />
-          </button>}
         </div>
         </div>
       </div>
@@ -1355,7 +1319,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
         {canOpenResults && resultsThreadId && <button type="button" onClick={() => openNotificationTarget(dispatch, { botId: bot.id, threadId: resultsThreadId }, state)} className="rounded px-2 py-1 text-accent hover:bg-raised">{t("routines.results.back")}</button>}
         <button type="button" onClick={() => dispatch({ type: "showRoutines", section: "logs", routineId: routineExecution.routineId, botId: bot.id })} className="rounded px-2 py-1 hover:bg-raised hover:text-ink">{t("routines.logs")}</button>
       </div>}
-      {findOpen && <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />}
 
       {/* Error banner */}
       {state.error && (
@@ -1585,16 +1548,34 @@ export function NewConversationInstead({ onNew }: { onNew: () => void }) {
   );
 }
 
-/** What the open task has spent — quiet until the first turn settles.
- * Click opens the bot's settings, where the Usage card has the breakdown. */
+/** Context-window pressure for the open task — quiet until it matters.
+ * Cost is deliberately never shown here: spend lives in the logs, not in
+ * the header. Click shows the read-only breakdown right here; it never
+ * opens settings. */
 function UsageChip({ bot }: { bot: Bot }) {
-  const { state, dispatch } = useStore();
+  const [open, setOpen] = useState(false);
+  const motion = useMenuMotion(open);
+  const menuRef = useRef<HTMLDivElement>(null);
   const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
-  const text = usage ? usageChip(usage) : "";
-  if (!usage || !text) return null;
-  const billing = state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)?.snapshot.billing;
+  const ctx = usage ? contextChip(usage) : null;
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open ]);
+  if (!usage || !ctx) return null;
   const share = contextShare(usage);
-  const detail = [
+  const lines = [
     usage.turns === 1 ? t("chat.usage.turnsOne") : t("chat.usage.turnsMany", { count: usage.turns }),
     usageDetail(usage),
     lastTurnDetail(usage),
@@ -1603,23 +1584,31 @@ function UsageChip({ bot }: { bot: Bot }) {
     // model re-reading what it already saw — say so, or the figure reads as
     // a bug (issue #527); past 80% of the window the fix is a new thread
     share?.tone === "danger" ? t("chat.usage.contextNudge") : null,
-    hasFiniteCost(usage.costUsd) ? `${formatUsd(usage.costUsd)} ${costCaption(billing)}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
-  // Keep the unit visible in the compact header too.
-  const short = text;
-  const ctx = contextChip(usage);
+  ].filter(Boolean);
   return (
-    <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true, section: "usage" })}
-      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
-      title={detail}
-      data-testid="usage-chip"
-    >
-      <span className="@max-4xl/chathead:hidden">{text}</span>
-      <span className="hidden @max-4xl/chathead:inline">{short}</span>
-      {ctx && <span className={cn("ml-1.5 @max-4xl/chathead:hidden", share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>}
-    </button>
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
+        title={lines.join("\n")}
+        data-testid="usage-chip"
+      >
+        <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
+      </button>
+      {motion.shown && (
+        <div
+          role="dialog"
+          aria-label={t("chat.usage.breakdown")}
+          className={cn("absolute right-0 top-full z-40 mt-1 w-[240px] rounded-xl border border-hairline/50 bg-card px-3 py-2 shadow-2xl shadow-black/50", motion.className)} {...motion.exitProps}
+        >
+          {lines.map((line) => (
+            <div key={line} className="py-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{line}</div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }

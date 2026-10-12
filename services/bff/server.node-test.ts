@@ -11,6 +11,8 @@ import {
   configFromEnvironment,
   createRelayBff,
   createSupabaseJwtVerifier,
+  isPermittedAvatarUrl,
+  supabaseDisplayClaims,
   type RelayBffConfig,
 } from "./server.ts";
 import {
@@ -1580,4 +1582,82 @@ test("keeps each connector unavailable when any required Google setting is missi
     assert.equal(connect.response.status, 503, `${name} should disable Connect`);
     assert.equal(connect.response.headers.get("location"), null);
   }
+});
+
+test("lifts only well-formed login display claims out of Supabase metadata", () => {
+  const photo = "https://lh3.googleusercontent.com/a-";
+  assert.deepEqual(
+    supabaseDisplayClaims({ id: "u", user_metadata: { full_name: " Ada Lovelace ", avatar_url: photo } }),
+    { displayName: "Ada Lovelace", avatarUrl: photo },
+  );
+  assert.deepEqual(
+    supabaseDisplayClaims({ id: "u", user_metadata: { name: "Ada", picture: photo } }),
+    { displayName: "Ada", avatarUrl: photo },
+  );
+  // Display-only: anything missing or malformed is omitted, never fatal.
+  for (const profile of [
+    {},
+    { user_metadata: null },
+    { user_metadata: { full_name: "   ", avatar_url: "http://lh3.googleusercontent.com/a" } },
+    { user_metadata: { full_name: "x".repeat(121), avatar_url: "https://attacker.example.test/a.png" } },
+    { user_metadata: { full_name: 7, avatar_url: ["https://lh3.googleusercontent.com/a"] } },
+  ]) assert.deepEqual(supabaseDisplayClaims(profile), {});
+});
+
+test("permits only Google image hosts over HTTPS for login photos", () => {
+  for (const url of [
+    "https://lh3.googleusercontent.com/a-",
+    "https://lh6.googleusercontent.com/a_=s96-c",
+    "https://googleusercontent.com/a",
+  ]) assert.equal(isPermittedAvatarUrl(url), true, url);
+  for (const url of [
+    "",
+    "http://lh3.googleusercontent.com/a",
+    "https://attacker.example.test/a.png",
+    "https://googleusercontent.com.evil.test/a",
+    "https://lh3.googleusercontent.com/a".padEnd(2049, "x"),
+    "not a url",
+  ]) assert.equal(isPermittedAvatarUrl(url), false, url);
+});
+
+test("hands the provider's name and photo to the Relay session it issues at login", async () => {
+  const photo = "https://lh3.googleusercontent.com/a-/photo";
+  const fixture = await startFixture({
+    authUser: {
+      ...VERIFIED_AUTH_USER,
+      user_metadata: { full_name: "Ada Lovelace", avatar_url: photo },
+    },
+  });
+  const result = await login(fixture);
+  assert.equal(result.response.status, 303);
+  const bridge = fixture.requests.find((request) => request.url.pathname === "/api/internal/portal-session")!;
+  assert.deepEqual(JSON.parse(bridge.body), {
+    userId: USER_ID,
+    email: USER_EMAIL,
+    scopes: ["client"],
+    displayName: "Ada Lovelace",
+    avatarUrl: photo,
+  });
+  // The claims ride the user lookup the sign-in already performs: no second
+  // provider request is made to learn the name or the photo.
+  assert.equal(fixture.requests.filter((request) => request.url.pathname === "/auth/v1/user").length, 1);
+});
+
+test("still issues the session when the provider photo fails the login-photo contract", async () => {
+  const fixture = await startFixture({
+    authUser: {
+      ...VERIFIED_AUTH_USER,
+      user_metadata: { full_name: "Ada Lovelace", avatar_url: "https://attacker.example.test/a.png" },
+    },
+  });
+  const result = await login(fixture);
+  assert.equal(result.response.status, 303);
+  const bridge = fixture.requests.find((request) => request.url.pathname === "/api/internal/portal-session")!;
+  // The name still travels; the disallowed host never reaches Relay.
+  assert.deepEqual(JSON.parse(bridge.body), {
+    userId: USER_ID,
+    email: USER_EMAIL,
+    scopes: ["client"],
+    displayName: "Ada Lovelace",
+  });
 });

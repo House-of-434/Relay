@@ -8,15 +8,16 @@
 // team who runs the workspace.
 //
 // Two views, the pair this panel has always had: what you can connect
-// (Available) and what you have connected (Connected). Each connected account
-// disconnects on its own, because a teammate may have more than one Google
-// account and may want exactly one of them to keep access.
+// (Available) and what you have connected (Connected). Connectors are for a
+// single Google account: a connected service is one row whose action
+// disconnects it, never a list of accounts to choose between.
 import { type ReactNode, useEffect, useState } from "react";
-import { CalendarDays, Loader2, Mail, Search, X } from "lucide-react";
+import { Loader2, Search, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useStore } from "@/state/store";
+import { GmailMark, GoogleCalendarMark } from "./ProviderIcons";
 
 export interface ConnectionService {
   id: "gmail" | "google-calendar";
@@ -27,19 +28,21 @@ export interface ConnectionService {
 }
 
 /** The shipped catalog. Adding a service later is a line here, not a new
- *  integration surface. */
+ *  integration surface. Details state the permission boundary in plain
+ *  language: what Relay may read or change on the teammate's behalf while
+ *  the grant lasts. */
 export const CONNECTION_SERVICES: readonly ConnectionService[] = [
   {
     id: "gmail",
     label: "Gmail",
-    detail: "Mercury reads connected mail and prepares drafts. Relay never sends email on its own.",
-    icon: <Mail size={20} />,
+    detail: "Relay can read and search your mail, and send email for you. Sending asks for confirmation first.",
+    icon: <GmailMark size={22} />,
   },
   {
     id: "google-calendar",
     label: "Google Calendar",
-    detail: "Connected events appear read-only beside Relay's own bot schedule.",
-    icon: <CalendarDays size={20} />,
+    detail: "Relay can read your primary calendar and manage its events — creating, rescheduling, or cancelling when you ask.",
+    icon: <GoogleCalendarMark size={22} />,
   },
 ];
 
@@ -76,7 +79,6 @@ export function connectionViews(
     accountsByService,
     connected: connected.filter(matches),
     available: services.filter((service) => !accountsByService.get(service.id)?.length && matches(service)),
-    connectedCount: connected.length,
   };
 }
 
@@ -88,7 +90,9 @@ export interface PluginsPanelProps {
   loading?: boolean;
   error?: string | null;
   onConnect: (service: ConnectionService["id"]) => void | Promise<void>;
-  onDisconnect: (account: ConnectionAccount) => void | Promise<void>;
+  /** Revokes every grant held on one service: the panel's rows are services,
+   *  so its Disconnect is service-scoped too. */
+  onDisconnect: (accounts: readonly ConnectionAccount[]) => void | Promise<void>;
 }
 
 export function PluginsPanel({ accounts, configured, loading = false, error, onConnect, onDisconnect }: PluginsPanelProps) {
@@ -111,7 +115,7 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  const { accountsByService, available, connected, connectedCount } = connectionViews(CONNECTION_SERVICES, accounts, query);
+  const { accountsByService, available, connected } = connectionViews(CONNECTION_SERVICES, accounts, query);
 
   const connect = async (service: ConnectionService["id"]) => {
     if (!configured[service] || pending) return;
@@ -125,14 +129,17 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
     }
   };
 
-  const disconnect = async (account: ConnectionAccount) => {
+  // Connectors are for one Google account per service, so a connected service
+  // is a single row whose Disconnect removes the service from Relay — every
+  // grant held on it, so a leftover second account cannot keep serving mail
+  // behind a confirmation that says access ends.
+  const disconnect = async (service: ConnectionService, accounts: readonly ConnectionAccount[]) => {
     if (pending) return;
-    const service = CONNECTION_SERVICES.find((candidate) => candidate.id === account.service);
-    if (!service || !window.confirm(t("connectors.disconnectConfirm", { identity: `“${account.email}” (${account.id})`, service: service.label }))) return;
-    setPending(account.id);
+    if (!window.confirm(t("connectors.disconnectConfirm", { service: service.label }))) return;
+    setPending(service.id);
     setActionError(null);
     try {
-      await onDisconnect(account);
+      await onDisconnect(accounts);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : t("connectors.action.failed"));
     } finally {
@@ -183,7 +190,6 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
                 )}
               >
                 {t(`connectors.view.${option}`)}
-                {option === "connected" && connectedCount > 0 ? ` ${connectedCount}` : ""}
               </button>
             ))}
           </div>
@@ -221,46 +227,31 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
             : null}
           {!loading && view === "connected" && (connected.length === 0
             ? <EmptyState connected />
-            : connected.map((service) => (
-                <ServiceRow key={service.id} service={service} action={
-                  <button
-                    type="button"
-                    disabled={!configured[service.id] || pending !== null}
-                    onClick={() => void connect(service.id)}
-                    className="flex min-w-[112px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
-                  >
-                    {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : t("connectors.action.addAccount")}
-                  </button>
-                }>
-                  {(accountsByService.get(service.id) ?? []).map((account) => (
-                    <div key={account.id} className="ml-14 mt-3 flex items-center gap-2 rounded-lg bg-raised/45 px-3 py-2">
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[12.5px] font-medium text-ink">{account.email}</div>
-                        <div className="mt-0.5 truncate text-[10.5px] text-ink-secondary">{account.id}</div>
-                      </div>
-                      <button
-                        type="button"
-                        disabled={pending !== null}
-                        onClick={() => void disconnect(account)}
-                        aria-label={t("connectors.disconnectAria", { account: account.email, service: service.label })}
-                        className="rounded-md px-2 py-1 text-[11px] text-ink-secondary transition-colors hover:bg-danger/10 hover:text-danger disabled:opacity-40"
-                      >
-                        {pending === account.id ? <Loader2 size={13} className="animate-spin" /> : t("connectors.disconnect")}
-                      </button>
-                    </div>
-                  ))}
-                </ServiceRow>
-              )))}
+            : connected.map((service) => {
+                const accounts = accountsByService.get(service.id) ?? [];
+                return (
+                  <ServiceRow key={service.id} service={service} action={
+                    <button
+                      type="button"
+                      disabled={pending !== null}
+                      onClick={() => void disconnect(service, accounts)}
+                      aria-label={t("connectors.disconnectAria", { service: service.label })}
+                      className="flex min-w-[112px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
+                    >
+                      {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : t("connectors.disconnect")}
+                    </button>
+                  } />
+                );
+              }))}
         </div>
       </div>
     </div>
   );
 }
 
-function ServiceRow({ service, action, children }: {
+function ServiceRow({ service, action }: {
   service: ConnectionService;
   action: ReactNode;
-  children?: ReactNode;
 }) {
   return (
     <section className="border-b border-hairline/35 py-4 last:border-b-0">
@@ -274,7 +265,6 @@ function ServiceRow({ service, action, children }: {
         </div>
         {action}
       </div>
-      {children}
     </section>
   );
 }
