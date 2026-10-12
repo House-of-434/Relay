@@ -3,7 +3,9 @@
 // bot-settings/; this dialog owns only the history fetch and which
 // accordion row is expanded.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Search, X } from "lucide-react";
+import { ChevronDown, Search, X } from "lucide-react";
+
+import { cn } from "@/lib/cn";
 
 import { api, useStore, type Bot } from "@/state/store";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -38,6 +40,12 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   const derived = useBotSettingsDerived(bot);
   const dialogRef = useRef<HTMLElement | null>(null);
   const [query, setQuery] = useState("");
+  // One section open at a time. An explicit deep link (voice, access,
+  // model, …) opens its target; "identity" is the dialog's home section,
+  // not a navigation target, so edit-profile and friends start collapsed.
+  const expandableSection = (id: string | undefined) => id && id !== "identity" ? id : null;
+  const [openId, setOpenId] = useState<string | null>(() => expandableSection(section));
+  useEffect(() => { setOpenId(expandableSection(section)); }, [section]);
   const q = query.trim().toLowerCase();
   // Slack is offered only where the server has an Admin page to link to
   // (a hosted organisation workspace); otherwise its row does not exist.
@@ -76,10 +84,10 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
   }, [bot.id, flushBotPatches]);
 
   useEffect(() => {
-    if (section !== "history") return;
+    if (openId !== "history") return;
     void loadHistory();
     return () => { historyRequest.current++; };
-  }, [section, loadHistory]);
+  }, [openId, loadHistory]);
 
   // A rollback failure (the row's soul text no longer round-trips the
   // server's validation, say) still reloads history so the list matches
@@ -164,7 +172,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
         // while the user consults another section. It fetches when it
         // becomes the active section. Always mounted; visibility toggled
         // via hidden on the accordion body wrapper.
-        return <MemorySection bot={bot} active={section === "memory"} />;
+        return <MemorySection bot={bot} active={openId === "memory"} />;
       case "routines":
         return <RoutinesSection bot={bot} routines={derived.botRoutines} runs={state.routineRuns} />;
       case "access":
@@ -248,15 +256,15 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
               Nothing matches “{query.trim()}”
             </div>
           )}
-          {/* Every section renders open: the dialog is a scrolling page of
-              settings, not an accordion. Unmatched rows are omitted
-              entirely, except Memory, which stays mounted (hidden) so an
-              unsaved draft survives filtering it out of view. */}
+          {/* One section open at a time: headers toggle, bodies mount on
+              expand — except Memory, which stays mounted (hidden) so an
+              unsaved draft survives collapsing it out of view. */}
           {sections.map((entry) => {
             const { id, icon: Icon } = entry;
             const label = sectionLabel(entry);
             const matched = sectionMatches(entry, q);
-            if (!matched && id !== "memory") return null;
+            const expanded = openId === id;
+            if (!matched && !expanded && id !== "memory") return null;
             return (
               <div
                 key={id}
@@ -264,11 +272,21 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
                 className="border-b border-hairline/30"
                 hidden={!matched}
               >
-                <div className="flex w-full shrink-0 items-center gap-2.5 bg-control/60 px-4 py-2.5 text-left text-[14px] text-ink">
+                <button
+                  type="button"
+                  aria-expanded={expanded}
+                  onClick={() => setOpenId(expanded ? null : id)}
+                  className="flex w-full shrink-0 items-center gap-2.5 bg-control/60 px-4 py-2.5 text-left text-[14px] text-ink hover:bg-control"
+                >
                   <Icon size={15} className="shrink-0" />
                   <span className="min-w-0 flex-1 truncate">{label}</span>
-                </div>
-                <div className="px-4 pb-4 pt-1">{renderSectionBody(id)}</div>
+                  <ChevronDown size={15} className={cn("shrink-0 text-ink-secondary transition-transform", expanded && "rotate-180")} />
+                </button>
+                {(expanded || id === "memory") && (
+                  <div className="px-4 pb-4 pt-1" hidden={id === "memory" ? !expanded : undefined}>
+                    {renderSectionBody(id)}
+                  </div>
+                )}
               </div>
             );
           })}

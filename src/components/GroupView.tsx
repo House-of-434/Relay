@@ -1234,17 +1234,6 @@ export function GroupView({ group }: { group: Group }) {
                 }))}
                 onSelect={(threadId) => dispatch({ type: "switchGroupTask", groupId: group.id, threadId })}
               />
-              {!remoteClient && !setupPending && (
-                <button
-                  type="button"
-                  onClick={() => dispatch({ type: "newGroupTask", groupId: group.id })}
-                  aria-label={t("thread.new")}
-                  title={t("thread.new")}
-                  className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-                >
-                  <Plus size={16} />
-                </button>
-              )}
             </>
           )}
         </div>
@@ -1255,6 +1244,27 @@ export function GroupView({ group }: { group: Group }) {
           // control row 16px (visual only) below the 26px overlay.
           style={controlsShiftStyle}
         >
+          {!remoteClient && !setupPending && !group.dm && (
+            <button
+              type="button"
+              onClick={() => {
+                // The current thread is already blank: creating another
+                // would pile up empties, so stay and hand the writer the
+                // composer. Group transcripts arrive atomically, so an
+                // empty list with no scrollback is a truly empty thread.
+                if (group.messages.length === 0 && !group.hasMore) {
+                  document.querySelector<HTMLTextAreaElement>("[data-composer-input]")?.focus();
+                  return;
+                }
+                dispatch({ type: "newGroupTask", groupId: group.id });
+              }}
+              aria-label={t("thread.new")}
+              title={t("thread.new")}
+              className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <Plus size={18} />
+            </button>
+          )}
           <ExportTranscriptMenu
             title={group.name}
             messages={group.messages}

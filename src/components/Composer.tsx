@@ -980,6 +980,7 @@ export function Composer({
           )}
           <MentionTextarea
           inputRef={inputRef}
+          data-composer-input
           peers={group ? members ?? [] : state.bots.filter((member) => member.id !== bot?.id)}
           everyone={Boolean(group && !group.dm)}
           // the message is composed in the writer's language, not the UI's

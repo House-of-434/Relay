@@ -895,6 +895,7 @@
   "chat.workingFolder": "Working folder: {folder}",
   "chat.usage.turnsOne": "1 turn",
   "chat.usage.turnsMany": "{count} turns",
+  "chat.usage.breakdown": "Context usage",
   "chat.usage.cachedNote": "cached = context re-read each turn, not new text",
   "chat.usage.uncachedInput": "{tokens} uncached input",
   "chat.usage.cachedInput": "{tokens} cached input",

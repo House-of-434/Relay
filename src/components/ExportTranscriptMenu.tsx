@@ -127,10 +127,6 @@ export function ExportTranscriptMenu({
           aria-label="Export options"
           className={cn("absolute right-0 top-full z-40 mt-1 w-[220px] overflow-hidden rounded-xl border border-hairline/50 bg-card px-1.5 py-1.5 shadow-2xl shadow-black/50", motion.className)} {...motion.exitProps}
         >
-          <div className="px-3 py-1 text-[11px] font-semibold uppercase tracking-wider text-ink-tertiary">
-            Export Conversation
-          </div>
-
           {!hasMessages ? (
             <div className="px-3 py-2 text-[12px] text-ink-secondary">
               No messages to export yet.

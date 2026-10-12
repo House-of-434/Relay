@@ -52,6 +52,7 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { RawMarkdownView, RawToggleAction } from "./RawMarkdownToggle";
 import { ThreadChip } from "./ThreadChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
+import { useMenuMotion } from "./MenuMotion";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
 import { ToolActivity } from "./ToolActivity";
@@ -1250,17 +1251,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             }))}
             onSelect={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
           />
-          {!remoteClient && (
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "newTask", botId: bot.id })}
-              aria-label={t("thread.new")}
-              title={t("thread.new")}
-              className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              <Plus size={16} />
-            </button>
-          )}
           {bot.chiefOfStaff && (
             // One line, never shrinking with the name (it wrapped "Chief / of /
             // Staff", #1871); folds to the crown like the chips beside it do,
@@ -1280,6 +1270,26 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
+          {!remoteClient && (
+            <button
+              type="button"
+              onClick={() => {
+                // The current thread is already blank: creating another would
+                // pile up empties, so stay and hand the writer the composer.
+                // An unloaded thread counts as non-empty — + must still work.
+                if (!bot.awaitingThreadSnapshot && visibleMessages(bot).length === 0 && !bot.hasMore) {
+                  document.querySelector<HTMLTextAreaElement>("[data-composer-input]")?.focus();
+                  return;
+                }
+                dispatch({ type: "newTask", botId: bot.id });
+              }}
+              aria-label={t("thread.new")}
+              title={t("thread.new")}
+              className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <Plus size={18} />
+            </button>
+          )}
           <ExportTranscriptMenu
             title={bot.name}
             messages={messages}
@@ -1540,15 +1550,32 @@ export function NewConversationInstead({ onNew }: { onNew: () => void }) {
 
 /** Context-window pressure for the open task — quiet until it matters.
  * Cost is deliberately never shown here: spend lives in the logs, not in
- * the header. Click opens the bot's settings, where the Usage card has
- * the breakdown. */
+ * the header. Click shows the read-only breakdown right here; it never
+ * opens settings. */
 function UsageChip({ bot }: { bot: Bot }) {
-  const { dispatch } = useStore();
+  const [open, setOpen] = useState(false);
+  const motion = useMenuMotion(open);
+  const menuRef = useRef<HTMLDivElement>(null);
   const usage = bot.tasks?.find((t) => t.threadId === bot.threadId)?.usage;
   const ctx = usage ? contextChip(usage) : null;
+  useEffect(() => {
+    if (!open) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setOpen(false);
+    };
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target instanceof Node && !menuRef.current?.contains(event.target)) setOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    window.addEventListener("pointerdown", onPointerDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+      window.removeEventListener("pointerdown", onPointerDown);
+    };
+  }, [open ]);
   if (!usage || !ctx) return null;
   const share = contextShare(usage);
-  const detail = [
+  const lines = [
     usage.turns === 1 ? t("chat.usage.turnsOne") : t("chat.usage.turnsMany", { count: usage.turns }),
     usageDetail(usage),
     lastTurnDetail(usage),
@@ -1557,17 +1584,31 @@ function UsageChip({ bot }: { bot: Bot }) {
     // model re-reading what it already saw — say so, or the figure reads as
     // a bug (issue #527); past 80% of the window the fix is a new thread
     share?.tone === "danger" ? t("chat.usage.contextNudge") : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ].filter(Boolean);
   return (
-    <button
-      onClick={() => dispatch({ type: "toggleSettings", open: true, section: "usage" })}
-      className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
-      title={detail}
-      data-testid="usage-chip"
-    >
-      <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
-    </button>
+    <div className="relative" ref={menuRef}>
+      <button
+        type="button"
+        onClick={() => setOpen((prev) => !prev)}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
+        title={lines.join("\n")}
+        data-testid="usage-chip"
+      >
+        <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
+      </button>
+      {motion.shown && (
+        <div
+          role="dialog"
+          aria-label={t("chat.usage.breakdown")}
+          className={cn("absolute right-0 top-full z-40 mt-1 w-[240px] rounded-xl border border-hairline/50 bg-card px-3 py-2 shadow-2xl shadow-black/50", motion.className)} {...motion.exitProps}
+        >
+          {lines.map((line) => (
+            <div key={line} className="py-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{line}</div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
