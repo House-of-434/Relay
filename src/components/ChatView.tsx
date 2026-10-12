@@ -5,15 +5,14 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
-  Bug,
   Copy,
   Crown,
   MessageSquareReply,
   Pencil,
   Pin,
   PinOff,
+  Plus,
   RefreshCw,
-  Search,
   Square,
   Webhook,
   X,
@@ -52,6 +51,7 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { RawMarkdownView, RawToggleAction } from "./RawMarkdownToggle";
 import { ThreadChip } from "./ThreadChip";
+import { ThreadSwitcher } from "./ThreadSwitcher";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
 import { ToolActivity } from "./ToolActivity";
@@ -60,7 +60,6 @@ import { OptionCard, shouldHideOnboardingCard } from "./OptionCard";
 import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
 import { Composer } from "./Composer";
-import { ChatFindBar } from "./ChatFindBar";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -928,24 +927,11 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const reasoning = stream.reasoning[bot.threadId];
   const provisioning = state.provisioning[bot.id];
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
-  const [findOpen, setFindOpen] = useState(false);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     bot.threadId,
     `bot:${bot.id}:${bot.threadId}`,
     bot.messages,
   );
-  useEffect(() => setFindOpen(false), [bot.threadId]);
-  useEffect(() => {
-    const onFind = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onFind);
-    return () => window.removeEventListener("keydown", onFind);
-  }, []);
-
   // only the active branch is rendered; forks stay reachable via ‹ › nav
   const messages = useMemo(() => visibleMessages(bot), [bot]);
   // The bot's run in the current ask — every command it ran, the control-CLI
@@ -1249,6 +1235,32 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           <span className="truncate text-[15px] font-semibold text-ink">
             {bot.name}
           </span>
+          <span aria-hidden="true" className="shrink-0 text-[15px] text-ink-tertiary">/</span>
+          <ThreadSwitcher
+            currentThreadId={bot.threadId}
+            currentTitle={bot.tasks?.find((task) => task.threadId === bot.threadId)?.title ?? bot.name}
+            entries={(bot.tasks ?? []).map((task) => ({
+              threadId: task.threadId,
+              title: task.title,
+              createdAt: task.createdAt,
+              updatedAt: task.updatedAt,
+              unread: task.unread,
+              openedByName: task.openedBy?.name,
+              hidden: task.routineRunId != null || task.closedBy != null || task.archivedAt != null,
+            }))}
+            onSelect={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
+          />
+          {!remoteClient && (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "newTask", botId: bot.id })}
+              aria-label={t("thread.new")}
+              title={t("thread.new")}
+              className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <Plus size={16} />
+            </button>
+          )}
           {bot.chiefOfStaff && (
             // One line, never shrinking with the name (it wrapped "Chief / of /
             // Staff", #1871); folds to the crown like the chips beside it do,
@@ -1268,18 +1280,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
-          <button
-            onClick={() => setFindOpen((open) => !open)}
-            aria-label={t("chat.find")}
-            aria-pressed={findOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("chat.findShortcut")}
-          >
-            <Search size={18} />
-          </button>
           <ExportTranscriptMenu
             title={bot.name}
             messages={messages}
@@ -1300,18 +1300,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
-          {!remoteClient && <button
-            onClick={() => dispatch({ type: "toggleInspector" })}
-            aria-label={t("chat.inspector")}
-            aria-pressed={state.inspectorOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              state.inspectorOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("chat.inspectorHint")}
-          >
-            <Bug size={18} />
-          </button>}
         </div>
         </div>
       </div>
@@ -1321,7 +1309,6 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
         {canOpenResults && resultsThreadId && <button type="button" onClick={() => openNotificationTarget(dispatch, { botId: bot.id, threadId: resultsThreadId }, state)} className="rounded px-2 py-1 text-accent hover:bg-raised">{t("routines.results.back")}</button>}
         <button type="button" onClick={() => dispatch({ type: "showRoutines", section: "logs", routineId: routineExecution.routineId, botId: bot.id })} className="rounded px-2 py-1 hover:bg-raised hover:text-ink">{t("routines.logs")}</button>
       </div>}
-      {findOpen && <ChatFindBar threadId={bot.threadId} onClose={() => setFindOpen(false)} />}
 
       {/* Error banner */}
       {state.error && (

@@ -4,7 +4,7 @@
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activeLocale, t } from "@/lib/i18n";
-import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, Search, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -28,7 +28,7 @@ import { normalizeState } from "@/lib/mascot";
 import { defaultResponderName, effectiveDefaultResponder, groupResponseHint, jevRoomRoutingOn } from "@/lib/group-routing";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { Composer } from "./Composer";
-import { ChatFindBar } from "./ChatFindBar";
+import { ThreadSwitcher } from "./ThreadSwitcher";
 import { GroupUsageChip } from "./GroupUsageChip";
 import { ExportTranscriptMenu } from "./ExportTranscriptMenu";
 import { ReplyQuote } from "./ReplyQuote";
@@ -972,7 +972,6 @@ export function GroupView({ group }: { group: Group }) {
   const [bulletinDraft, setBulletinDraft] = useState(group.bulletin);
   const [folderOpen, setFolderOpen] = useState(false);
   const [membersOpen, setMembersOpen] = useState(false);
-  const [findOpen, setFindOpen] = useState(false);
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     group.threadId,
     `group:${group.id}:${group.threadId}`,
@@ -980,17 +979,6 @@ export function GroupView({ group }: { group: Group }) {
   );
   const membersTriggerRef = useRef<HTMLButtonElement>(null);
   const closeMembers = useCallback(() => setMembersOpen(false), []);
-  useEffect(() => setFindOpen(false), [group.threadId]);
-  useEffect(() => {
-    const onFind = (event: KeyboardEvent) => {
-      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "f") {
-        event.preventDefault();
-        setFindOpen(true);
-      }
-    };
-    window.addEventListener("keydown", onFind);
-    return () => window.removeEventListener("keydown", onFind);
-  }, []);
 
   const members = useMemo(
     () => group.memberIds.map((id) => state.bots.find((b) => b.id === id)).filter((b): b is Bot => Boolean(b)),
@@ -1232,6 +1220,33 @@ export function GroupView({ group }: { group: Group }) {
         <div data-roomhead-row className="flex items-center justify-between @max-3xl/roomhead:flex-wrap @max-3xl/roomhead:gap-y-1">
         <div data-roomhead-identity className="flex min-w-0 items-center gap-2 @max-3xl/roomhead:basis-full" style={headerNoDragStyle}>
           <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
+          {!group.dm && (
+            <>
+              <span aria-hidden="true" className="shrink-0 text-[15px] text-ink-tertiary">/</span>
+              <ThreadSwitcher
+                currentThreadId={group.threadId}
+                currentTitle={group.tasks?.find((task) => task.threadId === group.threadId)?.title ?? group.name}
+                entries={(group.tasks ?? []).map((task) => ({
+                  threadId: task.threadId,
+                  title: task.title,
+                  createdAt: task.createdAt,
+                  updatedAt: task.updatedAt,
+                }))}
+                onSelect={(threadId) => dispatch({ type: "switchGroupTask", groupId: group.id, threadId })}
+              />
+              {!remoteClient && !setupPending && (
+                <button
+                  type="button"
+                  onClick={() => dispatch({ type: "newGroupTask", groupId: group.id })}
+                  aria-label={t("thread.new")}
+                  title={t("thread.new")}
+                  className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+                >
+                  <Plus size={16} />
+                </button>
+              )}
+            </>
+          )}
         </div>
         <div
           data-roomhead-controls
@@ -1240,19 +1255,6 @@ export function GroupView({ group }: { group: Group }) {
           // control row 16px (visual only) below the 26px overlay.
           style={controlsShiftStyle}
         >
-          <button
-            type="button"
-            onClick={() => setFindOpen((open) => !open)}
-            aria-label={t("chat.find")}
-            aria-pressed={findOpen}
-            className={cn(
-              "rounded-md p-1.5 hover:bg-raised",
-              findOpen ? "text-accent" : "text-ink-secondary hover:text-ink",
-            )}
-            title={t("chat.findShortcut")}
-          >
-            <Search size={18} />
-          </button>
           <ExportTranscriptMenu
             title={group.name}
             messages={group.messages}
@@ -1287,8 +1289,6 @@ export function GroupView({ group }: { group: Group }) {
         </div>
         </div>
       </div>
-
-      {findOpen && <ChatFindBar threadId={group.threadId} onClose={() => setFindOpen(false)} />}
 
       {/* An Auto room answers like lead mode while the decision model is off: say so, once. */}
       {!setupPending && !group.dm && !remoteClient && state.config && group.defaultResponder.kind === "auto" && !jevRoomRoutingOn(state.config) && (

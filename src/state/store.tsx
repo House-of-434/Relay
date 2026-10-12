@@ -1524,6 +1524,9 @@ export function reducer(state: AppState, action: Action): AppState {
           ...state,
           activeView: "chat",
           selectedId: action.id,
+          // A thread switch retires the doc preview: it points at the
+          // thread being left, never the one being opened.
+          docPane: null,
           botSettingsSection: action.id !== state.selectedId ? "identity" : state.botSettingsSection,
           groups: state.groups.map((g) => (g.id === action.id ? { ...g, unread: false } : g)),
         };
@@ -1534,6 +1537,7 @@ export function reducer(state: AppState, action: Action): AppState {
             ...state,
             activeView: "chat",
             selectedId: action.id,
+            docPane: null,
             botSettingsSection: action.id !== state.selectedId ? "identity" : state.botSettingsSection,
           },
           action.id,
@@ -2147,14 +2151,14 @@ export function reducer(state: AppState, action: Action): AppState {
     case "newGroupTask":
     case "switchGroupTask":
     case "deleteGroupTask":
-      return state;
+      return { ...state, docPane: null };
     case "newTask":
-      return { ...state, selectedId: action.botId, activeView: "chat" };
+      return { ...state, selectedId: action.botId, activeView: "chat", docPane: null };
     case "switchTask": {
       // Older background frames are already represented by the next server
       // snapshot. Only frames racing that request need replaying over it.
       const { [action.threadId]: _old, ...backgroundThreadEvents } = state.backgroundThreadEvents;
-      return { ...state, backgroundThreadEvents, selectedId: action.botId, activeView: "chat" };
+      return { ...state, backgroundThreadEvents, selectedId: action.botId, activeView: "chat", docPane: null };
     }
     case "renameTask":
       return updateBot(state, action.botId, (bot) => ({
