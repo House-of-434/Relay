@@ -9,7 +9,8 @@ const init = source("../../../supabase/migrations/0001_init.sql");
 const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const transcripts = source("../../../supabase/migrations/0004_transcripts.sql");
-const migrations = `${init}\n${stores}\n${transcripts}`;
+const serviceActors = source("../../../supabase/migrations/0005_service_actors.sql");
+const migrations = `${init}\n${stores}\n${transcripts}\n${serviceActors}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
 // model. It does not prove Postgres accepts the SQL or that the constraints and
@@ -17,13 +18,14 @@ const migrations = `${init}\n${stores}\n${transcripts}`;
 // applied to a real project and exercised.
 
 test("exactly the frozen tables are created", () => {
-  const created = [...migrations.matchAll(/create table (\w+)\.(\w+)/g)].map((match) => `${match[1]}.${match[2]}`);
+  const created = [...migrations.matchAll(/create table (?:if not exists )?(\w+)\.(\w+)/g)].map((match) => `${match[1]}.${match[2]}`);
   assert.deepEqual(created.sort(), [
     "app.companies",
     "app.events",
     "app.people",
     "history.conversations",
     "logs.tool_calls",
+    "relay.service_actors",
     "transcripts.meeting_segments",
     "transcripts.meetings",
   ]);
@@ -50,6 +52,35 @@ test("conversation agent enum matches the agents the Tool Layer serves", () => {
   assert.ok(match, "history.conversations.agent must be a checked enum");
   const sqlAgents = match[1]!.split(",").map((value) => value.trim().replace(/^'|'$/g, ""));
   assert.deepEqual(sqlAgents, [...AGENTS]);
+});
+
+test("service actors own meeting rows by UUID, not by a CHECK", () => {
+  // The registry is migration/service_role only: RLS on, no policies, no
+  // member grant. relay is intentionally absent from pgrst.db_schemas.
+  assert.match(serviceActors, /create table if not exists relay\.service_actors \([\s\S]*?unique \(name, actor_user_id\)/);
+  assert.match(serviceActors, /alter table relay\.service_actors enable row level security/);
+  assert.match(serviceActors, /revoke all on relay\.service_actors from public, anon, authenticated/);
+  assert.doesNotMatch(serviceActors, /relay\.service_actors for select to authenticated/);
+  // A composite FK with MATCH FULL: actor_agent and actor_user travel together.
+  assert.match(
+    serviceActors,
+    /foreign key \(actor_agent, actor_user\)\s+references relay\.service_actors \(name, actor_user_id\)\s+match full/,
+  );
+  // Ownership by UUID: generated stored owner, never a CHECK constraint.
+  assert.match(
+    serviceActors,
+    /owner_user_id uuid\s+generated always as \(coalesce\(organizer_user_id, creator_user_id\)\) stored/,
+  );
+  assert.match(serviceActors, /create index if not exists meetings_owner_user\s+on transcripts\.meetings \(owner_user_id\)/);
+  assert.match(serviceActors, /disclosure_posted boolean not null default false/);
+  // Terminal states are immutable (active -> partial|failed only).
+  assert.match(serviceActors, /create trigger meetings_status_transition/);
+  assert.match(serviceActors, /old\.status in \('completed','partial','failed','skipped'\)/);
+  // Email -> UUID resolution is service_role only and hardened.
+  assert.match(serviceActors, /create or replace function app\.member_by_email\(candidate text, allowed_domains text\[\] default null\)/);
+  assert.match(serviceActors, /security definer set search_path = ''/);
+  assert.match(serviceActors, /u\.email_confirmed_at is not null/);
+  assert.match(serviceActors, /grant execute on function app\.member_by_email\(text, text\[\]\) to service_role/);
 });
 
 test("conversation lifecycle is idle, running, or failed", () => {
