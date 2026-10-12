@@ -95,12 +95,16 @@ export interface TaskRecord extends WireTask {
    * it landed. Absent means legacy/unknown: it may be a person's choice,
    * so only positively identified auto pins yield to Works on changes. */
   surfaceSource?: "user" | "auto";
+  /** Set on conversations the shared-mailbox monitor opened: whose mail this
+   * is and which message opened it. The settle path emails that person when
+   * the work finishes while they were away. */
+  mailRouted?: { userId: string; email: string; messageId: string };
 }
 
 /** TaskRecord fields no client may see. Everything else must be on WireTask:
  * the exactness assertion below fails to compile when either side drifts,
  * so a new server field forces a decision — wire-visible or private here. */
-export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource";
+export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource" | "mailRouted";
 export type TaskWireProjection = Pick<TaskRecord, Exclude<keyof TaskRecord, TaskWirePrivateKeys>>;
 type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 type AssertSameKeys<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : never) : never;
@@ -122,6 +126,7 @@ const TASK_PATCH_FIELDS = [
   "title", "projectId", "modelSelection", "approvalMode", "autoApprove", "alwaysAllow",
   "unread", "rewound", "archivedAt", "pinned", "pinnedMessageId", "resumeCursors", "lastInstanceId", "cwd",
   "routineRunId", "surface", "surfaceSource", "snoozedUntil", "appliedCompactionId", "contextFloor", "lastContextModel",
+  "mailRouted",
 ] as const satisfies readonly (keyof TaskRecord)[];
 export type TaskPatch = Partial<Pick<TaskRecord, typeof TASK_PATCH_FIELDS[number]>>;
 
@@ -1275,7 +1280,7 @@ export class Store {
       detail: string;
       finishedAt: number;
     } | null,
-    fallbackDetail = "OpenMausBot restarted before this goal finished.",
+    fallbackDetail = "Relay restarted before this goal finished.",
     fallbackFinishedAt = Date.now(),
   ): number {
     const ownedThreadIds = new Set<string>();
@@ -1816,6 +1821,32 @@ export class Store {
     this.bots = this.bots.map((candidate) => candidate.id === id ? next : candidate);
     this.emit({ type: "bot", botId: id });
     return next;
+  }
+
+  /** A bot created while nothing was runnable keeps an empty selection (the
+   * Relay-agent seed deliberately omits it so the workspace default applies —
+   * relay-agents.ts). Once a default resolves, adopt it for every still-empty
+   * bot and task so the shipped roster can run. Explicit selections are never
+   * touched. A default that still resolves empty is a no-op. */
+  healEmptyModelSelections(): BotRecord[] {
+    const selection = this.newBotSelection();
+    if (!selection.instanceId) return [];
+    const healed: BotRecord[] = [];
+    for (const bot of this.bots) {
+      const botEmpty = !bot.modelSelection.instanceId;
+      const tasksEmpty = (bot.tasks ?? []).some((task) => !task.modelSelection?.instanceId);
+      if (!botEmpty && !tasksEmpty) continue;
+      if (botEmpty) bot.modelSelection = structuredClone(selection);
+      for (const task of bot.tasks ?? []) {
+        if (!task.modelSelection?.instanceId) task.modelSelection = structuredClone(selection);
+      }
+      healed.push(bot);
+    }
+    if (healed.length) {
+      this.saveBots();
+      for (const bot of healed) this.emit({ type: "bot", botId: bot.id });
+    }
+    return healed;
   }
 
   deleteBot(id: string, setupRequest?: TeamSetupRequest): boolean {
@@ -2689,10 +2720,19 @@ export class Store {
     role: RelayAgentRole;
     profile: NonNullable<Parameters<Store["createBot"]>[0]>;
   }[]) {
-    const present = new Set(this.bots.flatMap((bot) => bot.relayAgent ? [bot.relayAgent] : []));
+    const present = new Map(this.bots.flatMap((bot) => bot.relayAgent ? [[bot.relayAgent, bot] as const] : []));
     const created: BotRecord[] = [];
     for (const seed of seeds) {
-      if (present.has(seed.role)) continue;
+      const existing = present.get(seed.role);
+      if (existing) {
+        // Server-owned default: a seeded agent runs at Auto so its sandboxed
+        // tools do not stop to ask on every turn; outward actions keep their
+        // own confirmations (propose_*). A recorded choice is left alone.
+        if (existing.approvalMode === undefined && existing.autoApprove === undefined) {
+          this.patchBot(existing.id, { approvalMode: "auto" });
+        }
+        continue;
+      }
       const baseName = seed.profile.name?.trim() || seed.role;
       const taken = new Set(this.bots.map((bot) => bot.name.trim().toLocaleLowerCase()));
       let name = baseName;
@@ -2706,9 +2746,10 @@ export class Store {
         autoStartVps: false,
         voiceNotes: false,
         composio: false,
+        approvalMode: "auto",
       });
       created.push(bot);
-      present.add(seed.role);
+      present.set(seed.role, bot);
     }
     return created;
   }

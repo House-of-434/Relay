@@ -23,7 +23,7 @@ export interface BoatCreateRequest {
   idempotencyKey: string;
   createdAt: number;
   boxId?: string;
-  /** The provider Boat has its deterministic OpenMaus name. Until this is
+  /** The provider Boat has its deterministic Relay name. Until this is
    * true, deleting the bot would make an ambiguous or unnamed Boat orphaned. */
   resolved?: true;
 }
@@ -83,7 +83,7 @@ function recoveryStateError(detail: string, cause?: unknown): Error & { status: 
   return Object.assign(
     new Error(
       `Cloud computer creation is paused because its recovery state is ${detail}. `
-      + "Check boat.dev for an unnamed Boat before repairing OpenMausBot's local state.",
+      + "Check boat.dev for an unnamed Boat before repairing Relay's local state.",
     ),
     { status: 503, cause },
   );
@@ -325,7 +325,7 @@ function acquireJournalLock(): JournalLockOwner {
       // lock can disappear between link(EEXIST) and read, or replace each
       // successfully reaped owner before the next link attempt.
       if (performance.now() >= deadline) {
-        throw recoveryStateError("locked by another OpenMausBot process");
+        throw recoveryStateError("locked by another Relay process");
       }
       if (reaped) continue;
       Atomics.wait(lockWait, 0, 0, LOCK_RETRY_MS);

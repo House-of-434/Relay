@@ -50,7 +50,7 @@ until measurement justifies it.
                      ┌──────────────┐
                      │    Caddy     │  TLS termination
                      └──────┬───────┘
-                            │  http://omb:80 (internal)
+                            │  http://relay:80 (internal)
                   ┌─────────┴──────────┐
                   │  Relay / BFF       │
                   │  :8799 / :8798     │
@@ -142,11 +142,11 @@ product's nine tables, so Relay writes stay strictly inside `app`/`history`/
 - **Remote-host config (not code):**
   - Security list ingress on **80 / 443 / 22** (default list does not include
     all of these).
-  - Caddy for TLS. Note `compose.yaml:43-46` refuses `OMB_HTTPS_HOST` unless
-    `OMB_BIND_ADDRESS=127.0.0.1` — TLS terminates at Caddy in front of a
+  - Caddy for TLS. Note `compose.yaml:43-46` refuses `RELAY_HTTPS_HOST` unless
+    `RELAY_BIND_ADDRESS=127.0.0.1` — TLS terminates at Caddy in front of a
     loopback-bound app. TLS is mandatory for login, not cosmetic: cookies get
     `Secure` only under https (`services/bff/server.ts:513-515`).
-  - `OMB_PUBLIC_URL` = the public https origin. `compose.yaml:19` still
+  - `RELAY_PUBLIC_URL` = the public https origin. `compose.yaml:19` still
     defaults to `http://localhost:...` — do not ship that. The OAuth check
     (`services/bff/server.ts:676`, `redirectUri.origin !== publicUrl.origin`)
     enforces consistency with the registered Google redirect URIs.
@@ -154,7 +154,7 @@ product's nine tables, so Relay writes stay strictly inside `app`/`history`/
     VM hostname.
   - `RELAY_BFF_PUBLIC_URL` = the public BFF origin (dev uses a localhost
     value; do not ship that).
-  - `OMB_LOOPBACK_TRUST=service` (`server/request-auth.ts:108,116-118`) so no
+  - `RELAY_LOOPBACK_TRUST=service` (`server/request-auth.ts:108,116-118`) so no
     network request is ever trusted as the owner.
   - Leave `RELAY_SHARED_WORKSPACE` unset (defaults to the shared
     Scout/Mercury/Curator roster, `server/relay-agents.ts:58-63`).
@@ -172,7 +172,7 @@ provisioning and verification on the host.
 
 1. **Create `deploy/local/Dockerfile` and `deploy/local/Caddyfile`.** ✅ Done:
    `deploy/local/Dockerfile`, `deploy/local/Caddyfile`, and `compose.yaml:3-98`
-   (omb/tools/caddy) exist.
+   (relay/tools/caddy) exist.
 2. **Add the Tool Layer as a compose service**, pointed at by
    `RELAY_TOOL_URL`, keeping `BLADE_HOME` under `/data` so browser state lives
    on the volume. ✅ Done: `compose.yaml:31-55`.
@@ -181,7 +181,7 @@ provisioning and verification on the host.
    are already present. Linux headful also needs Xvfb. (Tracked deferral in
    `plans/deferred.md:19`.)
 4. **Provision the A1 instance** per the OCI section above; mount the
-   persistent volume at `/data`. `OMB_DATA_DIR=/data/.openmausbot` and
+   persistent volume at `/data`. `RELAY_DATA_DIR=/data/.relay` and
    `HOME=/data` are already the image defaults (`Dockerfile:63-64`).
 5. **Network + TLS + redirects + secrets** per the remote-host checklist.
 6. **Confirm decision-log retention** (180 days) and size the volume for

@@ -2,7 +2,7 @@
 //
 // Starts as root only to hand a fresh Fly volume (mounted root-owned at
 // /data) to the unprivileged `maus` user, then drops privileges for good
-// and runs two children: the OpenMausBot server on 127.0.0.1:8799 (and its
+// and runs two children: the Relay server on 127.0.0.1:8799 (and its
 // webhook receiver on :8800) and the Caddy edge on 0.0.0.0:8080. The edge is
 // the only listener the network can reach, and it always forwards with
 // X-Forwarded-*, so request-auth.ts never grants a remote request loopback
@@ -31,14 +31,14 @@ export function passwdIds(passwd: string, name: string): { uid: number; gid: num
  * only what it needs to route. */
 export function cloudHomeChildEnvironments(config: CloudHomeConfig, env: NodeJS.ProcessEnv, home: string) {
   const server: NodeJS.ProcessEnv = {
-    ...withoutIgnoredCloudKeys(env), HOME: home, OMB_DATA_DIR: env.OMB_DATA_DIR || posix.join(home, ".openmausbot"),
-    OMB_PORT: "8799", OMB_WEBHOOK_PORT: "8800", OMB_PUBLIC_URL: config.publicOrigin,
-    OMB_WEBHOOK_PUBLIC_URL: env.OMB_WEBHOOK_PUBLIC_URL || config.publicOrigin,
+    ...withoutIgnoredCloudKeys(env), HOME: home, RELAY_DATA_DIR: env.RELAY_DATA_DIR || posix.join(home, ".relay"),
+    RELAY_PORT: "8799", RELAY_WEBHOOK_PORT: "8800", RELAY_PUBLIC_URL: config.publicOrigin,
+    RELAY_WEBHOOK_PUBLIC_URL: env.RELAY_WEBHOOK_PUBLIC_URL || config.publicOrigin,
   };
   const edge: NodeJS.ProcessEnv = {
-    PATH: env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: "/tmp/omb-edge",
-    XDG_DATA_HOME: "/tmp/omb-edge/data", XDG_CONFIG_HOME: "/tmp/omb-edge/config",
-    OMB_CLOUD_PUBLIC_HOST: cloudHomeHost(config),
+    PATH: env.PATH ?? "/usr/local/bin:/usr/bin:/bin", HOME: "/tmp/relay-edge",
+    XDG_DATA_HOME: "/tmp/relay-edge/data", XDG_CONFIG_HOME: "/tmp/relay-edge/config",
+    RELAY_CLOUD_PUBLIC_HOST: cloudHomeHost(config),
   };
   return { server, edge };
 }
@@ -98,7 +98,7 @@ export function startCloudHome(env: NodeJS.ProcessEnv = process.env) {
     return true;
   });
   runServer();
-  run(env.OMB_CLOUD_EDGE_BIN || "/usr/local/bin/caddy", ["run", "--config", env.OMB_CLOUD_EDGE_CONFIG || "/app/cloud/Caddyfile", "--adapter", "caddyfile"], edge);
+  run(env.RELAY_CLOUD_EDGE_BIN || "/usr/local/bin/caddy", ["run", "--config", env.RELAY_CLOUD_EDGE_CONFIG || "/app/cloud/Caddyfile", "--adapter", "caddyfile"], edge);
   process.once("SIGTERM", () => stop(false));
   process.once("SIGINT", () => stop(false));
 }

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-export const NOTIFICATION_SOUNDS_KEY = "omb-notification-sounds";
+export const NOTIFICATION_SOUNDS_KEY = "relay-notification-sounds";
 
 // Whether desktop notifications on THIS computer may play the platform's
 // alert sound. The server still decides what is worth a notification (each

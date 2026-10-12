@@ -8,7 +8,7 @@ import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 
-import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
 import { request } from "../scripts/mcp-server.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
@@ -22,7 +22,7 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
   const parentEnv = { ...process.env, FAKE_CLAUDE_VERSION: "2.1.270", ...options.env };
   const session = await launchVerificationServer(parentEnv, undefined, undefined, undefined,
     { scripted: true }, options.codex ? ["codex"] : []);
-  const cli = (...args: string[]) => runControlOmb(args, { env: { OPENMAUSBOT_URL: session.info.url } }) as Promise<any>;
+  const cli = (...args: string[]) => runControlOmb(args, { env: { RELAY_URL: session.info.url } }) as Promise<any>;
   const api = (path: string, body?: unknown, method = "POST") =>
     request(path, body === undefined ? {} : { method, body: JSON.stringify(body) }, session.info.url) as Promise<any>;
   let restarted: ChildProcess | undefined;
@@ -48,9 +48,9 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
         'const mode = (after("--resume") ? modes.resume : modes.fresh) ?? modes.any;',
         `if (mode) process.env[${JSON.stringify(name === "codex" ? "FAKE_CODEX_MODE" : "FAKE_CLAUDE_MODE")}] = mode;`,
         "let botId = null;",
-        'try { for (const s of Object.values(JSON.parse(readFileSync(after("--mcp-config"), "utf8")).mcpServers ?? {})) botId = s?.env?.OMB_BOT_ID ?? botId; } catch {}',
+        'try { for (const s of Object.values(JSON.parse(readFileSync(after("--mcp-config"), "utf8")).mcpServers ?? {})) botId = s?.env?.RELAY_BOT_ID ?? botId; } catch {}',
         `if (after("--resume") || after("--session-id")) appendFileSync(${JSON.stringify(launchesPath)}, JSON.stringify({ botId, pid: process.pid, resume: after("--resume"), sessionId: after("--session-id"), mode: process.env.FAKE_CLAUDE_MODE ?? "happy" }) + "\\n");`,
-        `else if (argv[0] === "app-server") appendFileSync(${JSON.stringify(codexLaunchesPath)}, JSON.stringify({ botId: process.env.OMB_BOT_ID ?? null }) + "\\n");`,
+        `else if (argv[0] === "app-server") appendFileSync(${JSON.stringify(codexLaunchesPath)}, JSON.stringify({ botId: process.env.RELAY_BOT_ID ?? null }) + "\\n");`,
         `if (botId) process.env.FAKE_CLAUDE_PROMPTS = ${JSON.stringify(join(dataDir, "consumed-"))} + botId + ".jsonl";`,
         // A crashed fixture server must not leave a gated fake provider (or
         // its stdio MCP child) alive after its temporary home is removed.
@@ -755,7 +755,7 @@ it("does not offer a steered message again after the person stops the turn it we
 // The same withdrawal, for a message the person steered out of the server-side
 // queue instead of straight into the turn: a different route, one running turn.
 it("does not offer a message again that the person steered out of the queue into a turn they then stopped", () => {
-  const refuseLiveSteers = join(tmpdir(), `omb-queue-steer-${process.pid}-${Date.now()}.gate`);
+  const refuseLiveSteers = join(tmpdir(), `relay-queue-steer-${process.pid}-${Date.now()}.gate`);
   writeFileSync(refuseLiveSteers, "refuse live steers until the queue is lifted");
   return fixture(async (f) => {
     await f.useModel("codex");

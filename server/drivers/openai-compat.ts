@@ -6,7 +6,7 @@ import { createOpenAIChatRuntime } from "./openai-chat.ts";
 const DRIVER_KIND = "openai-compat";
 const DEFAULT_IDLE_TIMEOUT_MS = 180_000;
 const idleTimeoutMs = () => {
-  const raw = process.env.OPENMAUS_OPENAI_COMPAT_IDLE_TIMEOUT_MS;
+  const raw = process.env.RELAY_OPENAI_COMPAT_IDLE_TIMEOUT_MS;
   if (!raw) return DEFAULT_IDLE_TIMEOUT_MS;
   const value = Number(raw);
   return Number.isSafeInteger(value) && value >= 1_000 && value <= 2_147_483_647 ? value : DEFAULT_IDLE_TIMEOUT_MS;
@@ -74,14 +74,14 @@ export const OpenAICompatDriver: ProviderDriver<OpenAICompatConfig> = {
   install: {
     docsUrl: "https://openrouter.ai/keys",
     signInCommand:
-      "add {\"openaiCompat\":{\"key\":\"sk-or-v1-…\"}} to ~/.openmausbot/config.json (or set OPENAI_COMPAT_API_KEY)",
+      "add {\"openaiCompat\":{\"key\":\"sk-or-v1-…\"}} to ~/.relay/config.json (or set OPENAI_COMPAT_API_KEY)",
     command: {
       darwin:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.openmausbot/config.json under openaiCompat.key",
+        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.relay/config.json under openaiCompat.key",
       linux:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.openmausbot/config.json under openaiCompat.key",
+        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to ~/.relay/config.json under openaiCompat.key",
       win32:
-        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to %USERPROFILE%\\.openmausbot\\config.json under openaiCompat.key",
+        "Get a free key at https://openrouter.ai/keys (or https://console.groq.com) then add it to %USERPROFILE%\\.relay\\config.json under openaiCompat.key",
     },
   },
   decodeConfig,

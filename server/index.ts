@@ -1,4 +1,4 @@
-// OpenMausBot server — the harness host. Clients hold no transports
+// Relay server — the harness host. Clients hold no transports
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -51,7 +51,7 @@ import { configuredAccountDirectory, assertSeparateClaudeAccount, claudeAccountI
 import { providerIconPatchSchema, withInstanceIcon } from "./provider-icon.ts";
 import { providerIconError } from "../shared/provider-icon.ts";
 import * as checkpoints from "./checkpoints.ts";
-import { commandReceipt } from "./commands.ts";
+import { commandReceipt, runCommand } from "./commands.ts";
 import { buildTurnDigest, coverageForDriver, digestPromptLine, renderDigest, toolEvidence } from "./digest.ts";
 import { appendDecision, bindDecisionRetention, boundRetentionDays, decisionRetentionDays, decisionsCsv, flushDecisionLog, pruneDecisions, readDecisionRange, readDecisions, withDecisionActor, type DecisionActor } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
@@ -110,7 +110,8 @@ import { buildRecall } from "./recall.ts";
 import { createMemoryUpkeep, upkeepEnabled } from "./memory-upkeep.ts";
 import { appendAboutMe, commitLearned, planLearned } from "./profile-learned.ts";
 import { canAccessTeam, canReachPeer, coordinatorSupervises, livePeerRoster, livePeerRosterBlock, peerAllowed, peerName, peerRosterSystemPrompt, peerStatus, peerStatusWords, reachablePeers, resolveTeammate, roomPeerRosterSystemPrompt, roomRosterLine, PEER_ACCESS_HELP } from "./peer-roster.ts";
-import { openMausStatusSystemPrompt } from "./openmaus-status-capsule.ts";
+import { relayStatusSystemPrompt } from "./relay-status-capsule.ts";
+import { teamMidnightIso, teamTimeZone } from "./relay-day.ts";
 import {
   containerComputerAction,
   containerComputerExists,
@@ -209,6 +210,7 @@ import {
 } from "./mcp-registry.ts";
 import { bindRelayMcpForBot, relayAgentBotIds, relayToolMcpServer, signedActorContext } from "./relay-mcp.ts";
 import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
+import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
 import {
   RELAY_COMPUTER_DISABLED,
@@ -242,7 +244,7 @@ const RELAY_TOOL_URL = process.env.RELAY_TOOL_URL?.trim() ||
 if (RELAY_TOOL_URL) relayToolMcpServer("scout", RELAY_TOOL_URL);
 // Hold the BFF capability in the harness only, never in environments passed
 // to provider or tool subprocesses.
-let relayBffCapability = process.env.RELAY_BFF_CAPABILITY;
+const relayBffCapability = process.env.RELAY_BFF_CAPABILITY;
 delete process.env.RELAY_BFF_CAPABILITY;
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -329,7 +331,7 @@ import {
   type TaskRecord,
   toWireTask,
 } from "./store.ts";
-import { inheritThreadOwner, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
+import { inheritThreadOwner, ownerByEmail, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
 import * as tts from "./tts/index.ts";
 import { createDecider, deciderIncludedHere, deciderReady, deciderSavePatch, describeDecider } from "./decider/index.ts";
 import { decideRoomResponder, type RoomRoutingInput } from "./decider/room-routing.ts";
@@ -403,8 +405,9 @@ import {
   userProfileSystemPrompt,
   cloudHomePrompt,
   computerPrompt,
-  composioSystemPrompt,
   customMcpPrompt,
+  mailboxPromptPart,
+  relayPromptParts,
   CREDENTIAL_PROMPT,
   mentionPrompt,
   THREADS_PROMPT,
@@ -479,6 +482,16 @@ import {
   isTurnAdmissionBlocked,
   isTurnEventQuarantined,
 } from "./turn-dispatch-guard.ts";
+import {
+  deliverRoutedMail,
+  MAILBOX_LIST_LIMIT,
+  MAILBOX_POLL_QUERY,
+  MailboxMonitor,
+  routedMailPrompt,
+  routedMailTitle,
+  type MailboxMessage,
+} from "./mailbox-monitor.ts";
+import { mailboxBffCall } from "./mailbox-bff.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionStatus, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, editionForMembers, LICENSE_WARN_DAYS, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type EditionStatus, type WorkspaceAccess } from "./enterprise.ts";
@@ -489,6 +502,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
+import { mailboxReplyNeedsNoEmail, sendMailboxCompletionEmail } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -505,7 +519,7 @@ import {
   serializeSessionCookie,
   sessionCookieName,
 } from "./request-auth.ts";
-import { cookieMaxAgeSeconds, formatPairingCode, isUuidUserId, personKey, SessionRegistry, type Scope } from "./sessions.ts";
+import { cookieMaxAgeSeconds, formatPairingCode, isUuidUserId, personKey, personKeyForIdentity, SessionRegistry, type Scope } from "./sessions.ts";
 import { ThreadStarters } from "./thread-starters.ts";
 import {
   activityCsv,
@@ -566,11 +580,11 @@ import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
 
-const PORT = Number(process.env.OMB_PORT || process.env.OGB_PORT || 8799);
-const WEBHOOK_PORT = Number(process.env.OMB_WEBHOOK_PORT || PORT + 1);
+const PORT = Number(process.env.RELAY_PORT || process.env.OGB_PORT || 8799);
+const WEBHOOK_PORT = Number(process.env.RELAY_WEBHOOK_PORT || PORT + 1);
 // Behind a proxy or tunnel, the base URL senders should use (docs/self-hosting.md).
-const WEBHOOK_PUBLIC_URL = process.env.OMB_WEBHOOK_PUBLIC_URL || undefined;
-const STATIC_DIR = process.env.OMB_STATIC_DIR || null;
+const WEBHOOK_PUBLIC_URL = process.env.RELAY_WEBHOOK_PUBLIC_URL || undefined;
+const STATIC_DIR = process.env.RELAY_STATIC_DIR || null;
 const MIME: Record<string, string> = {
   ".html": "text/html",
   ".js": "text/javascript",
@@ -611,7 +625,7 @@ if (existsSync(join(DATA_DIR, ".backups"))) {
 }
 const workspaceMaintenance = new WorkspaceBackupMaintenance();
 // Only after ensureDirs(): it performs the one-time rename of the legacy data
-// dir, which must not find a freshly created ~/.openmausbot already there.
+// dir, which must not find a freshly created ~/.relay already there.
 // Remote clients (server/request-auth.ts, server/sessions.ts): a stable identity
 // for this server, the paired sessions, and the cookie the served UI uses.
 const ENVIRONMENT_ID = loadEnvironmentId(DATA_DIR);
@@ -631,6 +645,12 @@ const sharedComputers = new SharedComputers(id => sessions.isLive(id));
 // OMB Cloud Pro home machine (server/cloud-home.ts, docs/cloud-pro.md). A
 // partial or invalid boot contract stops the server here, before it serves.
 const CLOUD_HOME = cloudHomeConfiguration();
+/** Relay's own shared Gmail account (the mailbox monitor and the prompt
+ * paragraph). Feature is dark when unset. */
+const RELAY_MAILBOX_ADDRESS = process.env.RELAY_MAILBOX_ADDRESS?.trim() || undefined;
+/** Scribe (meeting transcription) has not shipped: until it does, no prompt
+ * may promise that adding the shared address gets a meeting transcribed. */
+const RELAY_SCRIBE_ENABLED = process.env.RELAY_SCRIBE_ENABLED === "1";
 /** Lending a computer to this server (the shared-computer routes, the two
  * agent tools, the advertised capability): the maintainer flag anywhere, and
  * always on an OMB Cloud home, where it is the person's own Mac lent to their
@@ -670,7 +690,7 @@ if (CLOUD_HOME) {
   // The signing secret is held in memory from here on, and a platform
   // gateway's settings are dropped: no engine or tool this server starts
   // inherits either. The person's own engines are the only way to a model.
-  delete process.env.OMB_CLOUD_BOOTSTRAP_SECRET;
+  delete process.env.RELAY_CLOUD_BOOTSTRAP_SECRET;
   for (const key of CLOUD_IGNORED_KEYS) delete process.env[key];
   console.log(`cloud home ${CLOUD_HOME.machineId}: bots run on the engines the person signs in to here`);
   for (const warning of CLOUD_HOME.warnings) console.warn(`cloud home: ${warning}`);
@@ -684,19 +704,19 @@ const commandAllowlist = new CommandAllowlistStore(join(DATA_DIR, "command-allow
 const SESSION_COOKIE = sessionCookieName(PORT, ENVIRONMENT_ID);
 const HOSTED_WORKSPACE = hostedWorkspaceConfigured();
 let workspaceAccess: WorkspaceAccess | null = null;
-const DESKTOP_MANAGED = process.env.OMB_DESKTOP_PARENT === "1";
+const DESKTOP_MANAGED = process.env.RELAY_DESKTOP_PARENT === "1";
 const SHARED_WORKSPACE_FULL_ACCESS = sharedWorkspaceFullAccessConfigured();
 const sharedWorkspaceFullAccessEnabled = () => SHARED_WORKSPACE_FULL_ACCESS && Boolean(workspaceAccess) && entitled("admin");
 // Who a loopback request without a session is (server/request-auth.ts
 // LoopbackTrust): the owner on a desktop or a one-person server; a service on
 // a shared workspace, where every bot's shell is a loopback caller too.
 const LOOPBACK = resolveLoopbackTrust({ desktopManaged: DESKTOP_MANAGED, hostedWorkspace: HOSTED_WORKSPACE, cloudHome: Boolean(CLOUD_HOME) });
-// `openmausbot serve` on a service-trust server hands the server it starts a
+// `relay serve` on a service-trust server hands the server it starts a
 // per-launch secret on stdin, then closes it (server/cli.ts). It opens only
 // the pairing route, for that CLI. Never an environment variable: every
 // engine this server starts inherits its environment.
 let cliOwnerToken: string | undefined;
-if (process.env.OMB_CLI_OWNER_STDIN === "1" && LOOPBACK.trust === "service" && process.stdin) {
+if (process.env.RELAY_CLI_OWNER_STDIN === "1" && LOOPBACK.trust === "service" && process.stdin) {
   let received = "";
   process.stdin.setEncoding("utf8");
   process.stdin.on("error", () => { /* the CLI went away; no pairing through it */ });
@@ -707,13 +727,13 @@ if (process.env.OMB_CLI_OWNER_STDIN === "1" && LOOPBACK.trust === "service" && p
     if (received.includes("\n") && /^[A-Za-z0-9_-]{43}$/.test(line)) cliOwnerToken = line;
   });
 }
-delete process.env.OMB_CLI_OWNER_STDIN;
+delete process.env.RELAY_CLI_OWNER_STDIN;
 // Empty is deliberately a deny-all bootstrap state. Only Electron's private
 // utility-process port can replace it with the per-launch owner capability.
 let desktopMutationToken: string | undefined = DESKTOP_MANAGED ? "" : undefined;
 let companionMutationToken: string | undefined = DESKTOP_MANAGED ? "" : undefined;
 // Where remote clients reach this server (a proxy's public address); pairing URLs use it.
-const FALLBACK_PUBLIC_URL = process.env.OMB_PUBLIC_URL?.trim().replace(/\/+$/, "") || null;
+const FALLBACK_PUBLIC_URL = process.env.RELAY_PUBLIC_URL?.trim().replace(/\/+$/, "") || null;
 const cfg = loadConfig();
 const hostedModels = hostedModelPolicy(DATA_DIR);
 const providerConfigs = () => hostedModels ? hostedModels.configs() : instanceConfigs(cfg);
@@ -1093,7 +1113,7 @@ function cloudCardRefusal(auth: RequestAuth & { kind: "session" }): string | nul
 function cardAnswerRefusal(auth: RequestAuth, threadId: string, requestId: string, behavior: string): string | null {
   if (auth.kind === "loopback") {
     return auth.trust === "service" && behavior !== "deny"
-      ? "A local service can only decline this request. Approve or answer it in OpenMausBot while signed in."
+      ? "A local service can only decline this request. Approve or answer it in Relay while signed in."
       : null;
   }
   // A Cloud home is one person's: a device paired with chat-only access (a
@@ -1412,7 +1432,7 @@ function adminActivityRecording(): boolean {
  * the command line (it marks its requests; on loopback that is the owner). */
 function adminActorFor(auth: RequestAuth, req: IncomingMessage): AdminActor {
   if (auth.kind === "loopback" && auth.trust !== "service" &&
-    (req.headers["x-openmausbot-cli"] === "1" || req.headers["x-openmausbot-cli-owner"] !== undefined)) return { kind: "cli" };
+    (req.headers["x-relay-cli"] === "1" || req.headers["x-relay-cli-owner"] !== undefined)) return { kind: "cli" };
   return decisionActorFor(auth);
 }
 
@@ -1657,7 +1677,7 @@ type UtilityParentPort = {
 // supplies parentPort; plain Node intentionally leaves it absent.
 const utilityParentPort = (process as NodeJS.Process & { parentPort?: UtilityParentPort }).parentPort;
 type DesktopPrivateMessage = {
-  type: "openmausbot:phone-secret-save";
+  type: "relay:phone-secret-save";
   requestId: string;
   target: string;
   value: string;
@@ -1691,7 +1711,7 @@ function postDesktopPrivateMessage(message: DesktopPrivateMessage): boolean {
 function applyDesktopMutationTokenMessage(raw: unknown): boolean {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
   const message = raw as Record<string, unknown>;
-  if (message.type !== "openmausbot:desktop-mutation-token") return false;
+  if (message.type !== "relay:desktop-mutation-token") return false;
   if (typeof message.token !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(message.token)) {
     throw new Error("invalid desktop mutation capability");
   }
@@ -1754,19 +1774,19 @@ const managedDesktop = new ManagedDesktopProviders({
 });
 utilityParentPort?.on("message", event => {
   const message = event.data as { type?: unknown; requestId?: unknown; identity?: unknown } | undefined;
-  if (message?.type !== "openmausbot:managed-desktop-identity") return;
+  if (message?.type !== "relay:managed-desktop-identity") return;
   const requestId = typeof message.requestId === "string" && message.requestId.length <= 100 ? message.requestId : undefined;
   void companyRuntimeStarted.then(() => managedDesktop.migrateIdentity(message.identity)).then(() => true, () => false).then(ok => {
-    utilityParentPort.postMessage({ type: "openmausbot:managed-desktop-result", requestId, ok });
+    utilityParentPort.postMessage({ type: "relay:managed-desktop-result", requestId, ok });
   });
 });
 utilityParentPort?.on("message", event => {
   const message = event.data as { type?: unknown; requestId?: unknown; policy?: unknown } | undefined;
-  if (message?.type !== "openmausbot:managed-desktop-policy") return;
+  if (message?.type !== "relay:managed-desktop-policy") return;
   const requestId = typeof message.requestId === "string" && message.requestId.length <= 100 ? message.requestId : undefined;
   let ok = true;
   try { managedPolicy.apply(message.policy); } catch { ok = false; }
-  utilityParentPort.postMessage({ type: "openmausbot:managed-desktop-result", requestId, ok });
+  utilityParentPort.postMessage({ type: "relay:managed-desktop-result", requestId, ok });
 });
 // The organization library (server/org-library.ts): Electron relays the
 // verified catalog; the runtime swaps it and acknowledges at once, then
@@ -1776,23 +1796,23 @@ let orgLibrary: OrgLibrary | null = null;
 let pendingOrgLibraryRelay: { library: unknown } | null = null;
 utilityParentPort?.on("message", event => {
   const message = event.data as { type?: unknown; requestId?: unknown; library?: unknown } | undefined;
-  if (message?.type !== "openmausbot:managed-library") return;
+  if (message?.type !== "relay:managed-library") return;
   const requestId = typeof message.requestId === "string" && message.requestId.length <= 100 ? message.requestId : undefined;
   let ok = true;
   if (orgLibrary) ok = orgLibrary.applyRelay(message.library ?? null).ok;
   else pendingOrgLibraryRelay = { library: message.library ?? null };
-  utilityParentPort.postMessage({ type: "openmausbot:managed-desktop-result", requestId, ok });
+  utilityParentPort.postMessage({ type: "relay:managed-desktop-result", requestId, ok });
 });
 // Only Electron owns this port. There is deliberately no HTTP equivalent or
 // config patch for its organization identity, endpoint, or model capability.
 utilityParentPort?.on("message", event => {
   const message = event.data as { type?: unknown; requestId?: unknown; connection?: unknown } | undefined;
-  if (message?.type !== "openmausbot:managed-desktop") return;
+  if (message?.type !== "relay:managed-desktop") return;
   const requestId = typeof message.requestId === "string" && message.requestId.length <= 100 ? message.requestId : undefined;
   void companyRuntimeStarted.then(() => managedDesktop.apply(message.connection)).then(() => {
-    utilityParentPort.postMessage({ type: "openmausbot:managed-desktop-result", requestId, ok: true });
+    utilityParentPort.postMessage({ type: "relay:managed-desktop-result", requestId, ok: true });
   }, () => {
-    utilityParentPort.postMessage({ type: "openmausbot:managed-desktop-result", requestId, ok: false, error: "Company connection could not be applied. Reconnect from desktop Settings." });
+    utilityParentPort.postMessage({ type: "relay:managed-desktop-result", requestId, ok: false, error: "Company connection could not be applied. Reconnect from desktop Settings." });
   });
 });
 
@@ -2057,23 +2077,23 @@ function agentsIntegration(
     args: [agentsProxyPath],
     env: {
       ...AGENTS_NODE_FLAG,
-      OMB_HARNESS_URL: `http://127.0.0.1:${PORT}`,
-      OMB_BOT_ID: botId,
-      OMB_THREAD_ID: threadId,
-      OMB_COMMS_TOKEN: token,
-      OMB_TURN_DEPTH: String(depth),
-      OMB_ROOM_TURN: roomCoordination ? "1" : "0",
-      OMB_OWN_THREAD_CREATION: ownThreadCreation ? "1" : "0",
-      OMB_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
+      RELAY_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+      RELAY_BOT_ID: botId,
+      RELAY_THREAD_ID: threadId,
+      RELAY_COMMS_TOKEN: token,
+      RELAY_TURN_DEPTH: String(depth),
+      RELAY_ROOM_TURN: roomCoordination ? "1" : "0",
+      RELAY_OWN_THREAD_CREATION: ownThreadCreation ? "1" : "0",
+      RELAY_SKILL_AUTHORING_ENABLED: skillAuthoring ? "1" : "0",
       // The shared-computer tools are advertised only while the workspace
       // gate is on; the routes behind them refuse regardless.
-      OMB_SHARED_COMPUTERS_ENABLED: !RELAY_COMPUTER_DISABLED && lendingEnabled() ? "1" : "0",
+      RELAY_SHARED_COMPUTERS_ENABLED: !RELAY_COMPUTER_DISABLED && lendingEnabled() ? "1" : "0",
       // A Cloud home offers no this computer and no Local VM (cloud-home.ts),
       // so select_computer lists neither and vm_exec is not shown.
-      OMB_CLOUD_HOME: CLOUD_HOME ? "1" : "0",
+      RELAY_CLOUD_HOME: CLOUD_HOME ? "1" : "0",
       // Same capability rule for voice: the tool is offered only when this
       // bot can actually speak, and the route re-checks on every call.
-      OMB_VOICE_NOTES: (() => {
+      RELAY_VOICE_NOTES: (() => {
         const speaking = botForThread(botId, threadId) ?? store.bot(botId);
         return !RELAY_COMPUTER_DISABLED && tts.voiceReady(cfg, speaking?.voice) && speaking?.voiceNotes !== false ? "1" : "0";
       })(),
@@ -2083,8 +2103,8 @@ function agentsIntegration(
 
 
 /** Engine lifecycle hooks (item 0.2): a turn-scoped bearer the engine's hook
- * helper presents on /api/internal/hook. OMB_HOOKS=0 turns the channel off. */
-const hooksEnabled = () => process.env.OMB_HOOKS !== "0";
+ * helper presents on /api/internal/hook. RELAY_HOOKS=0 turns the channel off. */
+const hooksEnabled = () => process.env.RELAY_HOOKS !== "0";
 function hooksIntegration(botId: string, threadId: string, generation: string): { url: string; token: string } {
   const token = mintInternalCapability({
     botId,
@@ -2695,11 +2715,11 @@ function phoneIntegration(botId: string, threadId: string, generation: string) {
   });
   const env: Record<string, string> = {
     ...AGENTS_NODE_FLAG,
-    OMB_PHONE_TOKEN: token,
-    OMB_HARNESS_URL: `http://127.0.0.1:${PORT}`,
+    RELAY_PHONE_TOKEN: token,
+    RELAY_HARNESS_URL: `http://127.0.0.1:${PORT}`,
   };
-  if (process.env.OMB_ADB_PATH) env.OMB_ADB_PATH = process.env.OMB_ADB_PATH;
-  if (process.env.OMB_RESOURCES_PATH) env.OMB_RESOURCES_PATH = process.env.OMB_RESOURCES_PATH;
+  if (process.env.RELAY_ADB_PATH) env.RELAY_ADB_PATH = process.env.RELAY_ADB_PATH;
+  if (process.env.RELAY_RESOURCES_PATH) env.RELAY_RESOURCES_PATH = process.env.RELAY_RESOURCES_PATH;
   if (process.env.PH_ANDROID_SERIAL) env.PH_ANDROID_SERIAL = process.env.PH_ANDROID_SERIAL;
   return { command: process.execPath, args: [phoneProxyPath], env };
 }
@@ -3171,6 +3191,9 @@ if (RELAY_SHARED_WORKSPACE) {
   relayAgentBotIds(store.bots, process.env);
 }
 else store.seedIfEmpty();
+// Bots seeded before any engine was runnable carry an empty selection; adopt
+// the now-resolved workspace default so the shipped roster can run.
+store.healEmptyModelSelections();
 hostedModels?.reconcile(store);
 
 /** A bot as a client may see it: no provider session bookkeeping.
@@ -3226,7 +3249,7 @@ function previewSystemPrompt(bot: BotRecord) {
   // `cfg` is the module-level config (`const cfg = loadConfig()` near the
   // top of index.ts), the same object the turn code reads.
   const persona = [
-    `You are ${bot.name}, a personal bot in OpenMausBot.`,
+    `You are ${bot.name}, a personal bot in Relay.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
   ]
@@ -3245,7 +3268,7 @@ function previewSystemPrompt(bot: BotRecord) {
   });
   const peers = reachablePeers(store.bots, bot);
   const coordination = bot.chiefOfStaff
-    ? chiefOfStaffSystemPrompt(bot.id, store.bots, true, openMausStatusSystemPrompt())
+    ? chiefOfStaffSystemPrompt(bot.id, store.bots, true, relayStatusSystemPrompt())
     : peers.length > 0
       ? peerRosterSystemPrompt(peers)
       : "";
@@ -3259,6 +3282,8 @@ function previewSystemPrompt(bot: BotRecord) {
     destination: previewComputer,
   });
   const privateWorkspace = instance && supportsWorkspaceFiles(instance.driverKind);
+  const previewDayTz = teamTimeZone();
+  const previewRelayParts = relayPromptParts(teamMidnightIso(new Date(), previewDayTz), previewDayTz);
   const built = buildSystemPrompt(persona, bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     {
@@ -3277,7 +3302,9 @@ function previewSystemPrompt(bot: BotRecord) {
       computer: previewPlan.computer && previewPlan.computer !== "off" && computerPromptKind ? previewPlan.computer : null,
     }, { note: previewPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
-    { id: "composio", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? composioSystemPrompt(bot.connectorTools) : "" },
+    { id: "composio", label: "Connected apps", text: "" },
+    mailboxPromptPart(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED),
+    ...previewRelayParts,
     { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(engineMcpServers(bot))) : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
@@ -4959,7 +4986,7 @@ if (lendingMemory) {
  * correctly through its own Last-Event-ID with no client code at all. */
 const STREAM_ID = randomUUID().slice(0, 8);
 const REPLAY_MAX = 500;
-const configuredSseHeartbeatMs = Number(process.env.OMB_SSE_HEARTBEAT_MS);
+const configuredSseHeartbeatMs = Number(process.env.RELAY_SSE_HEARTBEAT_MS);
 const SSE_HEARTBEAT_MS =
   Number.isFinite(configuredSseHeartbeatMs) && configuredSseHeartbeatMs > 0
     ? configuredSseHeartbeatMs
@@ -5215,16 +5242,16 @@ const repeats = new RepeatDetector({ thresholds: [5, 10, 20], maxKeysPerThread: 
 // left its bot busy forever. The watchdog stops a turn whose thread has emitted NOTHING for stallMs —
 // activity-based, so an hour-long turn that keeps streaming is never
 // touched, and turns parked on a human approval are exempt.
-const TURN_STALL_MS = Math.max(60_000, Number(process.env.OMB_TURN_STALL_MS) || 20 * 60_000);
+const TURN_STALL_MS = Math.max(60_000, Number(process.env.RELAY_TURN_STALL_MS) || 20 * 60_000);
 /** How long ask_bot waits synchronously before the ask is converted into a
  * delegation claim ticket (the peer's turn keeps running either way). */
-const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.OMB_ASK_BOT_TIMEOUT_MS) || 15_000);
+const ASK_BOT_TIMEOUT_MS = Math.max(5_000, Number(process.env.RELAY_ASK_BOT_TIMEOUT_MS) || 15_000);
 // A room waits for a busy teammate instead of dropping them, but never
 // forever: a bot parked on a permission card in another chat is "busy" until
 // a human returns. Past this cap a goal's lead is told the teammate could not
 // free up and reassigns, and a chat round moves on with a chip that says so —
 // the wait ends as data, not as a dead room. Tests shrink it.
-const GROUP_GOAL_WAIT_MAX_MS = Math.max(1_000, Number(process.env.OMB_GOAL_WAIT_MAX_MS) || 30 * 60_000);
+const GROUP_GOAL_WAIT_MAX_MS = Math.max(1_000, Number(process.env.RELAY_GOAL_WAIT_MAX_MS) || 30 * 60_000);
 // Reassigning around a busy teammate is bounded too: after this many
 // exhausted waits in one run the team is blocked on availability, not stuck.
 const GROUP_GOAL_MAX_WAIT_EXHAUSTIONS = 3;
@@ -5716,6 +5743,23 @@ function clearInternalTurn(threadId: string) {
 function isInternalTurn(threadId: string): boolean {
   return internalTurnThreads.has(threadId);
 }
+// A turn whose completion must not raise the workspace-wide "done" banner
+// (mail routed from the shared mailbox, Scribe meeting runs). Unlike an
+// internal turn, the thread still goes unread so the person sees it in the
+// app; only the notification is withheld. Rewritten at every dispatch like
+// the internal flag, so a dead turn cannot silence the next one.
+const silentCompletionThreads = new Set<string>();
+
+function markSilentCompletion(threadId: string) {
+  silentCompletionThreads.add(threadId);
+}
+function clearSilentCompletion(threadId: string) {
+  silentCompletionThreads.delete(threadId);
+}
+/** Consume the flag: a settle releases it, so the next turn is heard. */
+function takeSilentCompletion(threadId: string): boolean {
+  return silentCompletionThreads.delete(threadId);
+}
 // When the person last wrote into each thread with a turn in flight — but
 // only for turns THEY started. post_to_room's ceiling counts the bot posts
 // nobody has answered, and "answered" used to mean a person writing in the
@@ -5728,7 +5772,13 @@ function isInternalTurn(threadId: string): boolean {
 // such a turn finds in its thread may be hours old and its author gone.
 const personAskAt = new Map<string, number>();
 let routines: RoutineManager | null = null;
+/** Native poller for Relay's own shared Gmail account (server/mailbox-monitor.ts). */
+let mailboxMonitor: MailboxMonitor | null = null;
 let calendarCalls: CalendarCallManager | null = null;
+/** One-shot deep-research jobs. Server-side only; the card carries display
+ * text, never the brief's executable payload. Assigned beside
+ * connectorActions once the store exists. */
+let researchJobs: PendingResearchJobs | null = null;
 const localVmOwnerBusy = (botId: string) => store.bot(botId)?.busy === true;
 const localVmLeases = new LocalVmLeasePool(30 * 60_000);
 // Pool mode (issue #1654) keeps the lease pool as the ownership fence and
@@ -5960,8 +6010,8 @@ async function mountHostComputer(owner: TurnOwner, botId: string, providerSuppor
   if (!cua) {
     const reason = readCuaUnavailableReason();
     throw new Error(reason
-      ? `CUA Driver is not ready for this computer — ${reason}${process.platform === "darwin" && /(?:Screen Recording|Accessibility).*required/i.test(reason) ? ". Relaunch OpenMausBot after granting the missing macOS permission." : ""}`
-      : "CUA Driver is not ready for this computer — check permissions and restart OpenMausBot");
+      ? `CUA Driver is not ready for this computer — ${reason}${process.platform === "darwin" && /(?:Screen Recording|Accessibility).*required/i.test(reason) ? ". Relaunch Relay after granting the missing macOS permission." : ""}`
+      : "CUA Driver is not ready for this computer — check permissions and restart Relay");
   }
   await bindTurnComputer(owner, "computer:host");
   return gatedLocalComputer(cua, controlIntegration(botId, owner.threadId, owner.generation));
@@ -5999,7 +6049,7 @@ async function mountBotVps(
   return {
     integration: {
       ...vpsMcp,
-      env: { ...vpsMcp.env, OMB_CONTROL_URL: vpsControl.url, OMB_CONTROL_TOKEN: vpsControl.token },
+      env: { ...vpsMcp.env, RELAY_CONTROL_URL: vpsControl.url, RELAY_CONTROL_TOKEN: vpsControl.token },
     },
   };
 }
@@ -6904,6 +6954,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // thread nobody types in again (a deleted bot's) is not held forever.
       const internal = isInternalTurn(event.threadId);
       clearInternalTurn(event.threadId);
+      // Routed mail and meeting runs settle quietly: the thread still goes
+      // unread, but no workspace-wide banner fires for every message.
+      const silentCompletion = takeSilentCompletion(event.threadId);
       const generatedKey = turnAttachmentKey(event.threadId, event.turnId);
       const generated = turnAttachmentsByTurn.get(generatedKey) ?? [];
       turnAttachmentsByTurn.delete(generatedKey);
@@ -7091,7 +7144,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // A failed peer turn stays a chip too. The bot that delegated is woken
         // with the failure and answers the person in its own thread — buzzing
         // here as well would ring twice for one piece of news.
-        if ((!routineRun || routineRun.status === "completed") && !internal && !computerSelectionTurns.get(event.threadId)?.selected) {
+        if ((!routineRun || routineRun.status === "completed") && !internal && !silentCompletion && !computerSelectionTurns.get(event.threadId)?.selected) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun
@@ -7099,6 +7152,24 @@ bus.subscribe((event: RuntimeEvent) => {
             : reply;
           const notificationBot = (routineRun && routineSourceOwner(routineRun)?.bot) || bot;
           notify(buildNotification("done", notificationBot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: notificationBot.avatarUrl }));
+        }
+        // Routed mail that finished quietly still reaches its person: the
+        // shared account emails a short result. Invitations and no-op replies
+        // (NO_ACTION) are not worth an email, and failures keep the normal
+        // turn-failed alert instead.
+        if (silentCompletion && event.ok !== false) {
+          const routed = settledTask?.mailRouted;
+          const detail = routineRun ? reply || routineRun.output || "" : reply;
+          if (routed && detail.trim() && !mailboxReplyNeedsNoEmail(detail)) {
+            void sendMailboxCompletionEmail({
+              capability: relayBffCapability,
+              email: routed.email,
+              title: settledTask?.title ?? "Your request",
+              detail,
+            }).catch((error) => {
+              console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+            });
+          }
         }
         void digestSettled.finally(() => settleDirectTurn(true));
       } else if (group && speaker) {
@@ -7369,7 +7440,7 @@ function wakeUndispatchedDelegation(receipt: DelegationReceipt, routineRunId?: s
 // real provider instance id. A unique suffix also closes the setup race: if
 // another result arrives while that replay is launching, the newer marker is
 // left intact for one more replay instead of being accidentally consumed.
-const EXTERNAL_CONTEXT_MARKER_PREFIX = "__openmaus_external_context__:";
+const EXTERNAL_CONTEXT_MARKER_PREFIX = "__relay_external_context__:";
 
 function isExternalContextMarker(value: string | undefined): boolean {
   return Boolean(value?.startsWith(EXTERNAL_CONTEXT_MARKER_PREFIX));
@@ -7823,6 +7894,7 @@ function drainQueuedSends() {
       // The drained turn is booked to whoever sent the first waiting line.
       void startTurn(botId, prompt, {
         threadId, userMessage, excludeMessageIds: excludeIds, unattended, onTurnSettled: resolve,
+        silentCompletion: head.silentCompletion === true,
         trigger: queuedTurnTrigger(head),
       }).catch((err) => {
         store.appendMessage(threadId, {
@@ -8041,6 +8113,11 @@ async function startTurn(
     automationSource?: RoutineRunTrigger;
     /** the caller was already running unattended, so this turn is too */
     unattended?: boolean;
+    /** Withhold only the workspace-wide completion banner for this turn's
+     * thread (routed mail, Scribe meeting runs). The thread still goes
+     * unread; the person finds it in the app. Harness-only, never a client
+     * option. */
+    silentCompletion?: boolean;
     /** Bot delivery (including self-opened jobs): whose words this line carries,
      * recorded on the message itself (Message.peerAsk). */
     peerAsk?: Message["peerAsk"];
@@ -8166,6 +8243,10 @@ async function startTurn(
   // time it settles, the fold has only a thread id to go on.
   if (commsDepth > 0) markInternalTurn(threadId);
   else clearInternalTurn(threadId);
+  // Same rewrite discipline for the quiet-completion flag: every dispatch
+  // decides for itself, so a settled or dead turn cannot silence the next.
+  if (opts?.silentCompletion) markSilentCompletion(threadId);
+  else clearSilentCompletion(threadId);
   // a task takes its name from the first thing you asked it to do
   if (resolvedImages.text.trim() && !opts?.cardContinuation) {
     const titled = store.titleTaskFromFirstMessage(bot.id, resolvedImages.text, threadId);
@@ -8186,7 +8267,7 @@ async function startTurn(
     }
   }
 
-  console.error(`[omb-turn] bot=${botId} text=${JSON.stringify(resolvedImages.text.slice(0, 70))} images=${turnImages.length} depth=${commsDepth} card=${Boolean(opts?.cardContinuation)}`);
+  console.error(`[relay-turn] bot=${botId} text=${JSON.stringify(resolvedImages.text.slice(0, 70))} images=${turnImages.length} depth=${commsDepth} card=${Boolean(opts?.cardContinuation)}`);
   const instanceId = instance.instanceId;
   if (providerInstancesChanging.has(instanceId)) {
     throw Object.assign(new Error("this provider account is being updated — try again shortly"), { status: 409 });
@@ -8459,7 +8540,7 @@ async function startTurn(
       let dispatchContext = decideContext(plannedConfig);
 
       const persona = [
-        `You are ${bot.name}, a personal bot in OpenMausBot.`,
+        `You are ${bot.name}, a personal bot in Relay.`,
         bot.title && `Role: ${bot.title}.`,
         bot.description && `About: ${bot.description}`,
       ]
@@ -8539,7 +8620,7 @@ async function startTurn(
         throw Object.assign(new Error("another thread is working in this project folder — wait for it to finish or choose a separate folder"), { status: 409, code: "workspace_busy" });
       }
       // Checkpoint explicit project folders, where a bot can overwrite the
-      // user's work. Its private OpenMaus workspace is app-owned and changes
+      // user's work. Its private Relay workspace is app-owned and changes
       // on nearly every ordinary chat; snapshotting it would add hidden disk
       // and process overhead without a user project to restore.
       const checkpointCwd = cwd && cwd !== privateWorkspace ? cwd : undefined;
@@ -8940,7 +9021,7 @@ async function startTurn(
             bot.id,
             store.bots,
             Boolean(integrations.agents),
-            openMausStatusSystemPrompt(),
+            relayStatusSystemPrompt(),
             boundedCoordination,
           )
         : integrations.agents && sectionPeers.length > 0
@@ -9026,6 +9107,10 @@ async function startTurn(
         coordinationNode.parentId ? roomHandoffs.nodes.get(coordinationNode.parentId) : undefined))) {
         throw new DirectTurnSetupCancelled("Coordination access changed before dispatch");
       }
+      // Team-day for Relay data questions, computed at dispatch so routine
+      // runs (schedule/manual, incl. Curator's brief) get the run day's value.
+      const turnDayTz = teamTimeZone();
+      const turnRelayParts = relayPromptParts(teamMidnightIso(new Date(), turnDayTz), turnDayTz);
       const prompt = buildSystemPrompt(persona, liveBot?.soul ?? bot.soul ?? "", [
         { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
         // first after the soul: the block names agent tools, so it only goes
@@ -9039,7 +9124,9 @@ async function startTurn(
         { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
-        { id: "composio", label: "Connected apps", text: integrations.composio ? composioSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) : "" },
+        { id: "composio", label: "Connected apps", text: "" },
+        mailboxPromptPart(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED),
+        ...turnRelayParts,
         { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
@@ -9336,6 +9423,7 @@ function routineRunCard(run: RoutineRun): NonNullable<Message["routineRun"]> {
     routineName: redactSecretsInText(run.routineName),
     scheduledFor: run.scheduledFor,
     status: run.status,
+    ...(run.triggerSource !== undefined ? { triggerSource: run.triggerSource } : {}),
   };
   if (run.goalStatus) card.goalStatus = run.goalStatus;
   if (run.deferredAt != null && run.status === "queued") card.deferredAt = run.deferredAt;
@@ -9372,7 +9460,7 @@ function routineRunFallbackText(card: NonNullable<Message["routineRun"]>): strin
                 ? "deferred: target busy"
               : card.status
   );
-  return `Routine “${card.routineName}” ${state}`;
+  return `${card.triggerSource === "research" ? "Research" : "Routine"} “${card.routineName}” ${state}`;
 }
 
 /** Upsert one durable lifecycle card per run. Replaying the same transition,
@@ -9430,6 +9518,12 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
   if (statusChanged && ["waiting", "completed", "failed", "missed"].includes(run.status)) {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
     else store.patchTask(source.bot.id, sourceThreadId, { unread: true });
+  }
+  // Close the research job lifecycle from the run ledger's terminal truth:
+  // the registry moves proposed -> confirmed -> running, and the ledger
+  // reports running -> completed | failed | cancelled here.
+  if (run.triggerSource === "research" && ["completed", "failed", "cancelled"].includes(run.status)) {
+    researchJobs?.finish(run.routineId, run.status as "completed" | "failed" | "cancelled");
   }
   return sourceThreadId;
 }
@@ -9610,6 +9704,119 @@ routines = new RoutineManager({
     notify(buildNotification("routine-deferred", notificationBot, routineSourceThread(run) ?? bot.threadId, detail));
   },
 });
+
+// ── shared mailbox monitor ──────────────────────────────────────────────
+// Native poll of Relay's own Gmail account (server/mailbox-monitor.ts). Dark
+// unless the address, the owning Supabase user id, and the BFF capability
+// are all present. The monitor talks to the BFF's internal Gmail routes
+// directly, signing a fresh actor assertion per call; the capability lives
+// only in this module and is never written back into process.env.
+const RELAY_MAILBOX_USER_ID = process.env.RELAY_MAILBOX_USER_ID?.trim() || undefined;
+
+const mailboxPollMs = (() => {
+  const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
+  const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
+  return minutes * 60_000;
+})();
+
+if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
+  const mercuryId = relayAgentBotIds(store.bots).mercury;
+  if (!mercuryId) {
+    console.warn("[mailbox] shared mailbox disabled: no Mercury bot is registered");
+  } else {
+    mailboxMonitor = new MailboxMonitor({
+      address: RELAY_MAILBOX_ADDRESS,
+      pollMs: mailboxPollMs,
+      list: async () => {
+        const result = await mailboxBffCall<{ messages: Array<{ id: string }> }>(
+          relayBffCapability,
+          "/api/internal/gmail/messages/list",
+          { query: MAILBOX_POLL_QUERY, maxResults: MAILBOX_LIST_LIMIT, mailbox: "relay" },
+        );
+        return result.messages ?? [];
+      },
+      read: async (messageId) => {
+        const result = await mailboxBffCall<{ message: MailboxMessage }>(
+          relayBffCapability,
+          "/api/internal/gmail/messages/get",
+          { messageId, mailbox: "relay" },
+        );
+        return result.message;
+      },
+      // Live sessions first, then the durable thread-owner directory: an
+      // expired session must not turn a known teammate into a stranger.
+      lookupPerson: (email) => {
+        const known = sessions.personByEmail(email) ?? ownerByEmail(DATA_DIR, email);
+        return known ? { userId: known.userId, email: known.email, name: known.email.split("@")[0] } : undefined;
+      },
+      hasReceipt: (kind, key) => commandReceipt(kind, key) !== null,
+      recordReceipt: async (kind, key, detail) => {
+        runCommand({ kind, key }, () => detail ?? null);
+      },
+      deliver: async (message, person) => {
+        const personKey = personKeyForIdentity(person.userId, person.email);
+        const title = routedMailTitle(message, person);
+        const prompt = routedMailPrompt(message, person, { scribeEnabled: RELAY_SCRIBE_ENABLED });
+        const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s); contents not available yet]` : ""}`;
+        await deliverRoutedMail({
+          botId: mercuryId,
+          // Reservation by message id: a retry lands in the same conversation.
+          threadFor: async (messageId) => {
+            const reserved = commandReceipt<{ threadId?: string }>("gmail.thread", messageId);
+            if (reserved?.result?.threadId) return reserved.result.threadId;
+            const task = store.createTask(mercuryId, title, false);
+            if (!task) throw new Error("could not open the routed conversation");
+            if (personKey) threadStarters.set(task.threadId, personKey);
+            store.patchTask(mercuryId, task.threadId, {
+              mailRouted: { userId: person.userId, email: person.email, messageId },
+            });
+            runCommand({ kind: "gmail.thread", key: messageId }, () => ({ threadId: task.threadId }));
+            return task.threadId;
+          },
+          isBlocked: () => botAtThreadCapacity(mercuryId) || Boolean(activeGroupTurnForBot(mercuryId)),
+          queue: (delivery) => {
+            // The queue is keyed by the routed thread and carries the
+            // teammate's sender stamp, so the wait can never move their mail
+            // onto another person's running conversation.
+            queueSteeredMessage(mercuryId, delivery.threadId, delivery.text, {
+              prompt: delivery.prompt,
+              reason: activeGroupTurnForBot(mercuryId) ? "group-turn" : "capacity",
+              sender: delivery.sender,
+              unattended: true,
+              silentCompletion: true,
+            });
+          },
+          run: async (delivery) => {
+            // Idempotent across retries: reuse an appended copy rather than
+            // posting the same mail twice into the reserved thread.
+            const existing = store.messagesFor(delivery.threadId)
+              .findLast((entry) => entry.role === "user" && entry.text === delivery.text);
+            const message = existing ?? store.appendMessage(delivery.threadId, {
+              role: "user",
+              kind: "text",
+              text: delivery.text,
+              sender: delivery.sender,
+            });
+            await startTurn(mercuryId, delivery.prompt, {
+              threadId: delivery.threadId,
+              userMessage: message,
+              sender: delivery.sender,
+              unattended: true,
+              silentCompletion: true,
+            });
+          },
+          isAdmissionBlocked: (error) => isTurnAdmissionBlocked(error),
+        }, { message, person, personKey, text, prompt });
+      },
+      log: (event) => {
+        const line = `[mailbox] ${JSON.stringify(event)}`;
+        if (event.event === "mailbox.tick") console.log(line);
+        else console.warn(line);
+      },
+    });
+  }
+}
+
 orgLibrary = new OrgLibrary({
   dataDir: DATA_DIR,
   store,
@@ -9646,10 +9853,10 @@ store.reconcileInterruptedGroupGoals((runId, threadId) => {
   );
   const detail = run.output ?? run.error ?? (
     status === "completed"
-      ? "The scheduled team goal completed before OpenMausBot restarted."
+      ? "The scheduled team goal completed before Relay restarted."
       : status === "stopped"
         ? "The scheduled team goal was stopped."
-        : "OpenMausBot restarted before this scheduled team goal finished."
+        : "Relay restarted before this scheduled team goal finished."
   );
   return { status, detail, finishedAt: run.finishedAt ?? groupGoalRecoveryAt };
 });
@@ -9688,7 +9895,7 @@ async function cloudRoutineReadiness(botId: string, threadId?: string): Promise<
     };
   }
   const instance = turnInstance(bot, "cloud", threadId);
-  if (!instance) return { ready: false, reason: "The Cloud VM runner is unavailable. Restart OpenMausBot and try again." };
+  if (!instance) return { ready: false, reason: "The Cloud VM runner is unavailable. Restart Relay and try again." };
   try {
     if ((await instance.snapshot()).state !== "available") {
       return { ready: false, reason: "The target bot's model engine is not ready to use the Boat cloud computer." };
@@ -9800,12 +10007,12 @@ async function deleteBotWithLifecycle(botId: string, revalidate: () => void = ()
           const vm = await containerComputerStatus(undefined, undefined, target);
           if (!vm.daemonUp && existsSync(target.workspaceDir)) {
             return deletionResponse( 409, {
-              error: "start the container runtime so OpenMausBot can remove this bot's Local VM while deleting it",
+              error: "start the container runtime so Relay can remove this bot's Local VM while deleting it",
             });
           }
           if (vm.container !== "missing" && !vm.managed) {
             return deletionResponse(409, {
-              error: `The container named ${vm.container_name} was not created by OpenMausBot. Remove it manually before deleting this bot`,
+              error: `The container named ${vm.container_name} was not created by Relay. Remove it manually before deleting this bot`,
             });
           }
           localVmCleanup = {
@@ -10002,6 +10209,9 @@ const tighteningRequests = new TighteningRequestService({
 /** User-confirmed Google actions. The pending entry is server-side only; the
  * card the user sees carries display text, never the event or draft id. */
 const connectorActions = new PendingConnectorActions();
+/** One-shot research proposals live apart from routines: no schedule, no
+ * calendar entry, one execution per confirmation. */
+researchJobs = new PendingResearchJobs();
 const teamSetupTeams = () => [...new Set(["", ...readSections(), ...store.bots.map((bot) => sectionKey(bot.section)), ...store.groups.map((group) => sectionKey(group.section))])];
 const teamSetupRequests = new TeamSetupRequestService({
   store, teams: teamSetupTeams, canAccessTeam, canPersist: proposalPersistence, maxBots: MAX_WORKSPACE_BOTS,
@@ -10049,7 +10259,7 @@ function dispatchTeamSetupResume(entry: TeamSetupResumeEntry): void {
     pendingTeamSetupResumes.set(request.requestId, entry);
     return;
   }
-  const prompt = `OpenMausBot team setup decision ${request.requestId}: ${JSON.stringify(request.result)}. Report this exact result and continue the user's already requested work. Do not ask for confirmation again or repeat this setup/deletion. A denied or cancelled operation did not authorize any substitute action. Existing thread models were not changed.`;
+  const prompt = `Relay team setup decision ${request.requestId}: ${JSON.stringify(request.result)}. Report this exact result and continue the user's already requested work. Do not ask for confirmation again or repeat this setup/deletion. A denied or cancelled operation did not authorize any substitute action. Existing thread models were not changed.`;
   const failed = (error: string) => {
     if (cancelled()) return;
     const current = store.messagesFor(request.threadId).find((item) => item.id === messageId);
@@ -10371,10 +10581,10 @@ try {
     claimRequest: () => workspaceMaintenance.request(),
   });
   const advertised = WEBHOOK_PUBLIC_URL ? ` (advertised as ${webhookIngress.baseUrl})` : "";
-  console.log(`openmausbot webhook receiver on http://${webhookIngress.host}:${webhookIngress.port}${advertised}`);
+  console.log(`relay webhook receiver on http://${webhookIngress.host}:${webhookIngress.port}${advertised}`);
 } catch (error) {
   webhookIngressError = error instanceof Error ? error.message : String(error);
-  console.error(`openmausbot webhook receiver unavailable: ${webhookIngressError}`);
+  console.error(`relay webhook receiver unavailable: ${webhookIngressError}`);
 }
 
 const webhookIngressStatus = () => ({
@@ -11005,7 +11215,7 @@ async function runGroupMemberTurn(
     ? reachablePeers(store.bots, bot).filter((peer) => !readyGroup.memberIds.includes(peer.id))
     : [];
   const system = [
-    `You are ${bot.name}, a bot in the room "${readyGroup.name}" in OpenMausBot.`,
+    `You are ${bot.name}, a bot in the room "${readyGroup.name}" in Relay.`,
     bot.title && `Role: ${bot.title}.`,
     bot.description && `About: ${bot.description}`,
     `Room members: ${roster}, and ${userName} (the human).`,
@@ -11013,7 +11223,7 @@ async function runGroupMemberTurn(
     `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
     outsideRoom.length > 0 && orchestration && !orchestration.roomHandoffId && roomPeerRosterSystemPrompt(outsideRoom),
     integrations.agents && (CREDENTIAL_PROMPT + (orchestration && !orchestration.roomHandoffId ? THREADS_PROMPT : "")).trim(),
-    integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual OpenMausBot teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an OpenMausBot teammate participated. Plain @mentions are only for conversational replies in this room.",
+    integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual Relay teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an Relay teammate participated. Plain @mentions are only for conversational replies in this room.",
     integrations.agents && ROUTINE_PROMPT.trim(),
     integrations.agents && PROFILE_PROMPT.trim(),
     skillAuthoring && LEARN_PROMPT.trim(),
@@ -11090,6 +11300,8 @@ async function runGroupMemberTurn(
       });
     }
   }
+  const roomDayTz = teamTimeZone();
+  const roomRelayParts = relayPromptParts(teamMidnightIso(new Date(), roomDayTz), roomDayTz);
   const roomSystem = buildSystemPrompt(system, store.bot(bot.id)?.soul ?? bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
@@ -11098,6 +11310,8 @@ async function runGroupMemberTurn(
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer ?? undefined) },
     { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
+    mailboxPromptPart(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED),
+    ...roomRelayParts,
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
     { id: "recent", label: "Recent work", text: recentWorkPrompt(recentLines) },
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
@@ -12700,7 +12914,7 @@ function dispatchConnectorResume(entry: { botId: string; threadId: string; resum
   const owner = connectorThread(entry.botId, entry.threadId);
   if (!owner) return;
   const names = entry.labels.join(", ");
-  const prompt = `OpenMausBot connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
+  const prompt = `Relay connection update: the user securely connected ${names}. Continue the task that paused for this connection. Do not ask them to connect it again.`;
   if (!canAdmitDirectTurn(entry.botId, entry.threadId)) {
     pendingConnectorResumes.set(`${entry.threadId}:${entry.resumeKey}`, entry);
     return;
@@ -12806,7 +13020,7 @@ function phoneSecretSubmissionKey(threadId: string, messageId: string, requestKe
 }
 
 function credentialDesktopHandoff(label: string): string {
-  return `Securely provide the ${label} from OpenMausBot on your phone or computer. It is never added to chat.`;
+  return `Securely provide the ${label} from Relay on your phone or computer. It is never added to chat.`;
 }
 
 function secretMessage(botId: string, threadId: string, messageId: string): Message | null {
@@ -12843,8 +13057,8 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
   if (!owner) return;
   const prompt =
     entry.outcome === "provided"
-      ? `OpenMausBot credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
-      : `OpenMausBot credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+      ? `Relay credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
+      : `Relay credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
   if (!canAdmitDirectTurn(entry.botId, entry.threadId)) {
     pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     return;
@@ -13568,7 +13782,7 @@ const claudeUpdatesInFlight = new Set<string>();
  * Nothing frames the web UI: the desktop app shows it in its own window. */
 const PAGE_HEADERS = { "content-security-policy": "frame-ancestors 'none'", "x-frame-options": "DENY", "referrer-policy": "no-referrer" } as const;
 
-/** The built UI, when this process serves it (OMB_STATIC_DIR: set by the
+/** The built UI, when this process serves it (RELAY_STATIC_DIR: set by the
  * desktop app and by the container image). Public by design: it is the same
  * bundle anyone can download, holds no secrets, and a remote browser must be
  * able to load /pair before it has a session. Returns false when there is
@@ -13627,8 +13841,8 @@ const workspaceBackupAccess = {
       teamComputers.list().every(computer => !teamComputerInUse(computer)) &&
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
-    pause: () => { routines?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    pause: () => { routines?.stop(); mailboxMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
+    resume: () => { routines?.start(); mailboxMonitor?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // With writers gated and work idle, release our WAL connection for the
@@ -13674,7 +13888,10 @@ ROUTES.push(createPortalSessionRoutes({
     sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
   }),
 }));
-relayBffCapability = undefined;
+// The BFF capability is captured at the top of this module and kept there
+// for the process lifetime: the shared-mailbox monitor and Scribe call the
+// BFF's internal routes directly. It is never written back into
+// process.env, which engine driver child processes inherit.
 // Install statuses come from the organization library's own state, never
 // its file, so New bot cannot disagree with it. No organization: none.
 const orgInstallStatuses = () => orgLibrary?.installStatuses() ?? new Map();
@@ -13747,7 +13964,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       res.setHeader(HOSTED_CONTRACT_HEADER, String(HOSTED_CONTRACT_VERSION));
       if (hostedModels) res.setHeader(HOSTED_MODEL_POLICY_HEADER, "1");
-      return json(res, 200, { ok: true, service: "openmausbot", membershipAuthority: "portal", workspace: hosted.workspace, ...HOSTED_CONTRACT_METADATA });
+      return json(res, 200, { ok: true, service: "relay", membershipAuthority: "portal", workspace: hosted.workspace, ...HOSTED_CONTRACT_METADATA });
     }
     // Hosted workspaces have one sign-in authority. A missing optional layer
     // must not accidentally reactivate legacy email/QR credential minting.
@@ -13772,10 +13989,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // code into a session. Everything else needs the loopback owner or a
     // paired session with the right scope.
     if (method === "GET" && !path.startsWith("/api/") && !path.startsWith("/.well-known/") && serveStatic(res, path)) return;
-    if (method === "GET" && path === "/.well-known/openmausbot/environment") {
+    if (method === "GET" && path === "/.well-known/relay/environment") {
       return json(res, 200, environmentDescriptor({ environmentId: ENVIRONMENT_ID, desktopManaged: DESKTOP_MANAGED, emailSignIn: !HOSTED_WORKSPACE && emailSignIn.enabled(), sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled() }));
     }
-    const domainCheck = /^\/\.well-known\/openmausbot\/domain-check\/([a-f0-9]{64})$/.exec(path);
+    const domainCheck = /^\/\.well-known\/relay\/domain-check\/([a-f0-9]{64})$/.exec(path);
     if (method === "GET" && domainCheck) {
       res.setHeader("cache-control", "no-store");
       const challenge = customDomainVerifier.challenge(domainCheck[1]);
@@ -13829,7 +14046,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const source = requestSource(req);
       const header = (name: string) => { const value = req.headers[name]; return typeof value === "string" ? value : undefined; };
       const result = cloudPairing.handle({
-        timestamp: header("x-omb-cloud-timestamp"), nonce: header("x-omb-cloud-nonce"), signature: header("x-omb-cloud-signature"),
+        timestamp: header("x-relay-cloud-timestamp"), nonce: header("x-relay-cloud-nonce"), signature: header("x-relay-cloud-signature"),
         body: await readSignedBody(req), source,
       });
       if (result.status !== 200) console.warn(`cloud pairing refused from ${source}: ${String(result.body.error)}`);
@@ -13938,7 +14155,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // A stranger learns only the app name; pid (the desktop boot probe keys
     // on it) and the static flag stay behind the gate below.
     if (method === "GET" && path === "/api/health" && !gate.auth) {
-      return json(res, 200, { app: "openmausbot" });
+      return json(res, 200, { app: "relay" });
     }
     // The brand is public too: the sign-in page must carry the deployment's
     // name and icon before anyone has a session, and it holds nothing secret.
@@ -14043,7 +14260,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       // credential encoding because those scanners cannot take a typed code.
       const serverName = environmentDescriptor({ environmentId: ENVIRONMENT_ID, desktopManaged: DESKTOP_MANAGED }).label;
       const invite = base
-        ? `openmausbot://pair?address=${encodeURIComponent(base)}&token=${encodeURIComponent(opened.credential)}&name=${encodeURIComponent(serverName)}`
+        ? `relay://pair?address=${encodeURIComponent(base)}&token=${encodeURIComponent(opened.credential)}&name=${encodeURIComponent(serverName)}`
         : null;
       return json(res, 200, {
         id: opened.id,
@@ -14055,7 +14272,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         serverName,
         hint: base
           ? null
-          : "this server has no public address to put in a link: set OMB_PUBLIC_URL, or open /pair on the address you use and type the code",
+          : "this server has no public address to put in a link: set RELAY_PUBLIC_URL, or open /pair on the address you use and type the code",
       });
     }
     if (method === "GET" && path === "/api/auth/pairing") return json(res, 200, { pairings: sessions.openPairings(), publicUrl: publicUrl() });
@@ -14066,7 +14283,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       res.setHeader("cache-control", "no-store");
       if (method === "GET") return json(res, 200, customDomainStatus());
       if (method === "POST" || method === "DELETE") {
-        if (DESKTOP_MANAGED) return json(res, 409, { error: "Custom domains are configured on a self-hosted OpenMausBot server, not the desktop companion." });
+        if (DESKTOP_MANAGED) return json(res, 409, { error: "Custom domains are configured on a self-hosted Relay server, not the desktop companion." });
         if (!/^application\/json\b/i.test(String(req.headers["content-type"] ?? ""))) {
           return json(res, 415, { error: "content-type must be application/json" });
         }
@@ -14132,7 +14349,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const body = await readBody(req, 4_000_000);
       if (!lendingEnabled()) return json(res, 404, { error: `no route: ${method} ${path}` });
       if (!sessions.isLive(auth.session.id)) return json(res, 401, { error: "Session ended" });
-      const secret = String(req.headers["x-omb-computer-secret"] ?? "");
+      const secret = String(req.headers["x-relay-computer-secret"] ?? "");
       if (path === "/api/shared-computers/connect") {
         const parsed = sharedComputerRegistration.safeParse(body);
         if (!parsed.success) return json(res, 400, { error: "Invalid computer registration" });
@@ -14171,8 +14388,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // library, so a test relays one here instead. Like the capability route
     // below, it exists only when the launcher sets its high-entropy key.
     if (method === "POST" && path === "/api/testing/org-library") {
-      const expected = Buffer.from(process.env.OMB_TEST_ORG_LIBRARY_KEY ?? "");
-      const header = req.headers["x-openmausbot-test-org-library"];
+      const expected = Buffer.from(process.env.RELAY_TEST_ORG_LIBRARY_KEY ?? "");
+      const header = req.headers["x-relay-test-org-library"];
       const actual = Buffer.from(Array.isArray(header) ? "" : String(header ?? ""));
       if (expected.length < 32 || actual.length !== expected.length || !timingSafeEqual(actual, expected) || !orgLibrary) {
         return json(res, 404, { error: "not found" });
@@ -14183,10 +14400,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, applied.ok ? 200 : 400, { ...applied, report: orgLibrary.lastReport() });
     }
     if (method === "POST" && path === "/api/testing/internal-capability") {
-      const expected = process.env.OMB_TEST_INTERNAL_CAPABILITY_KEY ?? "";
-      const actual = Array.isArray(req.headers["x-openmausbot-test-capability"])
+      const expected = process.env.RELAY_TEST_INTERNAL_CAPABILITY_KEY ?? "";
+      const actual = Array.isArray(req.headers["x-relay-test-capability"])
         ? ""
-        : String(req.headers["x-openmausbot-test-capability"] ?? "");
+        : String(req.headers["x-relay-test-capability"] ?? "");
       const expectedBytes = Buffer.from(expected);
       const actualBytes = Buffer.from(actual);
       if (
@@ -14322,7 +14539,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           source!.previousSurface = store.taskByThread(bot.id, bot.threadId)?.surface;
         }
         return json(res, 200, { status: "pending", surface: option.surface,
-          message: `End this turn now without using the previous computer tools. OpenMausBot will continue the original request on ${option.label} with a fresh tool connection.` });
+          message: `End this turn now without using the previous computer tools. Relay will continue the original request on ${option.label} with a fresh tool connection.` });
       }
       if (method === "POST" && path === "/api/internal/hook") {
         const body = await readInternalBody();
@@ -14845,6 +15062,69 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           summary: display.detail, decision: "card-shown", source: "connector-scope",
         });
         return json(res, 201, { requestId: action.requestId, messageId: message.id, title: display.title, summary: display.detail });
+      }
+      if (method === "POST" && path === "/api/internal/research-requests") {
+        const parsed = z.object({
+          fromBotId: z.string().min(1).max(128),
+          fromThreadId: z.string().min(1).max(128),
+          title: z.unknown(),
+          brief: z.unknown(),
+          timeoutMinutes: z.unknown().optional(),
+          idempotencyKey: z.string().max(128).optional(),
+        }).strict().safeParse(await readInternalBody());
+        if (!parsed.success) return json(res, 400, { error: "invalid research proposal" });
+        const body = parsed.data;
+        const from = store.bot(body.fromBotId);
+        if (!from) return json(res, 403, { error: "unknown sender" });
+        const owner = connectorThread(from.id, body.fromThreadId);
+        if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
+        // Only a Relay agent with the Scout research role may propose deep
+        // research: the resolve step executes the brief as that bot.
+        const role = (Object.entries(relayAgentBotIds(store.bots)) as Array<[string, string | undefined]>)
+          .find(([, id]) => id === from.id)?.[0];
+        if (role !== "scout") return json(res, 403, { error: "only Scout may propose deep research" });
+        if (!researchJobs) return json(res, 503, { error: "research proposals are unavailable" });
+        let job;
+        try {
+          job = researchJobs.submit({
+            title: body.title,
+            brief: body.brief,
+            timeoutMinutes: body.timeoutMinutes,
+            idempotencyKey: body.idempotencyKey,
+            botId: from.id,
+            threadId: body.fromThreadId,
+          });
+        } catch (error) {
+          if (error instanceof ResearchJobError) return json(res, error.status, { error: error.message });
+          throw error;
+        }
+        // An idempotent resubmit answers with the live job, not a second
+        // card: one proposal, one confirmation, one execution.
+        const alreadyCarded = store.messagesFor(body.fromThreadId).some(
+          (message) => message.card?.requestId === job.researchId && message.kind === "options",
+        );
+        const display = researchDisplay(job);
+        let messageId: string | undefined;
+        if (!alreadyCarded) {
+          const message = store.appendMessage(body.fromThreadId, {
+            role: "bot",
+            kind: "options",
+            card: {
+              title: display.title,
+              subtitle: `${display.subtitle}\n\n${display.detail}`,
+              options: ["Confirm", "Cancel"],
+              requestId: job.researchId,
+              tool: "research_start",
+            },
+            from: owner.group ? { botId: from.id, name: from.name, color: from.color } : undefined,
+          });
+          messageId = message.id;
+        }
+        appendDecision(DATA_DIR, {
+          threadId: body.fromThreadId, requestId: job.researchId, botId: from.id, botName: from.name,
+          tool: "research_start", summary: display.detail, decision: "card-shown", source: "research",
+        });
+        return json(res, 201, { requestId: job.researchId, ...(messageId ? { messageId } : {}), title: display.title, summary: display.detail });
       }
       if (method === "POST" && path === "/api/internal/tightening-requests") {
         const parsed = z.object({
@@ -16675,7 +16955,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // ── independent webhook triggers ────────────────────────────────────
     // Management stays on the app-only server. Actual deliveries land on a
     // second, webhook-only loopback listener so Funnel or a future hosted
-    // relay never has to expose the rest of OpenMausBot's control surface.
+    // relay never has to expose the rest of Relay's control surface.
     if (path === "/api/webhooks" && method === "GET") {
       const shownHooks = webhooks.list().filter((webhook) => visible.bot(webhook.botId));
       const shownIds = new Set(shownHooks.map((webhook) => webhook.id));
@@ -16815,9 +17095,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // it never grants authority or replaces the existing request gate.
     const requirePinnedClientThread = (botId: string, threadId: unknown): void => {
       if (threadId === undefined &&
-        (auth.kind === "session" || req.headers["x-openmausbot-companion"] === "1") &&
+        (auth.kind === "session" || req.headers["x-relay-companion"] === "1") &&
         store.tasks(botId).length > 1) {
-        throw Object.assign(new Error("This bot has more than one thread. Update the OpenMausBot app on this device, then choose a thread and try again."), { status: 409 });
+        throw Object.assign(new Error("This bot has more than one thread. Update the Relay app on this device, then choose a thread and try again."), { status: 409 });
       }
     };
     if (method === "GET" && path === "/api/bots") {
@@ -16920,7 +17200,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // a bot must render a Markdown link or carry a generated-image attachment,
     // while a user message must carry the standalone composer tag. The bot
     // branch derives conversation/workspace roots; the user branch is limited
-    // to OpenMausBot's private attachment directory. This is deliberately not
+    // to Relay's private attachment directory. This is deliberately not
     // a general path reader.
     m = path.match(/^\/api\/threads\/([\w-]+)\/messages\/([\w-]+)\/file$/);
     const streamsMessageImage = Boolean(
@@ -17376,7 +17656,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           ? body.name.trim()
           : profileName
             ? `${profileName}'s Team`
-            : "My OpenMaus Team";
+            : "My Relay Team";
       const memberIds = store.bots.filter((bot) => !bot.hidden).map((bot) => bot.id);
       if ((body.format === "backup" ? store.bots.length : memberIds.length) === 0) return json(res, 400, { error: "Create a bot before exporting your team" });
       try {
@@ -17572,7 +17852,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         importVisibility = parsed.visibility;
       }
       const body = await readBody(req, MAX_TEAM_BACKUP_BYTES);
-      if (body?.format === "openmaus.backup") {
+      if (body?.format === "relay.backup") {
         if (importMode !== "add") return json(res, 400, { error: "Import backups alongside your existing bots; project mode is only for templates" });
         try {
           const imported = importTeamBackup(store, routines!, body, await defaultSelection(), { visibility: importVisibility });
@@ -20066,6 +20346,78 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           settleCard("allow");
           return json(res, 200, { ok: true, outcome });
         }
+        // One-shot deep research: the pending job is server-side only, and
+        // confirming it starts exactly one execution — never a routine, never
+        // a calendar entry. A requestId with no live pending entry is not
+        // ours; fall through.
+        if (researchJobs) {
+          const researchPending = researchJobs.peek(requestId);
+          const researchReplayed = researchJobs.settledOutcome(requestId);
+          if (researchReplayed !== undefined) {
+            console.log(`[relay-research] resolve ${requestId} replay -> ${researchReplayed.outcome}`);
+            return json(res, 200, { ok: true, outcome: researchReplayed.outcome, ...(researchReplayed.runId ? { runId: researchReplayed.runId } : {}), replayed: true });
+          }
+          if (researchPending) {
+            const cardMessage = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
+            const card = cardMessage?.card;
+            const threadBotId = store.botByThread(threadId)?.id;
+            const settled = !card || card.answered || card.dismissed || card.expired
+              || researchPending.threadId !== threadId || threadBotId !== researchPending.botId;
+            if (settled) {
+              researchJobs.cancel(requestId);
+              return json(res, 410, { error: "this confirmation is no longer pending" });
+            }
+            const settleResearchCard = (answered: "allow" | "deny") => {
+              if (!cardMessage) return;
+              const live = store.messagesFor(threadId).find((message) => message.id === cardMessage.id)?.card;
+              if (live) store.patchMessage(threadId, cardMessage.id, { card: { ...live, answered } });
+            };
+            const bot = store.bot(researchPending.botId);
+            if (!bot) return json(res, 400, { error: "this confirmation has no valid owner" });
+            if (behavior !== "allow") {
+              appendDecision(DATA_DIR, {
+                threadId, requestId, botId: bot.id, botName: bot.name,
+                tool: "research_start",
+                summary: "user declined the research proposal", decision: "user-denied", source: "research",
+              });
+              researchJobs.cancel(requestId);
+              settleResearchCard("deny");
+              return json(res, 200, { ok: true, outcome: "cancelled" });
+            }
+            if (!routines) return json(res, 503, { error: "research execution is unavailable" });
+            const confirmed = researchJobs.confirm(requestId);
+            if (!confirmed) return json(res, 410, { error: "this confirmation is no longer pending" });
+            let runId: string;
+            try {
+              ({ id: runId } = routines.enqueueResearch({
+                researchId: requestId,
+                title: confirmed.title,
+                brief: `${confirmed.brief}\n\nResearch provider: TinyFish via the web_search tool for discovery, then browser_open/browser_read for real reading. If web_search reports it is unavailable, say so in the report's methodology section and record which provider actually answered (including any fallback) — never present fallback results as TinyFish results.`,
+                botId: confirmed.botId,
+                runOn: "maus",
+                sourceThreadId: confirmed.threadId,
+                ...(confirmed.timeoutMinutes !== undefined ? { timeoutMinutes: confirmed.timeoutMinutes } : {}),
+                requestedAt: Date.now(),
+              }));
+            } catch (error) {
+              return json(res, 502, { error: error instanceof Error ? error.message : "the research could not start" });
+            }
+            const started = researchJobs.start(requestId, runId);
+            if (!started) {
+              // A concurrent resolve won the race: answer with its run.
+              const winner = researchJobs.peek(requestId);
+              return json(res, 200, { ok: true, outcome: "started", runId: winner?.runId ?? runId, replayed: true });
+            }
+            appendDecision(DATA_DIR, {
+              threadId, requestId, botId: bot.id, botName: bot.name,
+              tool: "research_start",
+              summary: `research started: ${confirmed.title}`, decision: "user-approved", source: "research",
+            });
+            researchJobs.settle(requestId, "started", runId);
+            settleResearchCard("allow");
+            return json(res, 200, { ok: true, outcome: "started", runId });
+          }
+        }
         const skillCard = store.messagesFor(threadId).find(
           (message) => message.card?.requestId === requestId && message.card.skillRequest,
         );
@@ -20816,7 +21168,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // child proves it is OURS by echoing its pid (a stray dev server has
     // the same API shape but a different pid)
     if (method === "GET" && path === "/api/health") {
-      return json(res, 200, { app: "openmausbot", pid: process.pid, static: Boolean(STATIC_DIR), capabilities: {
+      return json(res, 200, { app: "relay", pid: process.pid, static: Boolean(STATIC_DIR), capabilities: {
         guardedMessages: 1, guardedRequests: 1, guardedFullAccess: 1, guardedOnBehalfOf: 1,
         ...(sharedWorkspaceFullAccessEnabled() ? { sharedWorkspaceFullAccess: 1 } : {}),
       } });
@@ -20828,7 +21180,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (fleetRoute) {
       if (!entitled("admin")) return json(res, 403, { error: "Workspaces need an enterprise licence with the admin feature." });
       const socket = fleetSocketPath();
-      if (!fleetAvailable(socket)) return json(res, 404, { error: "No fleet agent on this server. Run `openmausbot fleet init --domain … --operator <this user>` as root." });
+      if (!fleetAvailable(socket)) return json(res, 404, { error: "No fleet agent on this server. Run `relay fleet init --domain … --operator <this user>` as root." });
       const [, resource, slug, sub] = fleetRoute;
       let forward: { method: string; path: string; body?: unknown } | null = null;
       if (method === "GET" && !resource) forward = { method: "GET", path: "/workspaces" };
@@ -21088,7 +21440,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 200, { instances: await describeInstances() });
         }
         if (action === "install") {
-          if (!(await registry.installRuntime(instanceId))) return json(res, 404, { error: "Installing this engine from Settings is not available on this server. Use the install command on the machine running OpenMausBot." });
+          if (!(await registry.installRuntime(instanceId))) return json(res, 404, { error: "Installing this engine from Settings is not available on this server. Use the install command on the machine running Relay." });
           return json(res, 200, { instances: await describeInstances() });
         }
         if (action === "auth/start") {
@@ -21097,7 +21449,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           // The official local OAuth callback terminates on this machine,
           // not a phone or the browser visiting a remotely hosted workspace.
           if (instance.authenticationMethod === "browser-pkce" && (isProxied(req) || !isLoopbackHost(req.socket.remoteAddress))) {
-            return json(res, 403, { error: "Continue with ChatGPT on the computer running OpenMausBot. Hosted Pro sign-in requires OpenAI's hosted-app approval." });
+            return json(res, 403, { error: "Continue with ChatGPT on the computer running Relay. Hosted Pro sign-in requires OpenAI's hosted-app approval." });
           }
           const started = await providerAuthSessions.start(instance, owner);
           // Revocation can arrive while the CLI is obtaining a device code.
@@ -21566,7 +21918,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               // deterministic rename. The replacement credential already
               // proved the exact deletion target, so its in-flight resource
               // is governed by that stronger target-bound receipt rather
-              // than an OpenMausBot name check.
+              // than an Relay name check.
               if (replacementProvedByDeletion && deletingBoatIds.has(recovery.boxId)) continue;
               const inspected = await boat.inspectBoatIdentity({ box: { token: currentBoatToken } }, recovery.boxId);
               if (!inspected.available) {
@@ -21917,10 +22269,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // Electron server has the private key needed to open the envelope.
     m = path.match(/^\/api\/bots\/([\w-]+)\/secret-cards\/([\w-]+)\/provide$/);
     if (m && method === "POST") {
-      if (req.headers["x-openmausbot-companion"] !== "1") {
+      if (req.headers["x-relay-companion"] !== "1") {
         return json(res, 403, { error: "Secure phone entry must come from a paired phone" });
       }
-      const rawDeviceId = req.headers["x-openmausbot-companion-device"];
+      const rawDeviceId = req.headers["x-relay-companion-device"];
       const authenticatedDeviceId = Array.isArray(rawDeviceId) ? "" : String(rawDeviceId ?? "");
       if (!/^[\w-]{1,128}$/.test(authenticatedDeviceId)) {
         return json(res, 401, { error: "This paired phone could not be verified" });
@@ -22379,7 +22731,7 @@ restoreChannelMessages();
 
 server.listen(PORT, "127.0.0.1", () => {
   companyRuntimeReady();
-  console.log(`openmausbot server on http://127.0.0.1:${PORT}`);
+  console.log(`relay server on http://127.0.0.1:${PORT}`);
   followupsReady = true;
   drainQueuedSends();
   drainQueuedChannelSends();
@@ -22387,6 +22739,7 @@ server.listen(PORT, "127.0.0.1", () => {
   // ordinary chat. Start only once every registry is initialized and the
   // endpoint is listening; earlier dispatch can hit uninitialized bindings.
   routines!.start();
+  mailboxMonitor?.start();
   memoryUpkeep.start();
   const leftover = pendingThreads();
   if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
@@ -22405,18 +22758,18 @@ server.listen(PORT, "127.0.0.1", () => {
   setInterval(expireDelegationsNow, DELEGATION_SWEEP_MS).unref();
 });
 
-// A second listener for `openmausbot serve --tunnel` (server/tunnel.ts): the
+// A second listener for `relay serve --tunnel` (server/tunnel.ts): the
 // connector gateway on this machine forwards public traffic to this IPC path.
 // Nothing changes about the loopback bind above. Requests arriving here have
 // no peer address, which request-auth treats as "through a proxy": a session
 // is required, never loopback trust, whatever headers the request carries.
-const TUNNEL_SOCKET = process.env.OMB_TUNNEL_SOCKET?.trim() || null;
+const TUNNEL_SOCKET = process.env.RELAY_TUNNEL_SOCKET?.trim() || null;
 let tunnelListener: ReturnType<typeof createServer> | null = null;
 if (TUNNEL_SOCKET) {
   if (process.platform !== "win32") rmSync(TUNNEL_SOCKET, { force: true });
   tunnelListener = createServer(handleRequest);
   tunnelListener.listen(TUNNEL_SOCKET, () => {
-    console.log(`openmausbot tunnel listener on ${TUNNEL_SOCKET}`);
+    console.log(`relay tunnel listener on ${TUNNEL_SOCKET}`);
   });
 }
 
@@ -22435,6 +22788,7 @@ const gracefulShutdown = createGracefulShutdown({
       for (const idle of localVmIdles.values()) idle.cancel();
       vps.closeAllVpsDesktopTunnels();
       watchdog.stop();
+      mailboxMonitor?.stop();
       routines?.stop();
       calendarCalls?.stop();
       memoryUpkeep.stop();

@@ -60,7 +60,7 @@ const mintedToken = async (botId: string, threadId: string): Promise<Record<stri
     "POST",
     "/api/testing/internal-capability",
     { botId, threadId, kind: "agents", depth: 0 },
-    { "x-openmausbot-test-capability": TEST_CAPABILITY_KEY },
+    { "x-relay-test-capability": TEST_CAPABILITY_KEY },
   );
   expect(minted.status).toBe(201);
   return { authorization: `Bearer ${minted.body.token}` };
@@ -87,8 +87,8 @@ const ownerRows = (): Record<string, { userId: string; email?: string }> => {
 
 beforeAll(async () => {
   chmodSync(FAKE_CLAUDE, 0o755);
-  home = mkdtempSync(join(tmpdir(), "omb-thread-owners-"));
-  dataDir = join(home, ".openmausbot");
+  home = mkdtempSync(join(tmpdir(), "relay-thread-owners-"));
+  dataDir = join(home, ".relay");
   mkdirSync(dataDir, { recursive: true });
   const gated = join(home, "gated-claude.mjs");
   writeFileSync(gated, [
@@ -111,9 +111,9 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(port),
-      OMB_WEBHOOK_PORT: String(port + 1),
-      OMB_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
+      RELAY_PORT: String(port),
+      RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -1,6 +1,6 @@
 // Fish Audio text to speech. The API key stays on the harness: the renderer
 // receives only voice metadata and synthesized audio bytes.
-const API = (process.env.OMB_FISH_AUDIO_API || "https://api.fish.audio").replace(/\/+$/, "");
+const API = (process.env.RELAY_FISH_AUDIO_API || "https://api.fish.audio").replace(/\/+$/, "");
 const MODEL = "s2.1-pro";
 const MAX_ERROR_LENGTH = 240;
 const PAGE_SIZE = 100;

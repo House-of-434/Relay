@@ -17,45 +17,45 @@ import { portableWorkspaceConfig, restoredWorkspaceConfig } from "./workspace-ba
 
 const directories: string[] = [];
 afterEach(async () => { for (const directory of directories.splice(0)) await removeTempDir(directory); });
-const directory = () => { const value = mkdtempSync(join(tmpdir(), "omb-cloud-home-")); directories.push(value); return value; };
+const directory = () => { const value = mkdtempSync(join(tmpdir(), "relay-cloud-home-")); directories.push(value); return value; };
 
 // Shapes exactly as openmaus-cloud's provisioner writes them (cloud-machines.ts).
 const secret = "S".repeat(43);
 const machineId = "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93";
 const contract = (extra: NodeJS.ProcessEnv = {}): NodeJS.ProcessEnv => ({
-  OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: machineId, OMB_CLOUD_ADMIN_URL: "https://cloud.example.test",
-  OMB_PUBLIC_URL: "https://omb-u-1a2b3c4d5e6f.fly.dev", OMB_CLOUD_BOOTSTRAP_SECRET: secret, ...extra,
+  RELAY_CLOUD_ROLE: "home", RELAY_CLOUD_MACHINE_ID: machineId, RELAY_CLOUD_ADMIN_URL: "https://cloud.example.test",
+  RELAY_PUBLIC_URL: "https://relay-u-1a2b3c4d5e6f.fly.dev", RELAY_CLOUD_BOOTSTRAP_SECRET: secret, ...extra,
 });
 // A platform gateway's settings, as an Admin from before Cloud Pro dropped
 // included AI wrote them. A Cloud home ignores them.
-const token = `omb_cloudai_${"t".repeat(43)}`;
+const token = `relay_cloudai_${"t".repeat(43)}`;
 const gatewayUrl = "https://cloud.example.test/api/cloud/gateway/g0123456789abcdef0123456789abcd";
-const withGateway = (extra: NodeJS.ProcessEnv = {}) => contract({ OMB_HOSTED_MODEL_URL: gatewayUrl, OMB_HOSTED_MODEL_TOKEN: token,
-  OMB_HOSTED_MODELS: JSON.stringify({ anthropic: ["claude-sonnet-5"], openai: ["gpt-5.6-sol"], openrouter: ["anthropic/claude-sonnet-5"] }), ...extra });
+const withGateway = (extra: NodeJS.ProcessEnv = {}) => contract({ RELAY_HOSTED_MODEL_URL: gatewayUrl, RELAY_HOSTED_MODEL_TOKEN: token,
+  RELAY_HOSTED_MODELS: JSON.stringify({ anthropic: ["claude-sonnet-5"], openai: ["gpt-5.6-sol"], openrouter: ["anthropic/claude-sonnet-5"] }), ...extra });
 
 // ── boot contract ──────────────────────────────────────────────────────────
 
 it("is off on every ordinary server and desktop", () => {
   expect(cloudHomeConfigured({})).toBe(false);
   expect(cloudHomeConfiguration({})).toBeNull();
-  expect(cloudHomeConfiguration({ OMB_PUBLIC_URL: "https://selfhosted.example.test", OMB_HOSTED_MODELS: "{}" })).toBeNull();
+  expect(cloudHomeConfiguration({ RELAY_PUBLIC_URL: "https://selfhosted.example.test", RELAY_HOSTED_MODELS: "{}" })).toBeNull();
 });
 
 it("reads the Admin's contract", () => {
   expect(cloudHomeConfiguration(contract())).toEqual({
-    machineId, adminOrigin: "https://cloud.example.test", publicOrigin: "https://omb-u-1a2b3c4d5e6f.fly.dev", bootstrapSecret: secret, warnings: [],
+    machineId, adminOrigin: "https://cloud.example.test", publicOrigin: "https://relay-u-1a2b3c4d5e6f.fly.dev", bootstrapSecret: secret, warnings: [],
   });
-  expect(cloudHomeConfiguration(contract({ OMB_CLOUD_ADMIN_URL: "https://cloud.example.test/" }))!.adminOrigin).toBe("https://cloud.example.test");
+  expect(cloudHomeConfiguration(contract({ RELAY_CLOUD_ADMIN_URL: "https://cloud.example.test/" }))!.adminOrigin).toBe("https://cloud.example.test");
 });
 
 it("ignores a platform gateway's settings with one warning, whatever they hold, and never serves them", () => {
   // Cloud Pro includes no AI: the person signs in with their own account or key.
   const all = cloudHomeConfiguration(withGateway())!;
   expect(Object.keys(all).sort()).toEqual(["adminOrigin", "bootstrapSecret", "machineId", "publicOrigin", "warnings"]);
-  expect(all.warnings).toEqual(["ignoring OMB_HOSTED_MODEL_URL, OMB_HOSTED_MODEL_TOKEN, OMB_HOSTED_MODELS: Cloud Pro includes no AI; people sign in with their own Claude or ChatGPT account, or an API key"]);
+  expect(all.warnings).toEqual(["ignoring RELAY_HOSTED_MODEL_URL, RELAY_HOSTED_MODEL_TOKEN, RELAY_HOSTED_MODELS: Cloud Pro includes no AI; people sign in with their own Claude or ChatGPT account, or an API key"]);
   // Any one of them, valid or not, is ignored the same way instead of failing the machine.
-  for (const stray of [{ OMB_HOSTED_MODEL_TOKEN: token }, { OMB_HOSTED_MODEL_TOKEN: "sk-ant-api03-platform-key" }, { OMB_HOSTED_MODELS: "{not json" },
-    { OMB_HOSTED_MODEL_URL: "https://gateway.attacker.test/v1" }, { OMB_HOSTED_MODELS: "" }]) {
+  for (const stray of [{ RELAY_HOSTED_MODEL_TOKEN: token }, { RELAY_HOSTED_MODEL_TOKEN: "sk-ant-api03-platform-key" }, { RELAY_HOSTED_MODELS: "{not json" },
+    { RELAY_HOSTED_MODEL_URL: "https://gateway.attacker.test/v1" }, { RELAY_HOSTED_MODELS: "" }]) {
     const config = cloudHomeConfiguration(contract(stray))!;
     expect(config.warnings).toEqual([expect.stringMatching(new RegExp(`^ignoring ${Object.keys(stray)[0]}: Cloud Pro includes no AI`))]);
     const value = Object.values(stray)[0];
@@ -63,33 +63,33 @@ it("ignores a platform gateway's settings with one warning, whatever they hold, 
   }
   // The exclusive workspace model policy stays off, so nothing routes to a gateway.
   expect(hostedModelPolicy(directory(), withGateway())).toBeNull();
-  expect(hostedModelPolicy(directory(), contract({ OMB_HOSTED_MODEL_TOKEN: `omb_workspace_${"t".repeat(43)}`, OMB_HOSTED_MODELS: "{}" }))).toBeNull();
+  expect(hostedModelPolicy(directory(), contract({ RELAY_HOSTED_MODEL_TOKEN: `relay_workspace_${"t".repeat(43)}`, RELAY_HOSTED_MODELS: "{}" }))).toBeNull();
   // Nothing the machine starts inherits them.
   expect(Object.keys(withoutIgnoredCloudKeys(withGateway())).filter((key) => (CLOUD_IGNORED_KEYS as readonly string[]).includes(key))).toEqual([]);
   expect(withoutIgnoredCloudKeys(withGateway())).toEqual(contract());
 });
 
 it.each<[string, NodeJS.ProcessEnv]>([
-  ["only one key", { OMB_CLOUD_MACHINE_ID: machineId }],
-  ["no role", { ...contract(), OMB_CLOUD_ROLE: undefined }],
-  ["the desktop role", contract({ OMB_CLOUD_ROLE: "desktop" })],
-  ["no public URL", { ...contract(), OMB_PUBLIC_URL: undefined }],
-  ["an http Admin", contract({ OMB_CLOUD_ADMIN_URL: "http://cloud.example.test" })],
-  ["an Admin URL with a path", contract({ OMB_CLOUD_ADMIN_URL: "https://cloud.example.test/api" })],
-  ["an Admin URL with credentials", contract({ OMB_CLOUD_ADMIN_URL: "https://user:pass@cloud.example.test" })],
-  ["an http public URL", contract({ OMB_PUBLIC_URL: "http://omb-u-1a2b3c4d5e6f.fly.dev" })],
-  ["a machine id with a slash", contract({ OMB_CLOUD_MACHINE_ID: "home/../x" })],
-  ["a short secret", contract({ OMB_CLOUD_BOOTSTRAP_SECRET: "S".repeat(42) })],
-  ["a secret with padding", contract({ OMB_CLOUD_BOOTSTRAP_SECRET: `${"S".repeat(42)}=` })],
-  ["the desktop app", contract({ OMB_DESKTOP_PARENT: "1" })],
-  ["a hosted team workspace too", contract({ OMB_ADMIN_URL: "https://cloud.example.test" })],
-  ["a hosted team workspace with a gateway", withGateway({ OMB_ADMIN_URL: "https://cloud.example.test", OMB_ADMIN_WORKSPACE: "acme", OMB_ADMIN_MEMBERSHIP: "portal" })],
+  ["only one key", { RELAY_CLOUD_MACHINE_ID: machineId }],
+  ["no role", { ...contract(), RELAY_CLOUD_ROLE: undefined }],
+  ["the desktop role", contract({ RELAY_CLOUD_ROLE: "desktop" })],
+  ["no public URL", { ...contract(), RELAY_PUBLIC_URL: undefined }],
+  ["an http Admin", contract({ RELAY_CLOUD_ADMIN_URL: "http://cloud.example.test" })],
+  ["an Admin URL with a path", contract({ RELAY_CLOUD_ADMIN_URL: "https://cloud.example.test/api" })],
+  ["an Admin URL with credentials", contract({ RELAY_CLOUD_ADMIN_URL: "https://user:pass@cloud.example.test" })],
+  ["an http public URL", contract({ RELAY_PUBLIC_URL: "http://relay-u-1a2b3c4d5e6f.fly.dev" })],
+  ["a machine id with a slash", contract({ RELAY_CLOUD_MACHINE_ID: "home/../x" })],
+  ["a short secret", contract({ RELAY_CLOUD_BOOTSTRAP_SECRET: "S".repeat(42) })],
+  ["a secret with padding", contract({ RELAY_CLOUD_BOOTSTRAP_SECRET: `${"S".repeat(42)}=` })],
+  ["the desktop app", contract({ RELAY_DESKTOP_PARENT: "1" })],
+  ["a hosted team workspace too", contract({ RELAY_ADMIN_URL: "https://cloud.example.test" })],
+  ["a hosted team workspace with a gateway", withGateway({ RELAY_ADMIN_URL: "https://cloud.example.test", RELAY_ADMIN_WORKSPACE: "acme", RELAY_ADMIN_MEMBERSHIP: "portal" })],
 ])("refuses to start with %s", (_why, env) => {
   expect(() => cloudHomeConfiguration(env)).toThrow(/Cloud home configuration is invalid/);
 });
 
 it("never echoes a secret or token in its refusal", () => {
-  for (const env of [contract({ OMB_CLOUD_BOOTSTRAP_SECRET: `${secret}!` }), withGateway({ OMB_CLOUD_BOOTSTRAP_SECRET: `${secret}!` })]) {
+  for (const env of [contract({ RELAY_CLOUD_BOOTSTRAP_SECRET: `${secret}!` }), withGateway({ RELAY_CLOUD_BOOTSTRAP_SECRET: `${secret}!` })]) {
     try { cloudHomeConfiguration(env); expect.unreachable(); }
     catch (error) { expect(String(error)).not.toContain(secret); expect(String(error)).not.toContain(token); }
   }
@@ -127,7 +127,7 @@ function fixture() {
   const sessions = new SessionRegistry({ file: join(root, "sessions.json"), now: () => now });
   const pairing = createCloudPairing({ secret, sessions, now: () => now });
   let counter = 0;
-  const sign = (body = JSON.stringify({ label: "OpenMausBot app (Cloud)", ttlSeconds: 300 }), options: { key?: string; at?: number; nonce?: string } = {}) => {
+  const sign = (body = JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 300 }), options: { key?: string; at?: number; nonce?: string } = {}) => {
     const timestamp = String(Math.floor((options.at ?? now) / 1000)), nonce = options.nonce ?? `nonce-${String(++counter).padStart(12, "0")}`;
     return { timestamp, nonce, signature: `v1=${cloudPairingSignature(options.key ?? secret, timestamp, nonce, body)}`, body: Buffer.from(body) };
   };
@@ -142,10 +142,10 @@ it("opens one ordinary pairing window for a correctly signed request", () => {
   expect(granted.status).toBe(200);
   expect(Object.keys(granted.body).sort()).toEqual(["code", "credential", "expiresAt"]);
   expect(granted.body.code).toMatch(/^[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}-[2-9A-HJ-NP-Z]{4}$/);
-  expect(granted.body.credential).toMatch(/^omb_pair_[A-Za-z0-9_-]{43}$/);
+  expect(granted.body.credential).toMatch(/^relay_pair_[A-Za-z0-9_-]{43}$/);
   expect(granted.body.expiresAt).toBe(f.now() + 300_000);
   const paired = f.exchange(granted.body.code as string);
-  expect(paired).toMatchObject({ ok: true, session: { label: "OpenMausBot app (Cloud)", scopes: ["admin", "client"] } });
+  expect(paired).toMatchObject({ ok: true, session: { label: "Relay app (Cloud)", scopes: ["admin", "client"] } });
 });
 
 it("matches the Admin's signature byte for byte", () => {
@@ -159,7 +159,7 @@ it("refuses a wrong key, a tampered request or a malformed signature, and counts
   const good = f.sign();
   const variants = [
     f.sign(undefined, { key: "W".repeat(43) }),
-    { ...good, body: Buffer.from(JSON.stringify({ label: "OpenMausBot app (Cloud)", ttlSeconds: 600 })) },
+    { ...good, body: Buffer.from(JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 600 })) },
     { ...good, nonce: "nonce-tampered-000" },
     { ...good, timestamp: String(Number(good.timestamp) + 1) },
     { ...good, signature: good.signature.slice(3) },
@@ -223,7 +223,7 @@ it("opens a browser sign-in only a browser redeems, by credential alone, for at 
   expect(granted.status).toBe(200);
   // No code to type, and `purpose` said back so the Admin knows this machine made one.
   expect(Object.keys(granted.body).sort()).toEqual(["credential", "expiresAt", "purpose"]);
-  expect(granted.body).toMatchObject({ credential: expect.stringMatching(/^omb_pair_[A-Za-z0-9_-]{43}$/), expiresAt: f.now() + 120_000, purpose: "browser" });
+  expect(granted.body).toMatchObject({ credential: expect.stringMatching(/^relay_pair_[A-Za-z0-9_-]{43}$/), expiresAt: f.now() + 120_000, purpose: "browser" });
   const credential = granted.body.credential as string;
   // The sign-in page can show whose Cloud this is before anything is redeemed.
   expect(f.sessions.previewBrowserSignIn(credential)).toEqual({ owner: "ada@example.test", expiresAt: f.now() + 120_000 });
@@ -271,7 +271,7 @@ it("treats a request the edge forwards as remote, whatever Host it claims", () =
     { host: "home-7f3k2.fly.dev", "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https" },
     { host: "localhost:8799", "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https" },
   ]) {
-    const result = resolveRequestAuth(request(headers), { sessions, cookieName: "omb_session_x", streamPath: "/api/events", url });
+    const result = resolveRequestAuth(request(headers), { sessions, cookieName: "relay_session_x", streamPath: "/api/events", url });
     expect(result.auth).toBeNull();
     expect(result.status).toBe(403);
   }
@@ -296,32 +296,15 @@ it("binds a fresh volume to its machine and refuses anyone else's data", () => {
 it("gives the edge only its routing name and the server the contract, never a gateway's settings", () => {
   const config = cloudHomeConfiguration(withGateway())!;
   const { server, edge } = cloudHomeChildEnvironments(config, { ...withGateway(), PATH: "/usr/bin" }, "/data");
-  expect(server).toMatchObject({ HOME: "/data", OMB_DATA_DIR: "/data/.openmausbot", OMB_PORT: "8799", OMB_WEBHOOK_PORT: "8800",
-    OMB_PUBLIC_URL: "https://omb-u-1a2b3c4d5e6f.fly.dev", OMB_WEBHOOK_PUBLIC_URL: "https://omb-u-1a2b3c4d5e6f.fly.dev", OMB_CLOUD_BOOTSTRAP_SECRET: secret });
+  expect(server).toMatchObject({ HOME: "/data", RELAY_DATA_DIR: "/data/.relay", RELAY_PORT: "8799", RELAY_WEBHOOK_PORT: "8800",
+    RELAY_PUBLIC_URL: "https://relay-u-1a2b3c4d5e6f.fly.dev", RELAY_WEBHOOK_PUBLIC_URL: "https://relay-u-1a2b3c4d5e6f.fly.dev", RELAY_CLOUD_BOOTSTRAP_SECRET: secret });
   for (const key of CLOUD_IGNORED_KEYS) expect(server).not.toHaveProperty(key);
   expect(JSON.stringify(server)).not.toContain(token);
-  expect(edge.OMB_CLOUD_PUBLIC_HOST).toBe(cloudHomeHost(config));
+  expect(edge.RELAY_CLOUD_PUBLIC_HOST).toBe(cloudHomeHost(config));
   expect(JSON.stringify(edge)).not.toContain(token);
   expect(JSON.stringify(edge)).not.toContain(secret);
   expect(passwdIds("root:x:0:0::/root:/bin/sh\nmaus:x:1001:1002::/data:/bin/bash\n", "maus")).toEqual({ uid: 1001, gid: 1002 });
   expect(passwdIds("root:x:0:0::/root:/bin/sh\n", "maus")).toBeNull();
-});
-
-it("ships an edge and a Fly template that keep the server private", () => {
-  const caddy = readFileSync(join(import.meta.dirname, "../deploy/fly/Caddyfile"), "utf8");
-  expect(caddy).toMatch(/^:8080 \{/m);
-  const upstreams = [...caddy.matchAll(/reverse_proxy (\S+)/g)].map(match => match[1]);
-  expect(new Set(upstreams)).toEqual(new Set(["127.0.0.1:8799", "127.0.0.1:8800"]));
-  // every forwarded request is marked as proxied
-  expect(caddy.match(/header_up X-Forwarded-For \{client_ip\}/g)).toHaveLength(upstreams.length);
-  const fly = readFileSync(join(import.meta.dirname, "../deploy/fly/fly.toml"), "utf8");
-  expect(fly).toMatch(/internal_port = 8080/);
-  expect(fly).toMatch(/destination = "\/data"/);
-  expect(fly).toMatch(/path = "\/api\/health"/);
-  const env = /\[env\]([\s\S]*?)\n\[/.exec(fly)![1];
-  for (const secretKey of ["OMB_CLOUD_BOOTSTRAP_SECRET", "OMB_CLOUD_ADMIN_URL"]) expect(env).not.toMatch(new RegExp(`^\\s*${secretKey}\\s*=`, "m"));
-  // Cloud Pro includes no AI: the template sets no gateway.
-  expect(fly).not.toContain("OMB_HOSTED_");
 });
 
 it("starts the server again only when it asks to after a restore, and only a few times in a row", () => {

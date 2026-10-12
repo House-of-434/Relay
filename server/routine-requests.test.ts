@@ -64,7 +64,7 @@ function harness(
   autoApply?: (botId: string, threadId: string) => boolean,
 ) {
   const clock = { now: start };
-  const dir = mkdtempSync(join(tmpdir(), "omb-routine-request-"));
+  const dir = mkdtempSync(join(tmpdir(), "relay-routine-request-"));
   tempDirs.push(dir);
   const routines = new RoutineManager({
     file: join(dir, "routines.json"),
@@ -1639,7 +1639,7 @@ describe("RoutineRequestService", () => {
 describe("cross-bot routine targeting", () => {
   function targetedHarness(validateTarget?: (proposerBotId: string, target: { botId: string; name: string }) => string | null) {
     const clock = { now: Date.parse("2026-08-28T10:00:00Z") };
-    const dir = mkdtempSync(join(tmpdir(), "omb-routine-target-"));
+    const dir = mkdtempSync(join(tmpdir(), "relay-routine-target-"));
     tempDirs.push(dir);
     const routines = new RoutineManager({
       file: join(dir, "routines.json"),
@@ -1862,7 +1862,7 @@ describe("routine ownership", () => {
   const OWNER = { userId: "123e4567-e89b-42d3-a456-426614174000", email: "Owner@Example.test" };
 
   function ownedService(ownerForThread?: (threadId: string) => { userId?: string; email?: string } | undefined) {
-    const dir = mkdtempSync(join(tmpdir(), "omb-routine-owner-"));
+    const dir = mkdtempSync(join(tmpdir(), "relay-routine-owner-"));
     tempDirs.push(dir);
     const routines = new RoutineManager({
       file: join(dir, "routines.json"),

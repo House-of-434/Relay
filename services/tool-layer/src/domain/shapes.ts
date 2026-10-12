@@ -9,6 +9,9 @@ export type Shape = {
   writable: readonly string[];
   serverSet: readonly string[];
   filterable: readonly string[];
+  /** Columns an agent may name in `select`. The tiebreaker/order columns are
+   * applied server-side and need no membership here to take effect. */
+  readable: readonly string[];
   require: readonly Requirement[];
   valueEnums?: Readonly<Record<string, readonly string[]>>;
   updateKey?: string;
@@ -25,6 +28,12 @@ export const SHAPES: Record<string, Shape> = {
       "updated_at", "captured_at",
     ],
     filterable: ["name", "domains", "classification", "observed_at", "actor_user"],
+    readable: [
+      "id", "name", "domains", "description", "source", "source_url",
+      "observed_at", "captured_at", "confidence", "external_source",
+      "external_source_id", "actor_user", "actor_agent", "classification",
+      "created_at", "updated_at",
+    ],
     require: [
       { f: "name", r: "nonempty" },
       { f: "source_url", r: "url" },
@@ -40,6 +49,12 @@ export const SHAPES: Record<string, Shape> = {
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
     ],
     filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user"],
+    readable: [
+      "id", "full_name", "aliases", "person_type", "company_id", "source",
+      "source_url", "observed_at", "captured_at", "confidence",
+      "external_source", "external_source_id", "actor_user", "actor_agent",
+      "classification", "created_at", "updated_at",
+    ],
     valueEnums: { person_type: ["founder", "investor", "partner", "other"] },
     require: [
       { f: "full_name", r: "nonempty" },
@@ -58,6 +73,13 @@ export const SHAPES: Record<string, Shape> = {
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
     ],
     filterable: ["title", "type", "company_id", "tags", "occurred_at", "actor_user"],
+    readable: [
+      "id", "type", "title", "summary", "occurred_at", "company_id", "tags",
+      "attendee_ids", "investor_names", "round", "amount", "source",
+      "source_url", "observed_at", "captured_at", "confidence",
+      "external_source", "external_source_id", "actor_user", "actor_agent",
+      "classification", "created_at", "updated_at",
+    ],
     valueEnums: { type: ["meeting", "gathering", "fundraising", "talk", "demo_day"] },
     require: [
       { f: "title", r: "nonempty" },
@@ -72,10 +94,50 @@ export const SHAPES: Record<string, Shape> = {
     writable: [],
     serverSet: ["user_id", "agent", "created_at", "updated_at"],
     filterable: ["id", "agent", "status", "created_at", "updated_at"],
+    readable: ["id", "user_id", "agent", "title", "status", "error", "last_run_at", "created_at", "updated_at"],
     valueEnums: {
       agent: ["scout", "mercury", "curator"],
       status: ["idle", "running", "failed"],
     },
+    require: [],
+  },
+  // House website activity (single Supabase project). Read-only for agents;
+  // the website's public API writes these rows.
+  "public.invitation_requests": {
+    writable: [],
+    serverSet: [],
+    filterable: ["created_at", "email", "interest"],
+    readable: ["id", "name", "email", "linkedin", "location", "building", "interest", "created_at"],
+    require: [],
+  },
+  "public.newsletter_subscribers": {
+    writable: [],
+    serverSet: [],
+    filterable: ["created_at", "email"],
+    readable: ["id", "name", "email", "created_at"],
+    require: [],
+  },
+  "public.host_applications": {
+    writable: [],
+    serverSet: [],
+    filterable: ["created_at", "email", "city"],
+    readable: ["id", "name", "email", "linkedin", "city", "background", "communities", "events_hosted", "event_idea", "created_at"],
+    require: [],
+  },
+  "public.partner_inquiries": {
+    writable: [],
+    serverSet: [],
+    filterable: ["created_at", "email", "company", "partnership_type"],
+    readable: ["id", "company", "contact_name", "email", "city", "partnership_type", "budget", "notes", "created_at"],
+    require: [],
+  },
+  // Legacy pre-migration applications (Lovable era). Historical read-only:
+  // people who interacted with the website before migration — not live.
+  "public.applications": {
+    writable: [],
+    serverSet: [],
+    filterable: ["created_at", "email", "role"],
+    readable: ["id", "name", "email", "linkedin", "role", "entity", "website", "story", "looking_for", "brings", "learn", "referrer", "attribution", "created_at", "role_details", "location"],
     require: [],
   },
 };
@@ -88,6 +150,36 @@ export function getShape(table: string): Shape {
   const shape = SHAPES[table];
   if (!shape) throw new Error(`No column shape is configured for ${table}`);
   return shape;
+}
+
+/** Columns that carry PII and must only ever be matched exactly. `like`,
+ * `_gte`, and friends on `email` would let a caller binary-search addresses
+ * character by character through counts without ever selecting one. */
+const EQ_ONLY_COLUMNS = new Set(["email"]);
+
+const SELECT_FORBIDDEN = ["*", "(", ")", ":", "-", ">", "<", " ", "\t", "\n", "\"", "'", ";"];
+
+/** Validate an explicit `select` list against the table's allowlisted
+ * columns. Each entry must exactly equal one readable column — the server
+ * builds the PostgREST select string itself from these validated names, so
+ * embedding (`other_table(*)`) and casts (`col::text`, `col->x`) cannot
+ * smuggle through a joined raw string. */
+export function validateSelect(table: string, select: unknown): string[] {
+  const shape = getShape(table);
+  if (!Array.isArray(select) || select.length < 1 || select.length > 50) {
+    throw new Error("select must be an array of 1–50 column names");
+  }
+  const allowed = new Set(shape.readable);
+  return select.map((entry) => {
+    if (typeof entry !== "string" || entry.length === 0 || entry.length > 64) {
+      throw new Error(`Invalid select column for ${table}`);
+    }
+    for (const fragment of SELECT_FORBIDDEN) {
+      if (entry.includes(fragment)) throw new Error(`Invalid select column for ${table}: ${entry}`);
+    }
+    if (!allowed.has(entry)) throw new Error(`Column ${entry} is not selectable on ${table}`);
+    return entry;
+  });
 }
 
 function isScalar(value: unknown): value is string | number | boolean | null {
@@ -105,6 +197,9 @@ export function validateFilters(table: string, filters: Record<string, unknown>)
     const column = suffix ? key.slice(0, -suffix.length) : key;
     const operator = suffix ? suffix.slice(1) as FilterOperator : "eq";
     if (!shape.filterable.includes(column)) throw new Error(`Column ${column} is not filterable on ${table}`);
+    if (EQ_ONLY_COLUMNS.has(column) && operator !== "eq") {
+      throw new Error(`Column ${column} supports only exact match on ${table}`);
+    }
 
     if (operator === "in") {
       if (!Array.isArray(value) || value.length < 1 || value.length > 100 || !value.every(isScalar)) {

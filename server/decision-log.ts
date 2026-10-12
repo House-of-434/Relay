@@ -18,7 +18,7 @@
 // Layout and retention follow the usage ledger: one file per UTC month under
 // <data>/decisions/YYYY-MM.ndjson, and a month file is deleted only once the
 // whole month is older than the retention window (default 180 days, config
-// `decisions.retentionDays` or OMB_DECISION_RETENTION_DAYS), so at least that
+// `decisions.retentionDays` or RELAY_DECISION_RETENTION_DAYS), so at least that
 // much history is always kept. Older servers wrote one decisions.ndjson that
 // rotated to .1 at 4 MB; both are still read, never written, and removed by
 // the same window once their last row is older than it.
@@ -56,7 +56,8 @@ export type DecisionKind =
  * switch, `user` the human's answer, and
  * auto-review sources the isolated model reviewer. connector-scope rows
  * come from the connected-app grants verdict: the person pre-decided them
- * by editing a bot's connectorTools, so the call itself needed no card. */
+ * by editing a bot's connectorTools, so the call itself needed no card.
+ * `research` marks a one-shot deep-research proposal and its resolution. */
 export type DecisionSource =
   | AutoVerdictSource
   | "question"
@@ -68,6 +69,7 @@ export type DecisionSource =
   | "tightening"
   | "user"
   | "connector-scope"
+  | "research"
   | "auto-review"
   | "auto-review-shadow";
 
@@ -125,10 +127,10 @@ export function boundRetentionDays(): number {
   return retentionDays();
 }
 
-/** The retention window in days: OMB_DECISION_RETENTION_DAYS when it is a
+/** The retention window in days: RELAY_DECISION_RETENTION_DAYS when it is a
  * whole number in range, else the configured value, else 180. */
 export function decisionRetentionDays(configured: number | undefined, env: NodeJS.ProcessEnv = process.env): number {
-  const fromEnv = env.OMB_DECISION_RETENTION_DAYS?.trim();
+  const fromEnv = env.RELAY_DECISION_RETENTION_DAYS?.trim();
   const parsed = fromEnv ? Number(fromEnv) : NaN;
   if (Number.isInteger(parsed) && parsed >= 1 && parsed <= MAX_DECISION_RETENTION_DAYS) return parsed;
   if (typeof configured === "number" && Number.isInteger(configured) && configured >= 1 && configured <= MAX_DECISION_RETENTION_DAYS) return configured;

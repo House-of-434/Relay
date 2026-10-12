@@ -1,5 +1,5 @@
 // A user upgrading from the pre-rename data dir (~/.opengrokbot) must find
-// everything in ~/.openmausbot after the first boot. Anything that touches
+// everything in ~/.relay after the first boot. Anything that touches
 // the new dir before ensureDirs() runs would make that rename a no-op and
 // boot the user into an empty workspace — this test pins the order.
 import { spawn, type ChildProcess } from "node:child_process";
@@ -21,7 +21,7 @@ let child: ChildProcess;
 let stderr = "";
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-legacy-test-"));
+  home = mkdtempSync(join(tmpdir(), "relay-legacy-test-"));
   const legacy = join(home, ".opengrokbot");
   mkdirSync(legacy, { recursive: true });
   // A non-product shadow keeps startup deterministic: an empty map selects
@@ -38,9 +38,9 @@ beforeAll(async () => {
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home,
       USERPROFILE: home,
-      OMB_PORT: String(PORT),
-      OMB_WEBHOOK_PORT: String(WEBHOOK_PORT),
-      OMB_BROWSER_CONNECTION: join(home, "browser-test-connection.json"),
+      RELAY_PORT: String(PORT),
+      RELAY_WEBHOOK_PORT: String(WEBHOOK_PORT),
+      RELAY_BROWSER_CONNECTION: join(home, "browser-test-connection.json"),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -65,7 +65,7 @@ afterAll(async () => {
 
 describe("legacy data dir", () => {
   it("is renamed to the new name on first boot, with its contents and a fresh environment id", () => {
-    const fresh = join(home, ".openmausbot");
+    const fresh = join(home, ".relay");
     expect(existsSync(join(home, ".opengrokbot"))).toBe(false);
     expect(readFileSync(join(fresh, "keep-me.txt"), "utf8")).toBe("carried over");
     expect(readFileSync(join(fresh, "environment-id"), "utf8").trim()).toMatch(/^[0-9a-f-]{36}$/);

@@ -8,6 +8,7 @@ import { RelayCalendarClient } from "../infra/calendar.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
+import { databaseToolCallLogger } from "../mcp/tool-log.js";
 import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolHost, toolPort } from "../config.js";
 
 function bearerToken(request: IncomingMessage): string | null {
@@ -49,7 +50,23 @@ export async function createRelayToolServer(
     void (async () => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
       if (request.method === "GET" && url.pathname === "/healthz") {
-        sendJson(response, 200, { app: "relay-tools", status: "ok" });
+        const searchConfigValue = searchConfig();
+        const searchProvider = new TinyFishSearchProvider({
+          binary: searchConfigValue.binary,
+          apiKey: searchConfigValue.apiKey,
+          home: searchConfigValue.home,
+        });
+        const search = await searchProvider.describe().catch(
+          (): import("../infra/search.js").ProviderReport => ({
+            requestedProvider: "tinyfish",
+            actualProvider: "none",
+            fallbackUsed: false,
+            providerStatus: "unavailable",
+            errorSummary: "provider probe failed",
+          }),
+        );
+        // Binary path only; apiKey/home never leave the process.
+        sendJson(response, 200, { app: "relay-tools", status: "ok", searchBinary: searchConfigValue.binary, search });
         return;
       }
 
@@ -119,7 +136,8 @@ export async function createRelayToolServer(
         }),
       };
 
-      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar, browser, search);
+      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar, browser, search,
+        databaseToolCallLogger(database, agentName, actor.userId));
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await mcp.connect(transport);

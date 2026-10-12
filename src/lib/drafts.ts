@@ -4,10 +4,10 @@
 import { useCallback, useEffect, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { isAttachment, type Attachment } from "./composer-attachments.js";
 
-const KEY = "omb-drafts";
-const ATTACHMENTS_KEY = "omb-draft-attachments";
-const SEND_IDS_KEY = "omb-draft-send-ids";
-const CHANNEL_MODES_KEY = "omb-draft-channel-modes";
+const KEY = "relay-drafts";
+const ATTACHMENTS_KEY = "relay-draft-attachments";
+const SEND_IDS_KEY = "relay-draft-send-ids";
+const CHANNEL_MODES_KEY = "relay-draft-channel-modes";
 // A task can be unmounted and mounted again while its POST is still in
 // flight. Keep the edit generation outside React so a late failure from the
 // old component cannot overwrite a newer draft created by the new one.

@@ -63,6 +63,8 @@ describe("workspace", () => {
     expect(prompt).toContain(JSON.stringify('/projects/quoted "folder"'));
     expect(prompt).not.toContain("existing private file contents");
     expect(prompt).toContain("Do not move old files");
+    expect(prompt).toContain("Never paste filesystem paths in chat");
+    expect(prompt).not.toContain("report its absolute path");
     expect(readFileSync(join(shared, "old.txt"), "utf8")).toBe("existing private file contents");
     expect(existsSync(join(thread, "old.txt"))).toBe(false);
     expect(workspaceLocationsPrompt(BOT, undefined)).toContain("inspect the working directory");

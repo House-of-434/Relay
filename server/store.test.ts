@@ -28,6 +28,48 @@ describe("Store", () => {
     rmSync(DATA_DIR, { recursive: true, force: true });
   });
 
+  it("heals a bot with no model selection to the workspace default, bot and tasks", () => {
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Scout", modelSelection: { instanceId: "", model: "" } });
+    expect(bot.modelSelection).toEqual({ instanceId: "", model: "" });
+    const healed = store.healEmptyModelSelections();
+    expect(healed.map((record) => record.id)).toEqual([bot.id]);
+    expect(store.bot(bot.id)!.modelSelection).toEqual(selection());
+    expect(store.bot(bot.id)!.tasks?.[0]?.modelSelection).toEqual(selection());
+  });
+
+  it("never overwrites an explicit model selection while healing", () => {
+    const store = new Store(selection);
+    const chosen = store.createBot({ name: "Custom", modelSelection: { instanceId: "codex", model: "gpt-x" } });
+    expect(store.healEmptyModelSelections()).toEqual([]);
+    expect(store.bot(chosen.id)!.modelSelection).toEqual({ instanceId: "codex", model: "gpt-x" });
+  });
+
+  it("leaves empty selections alone when no workspace default resolves", () => {
+    const store = new Store(() => ({ instanceId: "", model: "" }));
+    store.createBot({ name: "Scout", modelSelection: { instanceId: "", model: "" } });
+    expect(store.healEmptyModelSelections()).toEqual([]);
+    expect(store.bots[0]!.modelSelection).toEqual({ instanceId: "", model: "" });
+  });
+
+  it("creates Relay agents at Auto", () => {
+    const store = new Store(selection);
+    const created = store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS);
+    expect(created.length).toBe(RELAY_AGENT_SEEDS.length);
+    for (const bot of created) expect(bot.approvalMode).toBe("auto");
+  });
+
+  it("adopts Auto for an untouched seeded agent but preserves an explicit choice", () => {
+    const store = new Store(selection);
+    const seeded = store.createBot({ name: "Scout" }, { relayAgent: "scout" });
+    expect(seeded.approvalMode).toBeUndefined();
+    store.seedRelayAgentsIfMissing([{ role: "scout", profile: { name: "Scout" } }]);
+    expect(store.bot(seeded.id)!.approvalMode).toBe("auto");
+    store.patchBot(seeded.id, { approvalMode: "ask" });
+    store.seedRelayAgentsIfMissing([{ role: "scout", profile: { name: "Scout" } }]);
+    expect(store.bot(seeded.id)!.approvalMode).toBe("ask");
+  });
+
   it("renames populated teams without changing members, conversations, grants or computer identity", () => {
     const store = new Store(selection);
     const chief = store.createBot({ section: "Delivery" });
@@ -933,7 +975,7 @@ describe("Store", () => {
     const store = new Store(selection);
     const chief = store.createBot({ name: "Chief", section: "Ops" });
     store.patchBot(chief.id, { chiefOfStaff: true });
-    const folder = mkdtempSync(join(tmpdir(), "omb-store-cwd-"));
+    const folder = mkdtempSync(join(tmpdir(), "relay-store-cwd-"));
     store.applyTeamSetup({ version: 1, requestId: "setup-cwd", botId: chief.id, threadId: chief.threadId,
       reason: "Requested", createdAt: 1, requesterRevision: "fixture", newTeams: [], operations: [
         { action: "create", botId: "cwd-bot", threadId: "cwd-thread", fields: { name: "Foldered", section: "Ops", modelSelection: selection(), cwd: folder } },

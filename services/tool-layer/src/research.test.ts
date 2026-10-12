@@ -129,13 +129,33 @@ test("scout gets the full research loop; others get no search or browser", async
   }
 });
 
-test("anonymous callers see no research tools", async () => {
+test("anonymous callers are rejected before seeing any tools", async () => {
   useResearchEnv();
-  const anon = await session("scout");
+  const server = await createRelayToolServer(database, 0);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const endpoint = `http://127.0.0.1:${(address as { port: number }).port}/mcp/scout`;
   try {
-    assert.deepEqual(anon.tools, ["relay_read", "relay_write"]);
+    const response = await fetch(endpoint, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    assert.equal(response.status, 401);
+    await response.text().catch(() => undefined);
+
+    const client = new Client({ name: "research-chain-test", version: "0.1.0" });
+    const transport = new StreamableHTTPClientTransport(new URL(endpoint));
+    try {
+      await assert.rejects((async () => {
+        await client.connect(transport);
+        await client.listTools();
+      })());
+    } finally {
+      await client.close().catch(() => undefined);
+    }
   } finally {
-    await anon.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 

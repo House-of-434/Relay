@@ -19,14 +19,14 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const staging = mkdtempSync(join(tmpdir(), "omb-smoke-"));
-const home = mkdtempSync(join(tmpdir(), "omb-smoke-home-"));
+const staging = mkdtempSync(join(tmpdir(), "relay-smoke-"));
+const home = mkdtempSync(join(tmpdir(), "relay-smoke-home-"));
 const port = 21000 + Math.floor(Math.random() * 9000);
 
-// OMB_SMOKE_DIST lets the release workflow aim this at a packaged app's
+// RELAY_SMOKE_DIST lets the release workflow aim this at a packaged app's
 // Resources/server tree instead of the repo build.
 try {
-  cpSync(process.env.OMB_SMOKE_DIST ?? join(root, "dist-server"), join(staging, "server"), { recursive: true });
+  cpSync(process.env.RELAY_SMOKE_DIST ?? join(root, "dist-server"), join(staging, "server"), { recursive: true });
 } catch (error) {
   for (const directory of [staging, home]) rmSync(directory, { recursive: true, force: true });
   throw error;
@@ -42,12 +42,12 @@ const fixtureEnv = {
   XDG_CONFIG_HOME: join(home, ".config"),
   XDG_CACHE_HOME: join(home, ".cache"),
   XDG_DATA_HOME: join(home, ".local", "share"),
-  OMB_DATA_DIR: join(home, ".openmausbot"),
-  OMB_PORT: String(port),
+  RELAY_DATA_DIR: join(home, ".relay"),
+  RELAY_PORT: String(port),
   // Not a genuine key: enough to make the server look for its enterprise
   // layer and say whether it found one (checked below), never enough to
   // unlock anything.
-  OMB_LICENSE_KEY: "omb1.not.real",
+  RELAY_LICENSE_KEY: "relay1.not.real",
 };
 
 const child = spawn(process.execPath, [join(staging, "server", "index.js")], {
@@ -204,7 +204,7 @@ if (listening) {
     });
     assert.equal(response.status, 200, "Packaged backup worker did not export successfully");
     const archive = await response.json();
-    assert.equal(archive.summary.format, "openmaus.workspace-backup");
+    assert.equal(archive.summary.format, "relay.workspace-backup");
     const download = await fetch(`http://127.0.0.1:${port}/api/workspace-backup/download/${archive.id}`);
     assert.equal(download.status, 200);
     const bytes = Buffer.from(await download.arrayBuffer());
@@ -247,7 +247,7 @@ if (
   mcpReport.error ||
   mcpReport.exit?.timeout ||
   mcpReport.exit?.code !== 0 ||
-  mcpReport.responses?.find((response) => response.id === 1)?.result?.serverInfo?.name !== "openmausbot-mcp" ||
+  mcpReport.responses?.find((response) => response.id === 1)?.result?.serverInfo?.name !== "relay-mcp" ||
   mcpReport.responses?.find((response) => response.id === 2)?.result?.structuredContent?.status !== "connected" ||
   JSON.stringify(mcpReport.responses?.find((response) => response.id === 3)?.result) !== "{}"
 ) {

@@ -346,8 +346,8 @@ export const Transcript = memo(function Transcript({
                           ))}
                         </div>
                       )}
-                      <MessageAttachmentGallery text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} className={m.text ? undefined : "mb-0"} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
                       {m.text ? <ChatMarkdown text={m.text} mentionPeers={members} everyone={!group.dm} message={{ threadId: group.threadId, messageId: m.id }} /> : null}
+                      <MessageAttachmentGallery text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} className={m.text ? "mt-2" : undefined} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
                     </>
                   )}
                 </div>

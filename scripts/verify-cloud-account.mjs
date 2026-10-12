@@ -8,7 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL("..", import.meta.url)), flag = "--omb-cloud-account-fixture";
+const root = fileURLToPath(new URL("..", import.meta.url)), flag = "--relay-cloud-account-fixture";
 if (process.versions.electron && process.argv.includes(flag)) {
   const { app, BrowserWindow, ipcMain, session } = await import("electron");
   const { createServer } = await import("node:http");
@@ -51,7 +51,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
   try {
     await client.start(); assert.equal(begins, 0); assert.deepEqual(browsers, []);
     win = new BrowserWindow({ width: 740, height: 780, show: false, webPreferences: { preload: join(root, "electron/preload.cjs"), contextIsolation: true, nodeIntegration: false, sandbox: true,
-      additionalArguments: [`--omb-local-origin=${previewOrigin}`, "--omb-company-desktop=1"] } });
+      additionalArguments: [`--relay-local-origin=${previewOrigin}`, "--relay-company-desktop=1"] } });
     const evaluate = source => win.webContents.executeJavaScript(source, true);
     const wait = async text => { for (let count = 0; count < 240; count++) { if (await evaluate(`document.body.innerText.includes(${JSON.stringify(text)})`)) return; await new Promise(resolve => setTimeout(resolve, 50)); } throw new Error(`Missing fixture UI: ${text}`); };
     const click = async text => { for (let count = 0; count < 80; count++) {
@@ -92,7 +92,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
   });
 } else {
   const { createServer } = await import("vite"), { default: react } = await import("@vitejs/plugin-react"), { default: tailwindcss } = await import("@tailwindcss/vite");
-  const output = mkdtempSync(join(tmpdir(), "omb-cloud-account-ui-"));
+  const output = mkdtempSync(join(tmpdir(), "relay-cloud-account-ui-"));
   for (const name of ["home", "user-data"]) mkdirSync(join(output, name));
   const ui = await createServer({ configFile: false, root, resolve: { alias: { "@": join(root, "src") } }, define: { __APP_VERSION__: JSON.stringify("fixture") },
     server: { host: "127.0.0.1", port: 0 }, plugins: [react(), tailwindcss(), {

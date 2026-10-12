@@ -20,7 +20,7 @@ afterEach(async () => {
 });
 
 function scratchSettings(settings: unknown, raw = false): string {
-  const home = mkdtempSync(join(tmpdir(), "omb-qwen-catalog-"));
+  const home = mkdtempSync(join(tmpdir(), "relay-qwen-catalog-"));
   scratchDirs.push(home);
   const dir = join(home, ".qwen");
   mkdirSync(dir, { recursive: true });
@@ -34,7 +34,7 @@ function homeEnv(home: string): Record<string, string> {
 
 describe("readQwenModelCatalog", () => {
   it("returns an empty catalog for missing, malformed, or unsupported settings", () => {
-    const missing = join(tmpdir(), "omb-qwen-missing-home");
+    const missing = join(tmpdir(), "relay-qwen-missing-home");
     expect(readQwenModelCatalog(homeEnv(missing))).toEqual({ default: "", options: [] });
 
     const malformed = scratchSettings("{not-json", true);
@@ -145,7 +145,7 @@ describe("QwenAgentDriver catalog", () => {
     const instance = await QwenAgentDriver.create({
       instanceId: "qwen-local-catalog",
       displayName: "Qwen",
-      environment: { ...homeEnv(home), OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" },
+      environment: { ...homeEnv(home), RELAY_PROBE_LOCAL_INJECT: "1" },
       enabled: true,
       config: QwenAgentDriver.defaultConfig(),
     });
@@ -212,7 +212,7 @@ describe("Qwen route selection", () => {
       { id: "local-qwen", baseUrl: "https://cloud.example/v1" },
     ] } });
     const instance = await QwenAgentDriver.create({ instanceId: "qwen-default", displayName: "Qwen", enabled: true,
-      environment: { ...homeEnv(home), OPENMAUSBOT_PROBE_LOCAL_INJECT: "1" }, config: { cli: FAKE_CLI, fullAuto: false } });
+      environment: { ...homeEnv(home), RELAY_PROBE_LOCAL_INJECT: "1" }, config: { cli: FAKE_CLI, fullAuto: false } });
     try {
       expect(instance.models.default).toBe("omlx::local-qwen");
       expect(instance.models.options).toHaveLength(2);

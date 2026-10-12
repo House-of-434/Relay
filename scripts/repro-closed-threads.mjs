@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Reproduce: threads a bot opens with start_thread and later closes with
-// close_thread stay in the sidebar. Runs an isolated OpenMausBot server on a
+// close_thread stay in the sidebar. Runs an isolated Relay server on a
 // throwaway data dir with the repository's fake engine, then drives the same
 // internal endpoints the agents tools hit. Never touches the user's app data.
 //
@@ -33,7 +33,7 @@ const portFree = (port) => new Promise((resolve) => {
 let port;
 for (;;) { port = await freePort(); if (await portFree(port + 1)) break; }
 
-const home = mkdtempSync(join(tmpdir(), "omb-closed-threads-repro-"));
+const home = mkdtempSync(join(tmpdir(), "relay-closed-threads-repro-"));
 writeFileSync(join(home, "config.json"), JSON.stringify({
   threads: { maxConcurrentPerBot: 4 },
   instances: { claude: { driver: "claudeAgent", displayName: "Fake engine", config: { cli: FAKE_CLI } } },
@@ -44,12 +44,12 @@ const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, 
   cwd: ROOT,
   env: {
     PATH: process.env.PATH,
-    HOME: home, USERPROFILE: home, OMB_DATA_DIR: home,
+    HOME: home, USERPROFILE: home, RELAY_DATA_DIR: home,
     TMPDIR: home,
-    OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1),
-    OMB_TEST_INTERNAL_CAPABILITY_KEY: TEST_KEY,
+    RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1),
+    RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_KEY,
     FAKE_CLAUDE_MODE: "happy",
-    ...(existsSync(STATIC_DIR) ? { OMB_STATIC_DIR: STATIC_DIR } : {}),
+    ...(existsSync(STATIC_DIR) ? { RELAY_STATIC_DIR: STATIC_DIR } : {}),
   },
   stdio: ["ignore", "inherit", "inherit"],
 });
@@ -91,7 +91,7 @@ await api("PATCH", `/api/bots/${quinn.id}/tasks/${quinn.threadId}`, { title: "My
 // a couple of threads the PERSON opened, so we can see what the bot's pile does to them
 for (const title of ["Plan the launch", "Draft release notes"]) await api("POST", `/api/bots/${parker.id}/tasks`, { title });
 
-const minted = await api("POST", "/api/testing/internal-capability", { botId: parker.id, threadId: parker.threadId, kind: "agents", depth: 0 }, { "x-openmausbot-test-capability": TEST_KEY });
+const minted = await api("POST", "/api/testing/internal-capability", { botId: parker.id, threadId: parker.threadId, kind: "agents", depth: 0 }, { "x-relay-test-capability": TEST_KEY });
 if (minted.status !== 201) throw new Error(`mint: ${minted.status} ${JSON.stringify(minted.body)}`);
 const asParker = { authorization: `Bearer ${minted.body.token}` };
 

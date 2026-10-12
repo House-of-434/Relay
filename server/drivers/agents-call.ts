@@ -53,14 +53,14 @@ export interface ToolCallResult {
 }
 
 /** The context a spawned proxy was given, with a fresh set of turn guards:
- *   OMB_BOT_ID, OMB_THREAD_ID, OMB_TURN_DEPTH, plus the catalog switches
+ *   RELAY_BOT_ID, RELAY_THREAD_ID, RELAY_TURN_DEPTH, plus the catalog switches
  *   (agents-catalog.ts) and the harness address and token (agents-client.ts). */
 export function toolCallContextFromEnv(env: NodeJS.ProcessEnv): ToolCallContext {
   const profile = catalogProfileFromEnv(env);
   return {
     botId: profile.botId,
-    threadId: env.OMB_THREAD_ID ?? "",
-    depth: Number(env.OMB_TURN_DEPTH ?? "0") || 0,
+    threadId: env.RELAY_THREAD_ID ?? "",
+    depth: Number(env.RELAY_TURN_DEPTH ?? "0") || 0,
     externalRuntime: profile.externalRuntime,
     coordinating: profile.coordinating,
     sharedComputers: profile.sharedComputers,
@@ -921,7 +921,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       return { text: `${r.label ?? CREDENTIAL_TARGETS[credentialId].label} is already configured. Continue the task.` };
     }
     return {
-      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} request is ready. The desktop app and a freshly QR-paired mobile app show its secure entry card; older mobile pairings explain how to pair again or finish on the computer. End this turn; OpenMausBot will resume the task after the user saves or declines. Never ask them to paste the key into chat.`,
+      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} request is ready. The desktop app and a freshly QR-paired mobile app show its secure entry card; older mobile pairings explain how to pair again or finish on the computer. End this turn; Relay will resume the task after the user saves or declines. Never ask them to paste the key into chat.`,
     };
   }
   if (name === "send_voice_note") {
@@ -956,6 +956,28 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     return {
       text: `This bot's routines (current time: ${now}; timezone: ${timeZone}):\n${JSON.stringify(routines, null, 2)}`,
     };
+  }
+  if (name === "propose_deep_research") {
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    const brief = typeof args.brief === "string" ? args.brief.trim() : "";
+    const timeoutMinutes = args.timeout_minutes;
+    const idempotencyKey = typeof args.idempotency_key === "string" ? args.idempotency_key.trim() : "";
+    if (!title || title.length > 200 || !brief || brief.length > 24000
+      || (timeoutMinutes !== undefined && (!Number.isInteger(timeoutMinutes) || (timeoutMinutes as number) < 5 || (timeoutMinutes as number) > 1440))) {
+      return { text: "propose_deep_research needs a title (1-200 chars) and a brief (1-24000 chars), with optional timeout_minutes (5-1440).", isError: true };
+    }
+    const r = await api("/api/internal/research-requests", {
+      method: "POST",
+      body: JSON.stringify({
+        fromBotId: BOT_ID,
+        fromThreadId: THREAD_ID,
+        title,
+        brief,
+        ...(timeoutMinutes !== undefined ? { timeoutMinutes } : {}),
+        ...(idempotencyKey ? { idempotencyKey: idempotencyKey.slice(0, 128) } : {}),
+      }),
+    });
+    return confirmationResult(r, `the research proposal “${title}”`, "research");
   }
   if (name === "propose_routine") {
     const { fields: routine, error: scheduleError } = routineFields(args);

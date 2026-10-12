@@ -1,6 +1,6 @@
 // The full server as an OMB Cloud home machine, over its real HTTP boundary,
 // with the settings an Admin from before Cloud Pro dropped included AI still
-// sent (OMB_HOSTED_*). Cloud Pro includes no AI: the machine boots, says once
+// sent (RELAY_HOSTED_*). Cloud Pro includes no AI: the machine boots, says once
 // that it ignores them, serves no gateway models, never hands them (or its
 // signing secret) to an engine, and tells the app it pairs that its first run
 // is the engine sign-in. It also carries Pro's included Boat computers, voice
@@ -21,25 +21,25 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
-const HOST = "omb-t-0123456789ab.fly.dev";
+const HOST = "relay-t-0123456789ab.fly.dev";
 const secret = randomBytes(32).toString("base64url");
-const token = `omb_cloudai_${randomBytes(32).toString("base64url")}`;
+const token = `relay_cloudai_${randomBytes(32).toString("base64url")}`;
 const gateway = {
-  OMB_HOSTED_MODEL_URL: "https://cloud.example.test/api/cloud/gateway/g0123456789abcdef0123456789abcd",
-  OMB_HOSTED_MODEL_TOKEN: token,
-  OMB_HOSTED_MODELS: JSON.stringify({ anthropic: [], openai: ["gpt-fixture"], openrouter: ["anthropic/claude-fixture"] }),
+  RELAY_HOSTED_MODEL_URL: "https://cloud.example.test/api/cloud/gateway/g0123456789abcdef0123456789abcd",
+  RELAY_HOSTED_MODEL_TOKEN: token,
+  RELAY_HOSTED_MODELS: JSON.stringify({ anthropic: [], openai: ["gpt-fixture"], openrouter: ["anthropic/claude-fixture"] }),
 };
 // Cloud Pro's included Boat computers, voice and decisions (included-services.ts).
 const included = {
-  OMB_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
-  OMB_CLOUD_BOAT_TOKEN: `box_omb_${randomBytes(24).toString("base64url")}`,
-  OMB_CLOUD_VOICE_URL: "https://cloud.example.test/api/cloud/services/voice/v1",
-  OMB_CLOUD_VOICE_TOKEN: `omb_voice_${randomBytes(24).toString("base64url")}`,
-  OMB_TTS_DEFAULT_VOICE: "preset0voice0id",
-  OMB_CLOUD_DECIDER_URL: "https://cloud.example.test/api/cloud/services/decider",
-  OMB_CLOUD_DECIDER_TOKEN: `omb_decide_${randomBytes(32).toString("base64url")}`,
+  RELAY_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
+  RELAY_CLOUD_BOAT_TOKEN: `box_relay_${randomBytes(24).toString("base64url")}`,
+  RELAY_CLOUD_VOICE_URL: "https://cloud.example.test/api/cloud/services/voice/v1",
+  RELAY_CLOUD_VOICE_TOKEN: `relay_voice_${randomBytes(24).toString("base64url")}`,
+  RELAY_TTS_DEFAULT_VOICE: "preset0voice0id",
+  RELAY_CLOUD_DECIDER_URL: "https://cloud.example.test/api/cloud/services/decider",
+  RELAY_CLOUD_DECIDER_TOKEN: `relay_decide_${randomBytes(32).toString("base64url")}`,
 };
-const includedTokens = [included.OMB_CLOUD_BOAT_TOKEN, included.OMB_CLOUD_VOICE_TOKEN, included.OMB_CLOUD_DECIDER_TOKEN];
+const includedTokens = [included.RELAY_CLOUD_BOAT_TOKEN, included.RELAY_CLOUD_VOICE_TOKEN, included.RELAY_CLOUD_DECIDER_TOKEN];
 let home: string;
 let base: string;
 let child: ChildProcess;
@@ -67,8 +67,8 @@ async function api(method: string, path: string, options: { body?: unknown; remo
 }
 
 beforeAll(async () => {
-  home = mkdtempSync(join(tmpdir(), "omb-cloud-home-server-"));
-  const dataDir = join(home, ".openmausbot");
+  home = mkdtempSync(join(tmpdir(), "relay-cloud-home-server-"));
+  const dataDir = join(home, ".relay");
   mkdirSync(dataDir, { recursive: true });
   // A signed-in Claude Code whose turns record the environment they were given.
   // While the hang marker exists, a new turn records itself elsewhere and
@@ -94,7 +94,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   }));
   // The web UI's pages (a stand-in for the built app).
   mkdirSync(join(home, "web"));
-  writeFileSync(join(home, "web", "index.html"), "<!doctype html><title>OpenMausBot</title>");
+  writeFileSync(join(home, "web", "index.html"), "<!doctype html><title>Relay</title>");
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   const offlinePrelude = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
@@ -104,9 +104,9 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
       PATH: process.env.PATH,
       ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-      HOME: home, USERPROFILE: home, OMB_DATA_DIR: dataDir, OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: join(home, "web"),
-      OMB_CLOUD_ROLE: "home", OMB_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", OMB_CLOUD_ADMIN_URL: "https://cloud.example.test",
-      OMB_CLOUD_BOOTSTRAP_SECRET: secret, OMB_PUBLIC_URL: `https://${HOST}`,
+      HOME: home, USERPROFILE: home, RELAY_DATA_DIR: dataDir, RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1), RELAY_STATIC_DIR: join(home, "web"),
+      RELAY_CLOUD_ROLE: "home", RELAY_CLOUD_MACHINE_ID: "3f9c2a4e-8b1d-4c6e-9a7f-2d5e8c1b0a93", RELAY_CLOUD_ADMIN_URL: "https://cloud.example.test",
+      RELAY_CLOUD_BOOTSTRAP_SECRET: secret, RELAY_PUBLIC_URL: `https://${HOST}`,
       ...gateway,
       ...included,
     },
@@ -126,11 +126,11 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
 
 /** One of the owner's devices, paired the way the Admin pairs the app. */
 async function ownerPairing(): Promise<string> {
-  const body = JSON.stringify({ label: "OpenMausBot app (Cloud)", ttlSeconds: 300 });
+  const body = JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 300 });
   const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
   const granted = await api("POST", "/api/cloud/pairing", { remote: true, headers: {
-    "content-type": "application/json", "x-omb-cloud-timestamp": timestamp, "x-omb-cloud-nonce": nonce,
-    "x-omb-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
+    "content-type": "application/json", "x-relay-cloud-timestamp": timestamp, "x-relay-cloud-nonce": nonce,
+    "x-relay-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
   }, body: JSON.parse(body) });
   return (await api("POST", "/api/auth/pair", { remote: true, body: { code: granted.body.code } })).body.token as string;
 }
@@ -141,7 +141,7 @@ afterAll(async () => {
 });
 
 it("boots with a gateway's settings, says once that it ignores them, and never logs them", () => {
-  expect(log.match(/cloud home: ignoring OMB_HOSTED_MODEL_URL, OMB_HOSTED_MODEL_TOKEN, OMB_HOSTED_MODELS: Cloud Pro includes no AI/g)).toHaveLength(1);
+  expect(log.match(/cloud home: ignoring RELAY_HOSTED_MODEL_URL, RELAY_HOSTED_MODEL_TOKEN, RELAY_HOSTED_MODELS: Cloud Pro includes no AI/g)).toHaveLength(1);
   expect(log).not.toContain(token);
   expect(log).not.toContain(secret);
   for (const includedToken of includedTokens) expect(log).not.toContain(includedToken);
@@ -153,7 +153,7 @@ it("offers the included computers, voice and decisions with no key, and never sh
   expect(status.body.box).toEqual({ configured: true, included: true });
   expect(status.body.tts).toMatchObject({ configured: true, ready: true, provider: "elevenlabs", voice: "preset0voice0id", included: true });
   expect(status.body.decider).toEqual({ provider: "jev", configured: true, included: true, enabled: true, jobs: { roomRouting: true } });
-  const saved = readFileSync(join(home, ".openmausbot", "config.json"), "utf8");
+  const saved = readFileSync(join(home, ".relay", "config.json"), "utf8");
   for (const includedToken of includedTokens) {
     expect(JSON.stringify(status.body)).not.toContain(includedToken);
     expect(saved).not.toContain(includedToken);
@@ -161,11 +161,11 @@ it("offers the included computers, voice and decisions with no key, and never sh
 });
 
 it("pairs the app on a signed request and tells it its first run is the engine sign-in; no gateway models are served", async () => {
-  const body = JSON.stringify({ label: "OpenMausBot app (Cloud)", ttlSeconds: 300 });
+  const body = JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 300 });
   const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
   const granted = await api("POST", "/api/cloud/pairing", { remote: true, headers: {
-    "content-type": "application/json", "x-omb-cloud-timestamp": timestamp, "x-omb-cloud-nonce": nonce,
-    "x-omb-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
+    "content-type": "application/json", "x-relay-cloud-timestamp": timestamp, "x-relay-cloud-nonce": nonce,
+    "x-relay-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
   }, body: JSON.parse(body) });
   expect(granted.status, JSON.stringify(granted.body)).toBe(200);
   const paired = await api("POST", "/api/auth/pair", { remote: true, body: { code: granted.body.code } });
@@ -187,11 +187,11 @@ async function mintBrowserSignIn(owner = "ada@example.test"): Promise<string> {
   const body = JSON.stringify({ label: "Web browser (Cloud page)", ttlSeconds: 120, purpose: "browser", owner });
   const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
   const granted = await api("POST", "/api/cloud/pairing", { remote: true, headers: {
-    "content-type": "application/json", "x-omb-cloud-timestamp": timestamp, "x-omb-cloud-nonce": nonce,
-    "x-omb-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
+    "content-type": "application/json", "x-relay-cloud-timestamp": timestamp, "x-relay-cloud-nonce": nonce,
+    "x-relay-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
   }, body: JSON.parse(body) });
   expect(granted.status, JSON.stringify(granted.body)).toBe(200);
-  expect(granted.body).toMatchObject({ purpose: "browser", credential: expect.stringMatching(/^omb_pair_/) });
+  expect(granted.body).toMatchObject({ purpose: "browser", credential: expect.stringMatching(/^relay_pair_/) });
   expect(granted.body).not.toHaveProperty("code");
   return granted.body.credential as string;
 }
@@ -292,8 +292,8 @@ console.log("dump-env 1.0.0");
   expect(probe.body, JSON.stringify(probe.body)).toMatchObject({ ok: true, version: "dump-env 1.0.0" });
   const env = JSON.parse(readFileSync(dump, "utf8"));
   // Proves the dump is the server's environment, not an empty one.
-  expect(env.OMB_TTS_DEFAULT_VOICE).toBe(included.OMB_TTS_DEFAULT_VOICE);
-  for (const key of ["OMB_CLOUD_BOAT_TOKEN", "OMB_CLOUD_VOICE_TOKEN", "OMB_CLOUD_DECIDER_TOKEN", "OMB_CLOUD_BOOTSTRAP_SECRET"]) expect(env).not.toHaveProperty(key);
+  expect(env.RELAY_TTS_DEFAULT_VOICE).toBe(included.RELAY_TTS_DEFAULT_VOICE);
+  for (const key of ["RELAY_CLOUD_BOAT_TOKEN", "RELAY_CLOUD_VOICE_TOKEN", "RELAY_CLOUD_DECIDER_TOKEN", "RELAY_CLOUD_BOOTSTRAP_SECRET"]) expect(env).not.toHaveProperty(key);
   for (const value of [...includedTokens, secret]) expect(JSON.stringify(env)).not.toContain(value);
 });
 
@@ -332,7 +332,7 @@ it("never hands a gateway's settings or the signing secret to an engine", async 
   await expect.poll(() => existsSync(dump), { timeout: 15_000 }).toBe(true);
   const { env } = JSON.parse(readFileSync(dump, "utf8"));
   expect(env.HOME).toBe(home);
-  for (const key of [...CLOUD_IGNORED_KEYS, "OMB_CLOUD_BOOTSTRAP_SECRET", "OMB_CLOUD_BOAT_TOKEN", "OMB_CLOUD_VOICE_TOKEN", "OMB_CLOUD_DECIDER_TOKEN"]) expect(env).not.toHaveProperty(key);
+  for (const key of [...CLOUD_IGNORED_KEYS, "RELAY_CLOUD_BOOTSTRAP_SECRET", "RELAY_CLOUD_BOAT_TOKEN", "RELAY_CLOUD_VOICE_TOKEN", "RELAY_CLOUD_DECIDER_TOKEN"]) expect(env).not.toHaveProperty(key);
   expect(JSON.stringify(env)).not.toContain(token);
   expect(JSON.stringify(env)).not.toContain(secret);
   for (const includedToken of includedTokens) expect(JSON.stringify(env)).not.toContain(includedToken);
@@ -343,7 +343,7 @@ it("records when a bot's turn first finished here, once, in the Cloud's own sett
   const first = async () => (await api("GET", "/api/config")).body.onboarding?.firstTurnAt as string | undefined;
   await expect.poll(first, { timeout: 15_000 }).toMatch(/^\d{4}-\d{2}-\d{2}T/);
   const recorded = await first();
-  expect(JSON.parse(readFileSync(join(home, ".openmausbot", "config.json"), "utf8")).onboarding.firstTurnAt).toBe(recorded);
+  expect(JSON.parse(readFileSync(join(home, ".relay", "config.json"), "utf8")).onboarding.firstTurnAt).toBe(recorded);
   // A later turn leaves it as it was.
   const created = await api("POST", "/api/bots", { body: {
     name: "Second fixture", modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
@@ -382,12 +382,12 @@ it("offers its bots cloud computers only, and tells them they cannot see the per
     expect(systemPrompt).toContain("check list_shared_computers");
     expect(systemPrompt).not.toMatch(/Local VM is an isolated desktop|user's host|host desktop|select an available Local VM/);
     const agents = mcpConfig.mcpServers.agents;
-    expect(agents.env.OMB_CLOUD_HOME).toBe("1");
+    expect(agents.env.RELAY_CLOUD_HOME).toBe("1");
     const preview = (await api("GET", `/api/bots/${botId}/system-prompt`)).body.sections as Array<{ id: string; text: string }>;
     expect(preview.find((section) => section.id === "cloud-home")?.text).toBe(cloudHomePrompt(true));
     const select = (surface?: string) => fetch(`${base}/api/internal/computer/select`, {
       method: surface === undefined ? "GET" : "POST",
-      headers: { authorization: `Bearer ${agents.env.OMB_COMMS_TOKEN}`, ...(surface === undefined ? {} : { "content-type": "application/json" }) },
+      headers: { authorization: `Bearer ${agents.env.RELAY_COMMS_TOKEN}`, ...(surface === undefined ? {} : { "content-type": "application/json" }) },
       ...(surface === undefined ? {} : { body: JSON.stringify({ surface }) }),
     });
     const listed = await (await select()).json() as { canSelect: boolean; options: Array<{ surface: string }> };

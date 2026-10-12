@@ -37,7 +37,7 @@ export function PairPage({ initialCode, initialEmail = null, reason }: { initial
   const [sent, setSent] = useState(false);
 
   useEffect(() => {
-    void fetch("/.well-known/openmausbot/environment")
+    void fetch("/.well-known/relay/environment")
       .then((r) => (r.ok ? r.json() : null))
       .then((d: EnvironmentDescriptor | null) => {
         setEnvironment(d);

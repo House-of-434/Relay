@@ -3,13 +3,13 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { launchVerificationServer, runControlOmb } from "./control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "./control-relay.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const podman = process.env.OMB_VERIFY_PODMAN;
-const machine = process.env.OMB_VERIFY_MACHINE;
+const podman = process.env.RELAY_VERIFY_PODMAN;
+const machine = process.env.RELAY_VERIFY_MACHINE;
 if (!podman || !isAbsolute(podman) || !machine) {
-  throw new Error("Set OMB_VERIFY_PODMAN to an absolute executable path and OMB_VERIFY_MACHINE explicitly");
+  throw new Error("Set RELAY_VERIFY_PODMAN to an absolute executable path and RELAY_VERIFY_MACHINE explicitly");
 }
 type Connection = { Name: string; URI: string; Identity: string };
 const connections = JSON.parse(execFileSync(podman, ["system", "connection", "list", "--format", "json"], {
@@ -75,8 +75,8 @@ try {
     assert(computer.args.includes(target), "MCP must target exactly the speaking bot GUI container");
     assert(String(dump.systemPrompt).includes("computer"), "Goal must include computer instructions");
     // Settled capabilities must already be revoked, including the final speaker.
-    const gate = await fetch(computer.env.OMB_CONTROL_URL, {
-      headers: { authorization: `Bearer ${computer.env.OMB_CONTROL_TOKEN}` }, signal: AbortSignal.timeout(5_000),
+    const gate = await fetch(computer.env.RELAY_CONTROL_URL, {
+      headers: { authorization: `Bearer ${computer.env.RELAY_CONTROL_TOKEN}` }, signal: AbortSignal.timeout(5_000),
     });
     assert.equal(gate.status, 401, "A settled speaker must lose computer authority");
     evidence.push({ id, computerArgs: computer.args, target, status: wait.status });
@@ -100,7 +100,7 @@ try {
   process.removeListener("SIGTERM", cancel);
 }
 if (errors.length) throw new AggregateError(errors, "Fixture verification or cleanup failed; inspect the exact fixture IDs above");
-const evidenceDir = join(ROOT, ".omb-scratch/verification-logs");
+const evidenceDir = join(ROOT, ".relay-scratch/verification-logs");
 mkdirSync(evidenceDir, { recursive: true });
 writeFileSync(join(evidenceDir, "group-vm-routing.json"), JSON.stringify(receipt, null, 2));
 console.log(JSON.stringify(receipt));

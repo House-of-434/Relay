@@ -16,7 +16,7 @@ const issueSchema = z.object({
   scopes: z.array(scopeSchema).min(1).max(2),
 }).strict();
 const revokeSchema = z.union([
-  z.object({ token: z.string().regex(/^omb_sess_[A-Za-z0-9_-]{43}$/) }).strict(),
+  z.object({ token: z.string().regex(/^relay_sess_[A-Za-z0-9_-]{43}$/) }).strict(),
   z.object({ sessionId: z.string().uuid() }).strict(),
 ]);
 

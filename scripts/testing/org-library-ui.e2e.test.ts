@@ -6,17 +6,17 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { canonicalJson, parsePackageDocument } from "../../shared/package-format.ts";
-import { runControlOmb } from "../control-omb.ts";
+import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const FIXTURES = join(ROOT, "shared", "package-fixtures");
-const forced = process.env.OMB_UI_E2E === "1";
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
-if (!enabled) console.log("skipping org-library UI e2e: set OMB_UI_E2E=1 to require system Chrome");
+if (!enabled) console.log("skipping org-library UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 const sha = (value: string) => createHash("sha256").update(value).digest("hex");
 const ORG = "11111111-1111-4111-8111-111111111111";
@@ -54,8 +54,8 @@ describe("the organization library in the real renderer", () => {
     let stdout = "";
     let stderr = "";
     let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
-      cwd: ROOT, env: { ...process.env, OMB_TEST_ORG_LIBRARY_KEY: key }, stdio: ["ignore", "pipe", "pipe"],
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
+      cwd: ROOT, env: { ...process.env, RELAY_TEST_ORG_LIBRARY_KEY: key }, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
     child.stderr!.on("data", (chunk: Buffer) => { stderr += String(chunk); });
@@ -69,7 +69,7 @@ describe("the organization library in the real renderer", () => {
     const press = (keys: string) => ui("press", "--keys", keys);
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const api = (path: string, method = "GET", body?: unknown) => request(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, info.url);
-    const evidence = (name: string) => ui("screenshot", "--out", join(ROOT, ".omb-scratch", "verify-evidence", name));
+    const evidence = (name: string) => ui("screenshot", "--out", join(ROOT, ".relay-scratch", "verify-evidence", name));
 
     // No organization: Templates has no organization tab.
     await click("New or share");
@@ -84,10 +84,10 @@ describe("the organization library in the real renderer", () => {
     const blobs = join(info!.dataDir, "org-library", "blobs");
     mkdirSync(blobs, { recursive: true });
     for (const rel of [team, skills]) writeFileSync(join(blobs, `${rel.sha256}.json`), rel.bytes, { mode: 0o600 });
-    const catalog = JSON.stringify({ format: "openmaus.org-library", version: 1, libraryVersion: 1, organization: { id: ORG, name: "Customer Co" },
+    const catalog = JSON.stringify({ format: "relay.org-library", version: 1, libraryVersion: 1, organization: { id: ORG, name: "Customer Co" },
       packages: [team.entry(TEAM_ID), skills.entry(LIBRARY_ID)] });
     const relayed = await fetch(`${info!.url}/api/testing/org-library`, {
-      method: "POST", headers: { "content-type": "application/json", "x-openmausbot-test-org-library": key },
+      method: "POST", headers: { "content-type": "application/json", "x-relay-test-org-library": key },
       body: JSON.stringify({ library: { adminOrigin: "https://admin.example.com", organizationId: ORG, organizationName: "Customer Co", digest: sha(catalog), catalog } }),
     });
     expect(relayed.status).toBe(200);

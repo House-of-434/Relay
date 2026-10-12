@@ -7,7 +7,7 @@ import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
-import { launchVerificationServer, verificationServerEnvironment } from "../scripts/control-omb.ts";
+import { launchVerificationServer, verificationServerEnvironment } from "../scripts/control-relay.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 it("remembers real permission requests, scopes and revokes grants, and preserves them across restart", async () => {

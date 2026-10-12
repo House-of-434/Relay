@@ -8,8 +8,8 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 // staging is per-arch since the Intel build (dist-native/<arch>/…); default to
 // the host arch, which is the only one whose native SDK can load in-process
 const hostArch = process.arch === "arm64" ? "arm64" : "x64";
-const resources = process.env.OMB_CUA_RESOURCES ?? join(root, "dist-native", hostArch);
-process.env.OPENMAUSBOT_CUA_SDK_LIBRARY = join(resources, "cua-sdk/native/libcua_driver_sdk.dylib");
+const resources = process.env.RELAY_CUA_RESOURCES ?? join(root, "dist-native", hostArch);
+process.env.RELAY_CUA_SDK_LIBRARY = join(resources, "cua-sdk/native/libcua_driver_sdk.dylib");
 process.env.CUA_DRIVER_RS_TELEMETRY_ENABLED = "0";
 const sdk = pathToFileURL(join(resources, "cua-sdk/cua-sdk.mjs")).href;
 const binary = join(resources, "cua-driver");
@@ -65,7 +65,7 @@ try {
   await rpc("initialize", {
     protocolVersion: "2024-11-05",
     capabilities: {},
-    clientInfo: { name: "openmausbot-package-smoke", version: "1" },
+    clientInfo: { name: "relay-package-smoke", version: "1" },
   });
   proxy.stdin.write(JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) + "\n");
   const listed = await rpc("tools/list");

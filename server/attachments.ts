@@ -1,5 +1,5 @@
 // Image attachments: pasted/dropped images become files under
-// ~/.openmausbot/attachments so every CLI engine can open them by path —
+// ~/.relay/attachments so every CLI engine can open them by path —
 // the app never ships image bytes through the prompt itself.
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -36,7 +36,7 @@ export const ATTACHMENTS_MAX_BYTES = 512 * 1024 * 1024;
  * committed attachment that a transcript may still reference. */
 export const ATTACHMENT_PARTIAL_MAX_AGE_MS = 60 * 60 * 1000;
 
-const PARTIAL_NAME = /^\.openmaus-upload-[0-9a-f-]+-[0-9a-f-]+\.partial$/i;
+const PARTIAL_NAME = /^\.relay-upload-[0-9a-f-]+-[0-9a-f-]+\.partial$/i;
 const UPLOAD_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const activePartials = new Set<string>();
 const uploadLocks = new Map<string, Promise<void>>();
@@ -228,7 +228,7 @@ export function __resetAttachmentAccountingForTests(): void {
  * consuming quota for an hour. */
 function cleanupAttachmentPartialsForUpload(uploadId: string): void {
   ensureAttachmentsDir();
-  const prefix = `.openmaus-upload-${uploadId}-`;
+  const prefix = `.relay-upload-${uploadId}-`;
   for (const entry of readdirSync(ATTACHMENTS_DIR, { withFileTypes: true })) {
     if (!entry.isFile() || !entry.name.startsWith(prefix) || !PARTIAL_NAME.test(entry.name)) continue;
     const path = join(ATTACHMENTS_DIR, entry.name);
@@ -459,7 +459,7 @@ export async function saveFile(
 
     const id = uploadId ?? randomUUID();
     const path = join(ATTACHMENTS_DIR, `${id}${extension}`);
-    const partialPath = join(ATTACHMENTS_DIR, `.openmaus-upload-${id}-${randomUUID()}.partial`);
+    const partialPath = join(ATTACHMENTS_DIR, `.relay-upload-${id}-${randomUUID()}.partial`);
     const reservation = new AttachmentReservation();
     if (expectedBytes) reservation.reserve(expectedBytes);
     activePartials.add(partialPath);
@@ -543,7 +543,7 @@ export function saveImage(bytes: Buffer, mime: string, requestedUploadId?: strin
   const id = uploadId ?? randomUUID();
   const name = `${id}${ext}`;
   const path = join(ATTACHMENTS_DIR, name);
-  const partialPath = join(ATTACHMENTS_DIR, `.openmaus-upload-${id}-${randomUUID()}.partial`);
+  const partialPath = join(ATTACHMENTS_DIR, `.relay-upload-${id}-${randomUUID()}.partial`);
   activePartials.add(partialPath);
   let partialCleanupFailed = false;
   try {
@@ -592,7 +592,7 @@ export function saveAudio(bytes: Buffer, mime: string): SavedAttachment {
   const id = randomUUID();
   const name = `${id}.mp3`;
   const path = join(ATTACHMENTS_DIR, name);
-  const partialPath = join(ATTACHMENTS_DIR, `.openmaus-upload-${id}-${randomUUID()}.partial`);
+  const partialPath = join(ATTACHMENTS_DIR, `.relay-upload-${id}-${randomUUID()}.partial`);
   activePartials.add(partialPath);
   let partialCleanupFailed = false;
   try {

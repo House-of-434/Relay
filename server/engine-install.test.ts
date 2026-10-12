@@ -55,7 +55,7 @@ describe.skipIf(process.platform === "win32")("installing with npm", () => {
   const calls = () => readFileSync(join(scratch, "calls.jsonl"), "utf8").trim().split("\n").map((line) => JSON.parse(line) as { args: string[]; cwd: string; secret: string | null });
 
   beforeEach(() => {
-    scratch = mkdtempSync(join(tmpdir(), "omb-engine-install-"));
+    scratch = mkdtempSync(join(tmpdir(), "relay-engine-install-"));
     binDir = join(scratch, "fake-path");
     base = join(scratch, "data");
     mkdirSync(binDir);

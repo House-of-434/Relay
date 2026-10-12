@@ -206,9 +206,9 @@ describe("ASK_USER_TOOL_DEFINITION", () => {
 });
 
 describe("parseOmbAskQuestions", () => {
-  const block = (questions: unknown) => "```omb-ask\n" + JSON.stringify({ questions }) + "\n```";
+  const block = (questions: unknown) => "```relay-ask\n" + JSON.stringify({ questions }) + "\n```";
 
-  it("extracts the questions from a fenced omb-ask block", () => {
+  it("extracts the questions from a fenced relay-ask block", () => {
     expect(
       parseOmbAskQuestions(
         block([{ question: "Ship today?", options: [{ label: "Yes" }, { label: "No" }] }, { question: "Who reviews?", header: "Review", options: [] }]),
@@ -220,9 +220,9 @@ describe("parseOmbAskQuestions", () => {
   });
 
   it("returns null when the fence holds JSON garbage", () => {
-    expect(parseOmbAskQuestions("```omb-ask\n{not json at all\n`")).toBeNull();
-    expect(parseOmbAskQuestions("```omb-ask\n\"just a string\"\n`")).toBeNull();
-    expect(parseOmbAskQuestions("```omb-ask\n{\"questions\": []}\n`")).toBeNull();
+    expect(parseOmbAskQuestions("```relay-ask\n{not json at all\n`")).toBeNull();
+    expect(parseOmbAskQuestions("```relay-ask\n\"just a string\"\n`")).toBeNull();
+    expect(parseOmbAskQuestions("```relay-ask\n{\"questions\": []}\n`")).toBeNull();
   });
 
   it("caps an oversized block at the shared question limit", () => {
@@ -255,7 +255,7 @@ describe("parseOmbAskQuestions", () => {
 
 describe("stripOmbAskBlock", () => {
   it("removes the block and its fence, keeping the prose", () => {
-    const output = "Here is my summary.\n\n```omb-ask\n{\"questions\":[]}\n```\n\nThanks!";
+    const output = "Here is my summary.\n\n```relay-ask\n{\"questions\":[]}\n```\n\nThanks!";
     expect(stripOmbAskBlock(output)).toBe("Here is my summary.\n\nThanks!");
   });
 
@@ -269,7 +269,7 @@ describe("ombAskProtocolPrompt", () => {
   it("teaches the fence with the shared caps, so the contract and parser cannot drift", () => {
     const text = ombAskProtocolPrompt();
     expect(text).toContain("## Asking the person a question");
-    expect(text).toContain("```omb-ask");
+    expect(text).toContain("```relay-ask");
     expect(text).toContain(`up to ${MAX_QUESTIONS} questions at once, each with up to ${MAX_OPTIONS} options`);
     expect(text.trimEnd().endsWith("never invent them.")).toBe(true);
   });

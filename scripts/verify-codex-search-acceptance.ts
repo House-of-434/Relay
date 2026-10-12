@@ -1,15 +1,15 @@
-// Real-model search acceptance through an isolated OpenMausBot server.
+// Real-model search acceptance through an isolated Relay server.
 // Existing sign-in is explicitly designated; personal chats/config are not copied.
 import { copyFileSync, mkdirSync, writeFileSync, readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
-import { launchVerificationServer, runControlOmb } from "./control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "./control-relay.ts";
 import { fixtureApi } from "./testing/preview-fixture.ts";
 import { verifiedNativeSearch } from "./testing/native-search-evidence.ts";
 
-const cli = process.env.OMB_VERIFY_CODEX_CLI;
-const auth = process.env.OMB_VERIFY_CODEX_AUTH;
-const output = process.env.OMB_VERIFY_OUTPUT;
-const models = (process.env.OMB_VERIFY_MODELS ?? "gpt-5.6-luna").split(",").map(model => model.trim()).filter(Boolean);
+const cli = process.env.RELAY_VERIFY_CODEX_CLI;
+const auth = process.env.RELAY_VERIFY_CODEX_AUTH;
+const output = process.env.RELAY_VERIFY_OUTPUT;
+const models = (process.env.RELAY_VERIFY_MODELS ?? "gpt-5.6-luna").split(",").map(model => model.trim()).filter(Boolean);
 if (!models.length) throw new Error("Choose at least one acceptance model.");
 if (!cli || !auth || !output) throw new Error("Supply explicit CLI, sign-in and output. Uses real model quota.");
 mkdirSync(output, { recursive: true });

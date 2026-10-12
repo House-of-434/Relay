@@ -28,7 +28,7 @@ describe("Codex account identity", () => {
   };
 
   beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), "omb-codex-identity-"));
+    home = mkdtempSync(join(tmpdir(), "relay-codex-identity-"));
     mkdirSync(join(home, ".codex"));
     chmodSync(FAKE_CLI, 0o755);
   });
@@ -38,7 +38,7 @@ describe("Codex account identity", () => {
     expect(await codexAccountEmail(FAKE_CLI, env())).toBe("ada@example.test");
     expect(calls().argv).toEqual(["app-server"]);
     expect(calls().calls).toEqual([
-      { method: "initialize", params: { clientInfo: { name: "openmausbot", version: "1" } } },
+      { method: "initialize", params: { clientInfo: { name: "relay", version: "1" } } },
       { method: "initialized", params: {} },
       { method: "account/read", params: { refreshToken: false } },
     ]);

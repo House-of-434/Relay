@@ -8,7 +8,7 @@ export type FontId = (typeof FONT_IDS)[number];
 
 export const DEFAULT_FONT: FontId = "skin";
 
-const KEY = "omb-font";
+const KEY = "relay-font";
 
 function isFontId(value: unknown): value is FontId {
   // SAFETY: the assertion only satisfies includes()' parameter type; the

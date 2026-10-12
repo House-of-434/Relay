@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { launchVerificationServer, runControlOmb } from "./control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "./control-relay.ts";
 import { readQwenModelCatalog } from "../server/drivers/acp/qwen.ts";
 
 const fixture = await launchVerificationServer();
@@ -101,7 +101,7 @@ await import(${JSON.stringify(fake)});
     const calls = JSON.parse(readFileSync(`${dump}.config.json`, "utf8")) as Array<{ params: { value?: string } }>;
     assert(calls.some((call) => call.params.value === expected.options[1].id), "every resumed turn must restore the chosen endpoint");
     const servers = JSON.parse(readFileSync(`${dump}.mcp.json`, "utf8")) as Array<{ name: string; env: Array<{ name: string; value: string }> }>;
-    const token = servers.find((server) => server.name === "agents")?.env.find((entry) => entry.name === "OMB_COMMS_TOKEN")?.value;
+    const token = servers.find((server) => server.name === "agents")?.env.find((entry) => entry.name === "RELAY_COMMS_TOKEN")?.value;
     assert(token, "the agents proxy must receive turn credentials");
     tokens.add(token);
     assert.equal(tokens.size, turn, "each turn must receive a distinct token");

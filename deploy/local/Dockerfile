@@ -1,12 +1,12 @@
 # Relay cloud MVP image: harness + BFF + Tool Layer + Bladebro + Chrome.
 #
-# Single image, three processes across two compose services: `omb` runs the
+# Single image, three processes across two compose services: `relay` runs the
 # harness and the BFF (the BFF hardcodes the harness at 127.0.0.1, so they
 # share a network namespace), `tools` runs the Tool Layer on its own
 # container with RELAY_TOOL_HOST=0.0.0.0.
 #
 # Build from the repo root:
-#   docker build -f deploy/local/Dockerfile -t relay-omb:local .
+#   docker build -f deploy/local/Dockerfile -t relay-relay:local .
 # Or via compose (context is the repo root, not deploy/local):
 #   docker compose build && docker compose up -d
 #
@@ -57,7 +57,11 @@ RUN apt-get update \
 WORKDIR /app
 COPY --from=build --chown=maus:maus /src/dist-server ./dist-server
 COPY --from=build --chown=maus:maus /src/dist ./dist
-COPY --from=build --chown=maus:maus /src/services/tool-layer/dist ./tool-layer-dist
+# The compiled Tool Layer must live inside its workspace package directory:
+# pnpm isolates workspace deps under services/tool-layer/node_modules, so
+# running the bundle from anywhere else breaks Node module resolution
+# (ERR_MODULE_NOT_FOUND for @supabase/supabase-js et al).
+COPY --from=build --chown=maus:maus /src/services/tool-layer/dist ./services/tool-layer/dist
 # The BFF runs from source via Node type-stripping (it has no bundle step),
 # so it ships with the shared tree it imports and production node_modules.
 COPY --from=build --chown=maus:maus /src/services/bff ./services/bff
@@ -70,26 +74,27 @@ COPY scripts/install-git-hooks.mjs ./scripts/install-git-hooks.mjs
 RUN npm install -g pnpm@10.33.0 \
   && pnpm install --prod --frozen-lockfile \
   && pnpm store prune \
-  && npm install -g bladebro@4.0.3 \
-  && bladebro --version
+  && npm install -g bladebro@4.0.3 @tiny-fish/cli@0.46.0 \
+  && bladebro --version \
+  && tinyfish --version
 # Optional engine CLIs baked into the image (space-separated npm packages).
 # The opencode CLI (opencodeGo instance) is an operator choice, not a default.
 ARG ENGINES=""
 RUN if [ -n "$ENGINES" ]; then npm install -g $ENGINES; fi
 ENV HOME=/data \
-    OMB_DATA_DIR=/data/.openmausbot \
-    OMB_STATIC_DIR=/app/dist \
-    OMB_PORT=8799 \
-    OMB_WEBHOOK_PORT=8800 \
+    RELAY_DATA_DIR=/data/.relay \
+    RELAY_STATIC_DIR=/app/dist \
+    RELAY_PORT=8799 \
+    RELAY_WEBHOOK_PORT=8800 \
     CHROME_PATH=/usr/bin/google-chrome-stable \
     NODE_ENV=production
 VOLUME ["/data"]
-# The omb service runs harness+BFF via start.sh; the tools service overrides
+# The relay service runs harness+BFF via start.sh; the tools service overrides
 # the command to run the Tool Layer instead.
-COPY deploy/local/start-omb.sh /usr/local/bin/start-omb.sh
+COPY deploy/local/start-app.sh /usr/local/bin/start-app.sh
 COPY deploy/local/start-tools.sh /usr/local/bin/start-tools.sh
-RUN chmod +x /usr/local/bin/start-omb.sh /usr/local/bin/start-tools.sh
+RUN chmod +x /usr/local/bin/start-app.sh /usr/local/bin/start-tools.sh
 USER maus
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
-  CMD curl -sf http://127.0.0.1:8799/api/health | grep -q openmausbot || exit 1
-CMD ["/usr/local/bin/start-omb.sh"]
+  CMD curl -sf http://127.0.0.1:8799/api/health | grep -q relay || exit 1
+CMD ["/usr/local/bin/start-app.sh"]

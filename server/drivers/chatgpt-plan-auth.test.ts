@@ -48,7 +48,7 @@ describe("official ChatGPT plan OAuth", () => {
     return controller.get(flow.flowId!);
   }
   beforeEach(async () => {
-    home = mkdtempSync(join(tmpdir(), "omb-chatgpt-plan-"));
+    home = mkdtempSync(join(tmpdir(), "relay-chatgpt-plan-"));
     directory = join(home, "chatgpt-plan", "account-one");
     calls = []; controllers = []; mode = "success";
     const keys = await generateKeyPair("RS256"); key = keys.privateKey;
@@ -112,7 +112,7 @@ describe("official ChatGPT plan OAuth", () => {
     const controller = create();
     expect((await callback(controller)).phase).toBe("succeeded");
     expect(authorization.searchParams.get("client_id")).toBe("dynamic_agent_client");
-    expect(authorization.searchParams.get("agent_name_hint")).toBe("openmausbot");
+    expect(authorization.searchParams.get("agent_name_hint")).toBe("relay");
     expect(authorization.searchParams.get("ext_agent_host_id")).toMatch(/^urn:uuid:/);
     const exchange = calls.find((call) => call.path.endsWith("/token"))!;
     expect(exchange.params.get("client_id")).toBe("oaiapp_fixture_account_1");

@@ -89,7 +89,7 @@ function identity(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(async () => {
-  directory = mkdtempSync(join(tmpdir(), "omb-portal-session-"));
+  directory = mkdtempSync(join(tmpdir(), "relay-portal-session-"));
   now = 1_700_000_000_000;
   sessions = new SessionRegistry({ file: join(directory, "sessions.json"), now: () => now, portalMembership: true });
   hosted = true;
@@ -162,7 +162,7 @@ describe("internal portal session routes", () => {
     expect(first.status).toBe(200);
     expect(Object.keys(first.body).sort()).toEqual(["environment", "session", "token"]);
     expect(first.body.environment).toEqual(ENVIRONMENT);
-    expect(first.body.token).toMatch(/^omb_sess_[A-Za-z0-9_-]{43}$/);
+    expect(first.body.token).toMatch(/^relay_sess_[A-Za-z0-9_-]{43}$/);
     expect(first.body.session).toMatchObject({ email: "person@example.test", scopes: ["client"] });
     expect(first.body.session).not.toHaveProperty("userId");
     expect(sessions.authenticate(String(first.body.token))).toMatchObject({ userId: USER_ID, email: "person@example.test" });

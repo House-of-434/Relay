@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchVerificationServer, verificationServerEnvironment, type VerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer, verificationServerEnvironment, type VerificationServer } from "../scripts/control-relay.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 const TOKEN = "external-runtime-fixture-token-0123456789abcdef";
@@ -75,8 +75,8 @@ async function delayedBody(path: string, body: unknown) {
 function bridge(botId: string, threadId: string) {
   const child = spawn(process.execPath, [fileURLToPath(new URL("./drivers/agents-proxy.ts", import.meta.url))], {
     env: { ...verificationServerEnvironment({}, data, Number(new URL(base).port)),
-      OMB_HARNESS_URL: base, OMB_BOT_ID: botId, OMB_THREAD_ID: threadId,
-      OMB_COMMS_TOKEN: TOKEN, OMB_EXTERNAL_RUNTIME: "1" },
+      RELAY_HARNESS_URL: base, RELAY_BOT_ID: botId, RELAY_THREAD_ID: threadId,
+      RELAY_COMMS_TOKEN: TOKEN, RELAY_EXTERNAL_RUNTIME: "1" },
     stdio: ["pipe", "pipe", "pipe"],
   });
   child.stderr.resume();

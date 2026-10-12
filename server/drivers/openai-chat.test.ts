@@ -109,7 +109,7 @@ describe("createOpenAIChatRuntime tool approvals", () => {
   afterEach(() => { for (const d of mcpDir.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
   const toolServer = () => {
-    const dir = mkdtempSync(join(tmpdir(), "omb-chat-approval-"));
+    const dir = mkdtempSync(join(tmpdir(), "relay-chat-approval-"));
     mcpDir.push(dir);
     const script = join(dir, "fake-mcp.mjs");
     writeFileSync(script, `#!/usr/bin/env node
@@ -224,7 +224,7 @@ describe("createOpenAIChatRuntime mid-turn steer", () => {
   afterEach(() => { for (const d of mcpDir.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
   const toolServer = () => {
-    const dir = mkdtempSync(join(tmpdir(), "omb-chat-steer-"));
+    const dir = mkdtempSync(join(tmpdir(), "relay-chat-steer-"));
     mcpDir.push(dir);
     const script = join(dir, "fake-mcp.mjs");
     writeFileSync(script, `#!/usr/bin/env node

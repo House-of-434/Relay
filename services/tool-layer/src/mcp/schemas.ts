@@ -3,7 +3,14 @@ import { z } from "zod";
 export const READ_INPUT = {
   table: z.string().min(1),
   filters: z.record(z.unknown()).optional(),
+  /** Explicit column list against the table's allowlist — no `select *`.
+   * Optional only when `head` is true (pure count, no rows). */
+  select: z.array(z.string().min(1).max(64)).min(1).max(50).optional(),
+  /** Count-only mode: returns `{ total }` with no `rows` key at all. */
+  head: z.boolean().optional(),
   limit: z.number().int().min(1).max(100).optional(),
+  /** Row offset under the forced `(created_at desc, id asc)` order. */
+  offset: z.number().int().min(0).max(100_000).optional(),
 };
 
 export const WRITE_INPUT = {

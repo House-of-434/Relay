@@ -7,14 +7,14 @@ import { ensureDirs } from "../config.ts";
 import type { ProviderInstance, RuntimeEvent } from "../contracts.ts";
 import { recordEvents, type EventRecorder } from "../testing/events.ts";
 import { BoatAgentDriver } from "./boatagent.ts";
-import { OMB_ASK_TOOL } from "../../shared/ask-question.ts";
+import { RELAY_ASK_TOOL } from "../../shared/ask-question.ts";
 
 const BOAT = "boat-1";
 const PROMPT = "p1";
 
-/** A fenced omb-ask block exactly as the prompt contract tells the boat to
+/** A fenced relay-ask block exactly as the prompt contract tells the boat to
  * write one. */
-const askBlock = (questions: unknown[]) => "```omb-ask\n" + JSON.stringify({ questions }) + "\n```";
+const askBlock = (questions: unknown[]) => "```relay-ask\n" + JSON.stringify({ questions }) + "\n```";
 
 /** JSON Response helper for the in-process Boat HTTP fake. */
 function json(body: unknown, status = 200) {
@@ -212,7 +212,7 @@ describe("BoatAgentDriver turns (fake API)", () => {
     expect(texts).toEqual(["half"]);
   });
 
-  it("holds the turn open on an omb-ask block, then continues it with the answer", async () => {
+  it("holds the turn open on an relay-ask block, then continues it with the answer", async () => {
     const prompts: string[] = [];
     const askText = "Working.\n\n" + askBlock([
       { question: "Ship the release?", header: "Release", options: [{ label: "Ship now" }, { label: "Wait" }] },
@@ -227,7 +227,7 @@ describe("BoatAgentDriver turns (fake API)", () => {
     const opened = (await recorder.until((e) => e.type === "request.opened")) as Extract<RuntimeEvent, { type: "request.opened" }>;
     expect(opened).toMatchObject({
       requestType: "question",
-      tool: OMB_ASK_TOOL,
+      tool: RELAY_ASK_TOOL,
       summary: "Ship the release?",
       choices: ["Ship now", "Wait"],
       origin: "output",
@@ -255,7 +255,7 @@ describe("BoatAgentDriver turns (fake API)", () => {
     const resolved = recorder.events.find((e) => e.type === "request.resolved");
     expect(resolved).toMatchObject({ behavior: "answer", source: "user" });
     expect(recorder.events.indexOf(resolved!)).toBeLessThan(recorder.events.indexOf(done));
-    expect(prompts[0]).toContain("omb-ask");
+    expect(prompts[0]).toContain("relay-ask");
     expect(prompts[1]).toContain("Q: Ship the release?");
     expect(prompts[1]).toContain("A: ship it now");
     expect(texts()).toEqual(["Working.", "Shipped."]);
@@ -368,7 +368,7 @@ describe("BoatAgentDriver turns (fake API)", () => {
 
   it("folds a malformed block's correction into the next prompt instead of losing the ask silently", async () => {
     const prompts: string[] = [];
-    const badText = "Done.\n\n```omb-ask\n{not json\n```";
+    const badText = "Done.\n\n```relay-ask\n{not json\n```";
     restoreFetch = installFakeBoat([
       { events: [{ id: "m1", type: "response", text: badText }], status: { promptRun: { status: "running" } } },
       { events: [{ id: "m1", type: "response", text: badText }], status: { promptRun: { status: "finished", result: badText } } },
@@ -437,7 +437,7 @@ describe("BoatAgentDriver turns (fake API)", () => {
 // relay. The public model catalog follows the API in use too.
 describe("BoatAgentDriver credential and base URL", () => {
   const RELAY = "https://cloud.example.test/api/cloud/services/boat/api/box/v1";
-  const INCLUDED = "box_omb_included-relay-token";
+  const INCLUDED = "box_relay_included-relay-token";
   let seen: Array<{ url: string; auth: string | null }> = [];
   let instance: ProviderInstance | undefined;
   let recorder: EventRecorder | undefined;
@@ -446,9 +446,9 @@ describe("BoatAgentDriver credential and base URL", () => {
   beforeEach(() => {
     ensureDirs();
     vi.stubEnv("BOX_TOKEN", undefined);
-    vi.stubEnv("OMB_BOX_API", undefined);
-    vi.stubEnv("OMB_CLOUD_BOAT_URL", RELAY);
-    vi.stubEnv("OMB_CLOUD_BOAT_TOKEN", INCLUDED);
+    vi.stubEnv("RELAY_BOX_API", undefined);
+    vi.stubEnv("RELAY_CLOUD_BOAT_URL", RELAY);
+    vi.stubEnv("RELAY_CLOUD_BOAT_TOKEN", INCLUDED);
     seen = [];
     const previous = globalThis.fetch;
     globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
@@ -504,7 +504,7 @@ describe("BoatAgentDriver credential and base URL", () => {
   });
 
   it("is unavailable with neither an own token nor an included one", async () => {
-    vi.stubEnv("OMB_CLOUD_BOAT_TOKEN", undefined);
+    vi.stubEnv("RELAY_CLOUD_BOAT_TOKEN", undefined);
     instance = await BoatAgentDriver.create({ instanceId: "computer", displayName: "Computer", environment: {}, enabled: true, config: { pollMs: 0 } });
     expect(await instance.snapshot()).toMatchObject({ state: "unavailable" });
     expect(seen).toEqual([]);

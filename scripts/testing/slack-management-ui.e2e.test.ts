@@ -6,15 +6,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const forced = process.env.OMB_UI_E2E === "1";
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
-if (!enabled) console.log("skipping Slack settings UI e2e: no system Chrome; set OMB_UI_E2E=1 to require it");
+if (!enabled) console.log("skipping Slack settings UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");
 
 describe("Slack management in agent settings", () => {
   let child: ChildProcess | undefined;
@@ -24,7 +24,7 @@ describe("Slack management in agent settings", () => {
     let output = "";
     let errors = "";
     let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string } | undefined;
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { output += String(chunk); });

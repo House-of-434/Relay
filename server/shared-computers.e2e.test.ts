@@ -6,7 +6,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, rmSyn
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
-import { launchVerificationServer, type VerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer, type VerificationServer } from "../scripts/control-relay.ts";
 import { createComputerSharing, type SharedFolder } from "../electron/computer-sharing.mjs";
 import { sessionCookieName } from "./request-auth.ts";
 
@@ -67,7 +67,7 @@ beforeAll(async () => {
   const opened = await api("POST", "/api/auth/pairing", { label: "Desktop fixture", scopes: ["client"] });
   expect(opened.status).toBe(200);
   pairing = (await api("POST", "/api/auth/pair", { code: opened.body.code })).body;
-  expect(pairing.token).toMatch(/^omb_sess_/);
+  expect(pairing.token).toMatch(/^relay_sess_/);
   connector = createComputerSharing({
     file: grantFile, environments: () => [env], cuaConnection: async () => null,
     enabled: async () => localSharingEnabled,
@@ -108,7 +108,7 @@ async function proxyForTurn(start: () => Promise<void>): Promise<ChildProcess> {
   await start();
   await vi.waitFor(() => expect(existsSync(dump)).toBe(true), { timeout: 15_000 });
   const agents = JSON.parse(readFileSync(dump, "utf8")).mcpConfig.mcpServers.agents;
-  expect(agents.env.OMB_COMMS_TOKEN).toBeTruthy();
+  expect(agents.env.RELAY_COMMS_TOKEN).toBeTruthy();
   return spawn(agents.command, agents.args, {
     env: { PATH: process.env.PATH, HOME: fixture.info.dataDir, ...agents.env }, stdio: ["pipe", "pipe", "pipe"],
   });
@@ -162,13 +162,13 @@ it("explicit edits and terminal work; old credentials and other sessions cannot 
   const grant = storedGrant();
   const auth = { authorization: `Bearer ${pairing.token}` };
   expect((await api("POST", `/api/shared-computers/${grant.id}/lease`, {}, auth)).status).toBe(403);
-  expect((await api("POST", `/api/shared-computers/${old.id}/lease`, {}, { ...auth, "x-omb-computer-secret": old.secret })).status).toBe(403);
+  expect((await api("POST", `/api/shared-computers/${old.id}/lease`, {}, { ...auth, "x-relay-computer-secret": old.secret })).status).toBe(403);
   const second = await api("POST", "/api/auth/pairing", { label: "Other desktop" });
   const other = (await api("POST", "/api/auth/pair", { code: second.body.code })).body;
-  expect((await api("POST", `/api/shared-computers/${grant.id}/lease`, {}, { authorization: `Bearer ${other.token}`, "x-omb-computer-secret": grant.secret })).status).toBe(403);
+  expect((await api("POST", `/api/shared-computers/${grant.id}/lease`, {}, { authorization: `Bearer ${other.token}`, "x-relay-computer-secret": grant.secret })).status).toBe(403);
   expect((await api("POST", "/api/desktop/shared-computer-control", { id: randomUUID(), action: "acquire" }, { authorization: `Bearer ${other.token}` })).status).toBe(403);
   const cookie = `${sessionCookieName(Number(new URL(env.origin).port), grant.environmentId)}=${pairing.token}`;
-  expect((await api("POST", `/api/shared-computers/${grant.id}/lease`, {}, { cookie, origin: "https://evil.invalid", "x-omb-computer-secret": grant.secret })).status).toBe(403);
+  expect((await api("POST", `/api/shared-computers/${grant.id}/lease`, {}, { cookie, origin: "https://evil.invalid", "x-relay-computer-secret": grant.secret })).status).toBe(403);
   evidence.push("explicit hash-guarded edit and real terminal; cross-session, stale-secret, CSRF, local-control gate refusals");
 }, 60_000);
 
@@ -265,7 +265,7 @@ it("disabling the local gate cancels a live job even while the remote workspace 
   await expect.poll(() => connector.state(env.id).connected, { timeout: 5000 }).toBe(false);
   expect((await pending).isError).toBe(true);
   await expect.poll(() => commandAlive(marker), { timeout: 5000 }).toBe(false);
-  expect((await api("GET", "/.well-known/openmausbot/environment")).body.capabilities.sharedComputers).toBe(true);
+  expect((await api("GET", "/.well-known/relay/environment")).body.capabilities.sharedComputers).toBe(true);
   await expect(connector.identity(env)).rejects.toThrow("turned off on this computer");
   expect((await operation("read_file", { path: "brief.txt" })).isError).toBe(true);
   evidence.push("local flag withdrawal cancels a live remote command and prevents further access despite remote opt-in");
@@ -290,6 +290,6 @@ it("withdrawing the workspace flag closes pending jobs and refuses a previously 
   const staleTool = await tool("list_shared_computers");
   expect(staleTool.isError).toBe(true);
   expect(staleTool.content[0].text).toContain("unknown internal endpoint");
-  expect((await api("GET", "/.well-known/openmausbot/environment")).body.capabilities).not.toHaveProperty("sharedComputers");
+  expect((await api("GET", "/.well-known/relay/environment")).body.capabilities).not.toHaveProperty("sharedComputers");
   evidence.push("workspace flag withdrawal closes in-flight requests and refuses tools advertised to an earlier provider turn");
 }, 45_000);

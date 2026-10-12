@@ -79,7 +79,7 @@ describe("ThreadRefText", () => {
 
   it("renders a sent canonical link as a chip labeled with the title", () => {
     const markup = inProvider(createElement(ThreadRefText, {
-      text: "done in [QA PR 245](openmausbot://thread/qa-245?bot=scout) today",
+      text: "done in [QA PR 245](relay://thread/qa-245?bot=scout) today",
     }));
     expect(markup).toContain("done in ");
     expect(markup).toContain('<button type="button" data-thread-link="qa-245"');
@@ -88,8 +88,8 @@ describe("ThreadRefText", () => {
   });
 
   it("keeps a dead thread link as the raw text it was sent as", () => {
-    expect(inProvider(createElement(ThreadRefText, { text: "see [Gone](openmausbot://thread/dead?bot=scout)" })))
-      .toBe("see [Gone](openmausbot://thread/dead?bot=scout)");
+    expect(inProvider(createElement(ThreadRefText, { text: "see [Gone](relay://thread/dead?bot=scout)" })))
+      .toBe("see [Gone](relay://thread/dead?bot=scout)");
   });
 });
 

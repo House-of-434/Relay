@@ -39,6 +39,19 @@ export interface SearchProvider {
   search(query: string, options?: SearchOptions): Promise<SearchResult[]>;
 }
 
+export interface ProviderReport {
+  /** What the run was configured to use. */
+  requestedProvider: string;
+  /** What actually executed (same when no substitution occurred). */
+  actualProvider: string;
+  /** Whether a fallback provider answered instead of the requested one. */
+  fallbackUsed: boolean;
+  /** Available, unavailable (probe failed / not installed / not authed), or failed (call error). */
+  providerStatus: "available" | "unavailable" | "failed";
+  /** Short, actionable diagnostic. Never includes credentials. */
+  errorSummary?: string;
+}
+
 export interface SpawnResult {
   exitCode: number | null;
   stdout: string;
@@ -159,6 +172,7 @@ export class TinyFishSearchProvider implements SearchProvider {
   private readonly timeoutMs: number;
   private readonly spawn: SpawnFn;
   private available: boolean | null = null;
+  private lastError: string | null = null;
 
   constructor(options: TinyFishOptions = {}) {
     this.binary = options.binary ?? "tinyfish";
@@ -191,6 +205,37 @@ export class TinyFishSearchProvider implements SearchProvider {
     return this.available;
   }
 
+  /** Machine-readable provider report for preflight and run metadata.
+   * Agent-facing tool errors stay provider-agnostic; this is the
+   * observable record of requested vs actual provider. */
+  async describe(): Promise<ProviderReport> {
+    const up = await this.probe();
+    if (!up) {
+      return {
+        requestedProvider: "tinyfish",
+        actualProvider: "none",
+        fallbackUsed: false,
+        providerStatus: "unavailable",
+        errorSummary: this.lastError ?? "tinyfish CLI unavailable or unauthenticated on this host",
+      };
+    }
+    if (this.lastError) {
+      return {
+        requestedProvider: "tinyfish",
+        actualProvider: "tinyfish",
+        fallbackUsed: false,
+        providerStatus: "failed",
+        errorSummary: this.lastError,
+      };
+    }
+    return {
+      requestedProvider: "tinyfish",
+      actualProvider: "tinyfish",
+      fallbackUsed: false,
+      providerStatus: "available",
+    };
+  }
+
   async search(query: string, options: SearchOptions = {}): Promise<SearchResult[]> {
     if (typeof query !== "string" || query.trim().length === 0) {
       throw new Error("web_search requires a non-empty query");
@@ -199,6 +244,7 @@ export class TinyFishSearchProvider implements SearchProvider {
       throw new Error(`web_search query must be under ${SEARCH_QUERY_MAX_LENGTH} characters`);
     }
     if (!(await this.probe())) {
+      this.lastError = "tinyfish CLI unavailable or unauthenticated on this host";
       throw new Error("web search is unavailable on this host");
     }
     const limit = Math.min(Math.max(options.limit ?? SEARCH_DEFAULT_LIMIT, 1), SEARCH_MAX_LIMIT);
@@ -219,15 +265,26 @@ export class TinyFishSearchProvider implements SearchProvider {
     });
     if (result.exitCode !== 0) {
       const detail = result.stderr.length > 0 ? result.stderr.slice(0, 500) : "search command failed";
+      this.lastError = detail;
       throw new Error(`web search failed: ${detail}`);
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(result.stdout);
     } catch {
+      this.lastError = "provider returned a non-JSON response";
       throw new Error("web search returned an unreadable response");
     }
-    return normalizeResults(parsed).slice(0, limit);
+    try {
+      const narrowed = normalizeResults(parsed).slice(0, limit);
+      // Empty results are a successful provider answer ("no results"),
+      // distinct from unavailable/failed. Callers must not conflate them.
+      this.lastError = null;
+      return narrowed;
+    } catch (error) {
+      this.lastError = error instanceof Error ? error.message : "unreadable response";
+      throw error;
+    }
   }
 
   /** Curated CLI environment: PATH, key, telemetry off. Telemetry from a

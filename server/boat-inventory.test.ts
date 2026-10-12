@@ -15,7 +15,7 @@ const legacyNameFor = (botId: string) => {
   return `ogb-${prefix}-${hash}`;
 };
 
-describe("OpenMaus-managed Boat inventory", () => {
+describe("Relay-managed Boat inventory", () => {
   let api: Server;
   let boats: ProviderBoat[] = [];
   let listStatus = 200;
@@ -115,7 +115,7 @@ describe("OpenMaus-managed Boat inventory", () => {
     });
     await new Promise<void>((resolve) => api.listen(0, "127.0.0.1", resolve));
     const port = (api.address() as { port: number }).port;
-    vi.stubEnv("OMB_BOX_API", `http://127.0.0.1:${port}/api/box/v1`);
+    vi.stubEnv("RELAY_BOX_API", `http://127.0.0.1:${port}/api/box/v1`);
     vi.resetModules();
     boat = await import("./boat.ts");
     journal = await import("./boat-create-idempotency.ts");
@@ -278,7 +278,7 @@ describe("OpenMaus-managed Boat inventory", () => {
     const inventory = await boat.listManagedBoats(cfg, [{ botId, name: "Conflict", inUse: false }]);
 
     expect(inventory).toMatchObject({ available: false, instances: [] });
-    expect(inventory.problem).toMatch(/no longer has its OpenMausBot owner name/i);
+    expect(inventory.problem).toMatch(/no longer has its Relay owner name/i);
     expect(journal.boatCreateRecoverySnapshot()).toContainEqual({ botId, boxId, resolved: true });
     expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
       "GET /api/box/v1/boxes",

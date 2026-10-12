@@ -106,7 +106,7 @@ export function augmentedPath(): string {
   if (cached === null) {
     cached = mergePaths([
       ...registeredDirs.filter((d) => existsSync(d)),
-      ...(process.env.OMB_EXTRA_PATH ? process.env.OMB_EXTRA_PATH.split(delimiter) : []),
+      ...(process.env.RELAY_EXTRA_PATH ? process.env.RELAY_EXTRA_PATH.split(delimiter) : []),
       ...(process.env.PATH ? process.env.PATH.split(delimiter) : []),
       // Keep the last successful login-shell result while a rescan starts a
       // fresh asynchronous probe. Otherwise resetPathCache() would make
@@ -138,11 +138,11 @@ function probeLoginShellPath(): void {
   // shells read. A marker isolates $PATH from any rc-file noise.
   execFile(
     shell,
-    ["-l", "-i", "-c", 'printf "__OMB_PATH__%s" "$PATH"'],
+    ["-l", "-i", "-c", 'printf "__RELAY_PATH__%s" "$PATH"'],
     { timeout: 5000 },
     (err, stdout) => {
       if (err || !stdout) return;
-      const m = /__OMB_PATH__([^\n]*)/.exec(stdout);
+      const m = /__RELAY_PATH__([^\n]*)/.exec(stdout);
       if (!m || !m[1]) return;
       loginShellPath = m[1];
       cached = mergePaths([...(cached ?? "").split(delimiter), ...m[1].split(delimiter)]);

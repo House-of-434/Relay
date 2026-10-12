@@ -107,7 +107,7 @@ describe("Claude server-owned sign-in", () => {
   };
 
   beforeEach(() => {
-    home = mkdtempSync(join(tmpdir(), "omb-claude-login-"));
+    home = mkdtempSync(join(tmpdir(), "relay-claude-login-"));
     cli = join(home, "fake-claude.mjs");
     writeFileSync(cli, FAKE, { mode: 0o700 });
     chmodSync(cli, 0o700);

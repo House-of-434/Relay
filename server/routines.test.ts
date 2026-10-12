@@ -20,7 +20,7 @@ import {
 const dirs: string[] = [];
 
 function tempFile() {
-  const dir = mkdtempSync(join(tmpdir(), "omb-routines-"));
+  const dir = mkdtempSync(join(tmpdir(), "relay-routines-"));
   dirs.push(dir);
   return join(dir, "routines.json");
 }
@@ -986,7 +986,7 @@ describe("RoutineManager", () => {
         routineName: "Morning brief",
         status: "failed",
         threadId: "thread-1",
-        error: "OpenMausBot restarted while this routine was running",
+        error: "Relay restarted while this routine was running",
       },
     ]);
   });
@@ -1660,6 +1660,45 @@ describe("RoutineManager", () => {
       scheduledFor: start,
       status: "running",
     });
+  });
+
+  it("queues research without a routine record and never duplicates a live job", async () => {
+    const start = new Date(2026, 7, 17, 8, 0).getTime();
+    const h = harness(start);
+    h.setBot("busy");
+    const first = h.manager.enqueueResearch({
+      researchId: "research-1",
+      title: "Verify Electron claims",
+      brief: "Investigate the four headline claims with cited sources.",
+      botId: "maus-scout",
+      runOn: "maus",
+      sourceThreadId: "thread-source",
+      requestedAt: start,
+    });
+    // Confirming twice returns the live run instead of queueing another.
+    const second = h.manager.enqueueResearch({
+      researchId: "research-1",
+      title: "Verify Electron claims",
+      brief: "Investigate the four headline claims with cited sources.",
+      botId: "maus-scout",
+      runOn: "maus",
+      sourceThreadId: "thread-source",
+      requestedAt: start,
+    });
+    expect(second.id).toBe(first.id);
+    expect(h.manager.listRoutines()).toHaveLength(0);
+    expect(h.manager.listRuns()).toHaveLength(1);
+    h.setNow(start + 60_000);
+    h.setBot("ready");
+    await h.manager.tick();
+    expect(h.manager.listRuns().find((run) => run.id === first.id)).toMatchObject({
+      triggerSource: "research",
+      routineId: "research-1",
+      status: "running",
+    });
+    expect(h.triggerSources).toEqual(["research"]);
+    // Research runs get their own task thread, never the live chat.
+    expect(h.taskActivations).toEqual([false]);
   });
 
   it("retains an old waiting run when trimming terminal receipt history", async () => {
@@ -2940,7 +2979,7 @@ describe("routine runs × turn-held BoatAgent asks", () => {
   it("holds the run in waiting until the person answers, then completes it", async () => {
     const h = harness(start);
     const prompts: string[] = [];
-    const askText = "```omb-ask\n" + JSON.stringify({
+    const askText = "```relay-ask\n" + JSON.stringify({
       questions: [{ question: "Ship the release?", options: [{ label: "Ship now" }, { label: "Wait" }] }],
     }) + "\n```";
     const restoreFetch = installFakeBoat([

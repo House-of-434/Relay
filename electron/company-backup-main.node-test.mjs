@@ -209,9 +209,9 @@ test("scheduled native transfer receives fresh client state and disable cancels 
   f.now += 24 * 3600_000;
   const firing = f.scheduleTimer(); await nextTurn();
   const request = snapshotRequest(f); assert(request?.requestId);
-  f.invoke("client-state", { requestId: request.requestId, clientState: { "omb-drafts": "latest synthetic draft" } });
+  f.invoke("client-state", { requestId: request.requestId, clientState: { "relay-drafts": "latest synthetic draft" } });
   const { input, signal } = await started.promise;
-  assert.equal(input.clientState["omb-drafts"], "latest synthetic draft");
+  assert.equal(input.clientState["relay-drafts"], "latest synthetic draft");
   await f.invoke("configure-schedule", { enabled: false }); assert.equal(signal.aborted, true);
   completion.resolve({ id: STAGE }); await firing;
   assert.equal(f.savedSchedule, null); assert.equal(f.context.companyBackupState.schedule.enabled, false);
@@ -252,7 +252,7 @@ for (const [name, mutate] of [
     const f = fixture(), controller = new AbortController();
     const collecting = f.context.collectCompanyBackupClientState(controller.signal, f.context.companyBackupScope(), f.context.serverProc);
     const request = snapshotRequest(f); mutate(f);
-    f.invoke("client-state", { requestId: request.requestId, clientState: { "omb-drafts": "fixture" } });
+    f.invoke("client-state", { requestId: request.requestId, clientState: { "relay-drafts": "fixture" } });
     await assert.rejects(collecting, { code: "workspace_busy" });
     assert.equal(f.context.companyBackupClientStateRequest, null);
   });
@@ -265,13 +265,13 @@ test("client-state receipts are one-shot and unsolicited or other-frame replies 
   f.invoke("client-state", { requestId: "not-the-request", clientState: {} });
   f.invoke("client-state", { requestId: request.requestId, clientState: {} }, { sender: f.event.sender, senderFrame: { url: `${ORIGIN}/` } });
   assert(f.context.companyBackupClientStateRequest);
-  f.invoke("client-state", { requestId: request.requestId, clientState: { "omb-skin": "fresh fixture skin" } });
-  assert.equal((await collecting)["omb-skin"], "fresh fixture skin");
+  f.invoke("client-state", { requestId: request.requestId, clientState: { "relay-skin": "fresh fixture skin" } });
+  assert.equal((await collecting)["relay-skin"], "fresh fixture skin");
   assert.equal(f.context.companyBackupClientStateRequest, null);
-  f.invoke("client-state", { requestId: request.requestId, clientState: { "omb-skin": "ignored duplicate" } });
+  f.invoke("client-state", { requestId: request.requestId, clientState: { "relay-skin": "ignored duplicate" } });
 });
 
-for (const value of [{ unavailable: true }, { clientState: [] }, { clientState: { "omb-drafts": 42 } }, { clientState: { "omb-drafts": "x".repeat(2 * 1024 * 1024) } }]) {
+for (const value of [{ unavailable: true }, { clientState: [] }, { clientState: { "relay-drafts": 42 } }, { clientState: { "relay-drafts": "x".repeat(2 * 1024 * 1024) } }]) {
   test(`malformed or unavailable client-state reply is deferred (${Object.keys(value)[0]}, ${typeof value.clientState})`, async () => {
     const f = fixture(), controller = new AbortController();
     const collecting = f.context.collectCompanyBackupClientState(controller.signal, f.context.companyBackupScope(), f.context.serverProc);

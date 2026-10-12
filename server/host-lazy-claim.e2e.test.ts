@@ -55,13 +55,13 @@ describe("lazy host claim and pin on use (issue #1650)", () => {
     if (!existsSync(dumpFile)) return null;
     try {
       const sent = JSON.parse(readFileSync(dumpFile, "utf8"));
-      return sent.mcpConfig?.mcpServers?.computer?.env?.OMB_CONTROL_URL?.includes(botId) ? sent : null;
+      return sent.mcpConfig?.mcpServers?.computer?.env?.RELAY_CONTROL_URL?.includes(botId) ? sent : null;
     } catch { return null; }
   }, Boolean);
   const mountedComputer = (sent: any) => sent.mcpConfig.mcpServers.computer;
   // The first screen tools/call, exactly as the mounted proxy issues it.
-  const gate = (computer: any) => fetch(computer.env.OMB_CONTROL_URL, {
-    headers: { authorization: `Bearer ${computer.env.OMB_CONTROL_TOKEN}` },
+  const gate = (computer: any) => fetch(computer.env.RELAY_CONTROL_URL, {
+    headers: { authorization: `Bearer ${computer.env.RELAY_CONTROL_TOKEN}` },
   }).then(response => response.json() as Promise<any>);
   const threadState = (botId: string, threadId: string) =>
     api("GET", "/api/bots?messages=0").then(({ body }) =>
@@ -79,11 +79,11 @@ describe("lazy host claim and pin on use (issue #1650)", () => {
     const proc = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-        HOME: home, USERPROFILE: home, OMB_DATA_DIR: data,
+        HOME: home, USERPROFILE: home, RELAY_DATA_DIR: data,
         APPDATA: join(home, "appdata"), LOCALAPPDATA: join(home, "localappdata"),
         TEMP: home, TMP: home, TMPDIR: home,
-        OMB_PORT: String(port), OMB_WEBHOOK_PORT: String(port + 1), OMB_STATIC_DIR: ui, OMB_TEST_VM_STATE: stateFile,
-        OMB_USER_DATA: join(home, "user-data"),
+        RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1), RELAY_STATIC_DIR: ui, RELAY_TEST_VM_STATE: stateFile,
+        RELAY_USER_DATA: join(home, "user-data"),
       }, stdio: ["ignore", "pipe", "pipe"],
     });
     child = proc;
@@ -105,7 +105,7 @@ describe("lazy host claim and pin on use (issue #1650)", () => {
   const itAutoHost = process.platform === "linux" ? it.skip : it;
 
   beforeAll(async () => {
-    home = mkdtempSync(join(tmpdir(), "omb-host-lazy-claim-"));
+    home = mkdtempSync(join(tmpdir(), "relay-host-lazy-claim-"));
     data = join(home, "data");
     ui = join(home, "static");
     stateFile = join(home, "vm.json");
@@ -141,7 +141,7 @@ describe("lazy host claim and pin on use (issue #1650)", () => {
     await busy(holder.id, task.threadId);
     const computer = mountedComputer(await dumpFor(holder.id));
     // The gated host integration is mounted…
-    expect(computer.env.OMB_CUA_COMMAND).toBe("/fixture/cua-driver");
+    expect(computer.env.RELAY_CUA_COMMAND).toBe("/fixture/cua-driver");
     expect(computer.args.some((arg: string) => arg.includes("local-computer-proxy"))).toBe(true);
     // …but the turn pinned nothing and took no seat.
     expect(savedTask(holder.id, task.threadId)).not.toHaveProperty("surface");

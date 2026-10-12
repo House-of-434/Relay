@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { FIXTURE_STARTER_BOT_NAME, launchVerificationServer } from "../scripts/control-omb.ts";
+import { FIXTURE_STARTER_BOT_NAME, launchVerificationServer } from "../scripts/control-relay.ts";
 
 it("pins the fixture starter bot's name deterministically (#1257)", async () => {
   // The first-run seed draws a random name from server/names.ts — "Quill" is

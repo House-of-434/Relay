@@ -4,14 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const chrome = resolveUiChrome(process.env);
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(chrome);
-if (!enabled) console.info("skipping team computers UI e2e: set OMB_UI_E2E=1 to require system Chrome");
+const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(chrome);
+if (!enabled) console.info("skipping team computers UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 type Info = { ui: string; url: string; botId: string; dataDir: string; logPath: string; boatFixtureApi: string };
 type Computer = { id: string; name: string; section: string | null; state: string; problem?: string; held?: boolean };

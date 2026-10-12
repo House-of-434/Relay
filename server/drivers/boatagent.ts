@@ -23,7 +23,7 @@ import { newEventId, newId } from "../contracts.ts";
 import { boatCredential, boatProviderApi } from "../included-services.ts";
 import { appendNative } from "./native.ts";
 import {
-  OMB_ASK_TOOL,
+  RELAY_ASK_TOOL,
   answerWithoutPreamble,
   askQuestionSummary,
   capAnswerEcho,
@@ -47,7 +47,7 @@ const MODELS = {
 
 /** Any fence whose info string names the ask protocol, even when its body
  * does not parse: the marker for "the model tried to ask and failed". */
-const ASK_FENCE_ANY = /(^|\n)[ \t]{0,3}(`{3,}|~{3,})[ \t]*omb-ask\b/;
+const ASK_FENCE_ANY = /(^|\n)[ \t]{0,3}(`{3,}|~{3,})[ \t]*relay-ask\b/;
 
 /** The boat runs every harness boat.dev ships (claude-code, codex, pi, opencode,
  * prime-agent, kimi). Which one a model id belongs to comes from the public
@@ -76,7 +76,7 @@ const providerFor = (model: string): { provider: string; model: string } => {
 
 export interface BoatAgentConfig {
   pollMs: number;
-  /** How long a held omb-ask waits for the person before resolving as a
+  /** How long a held relay-ask waits for the person before resolving as a
    * timeout. Overridable so tests can exercise the path without faking the
    * clock (a leaked fake timer poisons every later test in the file). */
   askTimeoutMs?: number;
@@ -113,7 +113,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
       requestId: string;
       settle: (reply: string | null, source: "user" | "timeout" | "system") => void;
     }>();
-    /** Threads whose last run ended with an unparseable omb-ask fence: the
+    /** Threads whose last run ended with an unparseable relay-ask fence: the
      * next prompt carries the correction so the ask is never lost silently. */
     const malformedAsks = new Set<string>();
 
@@ -146,7 +146,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
       const { threadId } = turn;
       const computer = turn.integrations?.computer;
       const boxId = computer && (!computer.kind || computer.kind === "box") ? computer.boxId : undefined;
-      if (!account()) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.openmausbot/config.json');
+      if (!account()) throw new Error('box not configured — add {"box":{"token":"…"}} to ~/.relay/config.json');
       if (!boxId) {
         throw new Error("this bot has no computer yet — open the Computer panel and provision one");
       }
@@ -155,7 +155,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
       const model = turn.model || MODELS.default;
 
       const correction = malformedAsks.delete(threadId)
-        ? "Your previous omb-ask block was malformed or empty, so the person never saw it. Ask again with a valid fenced omb-ask JSON block, or ask in plain words."
+        ? "Your previous relay-ask block was malformed or empty, so the person never saw it. Ask again with a valid fenced relay-ask JSON block, or ask in plain words."
         : "";
       const prompt = [
         turn.system,
@@ -195,7 +195,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
       emit({ ...base(threadId, turnId), type: "session.started", sessionId: promptId, model });
 
       // poll events + run status until the prompt settles — and, when the
-      // run ends on an omb-ask block, until the person answers it: the OMB
+      // run ends on an relay-ask block, until the person answers it: the OMB
       // turn is the unit the whole server already understands (busy thread,
       // waiting-on-you, routines waiting), so it stays open across the ask
       // and the continuation prompt continues it rather than starting a
@@ -210,7 +210,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
         /** Why the boat could not answer (login expired, model refused, …). */
         let problem: string | null = null;
         /** Emit unflushed deltas as assistant_text and reset pendingText.
-         * The omb-ask block is protocol, not prose: it streamed raw (the
+         * The relay-ask block is protocol, not prose: it streamed raw (the
          * card is its readable form), and the settled message shows the
          * words around it, never the JSON. */
         const flushAssistantText = () => {
@@ -229,7 +229,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
         };
 
         /** The run has settled: flush its prose, then hold the OMB turn open
-         * on an omb-ask block (if any) until the person answers or the ask
+         * on an relay-ask block (if any) until the person answers or the ask
          * times out. An answer chains the continuation run under this same
          * turn; a deny or timeout ends it. */
         const finishRun = async (ok: boolean, stopReason: string | null): Promise<{ ok: boolean; stopReason: string | null }> => {
@@ -272,7 +272,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
             requestId,
             type: "request.opened",
             requestType: "question",
-            tool: OMB_ASK_TOOL,
+            tool: RELAY_ASK_TOOL,
             summary: askQuestionSummary(questions),
             questions,
             ...(choices?.length ? { choices } : {}),
@@ -289,7 +289,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
           const continuation = [
             capAnswerEcho(answerWithoutPreamble(reply)),
             "",
-            "The person answered the omb-ask questions above (Q:/A:). Continue the task with their answers; end with another omb-ask block only if you truly need more.",
+            "The person answered the relay-ask questions above (Q:/A:). Continue the task with their answers; end with another relay-ask block only if you truly need more.",
           ].join("\n");
           const nextPromptId = await postPrompt(continuation);
           // Stop can land while the continuation POST is in flight: the
@@ -405,7 +405,7 @@ export const BoatAgentDriver: ProviderDriver<BoatAgentConfig> = {
 
     const snapshot = async (): Promise<ProviderSnapshot> => {
       if (!account()) {
-        return { state: "unavailable", reason: 'no Boat token — add {"box":{"token":"…"}} to ~/.openmausbot/config.json' };
+        return { state: "unavailable", reason: 'no Boat token — add {"box":{"token":"…"}} to ~/.relay/config.json' };
       }
       try {
         await api("/me");

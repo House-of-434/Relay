@@ -154,4 +154,14 @@ describe("RoutineRunCard", () => {
     expect(hasRoutineExecutionTask(tasks, "deleted-thread")).toBe(false);
     expect(hasRoutineExecutionTask(undefined, "execution-thread")).toBe(false);
   });
+
+  it("reads a research execution as research, not as a routine run", () => {
+    const markup = renderToStaticMarkup(createElement(RoutineRunCard, {
+      message: message("completed", { triggerSource: "research", routineName: "Verify Electron claims" }),
+      onOpen: vi.fn(),
+    }));
+
+    expect(markup).toContain('aria-label="Verify Electron claims research: Completed"');
+    expect(markup).not.toContain("routine run");
+  });
 });

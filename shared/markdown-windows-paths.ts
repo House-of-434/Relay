@@ -1,8 +1,8 @@
 import type { CompileContext, Extension, Token } from "mdast-util-from-markdown";
 
 // Markdown reads a backslash before punctuation as an escape, so a bot's link
-// to C:\Users\me\.openmausbot\report.md parsed as C:\Users\me.openmausbot\report.md:
-// the separator before ".openmausbot" (the default data folder on Windows),
+// to C:\Users\me\.relay\report.md parsed as C:\Users\me.relay\report.md:
+// the separator before ".relay" (the default data folder on Windows),
 // "_drafts" or "-old" was dropped and the link named a file that isn't there.
 // In a link, image or definition destination that starts with a drive letter,
 // such a backslash stays a path separator. "\\" and the destination's own

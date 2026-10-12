@@ -9,7 +9,7 @@ import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 
 const cli = resolve(process.argv[2] ?? "/opt/homebrew/bin/grok");
-const home = mkdtempSync(join(tmpdir(), "omb-grok-images-"));
+const home = mkdtempSync(join(tmpdir(), "relay-grok-images-"));
 // Valid 32×32 PNG: Grok requires >=8 pixels per axis and >=512 pixels total.
 const pixels = "iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAIAAAD8GO2jAAAAKklEQVR4nGP4YKNBU8QwasGoBaMWjFowasGoBaMWjFowasGoBaMWDBULAA+GUEwTofF+AAAAAElFTkSuQmCC";
 let sawImage = false;

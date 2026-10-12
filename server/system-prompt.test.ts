@@ -12,9 +12,8 @@ import {
   computerPrompt,
   resolveComputerPromptKind,
   mentionPrompt,
-  COMPOSIO_PROMPT,
-  composioSystemPrompt,
   customMcpPrompt,
+  mailboxSystemPrompt,
   CREDENTIAL_PROMPT,
   LEARN_PROMPT,
   PROFILE_PROMPT,
@@ -165,7 +164,7 @@ describe("computerPrompt", () => {
   it("distinguishes background window control from foreground desktop input", () => {
     const prompt = computerPrompt("local");
     expect(prompt).toContain("background delivery");
-    expect(prompt).toContain("do not bring OpenMausBot");
+    expect(prompt).toContain("do not bring Relay");
     expect(prompt).toContain("dedicated browser tools");
     expect(prompt).toContain("keeping the user's intended browser profile/account");
     expect(prompt).toContain("Do not silently retry a background refusal");
@@ -207,7 +206,7 @@ describe("computerPrompt", () => {
 
 describe("shared sentences", () => {
   it("each begins with one space so they concatenate onto the persona line", () => {
-    for (const sentence of [COMPOSIO_PROMPT, CREDENTIAL_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
+    for (const sentence of [CREDENTIAL_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
       expect(sentence.startsWith(" ")).toBe(true);
       expect(sentence.startsWith("  ")).toBe(false);
     }
@@ -245,36 +244,6 @@ describe("shared sentences", () => {
   });
 });
 
-describe("composioSystemPrompt", () => {
-  it("keeps the generic all-tools sentence for legacy bots", () => {
-    expect(composioSystemPrompt(undefined)).toBe(COMPOSIO_PROMPT);
-  });
-
-  it("is absent when no tools are granted", () => {
-    expect(composioSystemPrompt({})).toBe("");
-  });
-
-  it("names exactly the granted services for a partial grant", () => {
-    const prompt = composioSystemPrompt({
-      gmail: { tools: ["GMAIL_SEND_EMAIL"] },
-      google_calendar: { tools: "*" },
-    });
-    expect(prompt).toContain("(Gmail, Google Calendar)");
-    expect(prompt).toContain("COMPOSIO_SEARCH_TOOLS");
-    expect(prompt).toContain("COMPOSIO_MULTI_EXECUTE_TOOL");
-    expect(prompt).toContain("Only the tools this bot was granted will run");
-    // a partial-grant prompt never advertises services the bot lacks
-    expect(prompt).not.toContain("Slack");
-    expect(prompt).not.toContain("Notion");
-  });
-
-  it("starts with exactly one space like every shared sentence", () => {
-    const prompt = composioSystemPrompt({ gmail: { tools: "*" } });
-    expect(prompt.startsWith(" ")).toBe(true);
-    expect(prompt.startsWith("  ")).toBe(false);
-  });
-});
-
 describe("cloudHomePrompt", () => {
   it("says the bot runs in the cloud, offers what works there, and never asks for a place that cannot exist", () => {
     for (const tools of [true, false]) {
@@ -291,5 +260,26 @@ describe("cloudHomePrompt", () => {
     expect(cloudHomePrompt(true)).toContain("turn on Let my Cloud use this Mac under Settings → OMB Cloud in the desktop app on that Mac");
     expect(cloudHomePrompt(false)).not.toMatch(/shared_computer|list_shared_computers/);
     expect(cloudHomePrompt(false)).toContain("You cannot see or use their Mac or PC, its screen or its files from here.");
+  });
+});
+
+describe("mailboxSystemPrompt", () => {
+  it("stays silent until a shared address is configured", () => {
+    expect(mailboxSystemPrompt(undefined, false)).toBe("");
+    expect(mailboxSystemPrompt("  ", false)).toBe("");
+  });
+
+  it("names the account and how to read it for every bot", () => {
+    const text = mailboxSystemPrompt("relay@houseof434.com", false);
+    expect(text).toContain("relay@houseof434.com");
+    expect(text).toContain('mailbox "relay"');
+    expect(text).toContain("visible to the workspace");
+    expect(text).toContain("sending from it is reserved");
+    expect(text).not.toContain("Scribe");
+  });
+
+  it("gates the Scribe transcription line until the feature ships", () => {
+    expect(mailboxSystemPrompt("relay@houseof434.com", true)).toContain("To have a meeting transcribed, add the shared address as an attendee.");
+    expect(mailboxSystemPrompt("relay@houseof434.com", false)).not.toContain("meeting transcribed");
   });
 });

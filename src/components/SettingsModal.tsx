@@ -795,7 +795,7 @@ export function SettingsModal() {
                 <RemoteComputerSection />
                 {!remoteActive && <CustomDomainSettings />}
                 {/* mints an admin/client session token for anything that isn't the phone companion
-                    flow (MCP clients, `openmausbot pair`, a second desktop app), and pairs phones to a
+                    flow (MCP clients, `relay pair`, a second desktop app), and pairs phones to a
                     hosted server. Shown for the desktop app's own server (#950) AND when this desktop is
                     a remote client of a hosted workspace: its requests carry that server's session, and
                     Settings there is the only place that server's phones can be paired from (MOCA-84).

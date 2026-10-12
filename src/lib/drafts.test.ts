@@ -73,8 +73,8 @@ describe("channel draft delivery mode", () => {
   it("keeps legacy drafts intact and defaults missing or invalid modes to chat", () => {
     const store = memoryStorage();
     const draftId = "group:legacy:task";
-    store.setItem("omb-drafts", JSON.stringify({ [draftId]: "/goal existing typed goal" }));
-    store.setItem("omb-draft-channel-modes", JSON.stringify({ "group:invalid:task": "unexpected" }));
+    store.setItem("relay-drafts", JSON.stringify({ [draftId]: "/goal existing typed goal" }));
+    store.setItem("relay-draft-channel-modes", JSON.stringify({ "group:invalid:task": "unexpected" }));
     expect(getDraftChannelMode(store, draftId)).toBe("chat");
     expect(getDraftChannelMode(store, "group:invalid:task")).toBe("chat");
     expect(getDraft(store, draftId)).toBe("/goal existing typed goal");
@@ -175,7 +175,7 @@ describe("durable attachment completion", () => {
     ]);
 
     expect(getDraftAttachments(store, draftId)).toHaveLength(2);
-    expect(JSON.parse(store.getItem("omb-draft-attachments") ?? "{}")[draftId]).toEqual([
+    expect(JSON.parse(store.getItem("relay-draft-attachments") ?? "{}")[draftId]).toEqual([
       {
         kind: "image",
         id: "ready",
@@ -286,7 +286,7 @@ describe("durable attachment completion", () => {
 });
 
 describe("appendComposerDraft", () => {
-  const prompt = "Create a verification skill from the run below.\n\n✓ doctor — pnpm control:omb doctor\n\n";
+  const prompt = "Create a verification skill from the run below.\n\n✓ doctor — pnpm control:relay doctor\n\n";
 
   it("puts the text into an empty draft exactly as given", () => {
     const store = memoryStorage();
@@ -295,7 +295,7 @@ describe("appendComposerDraft", () => {
     const revision = draftRevision(draftId);
     appendComposerDraft(draftId, prompt);
     expect(getDraft(store, draftId)).toBe(prompt);
-    expect(JSON.parse(store.getItem("omb-drafts") ?? "{}")[draftId]).toBe(prompt);
+    expect(JSON.parse(store.getItem("relay-drafts") ?? "{}")[draftId]).toBe(prompt);
     // an edited draft outranks a late failed send, exactly like typing does
     expect(draftRevision(draftId)).toBe(revision + 1);
   });

@@ -143,7 +143,6 @@ async function createFixture(options: { gateway?: GoogleApiGateway; accounts?: S
       listAccounts: (userId) => store.list(userId),
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      isLoopbackPeer: () => true,
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));

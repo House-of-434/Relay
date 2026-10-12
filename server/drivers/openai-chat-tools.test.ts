@@ -89,7 +89,7 @@ afterEach(async () => {
 });
 
 async function fixture(script: Script, provider: Provider = "openai-compat", apiKey = API_KEY_CANARY) {
-  const directory = mkdtempSync(join(tmpdir(), "omb-chat-tools-"));
+  const directory = mkdtempSync(join(tmpdir(), "relay-chat-tools-"));
   const requests: ChatRequest[] = [];
   const rpcStarted = deferred<{ name: string; args: Record<string, unknown> }>();
   const server = createServer(async (request, response) => {

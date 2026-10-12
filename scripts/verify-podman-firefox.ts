@@ -5,17 +5,17 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 
-const podman = process.env.OMB_VERIFY_PODMAN;
-const machine = process.env.OMB_VERIFY_MACHINE;
-if (!podman || !machine) throw new Error("Set OMB_VERIFY_PODMAN and OMB_VERIFY_MACHINE to an explicit test engine");
-const output = resolve(process.env.OMB_VERIFY_OUTPUT || ".omb-scratch/firefox");
+const podman = process.env.RELAY_VERIFY_PODMAN;
+const machine = process.env.RELAY_VERIFY_MACHINE;
+if (!podman || !machine) throw new Error("Set RELAY_VERIFY_PODMAN and RELAY_VERIFY_MACHINE to an explicit test engine");
+const output = resolve(process.env.RELAY_VERIFY_OUTPUT || ".relay-scratch/firefox");
 mkdirSync(output, { recursive: true });
 // Keep Podman's connection/config lookup intact while isolating app imports.
 const engineEnv = { ...process.env };
 const fixtureHome = mkdtempSync(resolve(output, "home-"));
 process.env.HOME = fixtureHome;
 process.env.USERPROFILE = fixtureHome;
-process.env.OMB_DATA_DIR = resolve(fixtureHome, "app-data");
+process.env.RELAY_DATA_DIR = resolve(fixtureHome, "app-data");
 const { containerRunArgs, perBotLocalVmTarget, IMAGE } = await import("../server/container-computer.ts");
 const run = (args: string[]) => execFileSync(podman, ["--connection", machine, ...args], { env: engineEnv, encoding: "utf8", timeout: 90_000 }).trim();
 const sandboxProbe = readFileSync(new URL("./testing/firefox-sandbox.py", import.meta.url), "utf8");
@@ -25,8 +25,8 @@ const assertSandboxEnabled = (report: { effectiveContentSandboxLevel: number }) 
 };
 const receipt = [];
 for (const mode of ["before", "after"] as const) {
-  const workspace = execFileSync(podman, ["machine", "ssh", machine, "mktemp", "-d", "/tmp/omb-firefox-XXXXXXXX"], { env: engineEnv, encoding: "utf8", timeout: 30_000 }).trim();
-  assert.match(workspace, /^\/tmp\/omb-firefox-[A-Za-z0-9]+$/);
+  const workspace = execFileSync(podman, ["machine", "ssh", machine, "mktemp", "-d", "/tmp/relay-firefox-XXXXXXXX"], { env: engineEnv, encoding: "utf8", timeout: 30_000 }).trim();
+  assert.match(workspace, /^\/tmp\/relay-firefox-[A-Za-z0-9]+$/);
   const target = { ...perBotLocalVmTarget(randomUUID()), workspaceDir: workspace };
   const args = containerRunArgs("podman", randomUUID(), target);
   if (mode === "before") {

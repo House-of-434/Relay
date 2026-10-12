@@ -26,7 +26,7 @@ export function HelloBeat({ onNext, onSkip, hosted = false }: BeatProps & { host
     setSaving(true);
     setFailed(false);
     const trimmedEmail = email.trim().toLowerCase();
-    // persisted server-side (~/.openmausbot/config.json); the response is
+    // persisted server-side (~/.relay/config.json); the response is
     // the fresh config status, folded straight into the store
     try {
       const config = await api("/api/config", {

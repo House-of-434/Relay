@@ -11,11 +11,11 @@ import {
   HELP_UI,
   launchVerificationServer,
   runControlOmb,
-} from "../scripts/control-omb.ts";
-import { resolveUiChrome, UI_MUTATING } from "../scripts/testing/control-omb-ui.ts";
+} from "../scripts/control-relay.ts";
+import { resolveUiChrome, UI_MUTATING } from "../scripts/testing/control-relay-ui.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
-describe("control-omb command mapping", () => {
+describe("control-relay command mapping", () => {
   it("treats unhealthy doctor and non-settled waits as command failures", () => {
     expect(controlResultSucceeded("doctor", { ok: true })).toBe(true);
     expect(controlResultSucceeded("doctor", { ok: false })).toBe(false);
@@ -28,7 +28,7 @@ describe("control-omb command mapping", () => {
   });
 
   it("keeps every ui verb off discovery: the launch handle is required, whatever the environment says", async () => {
-    const env = { OPENMAUSBOT_URL: "http://127.0.0.1:19999", OMB_PORT: "19999" };
+    const env = { RELAY_URL: "http://127.0.0.1:19999", RELAY_PORT: "19999" };
     const verbs = [...UI_MUTATING, "snapshot", "screenshot", "console", "wait-settle"];
     expect(UI_MUTATING).toEqual(new Set(["click", "type", "press", "flag", "eval"]));
     for (const verb of verbs) {
@@ -46,7 +46,7 @@ describe("control-omb command mapping", () => {
   });
 
   it("refuses a handle whose launch has already been stopped", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "omb-ui-handle-"));
+    const dir = mkdtempSync(join(tmpdir(), "relay-ui-handle-"));
     try {
       const handle = join(dir, "ui.json");
       writeFileSync(handle, JSON.stringify({
@@ -66,7 +66,7 @@ describe("control-omb command mapping", () => {
   });
 
   it("resolves system Chrome from the environment before well-known locations", () => {
-    const dir = mkdtempSync(join(tmpdir(), "omb-ui-tools-"));
+    const dir = mkdtempSync(join(tmpdir(), "relay-ui-tools-"));
     try {
       const fake = join(dir, "chrome-for-test");
       writeFileSync(fake, "");
@@ -82,16 +82,16 @@ describe("control-omb command mapping", () => {
   it("runs directly under Node's strip-only TypeScript loader", () => {
     const result = spawnSync(process.execPath, [
       "--experimental-strip-types",
-      join(process.cwd(), "scripts", "control-omb.ts"),
+      join(process.cwd(), "scripts", "control-relay.ts"),
       "help",
     ], { encoding: "utf8" });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain("control-omb");
+    expect(result.stdout).toContain("control-relay");
   });
 
   it("composes doctor from the shared health and model tools", async () => {
     const callTool = vi.fn(async (name: string) => name === "get_system_health"
-      ? { status: "connected", app: "openmausbot" }
+      ? { status: "connected", app: "relay" }
       : {
           instances: [
             { instanceId: "ready", snapshot: { state: "available" } },
@@ -109,7 +109,7 @@ describe("control-omb command mapping", () => {
     });
   });
 
-  it("rejects an available engine when the endpoint is not OpenMausBot", async () => {
+  it("rejects an available engine when the endpoint is not Relay", async () => {
     const callTool = vi.fn(async (name: string) => name === "get_system_health"
       ? { status: "connected", app: "another-app" }
       : { instances: [{ instanceId: "ready", snapshot: { state: "available" } }] });
@@ -126,13 +126,13 @@ describe("control-omb command mapping", () => {
       callTool: vi.fn() as any,
       env: {},
     })).rejects.toMatchObject({
-      message: "mutating commands require an explicit OpenMausBot instance",
+      message: "mutating commands require an explicit Relay instance",
     });
   });
 
   it("maps bounded reads and dry-run actions without reimplementing them", async () => {
     const callTool = vi.fn(async (name: string, args: Record<string, unknown>) => ({ name, args }));
-    const env = { OPENMAUSBOT_URL: "http://127.0.0.1:19999" };
+    const env = { RELAY_URL: "http://127.0.0.1:19999" };
     await expect(runControlOmb(["messages", "--channel", "room-1", "--limit", "20"], {
       callTool: callTool as any,
       env,
@@ -154,7 +154,7 @@ describe("control-omb command mapping", () => {
     // replay path, which is what compaction needs to be observable at all —
     // a cleanly resumed turn never compacts.
     const callTool = vi.fn(async (name: string, args: Record<string, unknown>) => ({ name, args }));
-    const env = { OPENMAUSBOT_URL: "http://127.0.0.1:19999" };
+    const env = { RELAY_URL: "http://127.0.0.1:19999" };
     await expect(runControlOmb(
       ["edit", "--bot", "bot-1", "--message", "msg-9", "--text", "say that again"],
       { callTool: callTool as any, env },
@@ -180,13 +180,13 @@ describe("control-omb command mapping", () => {
       callTool: vi.fn() as any,
       env: {},
     })).rejects.toMatchObject({
-      message: "mutating commands require an explicit OpenMausBot instance",
+      message: "mutating commands require an explicit Relay instance",
     });
   });
 
   it("requires every part of an edit before calling the shared tool", async () => {
     const callTool = vi.fn();
-    const env = { OPENMAUSBOT_URL: "http://127.0.0.1:19999" };
+    const env = { RELAY_URL: "http://127.0.0.1:19999" };
     for (const args of [
       ["edit", "--message", "m", "--text", "x"],
       ["edit", "--bot", "b", "--text", "x"],
@@ -208,7 +208,7 @@ describe("control-omb command mapping", () => {
 
   it("forwards pinned task IDs for sends, reads, waits, interrupts, and model changes", async () => {
     const callTool = vi.fn(async (name: string, args: Record<string, unknown>) => ({ name, args }));
-    const dependencies = { callTool: callTool as any, env: { OPENMAUSBOT_URL: "http://127.0.0.1:19999" } };
+    const dependencies = { callTool: callTool as any, env: { RELAY_URL: "http://127.0.0.1:19999" } };
     for (const [command, tool, extra] of [
       ["send", "send_bot_message", ["--text", "hello"]],
       ["messages", "get_bot_messages", []],
@@ -224,11 +224,11 @@ describe("control-omb command mapping", () => {
     });
     await expect(runControlOmb(["set-model", "--bot", "bot-1", "--instance", "claude", "--model", "model-b"], {
       callTool: callTool as any, env: {},
-    })).rejects.toThrow("explicit OpenMausBot instance");
+    })).rejects.toThrow("explicit Relay instance");
   });
 });
 
-describe("control-omb isolated verification loop", () => {
+describe("control-relay isolated verification loop", () => {
   it.each([
     "tcp://127.0.0.1:2375",
     "ssh://user@production.example/run/podman.sock",
@@ -243,12 +243,12 @@ describe("control-omb isolated verification loop", () => {
     const parentEnv = {
       ...process.env,
       COMPOSIO_API_KEY: "must-not-reach-the-fixture",
-      OMB_SKILLS_DIR: "/must/not/reach/the/fixture",
+      RELAY_SKILLS_DIR: "/must/not/reach/the/fixture",
       XAI_API_KEY: "must-not-reach-the-fixture",
       FAKE_CLAUDE_PROBE: "fixture-scripting-knob",
     };
     const session = await launchVerificationServer(parentEnv);
-    const env = { OPENMAUSBOT_URL: session.info.url };
+    const env = { RELAY_URL: session.info.url };
     try {
       const doctor = await runControlOmb(["doctor"], { env }) as any;
       expect(doctor.ok).toBe(true);
@@ -263,7 +263,7 @@ describe("control-omb isolated verification loop", () => {
       expect(transcript.messages.some((message: { role?: string }) => message.role === "bot")).toBe(true);
       const fixtureEnv = JSON.parse(readFileSync(session.fixtureDumpPath, "utf8")).env as Record<string, string>;
       expect(fixtureEnv).not.toHaveProperty("COMPOSIO_API_KEY");
-      expect(fixtureEnv).not.toHaveProperty("OMB_SKILLS_DIR");
+      expect(fixtureEnv).not.toHaveProperty("RELAY_SKILLS_DIR");
       expect(fixtureEnv).not.toHaveProperty("XAI_API_KEY");
       expect(JSON.stringify(fixtureEnv)).not.toContain("must-not-reach-the-fixture");
       // The fake engine's own knobs are the one thing that crosses.
@@ -302,9 +302,9 @@ describe("control-omb isolated verification loop", () => {
   it("scripts the fake engine's tool calls from the launcher's environment", async () => {
     const session = await launchVerificationServer({
       ...process.env,
-      FAKE_CLAUDE_TOOL_CALLS: '[{"name":"Bash","input":{"command":"pnpm control:omb doctor","password":"fixture-secret"},"output":{"text":"fixture healthy","api_key":"fixture-output-secret"},"ok":true},{"name":"Bash","input":{"command":"false"},"output":"fixture command failed","ok":false}]',
+      FAKE_CLAUDE_TOOL_CALLS: '[{"name":"Bash","input":{"command":"pnpm control:relay doctor","password":"fixture-secret"},"output":{"text":"fixture healthy","api_key":"fixture-output-secret"},"ok":true},{"name":"Bash","input":{"command":"false"},"output":"fixture command failed","ok":false}]',
     });
-    const env = { OPENMAUSBOT_URL: session.info.url };
+    const env = { RELAY_URL: session.info.url };
     try {
       const created = await runControlOmb(["new-bot", "--name", "Tool Script Probe"], { env }) as any;
       const botId = created.bot.id as string;
@@ -326,7 +326,7 @@ describe("control-omb isolated verification loop", () => {
       expect(response.ok).toBe(true);
       const rendererTranscript = await response.json() as { messages: Array<{ kind: string; tool?: { input?: string; output?: string } }> };
       const recorded = rendererTranscript.messages.filter((message) => message.kind === "activity");
-      expect(recorded[0].tool?.input).toContain("pnpm control:omb doctor");
+      expect(recorded[0].tool?.input).toContain("pnpm control:relay doctor");
       expect(recorded[0].tool?.output).toContain("fixture healthy");
       expect(recorded[1].tool?.output).toBe("fixture command failed");
       expect(JSON.stringify(recorded)).not.toContain("fixture-secret");

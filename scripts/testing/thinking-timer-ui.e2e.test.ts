@@ -14,7 +14,7 @@
 // claim and resume after switching to a 1:1 thread and back.
 //
 // Needs system Chrome. It runs when one resolves (CHROME_PATH or a
-// well-known install) or when OMB_UI_E2E=1 requires it; otherwise it is
+// well-known install) or when RELAY_UI_E2E=1 requires it; otherwise it is
 // skipped with a printed reason.
 import { spawn } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
@@ -24,24 +24,24 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const CLI = join(ROOT, "scripts", "control-omb.ts");
-const forced = process.env.OMB_UI_E2E === "1";
+const CLI = join(ROOT, "scripts", "control-relay.ts");
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
 if (!enabled) {
-  console.log(`skipping thinking-timer ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set OMB_UI_E2E=1 to require it`);
+  console.log(`skipping thinking-timer ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set RELAY_UI_E2E=1 to require it`);
 }
 const run = enabled ? it : it.skip;
 // A launch starts a fixture server, a Vite preview and a headless Chrome.
 const LAUNCH_TIMEOUT_MS = forced ? 600_000 : 180_000;
 
-// OMB_UI_EVIDENCE_DIR keeps the screenshot (CI uploads it); otherwise it is temporary.
-const evidenceDir = process.env.OMB_UI_EVIDENCE_DIR ? resolve(ROOT, process.env.OMB_UI_EVIDENCE_DIR) : mkdtempSync(join(tmpdir(), "omb-ui-evidence-"));
-const ownsEvidenceDir = !process.env.OMB_UI_EVIDENCE_DIR;
+// RELAY_UI_EVIDENCE_DIR keeps the screenshot (CI uploads it); otherwise it is temporary.
+const evidenceDir = process.env.RELAY_UI_EVIDENCE_DIR ? resolve(ROOT, process.env.RELAY_UI_EVIDENCE_DIR) : mkdtempSync(join(tmpdir(), "relay-ui-evidence-"));
+const ownsEvidenceDir = !process.env.RELAY_UI_EVIDENCE_DIR;
 
 interface Launched {
   child: ReturnType<typeof spawn>;

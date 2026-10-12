@@ -1,11 +1,11 @@
-// Assert the first-run workflow against a handle from `control-omb ui launch`.
+// Assert the first-run workflow against a handle from `control-relay ui launch`.
 // The handle gate refuses live-app URLs and stopped fixtures. All profile,
 // bot and onboarding writes below stay inside that launch's disposable home.
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { runControlOmb } from "./control-omb.ts";
+import { runControlOmb } from "./control-relay.ts";
 import { TOUR_STEPS } from "../src/lib/guided-tour.ts";
 
 const handle = process.argv[2];
@@ -32,7 +32,7 @@ const poll = async (read: () => Promise<unknown>, expected: unknown, label: stri
   assert.deepEqual(result, expected, label);
 };
 const textVisible = (text: string) => poll(async () => (await snapshot()).includes(text), true, text);
-const evidence = resolve(".omb-scratch/verify-evidence/onboarding");
+const evidence = resolve(".relay-scratch/verify-evidence/onboarding");
 mkdirSync(evidence, { recursive: true });
 const screenshot = (name: string) => ui("screenshot", "--out", resolve(evidence, `${name}.png`));
 const openSettings = async () => {

@@ -12,9 +12,9 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const flag = "--omb-company-backup-fixture";
+const flag = "--relay-company-backup-fixture";
 const PASSWORD = "isolated-cloud-backup-password";
-const MARKER = "omb-pending-workspace-restore";
+const MARKER = "relay-pending-workspace-restore";
 const pause = ms => new Promise(done => setTimeout(done, ms));
 
 if (process.versions.electron && process.argv.includes(flag)) {
@@ -177,7 +177,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
   handle("company-backups:state", async () => ({ ...state, pendingRestore: (await localJson("/api/workspace-backup/status")).pendingRestore }));
   handle("company-backups:list", () => portalRequest("/api/desktop/backups"));
   handle("company-backups:create", input => {
-    assert.equal(input.clientState["omb-drafts"], "fixture private draft");
+    assert.equal(input.clientState["relay-drafts"], "fixture private draft");
     assert.equal(Object.hasOwn(input.clientState, "fixture-auth-token"), false);
     createCalls++; return transfer("backup", input);
   });
@@ -204,7 +204,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     const open = async local => {
       const window = new BrowserWindow({ show: false, width: 850, height: 850, webPreferences: {
         preload: join(root, "electron/preload.cjs"), contextIsolation: true, sandbox: true, nodeIntegration: false,
-        additionalArguments: [`--omb-local-origin=${local ? localOrigin : "https://remote-fixture.invalid"}`, "--omb-company-desktop=1"],
+        additionalArguments: [`--relay-local-origin=${local ? localOrigin : "https://remote-fixture.invalid"}`, "--relay-company-desktop=1"],
       } });
       return window;
     };
@@ -257,7 +257,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
       assert.equal(objects.get(id).includes(Buffer.from("fixture private draft")), false);
       return id;
     };
-    await evaluate("localStorage.setItem('omb-drafts','fixture private draft'); localStorage.setItem('fixture-auth-token','must-stay-local');");
+    await evaluate("localStorage.setItem('relay-drafts','fixture private draft'); localStorage.setItem('fixture-auth-token','must-stay-local');");
     const first = await createBackup(true), second = await createBackup(false);
     assert.equal(createCalls, 2);
     assert.equal(await evaluate(`Object.values({...localStorage}).some(value => value.includes(${JSON.stringify(PASSWORD)}))`), false, "backup password never persisted in browser storage");
@@ -299,7 +299,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     await evaluate("document.querySelector('dialog input').scrollIntoView({block:'center'}); document.querySelector('dialog input').focus();");
     await screenshot("company-backup-replace-narrow.png");
     await click("Replace installation");
-    await until(() => evaluate("document.body.textContent.includes('Fully quit OpenMausBot') && !document.querySelector('dialog[open]')"), "restart-required confirmation");
+    await until(() => evaluate("document.body.textContent.includes('Fully quit Relay') && !document.querySelector('dialog[open]')"), "restart-required confirmation");
     const restoreId = await evaluate(`localStorage.getItem(${JSON.stringify(MARKER)})`);
     assert.match(restoreId, /^[a-f0-9-]{36}$/); assert.equal(restoreCalls, 1);
     assert.equal((await localJson("/api/workspace-backup/status")).pendingRestore, true);
@@ -309,7 +309,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
 
     // A new renderer instance, not the component's transient restart state.
     win.destroy(); win = await open(true); await win.loadURL(url);
-    await until(() => evaluate("document.body.textContent.includes('Fully quit OpenMausBot')"), "pending restore on reopen");
+    await until(() => evaluate("document.body.textContent.includes('Fully quit Relay')"), "pending restore on reopen");
     assert.equal(await evaluate("document.body.textContent.includes('Back up this installation')"), false);
     checks.push("pending restore survives closing and reopening the renderer");
     const restarted = new Promise((done, reject) => {
@@ -321,7 +321,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     await win.reload();
     await until(() => evaluate(`localStorage.getItem(${JSON.stringify(MARKER)}) === null && document.body.textContent.includes('Company cloud backups')`), "existing recovery restores drafts and clears marker");
     const afterIds = await botIds(); assert.ok(afterIds.includes(sourceBotId)); assert.equal(afterIds.includes(extra.bot.id), false);
-    assert.equal(await evaluate("localStorage.getItem('omb-drafts')"), "fixture private draft");
+    assert.equal(await evaluate("localStorage.getItem('relay-drafts')"), "fixture private draft");
     assert.equal(await evaluate("localStorage.getItem('fixture-auth-token')"), "must-stay-local");
     const afterStatus = await localJson("/api/workspace-backup/status");
     assert.equal(afterStatus.lastRestoreId, restoreId); assert.ok(afterStatus.safetyCopyPath);
@@ -351,7 +351,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     assert.equal(JSON.stringify(scheduler.state()).includes(PASSWORD), false);
     assert.equal(await evaluate(`Object.values({...localStorage}).some(value => value.includes(${JSON.stringify(PASSWORD)}))`), false);
     for (const draft of ["new draft from scheduled day one", "changed draft from scheduled day two"]) {
-      await evaluate(`localStorage.setItem('omb-drafts', ${JSON.stringify(draft)})`);
+      await evaluate(`localStorage.setItem('relay-drafts', ${JSON.stringify(draft)})`);
       const previousRuns = scheduledRuns;
       scheduleClock = scheduler.state().nextBackupAt + (previousRuns ? 7 * 24 * 60 * 60_000 : 0);
       const tick = scheduleTimer; assert.equal(typeof tick, "function"); tick();
@@ -360,11 +360,11 @@ if (process.versions.electron && process.argv.includes(flag)) {
       await until(() => evaluate(`document.body.textContent.includes(${JSON.stringify(latest.id)})`), "scheduled archive appears without refresh");
       const native = createCompanyBackups({ localRequest, portalRequest, tempRoot: join(output, "transfer-cache"), allowLoopbackForTests: true });
       const preview = await native.prepareRestore({ id: latest.id });
-      assert.equal(preview.summary.format, "openmaus.workspace-backup");
+      assert.equal(preview.summary.format, "relay.workspace-backup");
       // Check the real staged manifest rather than trusting captured IPC input.
       assert.match(preview.id, /^[a-f0-9-]{36}$/);
       const staged = JSON.parse(readFileSync(join(fixtureDataDir, ".backups", preview.id, "staged", "manifest.json"), "utf8"));
-      assert.equal(staged.clientState?.["omb-drafts"], draft);
+      assert.equal(staged.clientState?.["relay-drafts"], draft);
       assert.equal(Object.hasOwn(staged.clientState ?? {}, "fixture-auth-token"), false);
       assert.equal(scheduler.state().nextBackupAt, scheduleClock + 24 * 60 * 60_000, "missed days are not queued");
     }
@@ -393,11 +393,11 @@ if (process.versions.electron && process.argv.includes(flag)) {
   const { createServer } = await import("vite");
   const { default: react } = await import("@vitejs/plugin-react");
   const { default: tailwindcss } = await import("@tailwindcss/vite");
-  const { launchVerificationServer, runControlOmb } = await import("./control-omb.ts");
+  const { launchVerificationServer, runControlOmb } = await import("./control-relay.ts");
   const { waitForExit } = await import("../server/testing/cleanup.ts");
   const fixture = await launchVerificationServer({});
   let runtime = fixture.child, child, ui, restartTask;
-  const output = mkdtempSync(join(tmpdir(), "omb-company-backup-ui-"));
+  const output = mkdtempSync(join(tmpdir(), "relay-company-backup-ui-"));
   for (const name of ["home", "user-data"]) mkdirSync(join(output, name));
   const restart = async () => {
     await waitForExit(runtime, { signal: "SIGTERM" });
@@ -407,8 +407,8 @@ if (process.versions.electron && process.argv.includes(flag)) {
     mkdirSync(home, { recursive: true }); mkdirSync(temporary, { recursive: true });
     const env = { PATH: dirname(process.execPath), HOME: home, USERPROFILE: home, XDG_CONFIG_HOME: join(home, ".config"),
       XDG_CACHE_HOME: join(home, ".cache"), XDG_DATA_HOME: join(home, ".local/share"), APPDATA: join(home, "AppData/Roaming"), LOCALAPPDATA: join(home, "AppData/Local"),
-      TEMP: temporary, TMP: temporary, TMPDIR: temporary, HERMES_HOME: join(home, ".hermes"), OMB_DATA_DIR: fixture.info.dataDir,
-      OMB_PORT: new URL(fixture.info.url).port, OMB_WEBHOOK_PORT: String(Number(new URL(fixture.info.url).port) + 1),
+      TEMP: temporary, TMP: temporary, TMPDIR: temporary, HERMES_HOME: join(home, ".hermes"), RELAY_DATA_DIR: fixture.info.dataDir,
+      RELAY_PORT: new URL(fixture.info.url).port, RELAY_WEBHOOK_PORT: String(Number(new URL(fixture.info.url).port) + 1),
       FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: fixture.fixtureDumpPath };
     for (const key of ["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"]) if (process.env[key]) env[key] = process.env[key];
     const log = openSync(fixture.info.logPath, "a", 0o600);
@@ -428,7 +428,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     ui = await createServer({ configFile: false, root, resolve: { alias: { "@": join(root, "src") } }, define: { __APP_VERSION__: JSON.stringify("0.1.78") },
       server: { host: "127.0.0.1", port: 0, proxy: { "/api": { target: fixture.info.url } } }, plugins: [react(), tailwindcss(), {
         name: "company-backup-fixture", resolveId(id) { if (id === "virtual:company-backup-fixture") return `\0${id}`; },
-        load(id) { if (id === "\0virtual:company-backup-fixture") return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {CompanyBackupSettings} from '/src/components/CompanyBackupSettings.tsx'; import {WorkspaceBackupRecovery} from '/src/components/WorkspaceBackupSettings.tsx'; import {setLocale} from '/src/lib/i18n.ts'; import '/src/styles.css'; setLocale('en'); localStorage.setItem('omb-analytics-opt-out','1'); createRoot(document.getElementById('root')).render(React.createElement(WorkspaceBackupRecovery,null,React.createElement('main',{className:'mx-auto max-w-2xl p-4'},React.createElement(CompanyBackupSettings)))); document.body.dataset.ready='true';`; },
+        load(id) { if (id === "\0virtual:company-backup-fixture") return `import React from 'react'; import {createRoot} from 'react-dom/client'; import {CompanyBackupSettings} from '/src/components/CompanyBackupSettings.tsx'; import {WorkspaceBackupRecovery} from '/src/components/WorkspaceBackupSettings.tsx'; import {setLocale} from '/src/lib/i18n.ts'; import '/src/styles.css'; setLocale('en'); localStorage.setItem('relay-analytics-opt-out','1'); createRoot(document.getElementById('root')).render(React.createElement(WorkspaceBackupRecovery,null,React.createElement('main',{className:'mx-auto max-w-2xl p-4'},React.createElement(CompanyBackupSettings)))); document.body.dataset.ready='true';`; },
         configureServer(server) { server.middlewares.use((req, res, next) => {
           if (req.url?.split("?")[0] !== "/__company-backups.html") return next();
           void server.transformIndexHtml(req.url, '<html><head><meta name="viewport" content="width=device-width, initial-scale=1"><title>Isolated company backups</title></head><body class="bg-app"><div id="root"></div><script type="module" src="/@id/virtual:company-backup-fixture"></script></body></html>')

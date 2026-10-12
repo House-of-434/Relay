@@ -48,7 +48,7 @@ describe("remaining ACP approval mappings", () => {
   ];
   it.each(cases)("$driver.driverKind preserves residual requests across Full → Auto → Ask", async ({ driver, argv, native }) => {
     ensureDirs();
-    const scratch = mkdtempSync(join(tmpdir(), "omb-approval-matrix-"));
+    const scratch = mkdtempSync(join(tmpdir(), "relay-approval-matrix-"));
     const dump = join(scratch, "spawn.json");
     const rpcDump = join(scratch, "rpc.json");
     const instance = await driver.create({
@@ -60,7 +60,7 @@ describe("remaining ACP approval mappings", () => {
         USERPROFILE: scratch,
         HERMES_HOME: join(scratch, ".hermes"),
         KIMI_CODE_HOME: join(scratch, ".kimi"),
-        OPENMAUSBOT_PROBE_LOCAL_INJECT: "0",
+        RELAY_PROBE_LOCAL_INJECT: "0",
         FAKE_ACP_MODE: "permission",
         FAKE_ACP_DUMP: dump,
         FAKE_ACP_RPC_DUMP: rpcDump,

@@ -96,9 +96,9 @@ describe("local computer descriptor contract", () => {
     };
     const gated = gatedLocalComputer(connection, { url: "http://127.0.0.1:1234/control", token: "fixture-token" });
     expect(gated).toMatchObject({ command: process.execPath, args: ["--experimental-strip-types", SPAWNED_PROXIES.localComputer], platform: "linux", scope: "local-computer", generation: connection.generation });
-    expect(gated.env).toEqual({ ...connection.env, ELECTRON_RUN_AS_NODE: "1", OMB_CUA_COMMAND: connection.command, OMB_CUA_ARGS: JSON.stringify(connection.args), OMB_CONTROL_URL: "http://127.0.0.1:1234/control", OMB_CONTROL_TOKEN: "fixture-token" });
+    expect(gated.env).toEqual({ ...connection.env, ELECTRON_RUN_AS_NODE: "1", RELAY_CUA_COMMAND: connection.command, RELAY_CUA_ARGS: JSON.stringify(connection.args), RELAY_CONTROL_URL: "http://127.0.0.1:1234/control", RELAY_CONTROL_TOKEN: "fixture-token" });
     expect(gated.args.join(" ")).not.toContain("fixture-token");
-    expect(connection.env).not.toHaveProperty("OMB_CONTROL_TOKEN");
+    expect(connection.env).not.toHaveProperty("RELAY_CONTROL_TOKEN");
   });
   it("owns the helper's Node mode even when the daemon environment disagrees", () => {
     const gated = gatedLocalComputer({ command: "/trusted/cua-driver", args: ["mcp"], env: { ELECTRON_RUN_AS_NODE: "0" }, platform: "darwin", scope: "local-computer" }, { url: "http://127.0.0.1:1234/control", token: "fixture-token" });
@@ -114,7 +114,7 @@ const temporaryDirectories: string[] = [];
 
 function privateUserData(name: string) {
   const base = process.platform === "win32" ? tmpdir() : realpathSync("/tmp");
-  const root = mkdtempSync(join(base, "omb-local-computer-"));
+  const root = mkdtempSync(join(base, "relay-local-computer-"));
   temporaryDirectories.push(root);
   const userData = join(root, name);
   mkdirSync(userData, { recursive: true, mode: 0o700 });
@@ -132,7 +132,7 @@ describe("local computer descriptor", () => {
   it.skipIf(process.platform === "win32")("reports a private unavailable reason without making that descriptor mountable", () => {
     const userData = privateUserData("mac-unavailable");
     const file = join(userData, "cua-connection.json");
-    const reason = "embedded host failed: Screen Recording required; grant access in System Settings and restart OpenMausBot";
+    const reason = "embedded host failed: Screen Recording required; grant access in System Settings and restart Relay";
     writeFileSync(file, JSON.stringify({ mode: "unavailable", reason }), { mode: 0o600 });
     expect(readCuaConnection({ platform: "darwin", userData })).toBeNull();
     expect(readCuaUnavailableReason({ platform: "darwin", userData })).toBe(reason);
@@ -159,7 +159,7 @@ describe("local computer descriptor", () => {
   it.skipIf(process.platform === "win32")("never substitutes a stale legacy descriptor for the packaged app's exact status", () => {
     const userData = privateUserData("exact-mac-user-data");
     const home = join(userData, "fixture-home");
-    const legacy = join(home, "Library", "Application Support", "OpenMausBot");
+    const legacy = join(home, "Library", "Application Support", "Relay");
     mkdirSync(legacy, { recursive: true, mode: 0o700 });
     const legacyFile = join(legacy, "cua-connection.json");
     writeFileSync(legacyFile, JSON.stringify({
@@ -168,7 +168,7 @@ describe("local computer descriptor", () => {
     }), { mode: 0o600 });
 
     const exactFile = join(userData, "cua-connection.json");
-    const reason = "Screen Recording required; grant access in System Settings and restart OpenMausBot";
+    const reason = "Screen Recording required; grant access in System Settings and restart Relay";
     writeFileSync(exactFile, JSON.stringify({ mode: "unavailable", reason }), { mode: 0o600 });
     expect(readCuaConnection({ platform: "darwin", userData, home })).toBeNull();
     expect(readCuaUnavailableReason({ platform: "darwin", userData, home })).toBe(reason);
@@ -181,11 +181,11 @@ describe("local computer descriptor", () => {
 
   it.skipIf(process.platform === "win32")("treats the first present legacy descriptor as authoritative", () => {
     const root = privateUserData("legacy-mac-home");
-    const first = join(root, "Library", "Application Support", "OpenMausBot");
+    const first = join(root, "Library", "Application Support", "Relay");
     const stale = join(root, "Library", "Application Support", "OpenGrokBot");
     mkdirSync(first, { recursive: true, mode: 0o700 });
     mkdirSync(stale, { recursive: true, mode: 0o700 });
-    const reason = "Accessibility required; grant access in System Settings and restart OpenMausBot";
+    const reason = "Accessibility required; grant access in System Settings and restart Relay";
     writeFileSync(join(first, "cua-connection.json"), JSON.stringify({ mode: "unavailable", reason }), { mode: 0o600 });
     writeFileSync(join(stale, "cua-connection.json"), JSON.stringify({
       mode: "embedded", socketPath: "/fixture/stale.sock", mcpCommand: "/fixture/stale-driver",

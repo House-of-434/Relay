@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { launchVerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer } from "../scripts/control-relay.ts";
 
 it("boots an idempotent Scout, Mercury, Curator roster using the current default model", async () => {
   const fixture = await launchVerificationServer({

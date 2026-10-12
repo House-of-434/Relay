@@ -106,7 +106,6 @@ export interface InternalCalendarOptions {
   listAccounts: (userId: string) => Promise<GoogleConnectionMetadata[]>;
   capability: string;
   actorSecret: string | undefined;
-  isLoopbackPeer: (req: IncomingMessage) => boolean;
   now?: () => number;
 }
 
@@ -225,6 +224,10 @@ async function resolveCalendar(options: InternalCalendarOptions, actor: RelayAct
  * calendar that actor connected. Every route requires the events scope for
  * writes and the read scope for reads; no caller-supplied identity, calendar,
  * or scope is honored, and no token or provider error leaves this boundary.
+ *
+ * The boundary is the shared capability plus the signed actor assertion, not
+ * the peer's address: in the compose deployment the Tool Layer is a separate
+ * container and is never a loopback peer.
  */
 export async function handleInternalCalendar(
   req: IncomingMessage,
@@ -234,10 +237,6 @@ export async function handleInternalCalendar(
 ): Promise<void> {
   const expectedHash = hash(options.capability);
   req.resume();
-  if (!options.isLoopbackPeer(req)) {
-    json(res, 403, { error: "forbidden" });
-    return;
-  }
   if (!capabilityMatches(req, expectedHash)) {
     json(res, 401, { error: "unauthorized" });
     return;

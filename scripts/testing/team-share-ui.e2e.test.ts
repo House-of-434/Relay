@@ -3,16 +3,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
+import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const forced = process.env.OMB_UI_E2E === "1";
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
-if (!enabled) console.log("skipping share-team UI e2e: set OMB_UI_E2E=1 to require system Chrome");
+if (!enabled) console.log("skipping share-team UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 describe("Share team in the real renderer", () => {
   let child: ChildProcess | undefined;
@@ -22,7 +22,7 @@ describe("Share team in the real renderer", () => {
     let stdout = "";
     let stderr = "";
     let info: { ui: string; url: string; botId: string; logPath: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
@@ -77,7 +77,7 @@ describe("Share team in the real renderer", () => {
     for (const line of ["research-brief", "fill-01", "fill-30", "Starter notes are included", "Save file"]) expect(dialog).toContain(line);
     expect(dialog).not.toContain("What's in the file");
     expect(await saveDisabled()).toBe(true);
-    await ui("screenshot", "--out", join(ROOT, ".omb-scratch", "verify-evidence", "share-team-refused.png"));
+    await ui("screenshot", "--out", join(ROOT, ".relay-scratch", "verify-evidence", "share-team-refused.png"));
     // Leaving out one long skill is a choice that fits.
     await click("fill-01");
     await expect.poll(snapshot, { timeout: 20_000 }).toContain("What's in the file");
@@ -101,33 +101,33 @@ describe("Share team in the real renderer", () => {
     expect(await snapshot()).not.toContain("Scout has more than 30 skills");
     expect(await saveDisabled()).toBe(false);
     await expect.poll(snapshot, { timeout: 10_000 }).toContain("Removed what looked like a key or password from:");
-    await ui("screenshot", "--out", join(ROOT, ".omb-scratch", "verify-evidence", "share-team-dialog.png"));
+    await ui("screenshot", "--out", join(ROOT, ".relay-scratch", "verify-evidence", "share-team-dialog.png"));
     await click("Save file");
-    await expect.poll(snapshot, { timeout: 10_000 }).toContain("Saved sales-desk-1.0.0.openmaus.json");
+    await expect.poll(snapshot, { timeout: 10_000 }).toContain("Saved sales-desk-1.0.0.relay.json");
     await evaluate("window.__shareBlob.text().then((text) => { window.__shareText = text; }); true");
     await expect.poll(async () => typeof (await evaluate("window.__shareText")), { timeout: 5_000 }).toBe("string");
     const saved = JSON.parse(await evaluate("window.__shareText") as string);
-    expect(await evaluate("window.__shareDownload")).toBe("sales-desk-1.0.0.openmaus.json");
-    expect(saved).toMatchObject({ format: "openmaus.package", version: 2, package: { id: "sales-desk", team: { name: "Sales desk", brief: "Quote list prices only." } } });
+    expect(await evaluate("window.__shareDownload")).toBe("sales-desk-1.0.0.relay.json");
+    expect(saved).toMatchObject({ format: "relay.package", version: 2, package: { id: "sales-desk", team: { name: "Sales desk", brief: "Quote list prices only." } } });
     expect(saved.package.agents).toHaveLength(2);
     const savedScout = saved.package.agents.find((agent: { name: string }) => agent.name === "Scout");
     expect(savedScout.skills).toHaveLength(30);
     for (const name of ["research-brief", "fill-01", "fill-30"]) expect(savedScout.skills).toContain(name);
     expect(savedScout.skills).not.toContain("fill-02");
     expect(JSON.stringify(saved)).not.toContain("UiFixture-Secret-1");
-    await ui("screenshot", "--out", join(ROOT, ".omb-scratch", "verify-evidence", "share-team-saved.png"));
+    await ui("screenshot", "--out", join(ROOT, ".relay-scratch", "verify-evidence", "share-team-saved.png"));
     await click("Done");
 
     // Add the saved file back through Import: the preview names every part.
     await click("Import");
-    await evaluate(`(() => { const input = document.querySelector('[role=dialog] input[type=file]'); const transfer = new DataTransfer(); transfer.items.add(new File([window.__shareText], 'sales-desk-1.0.0.openmaus.json', { type: 'application/json' })); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+    await evaluate(`(() => { const input = document.querySelector('[role=dialog] input[type=file]'); const transfer = new DataTransfer(); transfer.items.add(new File([window.__shareText], 'sales-desk-1.0.0.relay.json', { type: 'application/json' })); input.files = transfer.files; input.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
     await expect.poll(snapshot, { timeout: 10_000 }).toContain("2 bots · shared team");
     const preview = await snapshot();
     for (const line of ["Shared instructions", "Routines: 1 · paused", "Starter notes: 1", "Included skills — added switched off"]) {
       expect(preview).toContain(line);
     }
     expect(preview).not.toContain("Connections to finish");
-    await ui("screenshot", "--out", join(ROOT, ".omb-scratch", "verify-evidence", "share-team-import-preview.png"));
+    await ui("screenshot", "--out", join(ROOT, ".relay-scratch", "verify-evidence", "share-team-import-preview.png"));
     await click("Add team");
     await expect.poll(snapshot, { timeout: 10_000 }).toContain('button "Sales desk 2"');
     const bots = (await api("/api/bots")).bots.filter((bot: { section?: string }) => bot.section === "Sales desk 2");

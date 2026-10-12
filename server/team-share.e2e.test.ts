@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { launchVerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer } from "../scripts/control-relay.ts";
 import { NEWER_PACKAGE_MESSAGE, parsePackageDocument } from "../shared/package-format.ts";
 import { includedSkills, requestedSkills, startingTicks } from "../src/lib/team-share-skills.ts";
 
@@ -56,7 +56,7 @@ it("shares one team whole (minus chat history) and imports it back as new, inert
     expect(preview.summary.counts).toEqual({ bots: 2, skills: 1, presets: 0, rooms: 1, routines: 2, connections: 1, playbooks: 0 });
     expect(preview.choices.skills).toEqual(["research-brief"]);
     const saved = await ok("POST", "/api/teams/export", body);
-    expect(saved.filename).toBe("sales-desk-1.0.0.openmaus.json");
+    expect(saved.filename).toBe("sales-desk-1.0.0.relay.json");
     expect(saved.redacted).toEqual(["agents[morgan].soul"]);
     expect(saved.skipped).toEqual([{ part: "connections[local-tool]", reason: "stdio_server" }]);
     const text = JSON.stringify(saved.document);

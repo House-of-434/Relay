@@ -4,7 +4,7 @@ import { DatabaseSync } from "node:sqlite";
 import { performance } from "node:perf_hooks";
 import { setImmediate } from "node:timers/promises";
 import { expect, it } from "vitest";
-import { launchVerificationServer, runControlOmb } from "../scripts/control-omb.ts";
+import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 
 it("keeps independent fixture chats and health requests usable during queued history scans", async () => {
   const fixture = await launchVerificationServer();

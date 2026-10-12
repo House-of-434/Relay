@@ -30,7 +30,7 @@ const COOKIE_NAME = "relay_bff";
 const OAUTH_STATE_COOKIE_NAME = "relay_bff_oauth_state";
 const GOOGLE_OAUTH_STATE_COOKIE_PREFIX = "relay_google_oauth_state_";
 const DEFAULT_BFF_PORT = 8798;
-const DEFAULT_OMB_PORT = 8799;
+const DEFAULT_RELAY_PORT = 8799;
 const DEFAULT_UI_PORT = 5199;
 const SESSION_TTL_MS = 8 * 60 * 60 * 1000;
 const OAUTH_STATE_TTL_MS = 10 * 60 * 1000;
@@ -38,7 +38,7 @@ const MAX_OAUTH_STATE_TTL_MS = OAUTH_STATE_TTL_MS;
 const MAX_LIVE_SESSIONS = 500;
 const MAX_PENDING_LOGINS = 500;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const RELAY_SESSION_TOKEN_PATTERN = /^omb_sess_[A-Za-z0-9_-]{43}$/;
+const RELAY_SESSION_TOKEN_PATTERN = /^relay_sess_[A-Za-z0-9_-]{43}$/;
 const OAUTH_CODE_PATTERN = /^[\x21-\x7e]{1,4096}$/;
 const RFC3339_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
 const CALENDAR_EVENT_PAGE_SIZE = 2500;
@@ -61,6 +61,10 @@ export interface RelayBffConfig {
   googleRedirectUri?: string;
   googleTokenEncryptionKey?: string;
   relayToolActorSecret?: string;
+  /** Relay's own shared Gmail account: the address and the Supabase user id
+   * that owns its connection. Both are required for `mailbox: "relay"`. */
+  relayMailboxAddress?: string;
+  relayMailboxUserId?: string;
   dataDir?: string;
 }
 
@@ -113,10 +117,12 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     supabaseAnonKey: env.SUPABASE_ANON_KEY!,
     relayBffCapability: env.RELAY_BFF_CAPABILITY!,
     relayToolActorSecret: env.RELAY_TOOL_ACTOR_SECRET,
+    relayMailboxAddress: env.RELAY_MAILBOX_ADDRESS?.trim(),
+    relayMailboxUserId: env.RELAY_MAILBOX_USER_ID?.trim(),
     relayBffPublicUrl: env.RELAY_BFF_PUBLIC_URL?.trim() || `http://localhost:${bffPort}`,
     bffPort,
-    ombPort: parsePort(env.OMB_PORT, DEFAULT_OMB_PORT, "OMB_PORT"),
-    uiPort: parsePort(env.OMB_UI_PORT, DEFAULT_UI_PORT, "OMB_UI_PORT"),
+    ombPort: parsePort(env.RELAY_PORT, DEFAULT_RELAY_PORT, "RELAY_PORT"),
+    uiPort: parsePort(env.RELAY_UI_PORT, DEFAULT_UI_PORT, "RELAY_UI_PORT"),
     googleOAuthClients: {
       gmail: {
         clientId: env[GOOGLE_SERVICE_REGISTRY.gmail.clientIdEnvironmentVariable]?.trim(),
@@ -129,7 +135,7 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     },
     googleRedirectUri: env.RELAY_GOOGLE_REDIRECT_URI?.trim(),
     googleTokenEncryptionKey: env.RELAY_TOKEN_ENCRYPTION_KEY,
-    dataDir: env.OMB_DATA_DIR?.trim() || join(homedir(), ".openmausbot"),
+    dataDir: env.RELAY_DATA_DIR?.trim() || join(homedir(), ".relay"),
   });
 }
 
@@ -158,7 +164,7 @@ function validateConfig(config: RelayBffConfig): RelayBffConfig {
   if (Buffer.byteLength(config.relayBffCapability) < 32) {
     throw new Error("RELAY_BFF_CAPABILITY must be at least 32 bytes");
   }
-  for (const [name, port] of [["RELAY_BFF_PORT", config.bffPort], ["OMB_PORT", config.ombPort], ["OMB_UI_PORT", config.uiPort]] as const) {
+  for (const [name, port] of [["RELAY_BFF_PORT", config.bffPort], ["RELAY_PORT", config.ombPort], ["RELAY_UI_PORT", config.uiPort]] as const) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name} must be a valid TCP port`);
   }
   if (config.sessionTtlMs !== undefined && (!Number.isFinite(config.sessionTtlMs) || config.sessionTtlMs <= 0)) {
@@ -720,13 +726,6 @@ function googleUserIdentity(value: unknown): { sub: string; email: string } | un
     verified !== true
   ) return undefined;
   return { sub, email };
-}
-
-function loopbackPeerAddress(req: IncomingMessage): boolean {
-  const address = req.socket?.remoteAddress;
-  if (!address) return false;
-  const normalized = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
-  return normalized === "127.0.0.1" || normalized === "::1" || normalized.startsWith("127.");
 }
 
 /** Sign-in and connector calls are the ones that fail silently, so record their
@@ -1346,7 +1345,7 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       }
     }
 
-    if (url.pathname === "/.well-known/openmausbot/environment" && method === "GET") {
+    if (url.pathname === "/.well-known/relay/environment" && method === "GET") {
       await proxyRequest({
         req,
         res,
@@ -1362,7 +1361,8 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
-        isLoopbackPeer: loopbackPeerAddress,
+        mailboxAddress: config.relayMailboxAddress,
+        mailboxUserId: config.relayMailboxUserId,
         now,
       });
       return;
@@ -1374,7 +1374,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
-        isLoopbackPeer: loopbackPeerAddress,
         now,
       });
       return;
@@ -1460,9 +1459,13 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 export async function startRelayBff(env: NodeJS.ProcessEnv = process.env): Promise<RelayBffApplication> {
   const config = configFromEnvironment(env);
   const app = createRelayBff({ config });
+  // Loopback by default. A compose deployment overrides this so the separate
+  // Tool Layer container can reach the capability-gated /api/internal routes;
+  // the port is never published, so only compose-network peers can dial it.
+  const host = env.RELAY_BFF_HOST?.trim() || "127.0.0.1";
   await new Promise<void>((resolveListen, rejectListen) => {
     app.server.once("error", rejectListen);
-    app.server.listen(config.bffPort, "127.0.0.1", () => {
+    app.server.listen(config.bffPort, host, () => {
       app.server.off("error", rejectListen);
       resolveListen();
     });
@@ -1472,10 +1475,24 @@ export async function startRelayBff(env: NodeJS.ProcessEnv = process.env): Promi
 
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : undefined;
 if (invokedPath === import.meta.url) {
+  // A process that dies with no stack (an OOM kill, a signal, a rejected
+  // promise nobody awaited) looks identical from the outside. Log the two
+  // Node-level failures we can see here and exit non-zero, so a supervisor
+  // (compose `restart: unless-stopped`, systemd `Restart=`) brings the BFF
+  // back and the next occurrence is diagnosable. An OOM SIGKILL still needs
+  // a per-container memory limit to be attributed to the right service.
+  process.on("uncaughtException", (error) => {
+    console.error("[relay-bff] fatal: uncaught exception", error);
+    process.exit(1);
+  });
+  process.on("unhandledRejection", (reason) => {
+    console.error("[relay-bff] fatal: unhandled rejection", reason);
+    process.exit(1);
+  });
   void startRelayBff().then((app) => {
     process.once("SIGINT", () => { void app.close().finally(() => { process.exitCode = 0; }); });
     process.once("SIGTERM", () => { void app.close().finally(() => { process.exitCode = 0; }); });
-    console.log(`Relay BFF listening on http://127.0.0.1:${process.env.RELAY_BFF_PORT || DEFAULT_BFF_PORT}`);
+    console.log(`Relay BFF listening on http://${process.env.RELAY_BFF_HOST?.trim() || "127.0.0.1"}:${process.env.RELAY_BFF_PORT || DEFAULT_BFF_PORT}`);
   }).catch(() => {
     console.error("Relay BFF could not start; check required configuration and port availability.");
     process.exitCode = 1;

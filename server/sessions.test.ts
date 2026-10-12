@@ -15,6 +15,7 @@ import {
   PAIRING_CODE_ALPHABET,
   PAIRING_CODE_TTL_MS,
   personKey,
+  personKeyForIdentity,
   SESSION_TTL_MS,
   SessionRegistry,
   STREAM_TICKET_TTL_MS,
@@ -29,7 +30,7 @@ let registry: SessionRegistry;
 const file = () => join(dir, "sessions.json");
 
 beforeEach(() => {
-  dir = mkdtempSync(join(tmpdir(), "omb-sessions-"));
+  dir = mkdtempSync(join(tmpdir(), "relay-sessions-"));
   clock = 1_700_000_000_000;
   registry = new SessionRegistry({ file: file(), now: () => clock });
 });
@@ -40,9 +41,9 @@ describe("the native-app encoding of a pairing window", () => {
     const { code, credential } = registry.openPairing({ label: "Pixel" });
     // The shape the Android companion's parser demands: the 9-character
     // prefix plus exactly 43 base64url characters (Connection.kt).
-    expect(credential.startsWith("omb_pair_")).toBe(true);
+    expect(credential.startsWith("relay_pair_")).toBe(true);
     expect(credential.length).toBe(52);
-    expect(credential.slice("omb_pair_".length)).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(credential.slice("relay_pair_".length)).toMatch(/^[A-Za-z0-9_-]{43}$/);
 
     const paired = registry.exchange({ code: credential, label: "Pixel", source: "10.0.0.9" });
     expect(paired.ok).toBe(true);
@@ -57,7 +58,7 @@ describe("the native-app encoding of a pairing window", () => {
     // secret and map distinct secrets onto one digest, so a credential must
     // be hashed exactly as presented. This is the trap the fix exists to
     // avoid, so pin it with a credential that contains every folded symbol.
-    const trap = "omb_pair_0123456789-_abcdefghijklmnopqrstuvwxyzABCDE";
+    const trap = "relay_pair_0123456789-_abcdefghijklmnopqrstuvwxyzABCDE";
     expect(trap.length).toBe(52);
     expect(normalizePairingCode(trap)).not.toBe(trap);
     expect(isPairingCredential(trap)).toBe(true);
@@ -516,7 +517,7 @@ describe("sessions", () => {
     if (process.platform !== "win32") expect(statSync(file()).mode & 0o777).toBe(0o600); // Windows has no POSIX modes
     const reloaded = new SessionRegistry({ file: file(), now: () => clock });
     expect(reloaded.authenticate(token)?.id).toBe(session.id);
-    expect(reloaded.authenticate("omb_sess_nope")).toBeNull();
+    expect(reloaded.authenticate("relay_sess_nope")).toBeNull();
   });
 
   it("expires after 30 days and can be revoked", () => {
@@ -628,5 +629,47 @@ describe("stream tickets", () => {
     const { ticket: orphan } = registry.issueStreamTicket(session.id);
     registry.revoke(session.id);
     expect(registry.redeemStreamTicket(orphan)).toBeNull();
+  });
+});
+
+describe("sessionless identity for the shared-mailbox monitor", () => {
+  it("derives the exact key a session would, from a verified user id or email", () => {
+    expect(personKeyForIdentity("1457CB2A-7543-4B48-8854-A63CD160241F", undefined))
+      .toBe(personKey({ id: "s1", userId: "1457cb2a-7543-4b48-8854-a63cd160241f", email: undefined }));
+    expect(personKeyForIdentity(undefined, "Ada@HouseOf434.com"))
+      .toBe(personKey({ id: "s1", userId: undefined, email: "ada@houseof434.com" }));
+    expect(personKeyForIdentity(undefined, undefined)).toBeUndefined();
+  });
+
+  it("an expired session drops out of the live lookup; the durable thread-owner record still identifies the person", async () => {
+    const { ownerByEmail, recordThreadOwner } = await import("./thread-owners.ts");
+    // Email-bearing sessions fail closed without a membership resolver, so a
+    // real deployment (and this test) supplies one.
+    const scoped = new SessionRegistry({
+      file: join(dir, "sessions-scoped.json"),
+      now: () => clock,
+      emailScopes: () => ["client"],
+    });
+    const issued = scoped.issue({
+      label: "Laptop",
+      scopes: ["client"],
+      userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
+      email: "ada@houseof434.com",
+    });
+    expect(issued.session.email).toBe("ada@houseof434.com");
+    expect(scoped.personByEmail("ada@houseof434.com")).toEqual({
+      userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
+      email: "ada@houseof434.com",
+    });
+
+    // The person goes quiet past the session lifetime: the live store prunes
+    // them, so only a durable directory can still turn the email into an id.
+    recordThreadOwner(dir, "thread-ada", "1457cb2a-7543-4b48-8854-a63cd160241f", "ada@houseof434.com");
+    clock += SESSION_TTL_MS + 1;
+    expect(scoped.personByEmail("ada@houseof434.com")).toBeUndefined();
+    expect(ownerByEmail(dir, "ada@houseof434.com")).toEqual({
+      userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
+      email: "ada@houseof434.com",
+    });
   });
 });

@@ -3,16 +3,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
+import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const forced = process.env.OMB_UI_E2E === "1";
+const forced = process.env.RELAY_UI_E2E === "1";
 const enabled = forced || Boolean(resolveUiChrome(process.env));
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
-if (!enabled) console.log("skipping template UI e2e: set OMB_UI_E2E=1 to require system Chrome");
+if (!enabled) console.log("skipping template UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 describe("additive template imports in the real renderer", () => {
   let child: ChildProcess | undefined;
@@ -22,7 +22,7 @@ describe("additive template imports in the real renderer", () => {
     let stdout = "";
     let stderr = "";
     let info: { ui: string; url: string; botId: string; logPath: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
@@ -44,7 +44,7 @@ describe("additive template imports in the real renderer", () => {
     expect(await control("wait", "--bot", info!.botId, "--timeout", "30")).toMatchObject({ status: "settled" });
     const original = await api("/api/bots");
     const transcript = await control("messages", "--bot", info!.botId, "--limit", "10");
-    const manifest = { format: "openmaus.team", version: 2, team: { name: "Sales crew", members: [
+    const manifest = { format: "relay.team", version: 2, team: { name: "Sales crew", members: [
       { key: "researcher", name: "Lead finder", appearance: { color: "cyan" } },
       { key: "writer", name: "Outreach writer", appearance: { color: "purple" } },
     ] } };
@@ -56,7 +56,7 @@ describe("additive template imports in the real renderer", () => {
       window.fetch = (input, init) => {
         const path = String(input);
         const reply = value => Promise.resolve(new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }));
-        if (path === '/api/team-library/catalog') return reply({ format: 'openmaus.catalog', version: 1, repositoryUrl: '', teams: [{ slug: 'sales', name: 'Sales crew', summary: 'Fixture template', category: 'Sales', members: 2, skills: [], requires: { apps: [] } }] });
+        if (path === '/api/team-library/catalog') return reply({ format: 'relay.catalog', version: 1, repositoryUrl: '', teams: [{ slug: 'sales', name: 'Sales crew', summary: 'Fixture template', category: 'Sales', members: 2, skills: [], requires: { apps: [] } }] });
         if (path === '/api/team-library/teams/sales') return reply(window.templateFixture);
         return originalFetch(input, init);
       };
@@ -84,7 +84,7 @@ describe("additive template imports in the real renderer", () => {
       expect(await snapshot()).toContain('button "Existing work"');
       expect(await snapshot()).toContain('button "Personal"');
     }
-    const evidence = join(ROOT, ".omb-scratch", "verify-evidence", "template-import-sections.png");
+    const evidence = join(ROOT, ".relay-scratch", "verify-evidence", "template-import-sections.png");
     await ui("screenshot", "--out", evidence);
     process.stdout.write(`${JSON.stringify({ fixture: info!, screenshot: evidence, libraryAndFileImports: true, originalConversationUnchanged: true })}\n`);
   }, launchTimeout + 120_000);

@@ -15,7 +15,7 @@ function preload({ company = true } = {}) {
   const invoked = [];
   let bridge;
   const context = vm.createContext({
-    process: { platform: "fixture", argv: [`--omb-local-origin=${ORIGIN}`, ...(company ? ["--omb-company-desktop=1"] : [])] },
+    process: { platform: "fixture", argv: [`--relay-local-origin=${ORIGIN}`, ...(company ? ["--relay-company-desktop=1"] : [])] },
     location: { origin: ORIGIN }, TextEncoder, localStorage: { getItem: () => null },
     require: name => {
       assert.equal(name, "electron");

@@ -4,15 +4,15 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
+import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
 import { mountPreview, type MountedPreview } from "./preview-fixture.ts";
-import { resolveUiChrome } from "./control-omb-ui.ts";
+import { resolveUiChrome } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const chrome = resolveUiChrome(process.env);
-const enabled = process.env.OMB_UI_E2E === "1" || Boolean(chrome);
-if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to require system Chrome");
+const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(chrome);
+if (!enabled) console.log("skipping team lifecycle UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 (enabled ? it : it.skip)("creates an empty team, moves bots, and manages shared instructions in the renderer", async () => {
   let child: ChildProcess | undefined;
@@ -23,7 +23,7 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to r
   try {
     let stdout = "", stderr = "";
     let info: { ui: string; url: string; botId: string; logPath: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
@@ -85,7 +85,7 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to r
       if (!header) throw new Error('Missing team header');
       header.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, clientX: 120, clientY: 250 })); return true;
     })()`);
-    await ui("eval", "--js", `localStorage.setItem('openmausbot.sidebarCollapsedSections.v1', JSON.stringify(['section:Delivery'])); localStorage.setItem('openmausbot.sidebarSectionOrder.v1', JSON.stringify(['section:Research','section:Delivery','section:Engineering'])); location.reload(); true`);
+    await ui("eval", "--js", `localStorage.setItem('relay.sidebarCollapsedSections.v1', JSON.stringify(['section:Delivery'])); localStorage.setItem('relay.sidebarSectionOrder.v1', JSON.stringify(['section:Research','section:Delivery','section:Engineering'])); location.reload(); true`);
     await expect.poll(snapshot, { timeout: 15_000 }).toContain('button "Delivery"');
     await teamMenu("Delivery");
     await ui("press", "--keys", "Escape");
@@ -100,8 +100,8 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to r
     await click("Save name");
     await expect.poll(snapshot).toContain('button "Dispatch"');
     expect((await ui("eval", "--js", "document.querySelector('[data-section=Dispatch] button')?.getAttribute('aria-expanded')")).result).toBe("false");
-    expect((await ui("eval", "--js", "JSON.parse(localStorage.getItem('openmausbot.sidebarCollapsedSections.v1'))")).result).toContain("section:Dispatch");
-    expect((await ui("eval", "--js", "JSON.parse(localStorage.getItem('openmausbot.sidebarSectionOrder.v1'))")).result).toEqual(["section:Research", "section:Dispatch", "section:Engineering"]);
+    expect((await ui("eval", "--js", "JSON.parse(localStorage.getItem('relay.sidebarCollapsedSections.v1'))")).result).toContain("section:Dispatch");
+    expect((await ui("eval", "--js", "JSON.parse(localStorage.getItem('relay.sidebarSectionOrder.v1'))")).result).toEqual(["section:Research", "section:Dispatch", "section:Engineering"]);
     await ui("eval", "--js", "location.reload(); true");
     await expect.poll(snapshot, { timeout: 15_000 }).toContain('button "Dispatch"');
     await teamMenu("Dispatch");
@@ -173,7 +173,7 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set OMB_UI_E2E=1 to r
     await manage("Launch");
     await expect.poll(snapshot, { timeout: 10_000 }).toContain("Edit Launch shared instructions");
     expect((await api("/api/section-context?section=Launch")).text).toBe("Research first, then build and review.");
-    const screenshot = join(ROOT, ".omb-scratch", "verify-evidence", "team-lifecycle.png");
+    const screenshot = join(ROOT, ".relay-scratch", "verify-evidence", "team-lifecycle.png");
     await ui("screenshot", "--out", screenshot);
     await teamMenu("Launch");
     await click("Delete team");

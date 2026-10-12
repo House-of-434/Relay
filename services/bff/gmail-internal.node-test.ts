@@ -26,6 +26,7 @@ const TOKEN_KEY = "a".repeat(64);
 const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const OTHER_USER_ID = "f7cd9c1b-5f39-4892-b37e-baf8ae27c0c5";
 const USER_EMAIL = "one@houseof434.com";
+const SHARED_EMAIL = "relay@houseof434.com";
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -107,7 +108,11 @@ interface SeededAccount {
   email: string;
 }
 
-async function createFixture(options: { gateway?: GoogleApiGateway; accounts?: SeededAccount[] } = {}) {
+async function createFixture(options: {
+  gateway?: GoogleApiGateway;
+  accounts?: SeededAccount[];
+  mailbox?: { address: string; userId: string };
+} = {}) {
   const dataDir = mkdtempSync(join(tmpdir(), "relay-gmail-internal-"));
   cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
   const store = new GoogleConnectionStore({ dataDir, encryptionKey: TOKEN_KEY });
@@ -122,7 +127,7 @@ async function createFixture(options: { gateway?: GoogleApiGateway; accounts?: S
       listAccounts: (userId) => store.list(userId),
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      isLoopbackPeer: () => true,
+      ...(options.mailbox ? { mailboxAddress: options.mailbox.address, mailboxUserId: options.mailbox.userId } : {}),
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -216,40 +221,6 @@ test("missing or invalid capability is rejected before any Google work happens",
   const wrong = await gmail(assertion, WRONG_CAPABILITY);
   assert.equal(wrong.status, 401);
   assert.equal(calls.length, 0);
-});
-
-test("a non-loopback caller is refused regardless of capability", async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "relay-gmail-loopback-"));
-  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
-  const store = new GoogleConnectionStore({ dataDir, encryptionKey: TOKEN_KEY });
-  await store.save({ userId: USER_ID, service: "gmail", googleSub: "sub", email: "one@example.com", refreshToken: "refresh" });
-
-  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
-    void handleInternalGmail(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
-      googleApi: gmailGateway([]),
-      listAccounts: (userId) => store.list(userId),
-      capability: CAPABILITY,
-      actorSecret: ACTOR_SECRET,
-      isLoopbackPeer: () => false,
-    });
-  });
-  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
-  const { port } = server.address() as AddressInfo;
-  cleanups.push(() => new Promise<void>((resolve) => {
-    server.closeAllConnections();
-    server.close(() => resolve());
-  }));
-
-  const response = await fetch(new URL(INTERNAL_GMAIL_MESSAGES_LIST, `http://127.0.0.1:${port}`), {
-    method: "POST",
-    headers: {
-      authorization: `Bearer ${CAPABILITY}`,
-      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
-      "content-type": "application/json",
-    },
-    body: JSON.stringify({ query: "is:unread" }),
-  });
-  assert.equal(response.status, 403);
 });
 
 test("an expired actor assertion is rejected", async () => {
@@ -411,4 +382,170 @@ test("no send or message-mutating Gmail operation is routed", () => {
   ]) {
     assert.equal(isInternalGmailPath(path), false);
   }
+});
+
+test("the shared mailbox resolves to the configured account, never to the actor's own", async () => {
+  const configured = await createFixture({
+    accounts: [
+      { userId: USER_ID, service: "gmail", googleSub: "own-sub", email: "one@example.com" },
+      { userId: OTHER_USER_ID, service: "gmail", googleSub: "shared-sub", email: SHARED_EMAIL },
+    ],
+    mailbox: { address: SHARED_EMAIL, userId: OTHER_USER_ID },
+  });
+
+  const shared = await configured.gmail(actorAssertion(USER_ID, USER_EMAIL), CAPABILITY, {
+    query: "in:inbox is:unread newer_than:1d",
+    mailbox: "relay",
+  });
+  assert.equal(shared.status, 200);
+  assert.equal((await shared.json() as { account: { email: string } }).account.email, SHARED_EMAIL);
+  // The credential used is the shared owner's, not the actor's.
+  const sharedCalls = configured.calls.filter((call) => call.operation.startsWith("withClient:"));
+  assert.equal(sharedCalls.at(-1)?.userId, OTHER_USER_ID);
+
+  const own = await configured.gmail(actorAssertion(USER_ID, USER_EMAIL), CAPABILITY, { query: "is:unread", mailbox: "own" });
+  assert.equal(own.status, 200);
+  assert.equal((await own.json() as { account: { email: string } }).account.email, "one@example.com");
+  const ownCalls = configured.calls.filter((call) => call.operation.startsWith("withClient:"));
+  assert.equal(ownCalls.at(-1)?.userId, USER_ID);
+});
+
+test("the shared mailbox fails closed when unconfigured or unconnected", async () => {
+  const unconfigured = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "own-sub", email: "one@example.com" }],
+  });
+  const unavailable = await unconfigured.gmail(actorAssertion(USER_ID, USER_EMAIL), CAPABILITY, { query: "is:unread", mailbox: "relay" });
+  assert.equal(unavailable.status, 404);
+  assert.match(await unavailable.text(), /not configured/);
+
+  const unconnected = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "own-sub", email: "one@example.com" }],
+    mailbox: { address: SHARED_EMAIL, userId: OTHER_USER_ID },
+  });
+  const missing = await unconnected.gmail(actorAssertion(USER_ID, USER_EMAIL), CAPABILITY, { query: "is:unread", mailbox: "relay" });
+  assert.equal(missing.status, 404);
+  assert.match(await missing.text(), /not connected/);
+  assert.equal(unconnected.calls.some((call) => call.operation.startsWith("withClient:")), false);
+});
+
+test("a read extracts the bounded body and lists attachment metadata only", async () => {
+  const bodyText = "Pitch deck attached.";
+  const providerClient = {
+    users: {
+      messages: {
+        list: async () => ({ data: { messages: [] } }),
+        get: async () => ({
+          data: {
+            id: "message-9",
+            threadId: "thread-9",
+            snippet: "Pitch deck attached.",
+            payload: {
+              mimeType: "multipart/mixed",
+              headers: [
+                { name: "From", value: "teammate@houseof434.com" },
+                { name: "To", value: SHARED_EMAIL },
+                { name: "Subject", value: "Pitch deck" },
+              ],
+              parts: [
+                {
+                  mimeType: "multipart/alternative",
+                  parts: [
+                    { mimeType: "text/plain", body: { data: Buffer.from(bodyText, "utf8").toString("base64url") } },
+                    { mimeType: "text/html", body: { data: Buffer.from("<p>Pitch deck attached.</p>", "utf8").toString("base64url") } },
+                  ],
+                },
+                { mimeType: "application/pdf", filename: "deck.pdf", body: { attachmentId: "att-1", size: 12_345 } },
+              ],
+            },
+          },
+        }),
+      },
+      drafts: { create: async () => { throw new Error("unused"); } },
+    },
+  };
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation(providerClient),
+  } as unknown as GoogleApiGateway;
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: OTHER_USER_ID, service: "gmail", googleSub: "shared-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: OTHER_USER_ID },
+  });
+
+  const response = await call(INTERNAL_GMAIL_MESSAGES_GET, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ messageId: "message-9", mailbox: "relay" }),
+  });
+  assert.equal(response.status, 200);
+  const message = (await response.json() as {
+    message: { body?: string; bodyTruncated?: boolean; attachments?: unknown[] };
+  }).message;
+  assert.equal(message.body, bodyText);
+  assert.equal(message.bodyTruncated, undefined);
+  assert.deepEqual(message.attachments, [
+    { id: "att-1", filename: "deck.pdf", mimeType: "application/pdf", size: 12_345 },
+  ]);
+});
+
+test("an HTML-only message falls back to stripped text", async () => {
+  const providerClient = {
+    users: {
+      messages: {
+        list: async () => ({ data: { messages: [] } }),
+        get: async () => ({
+          data: {
+            id: "message-10",
+            threadId: "thread-10",
+            snippet: "Hello",
+            payload: {
+              mimeType: "text/html",
+              headers: [{ name: "Subject", value: "Hello" }],
+              body: { data: Buffer.from("<div>Hello <b>there</b></div><script>bad()</script>", "utf8").toString("base64url") },
+            },
+          },
+        }),
+      },
+      drafts: { create: async () => { throw new Error("unused"); } },
+    },
+  };
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation(providerClient),
+  } as unknown as GoogleApiGateway;
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: OTHER_USER_ID, service: "gmail", googleSub: "shared-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: OTHER_USER_ID },
+  });
+
+  const response = await call(INTERNAL_GMAIL_MESSAGES_GET, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ messageId: "message-10", mailbox: "relay" }),
+  });
+  assert.equal(response.status, 200);
+  const message = (await response.json() as { message: { body?: string } }).message;
+  assert.match(message.body ?? "", /Hello/);
+  assert.match(message.body ?? "", /there/);
+  assert.equal(message.body?.includes("bad()"), false);
 });

@@ -38,7 +38,7 @@ describe("t", () => {
   it("renders the Relay product name in legacy catalog strings", () => {
     const downloadNote = t("engineSetup.downloadNote", { mb: 10 });
     expect(downloadNote).toContain("Relay");
-    expect(downloadNote).not.toContain("OpenMausBot");
+    expect(downloadNote).not.toContain("Relay");
   });
 
   it("keeps new team lifecycle labels available in partial packs, with interpolated names and counts", () => {

@@ -8,7 +8,7 @@ export const CHATGPT_USAGE_URL = "https://chatgpt.com/settings/usage";
 
 /** This marker dismisses a welcome message only; no sign-in data lives in the renderer. */
 export function ChatGptPlanStatus({ instanceId }: { instanceId: string }) {
-  const key = `omb:chatgpt-plan-welcome:${instanceId}`;
+  const key = `relay:chatgpt-plan-welcome:${instanceId}`;
   const [acknowledged, setAcknowledged] = useState(() => {
     try { return localStorage.getItem(key) === "1"; } catch { return false; }
   });

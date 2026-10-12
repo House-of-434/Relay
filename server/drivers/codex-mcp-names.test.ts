@@ -35,7 +35,7 @@ trust_level = "trusted"
 
 describe("codexConfigMcpServerNames", () => {
   it("reads config.toml from CODEX_HOME, falling back to ~/.codex, and tolerates a missing file", () => {
-    const home = mkdtempSync(join(tmpdir(), "omb-codex-names-"));
+    const home = mkdtempSync(join(tmpdir(), "relay-codex-names-"));
     dirs.push(home);
     mkdirSync(join(home, ".codex"));
     writeFileSync(join(home, ".codex", "config.toml"), '[mcp_servers.home_one]\nurl = "https://a.test"\n');
@@ -51,7 +51,7 @@ describe("codexConfigMcpServerNames", () => {
 describe("mountedMcpServerName", () => {
   it("keeps a free name and moves a taken one aside deterministically", () => {
     expect(mountedMcpServerName("notes", new Set())).toBe("notes");
-    expect(mountedMcpServerName("fibery", new Set(["fibery"]))).toBe("fibery_openmausbot");
-    expect(mountedMcpServerName("fibery", new Set(["fibery", "fibery_openmausbot"]))).toBe("fibery_openmausbot2");
+    expect(mountedMcpServerName("fibery", new Set(["fibery"]))).toBe("fibery_relay");
+    expect(mountedMcpServerName("fibery", new Set(["fibery", "fibery_relay"]))).toBe("fibery_relay2");
   });
 });

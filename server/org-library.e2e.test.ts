@@ -3,7 +3,7 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { launchVerificationServer } from "../scripts/control-omb.ts";
+import { launchVerificationServer } from "../scripts/control-relay.ts";
 import { canonicalJson, parsePackageDocument } from "../shared/package-format.ts";
 
 const FIXTURES = join(import.meta.dirname, "..", "shared", "package-fixtures");
@@ -38,7 +38,7 @@ function entry(packageId: string, rel: ReturnType<typeof release>) {
 // where Electron stores them, then the renderer's routes.
 it("shows the organization's shelf, adds a team once, and keeps its stamps off the wire", async () => {
   const key = randomBytes(32).toString("hex");
-  const fixture = await launchVerificationServer({ ...process.env, OMB_TEST_ORG_LIBRARY_KEY: key });
+  const fixture = await launchVerificationServer({ ...process.env, RELAY_TEST_ORG_LIBRARY_KEY: key });
   console.log(JSON.stringify({ fixture: fixture.info }));
   const url = fixture.info.url;
   const call = async (method: string, path: string, body?: unknown, headers: Record<string, string> = {}) => {
@@ -53,19 +53,19 @@ it("shows the organization's shelf, adds a team once, and keeps its stamps off t
     expect((await call("POST", "/api/org-library/add", { packageId: TEAM_ID })).status).toBe(404);
     expect(await call("GET", "/api/org-library/skills")).toEqual({ status: 200, body: { organization: null, skills: [] } });
     // The relay route needs the fixture's key.
-    expect((await call("POST", "/api/testing/org-library", { library: null }, { "x-openmausbot-test-org-library": "wrong".repeat(13) })).status).toBe(404);
+    expect((await call("POST", "/api/testing/org-library", { library: null }, { "x-relay-test-org-library": "wrong".repeat(13) })).status).toBe(404);
 
     const team = release("full-team.v2.json");
     const skills = release("library-only.v2.json");
     const blobs = join(fixture.info.dataDir, "org-library", "blobs");
     mkdirSync(blobs, { recursive: true });
     for (const rel of [team, skills]) writeFileSync(join(blobs, `${rel.sha256}.json`), rel.bytes, { mode: 0o600 });
-    const catalog = JSON.stringify({ format: "openmaus.org-library", version: 1, libraryVersion: 1, organization: { id: ORG, name: "Customer Co" },
+    const catalog = JSON.stringify({ format: "relay.org-library", version: 1, libraryVersion: 1, organization: { id: ORG, name: "Customer Co" },
       packages: [entry(TEAM_ID, team), entry(LIBRARY_ID, skills)] });
     const relayed = await call("POST", "/api/testing/org-library", {
       library: { adminOrigin: "https://admin.example.com", organizationId: ORG, organizationName: "Customer Co", digest: sha(catalog), catalog },
-    }, { "x-openmausbot-test-org-library": key });
-    expect(relayed).toEqual({ status: 200, body: { ok: true, report: { type: "openmausbot:managed-library-state", digest: sha(catalog), packages: [] } } });
+    }, { "x-relay-test-org-library": key });
+    expect(relayed).toEqual({ status: 200, body: { ok: true, report: { type: "relay:managed-library-state", digest: sha(catalog), packages: [] } } });
 
     const shelf = (await call("GET", "/api/org-library")).body;
     expect(shelf.organization).toEqual({ id: ORG, name: "Customer Co" });
@@ -105,7 +105,7 @@ it("shows the organization's shelf, adds a team once, and keeps its stamps off t
     expect(put).toMatchObject({ status: 201, body: { skill: { name: "follow-up", enabled: true } } });
 
     // Signing out hides the shelf; what was added stays.
-    await call("POST", "/api/testing/org-library", { library: null }, { "x-openmausbot-test-org-library": key });
+    await call("POST", "/api/testing/org-library", { library: null }, { "x-relay-test-org-library": key });
     expect((await call("GET", "/api/org-library")).body).toEqual({ organization: null, packages: [] });
     expect((await call("GET", "/api/bots")).body.bots.filter((bot: any) => bot.section === "Sales desk")).toHaveLength(3);
   } finally {

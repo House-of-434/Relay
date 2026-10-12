@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from "react";
 
-export const LANGUAGE_KEY = "omb-language";
+export const LANGUAGE_KEY = "relay-language";
 
 // The app language chosen on THIS device. It used to live only in the
 // server's config, which every person and device on the server shares and
