@@ -260,6 +260,15 @@ class MeetSession {
           log: (message) => console.log(message),
         });
         this.disclosurePosted = outcome !== "failed";
+        if (outcome === "failed") {
+          try {
+            const dir = joinPath(this.config.dataDir, "failures");
+            mkdirSync(dir, { recursive: true });
+            await this.page.screenshot({ path: joinPath(dir, `disclosure-${this.descriptor.instance_id}.png`) });
+          } catch {
+            /* best effort */
+          }
+        }
       }
       if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
 

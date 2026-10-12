@@ -12,30 +12,44 @@ interface FakeOptions {
   fillThrows?: boolean;
 }
 
+interface FakeLocator {
+  first(): FakeLocator;
+  isVisible(): Promise<boolean>;
+  fill(text: string): Promise<void>;
+  click(): Promise<void>;
+}
+
 function fakePage(options: FakeOptions = {}) {
   const calls: string[] = [];
   let visible = options.openInitially ?? false;
-  const input = {
+
+  const inputLocator: FakeLocator = {
+    first: () => inputLocator,
     isVisible: async (): Promise<boolean> => visible,
     fill: async (text: string): Promise<void> => {
       if (options.fillThrows) throw new Error("fill failed");
       calls.push(`fill:${text}`);
     },
+    click: async (): Promise<void> => {},
   };
-  const button = {
+  const buttonLocator: FakeLocator = {
+    first: () => buttonLocator,
     isVisible: async (): Promise<boolean> => options.buttonVisible ?? true,
+    fill: async (): Promise<void> => {},
     click: async (): Promise<void> => {
       calls.push("click:chat");
       if (options.buttonOpens ?? true) visible = true;
     },
   };
-  const page = {
-    locator: (_selector: string) => input,
-    getByRole: (_role: string, _opts: unknown) => button,
+  const page: any = {
+    locator: (_selector: string) => inputLocator,
+    getByRole: (_role: string, _opts: unknown) => buttonLocator,
     waitForTimeout: async (): Promise<void> => {},
     keyboard: { press: async (key: string): Promise<void> => { calls.push(`press:${key}`); } },
-  } as unknown as Page;
-  return { page, calls };
+  };
+  page.mainFrame = () => page;
+  page.frames = () => [page];
+  return { page: page as Page, calls };
 }
 
 test("sendMeetChat opens the chat, fills the composer, and sends", async () => {

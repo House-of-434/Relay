@@ -14,6 +14,11 @@
 set -eu
 export DISPLAY="${DISPLAY:-:99}"
 if ! xdpyinfo -display "$DISPLAY" >/dev/null 2>&1; then
+  # A restart leaves the previous Xvfb's lock/socket behind; Xvfb then refuses
+  # ("Server is already active for display 99") and the headful browser has no
+  # display, so every join fails. Clear a stale lock (no server answered above).
+  display_num="${DISPLAY#:}"
+  rm -f "/tmp/.X${display_num}-lock" "/tmp/.X11-unix/X${display_num}" 2>/dev/null || true
   Xvfb "$DISPLAY" -screen 0 1920x1080x24 -nolisten tcp &
   for _ in $(seq 1 50); do xdpyinfo -display "$DISPLAY" >/dev/null 2>&1 && break; sleep 0.2; done
 fi
