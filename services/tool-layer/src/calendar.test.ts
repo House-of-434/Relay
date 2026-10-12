@@ -25,6 +25,20 @@ test("only Mercury may use the calendar, and writes are separable from reads", (
   assert.throws(() => authorizeCalendar("curator", "respond"), /calendar respond access denied for curator/);
 });
 
+test("the agent calendar client knows no monitor join path", () => {
+  // The monitor-only list-join projection carries the meeting URL. It must stay
+  // off the agent client's route table: the Tool Layer shares the BFF capability,
+  // so this is a convention (and a cheap regression guard), not enforcement.
+  const paths = Object.values(CALENDAR_INTERNAL_PATHS);
+  assert.equal(paths.some((path) => path.includes("list-join")), false);
+  assert.deepEqual([...paths].sort(), [
+    "/api/internal/calendar/events/create",
+    "/api/internal/calendar/events/delete",
+    "/api/internal/calendar/events/list",
+    "/api/internal/calendar/events/update",
+  ]);
+});
+
 test("the client speaks notification intent, never the provider's vocabulary", async () => {
   const seen: Array<{ url: string; init: RequestInit }> = [];
   const client = new RelayCalendarClient({
