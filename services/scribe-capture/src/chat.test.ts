@@ -30,7 +30,9 @@ function fakePage(options: FakeOptions = {}) {
       if (options.fillThrows) throw new Error("fill failed");
       calls.push(`fill:${text}`);
     },
-    click: async (): Promise<void> => {},
+    click: async (): Promise<void> => {
+      calls.push("click:input");
+    },
   };
   const buttonLocator: FakeLocator = {
     first: () => buttonLocator,
@@ -45,7 +47,10 @@ function fakePage(options: FakeOptions = {}) {
     locator: (_selector: string) => inputLocator,
     getByRole: (_role: string, _opts: unknown) => buttonLocator,
     waitForTimeout: async (): Promise<void> => {},
-    keyboard: { press: async (key: string): Promise<void> => { calls.push(`press:${key}`); } },
+    keyboard: {
+      press: async (key: string): Promise<void> => { calls.push(`press:${key}`); },
+      type: async (text: string): Promise<void> => { calls.push(`type:${text}`); },
+    },
   };
   page.mainFrame = () => page;
   page.frames = () => [page];
@@ -62,6 +67,14 @@ test("sendMeetChat uses an already-open composer without clicking the button", a
   const { page, calls } = fakePage({ openInitially: true });
   await sendMeetChat(page, "hi");
   assert.deepEqual(calls, ["fill:hi", "press:Enter"]);
+});
+
+test("sendMeetChat falls back to click+type when fill() is unsupported", async () => {
+  // Meet's Google Chat composer is a div[role=textbox] with no contenteditable,
+  // which Playwright's fill() refuses — so we click and type instead.
+  const { page, calls } = fakePage({ openInitially: true, fillThrows: true });
+  await sendMeetChat(page, "hello");
+  assert.deepEqual(calls, ["click:input", "type:hello", "press:Enter"]);
 });
 
 test("sendMeetChat rejects a message over Meet's own limit", async () => {

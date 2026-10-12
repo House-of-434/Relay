@@ -125,7 +125,15 @@ export async function sendMeetChat(
     await logChatSurface(page, log);
     throw new Error("Meet chat input is not available");
   }
-  await input.fill(text, { timeout: timeoutMs });
+  try {
+    // Preferred when the composer is a real input/textarea/contenteditable.
+    await input.fill(text, { timeout: timeoutMs });
+  } catch {
+    // Meet's Google Chat composer is a div[role=textbox] with NO contenteditable
+    // attribute, which fill() refuses. Focus it and type keystrokes instead.
+    await input.click({ timeout: timeoutMs });
+    await page.keyboard.type(text);
+  }
   await page.waitForTimeout(500);
   await page.keyboard.press("Enter");
 }
