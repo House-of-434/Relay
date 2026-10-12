@@ -27,8 +27,6 @@ export interface CatalogProfile {
   skillAuthoring: boolean;
   /** Opt-in computer sharing (server features.sharedComputers). */
   sharedComputers: boolean;
-  /** A voice is actually configured for this bot (tts voiceReady). */
-  voiceNotes: boolean;
   /** The server is a Cloud home (server/cloud-home.ts): no "this computer"
    * of the person's and no Local VM to offer. */
   cloudHome: boolean;
@@ -46,7 +44,6 @@ export function catalogProfileFromEnv(env: NodeJS.ProcessEnv): CatalogProfile {
     ownThreadCreation: env.RELAY_OWN_THREAD_CREATION === "1",
     skillAuthoring: env.RELAY_SKILL_AUTHORING_ENABLED === "1",
     sharedComputers: env.RELAY_SHARED_COMPUTERS_ENABLED === "1",
-    voiceNotes: env.RELAY_VOICE_NOTES === "1",
     cloudHome: env.RELAY_CLOUD_HOME === "1",
     botId: env.RELAY_BOT_ID ?? "",
   };
@@ -402,14 +399,13 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "post_to_room",
     description:
-      "Put one message into a shared room you belong to, for example when the user asks you to tell the team something. Get group_id from list_rooms. This posts and returns: no room member's turn starts, nobody replies, and nothing comes back except confirmation — so never use it to ask a question or hand out work (use ask_bot or delegate_bot for those). Post once, say it in full, and tell the user what you posted. Set attach_voice_note true to attach this turn's voice note. If a post is refused, do not retry it: say what you wanted to post in your reply instead.",
+      "Put one message into a shared room you belong to, for example when the user asks you to tell the team something. Get group_id from list_rooms. This posts and returns: no room member's turn starts, nobody replies, and nothing comes back except confirmation — so never use it to ask a question or hand out work (use ask_bot or delegate_bot for those). Post once, say it in full, and tell the user what you posted. If a post is refused, do not retry it: say what you wanted to post in your reply instead.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         group_id: { type: "string", description: "The room's id, copied exactly from list_rooms." },
         message: { type: "string", description: "The complete message to post, written for the room to read as it stands." },
-        attach_voice_note: { type: "boolean", description: "True to attach this turn's send_voice_note recording; the message is its caption. Call send_voice_note first." },
       },
       required: ["group_id", "message"],
     },
@@ -546,24 +542,6 @@ const toolDefinitions = (externalRuntime: boolean) => [
         },
       },
       required: ["credential_id"],
-    },
-  },
-  {
-    name: "send_voice_note",
-    description:
-      "Send the user a voice note: a short spoken message synthesized with your configured voice, stored as audio, and attached to your reply when the turn ends. Write the note as speakable words, exactly as it should be said — no lists, links or markdown meant for screens. The same text becomes the note's visible caption and transcript, so the person can read or listen. Use it for warmth, tone or emphasis a written line cannot carry; use ordinary text otherwise.",
-    inputSchema: {
-      type: "object",
-      additionalProperties: false,
-      properties: {
-        text: {
-          type: "string",
-          minLength: 1,
-          maxLength: 1000,
-          description: "The note verbatim: short, speakable text, at most 1000 characters.",
-        },
-      },
-      required: ["text"],
     },
   },
   {
@@ -722,7 +700,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "propose_profile",
     description:
-      "Submit user-requested changes to your own name, title, description, standing instructions (SOUL.md), working folder (cwd), or your alert and voice toggles (notifications, speakReplies). Keep SOUL.md short — who you are and the rules you never break; put step-by-step procedure into a skill instead. A Chief of Staff may pass for_bot_id (from list_bots) for a requested change to another bot in its section." + PROPOSAL_OUTCOME,
+      "Submit user-requested changes to your own name, title, description, standing instructions (SOUL.md), working folder (cwd), or your alert toggle (notifications). Keep SOUL.md short — who you are and the rules you never break; put step-by-step procedure into a skill instead. A Chief of Staff may pass for_bot_id (from list_bots) for a requested change to another bot in its section." + PROPOSAL_OUTCOME,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -739,10 +717,6 @@ const toolDefinitions = (externalRuntime: boolean) => [
         notifications: {
           type: "boolean",
           description: "Completion and attention notifications for this bot on the host and paired clients.",
-        },
-        speakReplies: {
-          type: "boolean",
-          description: "Speak this bot's replies aloud as they settle, without being asked.",
         },
         reason: { type: "string", minLength: 1, maxLength: 500, description: "One sentence the user will see explaining why." },
         for_bot_id: {
@@ -887,10 +861,6 @@ const SKILL_TOOL_NAMES = new Set(["skills_list", "skill_manage"]);
 // so they must not be advertised at all: a model that sees a tool it cannot
 // use spends turns discovering that.
 export const SHARED_COMPUTER_TOOL_NAMES = new Set(["list_shared_computers", "shared_computer"]);
-// Same capability rule: a bot with no configured voice must never be shown a
-// tool whose every call would end in a setup error. The route behind it
-// refuses regardless; this keeps the catalog honest about what can work.
-const VOICE_TOOL_NAMES = new Set(["send_voice_note"]);
 // One teamwork path in room turns; keep all unrelated integrations available.
 // Ordinary direct chats use this same bounded coordinator. Goal-owned turns
 // retain their independent loop and cannot start a second coordinator.
@@ -928,13 +898,10 @@ function catalogTools(profile: CatalogProfile) {
   const SHAREABLE_TOOLS = profile.sharedComputers
     ? AUTHORING_TOOLS
     : AUTHORING_TOOLS.filter((tool) => !SHARED_COMPUTER_TOOL_NAMES.has(tool.name));
-  const VOICE_READY_TOOLS = profile.voiceNotes
-    ? SHAREABLE_TOOLS
-    : SHAREABLE_TOOLS.filter((tool) => !VOICE_TOOL_NAMES.has(tool.name));
   return profile.externalRuntime
     ? BOT_SCOPED_TOOLS.filter(tool => EXTERNAL_TOOL_NAMES.has(tool.name))
     : profile.coordinating
-    ? VOICE_READY_TOOLS.filter(tool => !ROOM_REPLACED_TOOLS.has(tool.name) || (tool.name === "start_thread" && profile.ownThreadCreation))
+    ? SHAREABLE_TOOLS.filter(tool => !ROOM_REPLACED_TOOLS.has(tool.name) || (tool.name === "start_thread" && profile.ownThreadCreation))
       .map(tool => tool.name === "start_thread" ? {
         ...tool,
         description: "Open a separate job on yourself with its own history and run, without switching the person's selected conversation. Use only when the user requests independent jobs (for example one review per pull request). Give a short specific title and complete instructions; you can open at most five per turn. This is not a teammate handoff: use coordinate_bots for teammates and their automatic replies. Self-opened jobs cannot recursively open more jobs. If refused, do not retry; explain what remains.",
@@ -942,5 +909,5 @@ function catalogTools(profile: CatalogProfile) {
           bot_id: { type: "string", enum: [profile.botId], description: "Leave out, or use your own bot ID. For teammates use coordinate_bots." },
         } },
       } : tool)
-    : VOICE_READY_TOOLS.filter(tool => !ROOM_ONLY_TOOLS.has(tool.name));
+    : SHAREABLE_TOOLS.filter(tool => !ROOM_ONLY_TOOLS.has(tool.name));
 }

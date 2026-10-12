@@ -13,12 +13,6 @@ function capabilities(status: "checking" | "ready"): DesktopCapabilities {
       available: true,
       interaction: "direct",
     },
-    dictation: {
-      available: false,
-      engine: "none",
-      onDevice: false,
-      reasonCode: "unsupported-platform",
-    },
     localComputer: {
       available: status === "ready",
       support: "limited",

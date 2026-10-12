@@ -149,7 +149,7 @@ if (process.versions.electron && process.argv.includes(flag)) {
     assert.equal(await evaluate("JSON.stringify(window.ogb.organization).includes('token')"), false);
     assert.equal(await evaluate("window.ogb.organization.state().then(s => /om[dg]_/.test(JSON.stringify(s)))"), false);
     assert.equal(await evaluate("typeof window.ogb.organization.connection"), "undefined");
-    assert.equal(await evaluate("window.ogb.getCapabilities().then(value => value.dictation.available)"), process.platform === "darwin", "organisation sign-in does not turn the local renderer into a remote workspace");
+    assert.equal(await evaluate("window.ogb.getCapabilities().then(value => value.dictation?.available ?? false)"), false, "organisation sign-in does not turn the local renderer into a remote workspace");
     assert.ok(grantsApplied > 0);
     await until(() => evaluate("document.querySelector('img[alt=\"Organization logo\"]')?.naturalWidth > 0"), "organization logo decoded");
     await win.loadURL(`${url}?branding=1`);

@@ -10,8 +10,6 @@
 export const WORKSPACE_CREDENTIALS = [
   { section: "xai", field: "key", name: "xaiApiKey", env: "XAI_API_KEY" },
   { section: "box", field: "token", name: "boxToken", env: "BOX_TOKEN" },
-  { section: "tts", field: "key", name: "ttsKey", env: "RELAY_TTS_KEY" },
-  { section: "tts", field: "fishKey", name: "fishAudioKey", env: "RELAY_FISH_AUDIO_API_KEY" },
   { section: "decider", field: "key", name: "jevApiKey", env: "RELAY_JEV_API_KEY" },
   { section: "imageGen", field: "key", name: "openaiImageApiKey", env: "RELAY_OPENAI_IMAGE_KEY" },
   { section: "imageGen", field: "customApiKey", name: "customImageApiKey", env: "RELAY_CUSTOM_IMAGE_KEY" },

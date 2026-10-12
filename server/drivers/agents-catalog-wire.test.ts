@@ -55,20 +55,17 @@ function profiles(): Record<string, Profile> {
     for (const ownThread of room ? [false, true] : [false]) {
       for (const skills of [false, true]) {
         for (const shared of [false, true]) {
-          for (const voice of [false, true]) {
-            const name = [room ? "room" : "direct", ownThread && "own-thread", skills && "skills", shared && "shared", voice && "voice"]
-              .filter(Boolean).join("+");
-            all[name] = {
-              family: room ? "room" : "direct",
-              env: {
-                RELAY_ROOM_TURN: flag(room),
-                RELAY_OWN_THREAD_CREATION: flag(ownThread),
-                RELAY_SKILL_AUTHORING_ENABLED: flag(skills),
-                RELAY_SHARED_COMPUTERS_ENABLED: flag(shared),
-                RELAY_VOICE_NOTES: flag(voice),
-              },
-            };
-          }
+          const name = [room ? "room" : "direct", ownThread && "own-thread", skills && "skills", shared && "shared"]
+            .filter(Boolean).join("+");
+          all[name] = {
+            family: room ? "room" : "direct",
+            env: {
+              RELAY_ROOM_TURN: flag(room),
+              RELAY_OWN_THREAD_CREATION: flag(ownThread),
+              RELAY_SKILL_AUTHORING_ENABLED: flag(skills),
+              RELAY_SHARED_COMPUTERS_ENABLED: flag(shared),
+            },
+          };
         }
       }
     }
@@ -76,7 +73,7 @@ function profiles(): Record<string, Profile> {
   // A Cloud home is one more switch on top of any of these; its fullest
   // profiles are pinned, and differ from their family only where the test
   // below says they may.
-  for (const name of ["direct+skills+shared+voice", "room+own-thread+skills+shared+voice"]) {
+  for (const name of ["direct+skills+shared", "room+own-thread+skills+shared"]) {
     all[`${name}+cloud-home`] = { family: all[name]!.family, env: { ...all[name]!.env, RELAY_CLOUD_HOME: "1" } };
   }
   all.external = { family: "external", env: { RELAY_EXTERNAL_RUNTIME: "1" } };
@@ -89,7 +86,6 @@ function profiles(): Record<string, Profile> {
       RELAY_OWN_THREAD_CREATION: "1",
       RELAY_SKILL_AUTHORING_ENABLED: "1",
       RELAY_SHARED_COMPUTERS_ENABLED: "1",
-      RELAY_VOICE_NOTES: "1",
       RELAY_CLOUD_HOME: "1",
     },
   };
@@ -100,38 +96,26 @@ const PROFILES = profiles();
 /** The profile of each family that mounts the most: checked in whole, as
  * readable JSON. Every other profile is a by-name subset of one of these and
  * is pinned by tool names, byte count and sha256 in profiles.json. */
-const FULL = { direct: "direct+skills+shared+voice", room: "room+own-thread+skills+shared+voice", external: "external" } as const;
+const FULL = { direct: "direct+skills+shared", room: "room+own-thread+skills+shared", external: "external" } as const;
 
 /** Bytes measured when the budget was last set. A profile may not exceed this
  * by more than 2%, and may not undercut it by more than 2% either: a smaller
  * catalog is the goal, so lock the win in by lowering the number. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "direct": 50133,
-  "direct+voice": 50874,
-  "direct+shared": 51878,
-  "direct+shared+voice": 52619,
-  "direct+skills": 52059,
-  "direct+skills+voice": 52800,
-  "direct+skills+shared": 53804,
-  "direct+skills+shared+voice": 54545,
-  "room": 48139,
-  "room+voice": 48880,
-  "room+shared": 49884,
-  "room+shared+voice": 50625,
-  "room+skills": 50065,
-  "room+skills+voice": 50806,
-  "room+skills+shared": 51810,
-  "room+skills+shared+voice": 52551,
-  "room+own-thread": 49426,
-  "room+own-thread+voice": 50167,
-  "room+own-thread+shared": 51171,
-  "room+own-thread+shared+voice": 51912,
-  "room+own-thread+skills": 51352,
-  "room+own-thread+skills+voice": 52093,
-  "room+own-thread+skills+shared": 53097,
-  "room+own-thread+skills+shared+voice": 53838,
-  "direct+skills+shared+voice+cloud-home": 53619,
-  "room+own-thread+skills+shared+voice+cloud-home": 52912,
+  "direct": 49740,
+  "direct+shared": 51485,
+  "direct+skills": 51666,
+  "direct+skills+shared": 53411,
+  "room": 47746,
+  "room+shared": 49491,
+  "room+skills": 49672,
+  "room+skills+shared": 51417,
+  "room+own-thread": 49033,
+  "room+own-thread+shared": 50778,
+  "room+own-thread+skills": 50959,
+  "room+own-thread+skills+shared": 52704,
+  "direct+skills+shared+cloud-home": 52485,
+  "room+own-thread+skills+shared+cloud-home": 51778,
   "external": 3030,
   "external+everything": 3030,
 };

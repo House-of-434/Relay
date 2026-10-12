@@ -71,19 +71,6 @@ describe("configuration boundaries", () => {
       expect(() => parseConfigPatch({ context: { rebuildBytes: value } })).toThrow();
     }
   });
-  it("keeps Fish Audio and ElevenLabs voice credentials separate", () => {
-    const parsed = parseConfigPatch({
-      tts: { provider: "fish", key: "eleven-key", fishKey: "fish-key", voice: "fish-voice" },
-    });
-    expect(parsed.tts).toEqual({
-      provider: "fish",
-      key: "eleven-key",
-      fishKey: "fish-key",
-      voice: "fish-voice",
-    });
-    expect(() => parseConfigPatch({ tts: { provider: "unknown" } })).toThrow("provider");
-  });
-
   it("defaults to three parallel threads and validates a configurable maximum of ten", () => {
     expect(maxConcurrentBotThreads({})).toBe(3);
     expect(parseStoredConfig({ threads: { maxConcurrentPerBot: 10 } })).toEqual({ threads: { maxConcurrentPerBot: 10 } });
@@ -781,21 +768,17 @@ describe("credential env preference", () => {
         xai: { key: "file-xai", url: "https://api.example.test/v1" },
         box: { token: "file-box" },
         opencodeGo: { apiKey: "file-ocg" },
-        tts: { key: "file-tts", fishKey: "file-fish", voice: "narrator" },
         imageGen: { key: "file-image" },
       }),
     );
     process.env.XAI_API_KEY = "env-xai";
     process.env.BOX_TOKEN = "env-box";
     process.env.OPENCODE_API_KEY = "env-ocg";
-    process.env.RELAY_TTS_KEY = "env-tts";
-    process.env.RELAY_FISH_AUDIO_API_KEY = "env-fish";
     process.env.RELAY_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
     expect(cfg.box).toEqual({ token: "env-box" });
     expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
-    expect(cfg.tts).toEqual({ key: "env-tts", fishKey: "env-fish", voice: "narrator" });
     expect(cfg.imageGen).toEqual({ key: "env-image" });
   });
 
@@ -814,23 +797,10 @@ describe("credential env preference", () => {
     expect(loadConfig().defaultModelSelection).toEqual({ instanceId: "codex", model: "gpt-x" });
   });
 
-  it("uses a preset voice only when the person has not chosen one or another provider", () => {
-    process.env.RELAY_TTS_DEFAULT_VOICE = " preset-voice ";
-    expect(loadConfig().tts?.voice).toBe("preset-voice");
-    writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ tts: { voice: "chosen" } }));
-    expect(loadConfig().tts?.voice).toBe("chosen");
-    writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ tts: { provider: "system" } }));
-    expect(loadConfig().tts?.voice).toBeUndefined();
-    writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ tts: { provider: "elevenlabs" } }));
-    expect(loadConfig().tts?.voice).toBe("preset-voice");
-  });
-
   it("never takes Cloud Pro's included tokens for the person's own keys, in config or an engine's environment", () => {
     const included = {
       RELAY_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
       RELAY_CLOUD_BOAT_TOKEN: "box_relay_included-relay-token",
-      RELAY_CLOUD_VOICE_URL: "https://cloud.example.test/api/cloud/services/voice/v1",
-      RELAY_CLOUD_VOICE_TOKEN: "relay_voice_included-relay-token",
       RELAY_CLOUD_DECIDER_URL: "https://cloud.example.test/api/cloud/services/decider",
       RELAY_CLOUD_DECIDER_TOKEN: "relay_decide_included-relay-token",
     };
@@ -838,20 +808,18 @@ describe("credential env preference", () => {
     try {
       const cfg = loadConfig();
       expect(cfg.box?.token).toBeUndefined();
-      expect(cfg.tts?.key).toBeUndefined();
       expect(cfg.decider?.key).toBeUndefined();
       expect(instanceConfigs(cfg).computer?.environment).toEqual({});
-      saveConfig({ tts: { voice: "chosen" }, box: { token: "" }, decider: { enabled: true, jobs: { roomRouting: true } } });
+      saveConfig({ box: { token: "" }, decider: { enabled: true, jobs: { roomRouting: true } } });
       const disk = readFileSync(join(DATA_DIR, "config.json"), "utf8");
       const runtime = JSON.stringify([loadConfig(), instanceConfigs(loadConfig()), persistableInstanceConfigs(loadConfig())]);
-      for (const token of [included.RELAY_CLOUD_BOAT_TOKEN, included.RELAY_CLOUD_VOICE_TOKEN, included.RELAY_CLOUD_DECIDER_TOKEN]) {
+      for (const token of [included.RELAY_CLOUD_BOAT_TOKEN, included.RELAY_CLOUD_DECIDER_TOKEN]) {
         expect(disk).not.toContain(token);
         expect(runtime).not.toContain(token);
       }
       // The person's own keys, from the environment here, are theirs as ever.
       process.env.BOX_TOKEN = "box_own";
-      process.env.RELAY_TTS_KEY = "sk-own";
-      expect(loadConfig()).toMatchObject({ box: { token: "box_own" }, tts: { key: "sk-own" } });
+      expect(loadConfig()).toMatchObject({ box: { token: "box_own" } });
       expect(instanceConfigs(loadConfig()).computer?.environment).toEqual({ BOX_TOKEN: "box_own" });
     } finally {
       vi.unstubAllEnvs();
@@ -901,11 +869,10 @@ describe("credential env preference", () => {
   it("falls back to the config file when the env var is unset (dev mode)", () => {
     writeFileSync(
       join(DATA_DIR, "config.json"),
-      JSON.stringify({ xai: { key: "file-xai" }, tts: { key: "file-tts" }, imageGen: { key: "file-image" } }),
+      JSON.stringify({ xai: { key: "file-xai" }, imageGen: { key: "file-image" } }),
     );
     const cfg = loadConfig();
     expect(cfg.xai?.key).toBe("file-xai");
-    expect(cfg.tts?.key).toBe("file-tts");
     expect(cfg.imageGen?.key).toBe("file-image");
   });
 
@@ -1095,16 +1062,6 @@ describe("credential env preference", () => {
     expect(process.env.XAI_API_KEY).toBe("just-saved");
     expect(process.env.COMPOSIO_API_KEY).toBe("ak_just_saved");
     expect(process.env.BOX_TOKEN).toBeUndefined();
-    expect(process.env.RELAY_TTS_KEY).toBeUndefined();
-    expect(process.env.RELAY_FISH_AUDIO_API_KEY).toBeUndefined();
-  });
-
-  it("syncCredentialEnv updates Fish Audio without replacing ElevenLabs", () => {
-    process.env.RELAY_TTS_KEY = "eleven-kept";
-    process.env.RELAY_FISH_AUDIO_API_KEY = "fish-old";
-    syncCredentialEnv({ tts: { fishKey: "fish-new" } });
-    expect(process.env.RELAY_TTS_KEY).toBe("eleven-kept");
-    expect(process.env.RELAY_FISH_AUDIO_API_KEY).toBe("fish-new");
   });
 
   it("syncCredentialEnv keeps model and provider env in step with a save", () => {
@@ -1173,15 +1130,13 @@ describe("workspace credential env strip", () => {
 
   it("covers in-process secrets and private app-state paths", () => {
     // These secrets have no per-driver ACP allowlist entry anywhere — they are
-    // consumed in-process (Computer driver / voice module), never by a CLI
+    // consumed in-process (Computer driver), never by a CLI
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("BOX_TOKEN");
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_TTS_KEY");
     // Cloud Pro's included relay tokens (the server also drops them from its
     // own environment at startup; included-services.ts)
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_CLOUD_BOAT_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_CLOUD_VOICE_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_CLOUD_DECIDER_TOKEN");
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_FISH_AUDIO_API_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_OPENAI_IMAGE_KEY");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_BROWSER_CONNECTION");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_USER_DATA");
@@ -1267,7 +1222,7 @@ describe("providerReloadKeys", () => {
   it("rebuilds the fleet only for sections a driver reads", () => {
     expect(providerReloadKeys({ claude: { model: "x" }, profile: { name: "me" } })).toEqual(["claude"]);
     expect(providerReloadKeys({ onboarding: { hintsSeen: ["tour.composer"] } })).toEqual([]);
-    expect(providerReloadKeys({ profile: {}, language: "de", tts: {}, features: {} })).toEqual([]);
+    expect(providerReloadKeys({ profile: {}, language: "de", features: {} })).toEqual([]);
   });
 });
 

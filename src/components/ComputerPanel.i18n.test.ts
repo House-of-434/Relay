@@ -14,7 +14,6 @@ const capabilities: DesktopCapabilities = {
   host: { platform: "linux", label: "Ubuntu", session: "x11", packaged: true },
   windowChrome: "native",
   screenPreview: { available: true, interaction: "portal-picker" },
-  dictation: { available: false, engine: "none", onDevice: false },
   localComputer: { available: false, support: "supported", enabled: false, status: "disabled" },
 };
 

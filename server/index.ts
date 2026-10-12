@@ -65,7 +65,6 @@ import {
   IMAGE_MAX_BYTES,
   parseAudioRange,
   readAttachment,
-  saveAudio,
   saveFile,
   saveImage,
   saveImageUpload,
@@ -331,10 +330,8 @@ import {
   toWireTask,
 } from "./store.ts";
 import { inheritThreadOwner, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
-import * as tts from "./tts/index.ts";
 import { createDecider, deciderIncludedHere, deciderReady, deciderSavePatch, describeDecider } from "./decider/index.ts";
 import { decideRoomResponder, type RoomRoutingInput } from "./decider/room-routing.ts";
-import { narrateTool, toUtterances } from "./tts/speech-text.ts";
 import { buildRecoveryText, buildTurnContext, engineIsFresh, NATIVELY_REPLAYING_DRIVER_KINDS, peerMessageText } from "./turn-context.ts";
 import { Handoffs, handedStateUsable, recordHanded, renderUnseen, sessionStart, unseenMessages, withUnseenMessages, type ContextMessage } from "./delta-context.ts";
 import { extractTurnImages } from "./turn-images.ts";
@@ -676,7 +673,7 @@ if (CLOUD_HOME) {
   console.log(`cloud home ${CLOUD_HOME.machineId}: bots run on the engines the person signs in to here`);
   for (const warning of CLOUD_HOME.warnings) console.warn(`cloud home: ${warning}`);
 }
-// Cloud Pro's included Boat, voice and decision relay tokens, when the Admin
+// Cloud Pro's included Boat and decision relay tokens, when the Admin
 // set them: held in memory from here on, like the signing secret.
 holdIncludedServices();
 // Who each thread is for, when a signed-in person can be named (server-private).
@@ -2072,12 +2069,8 @@ function agentsIntegration(
       // A Cloud home offers no this computer and no Local VM (cloud-home.ts),
       // so select_computer lists neither and vm_exec is not shown.
       RELAY_CLOUD_HOME: CLOUD_HOME ? "1" : "0",
-      // Same capability rule for voice: the tool is offered only when this
-      // bot can actually speak, and the route re-checks on every call.
-      RELAY_VOICE_NOTES: (() => {
-        const speaking = botForThread(botId, threadId) ?? store.bot(botId);
-        return !RELAY_COMPUTER_DISABLED && tts.voiceReady(cfg, speaking?.voice) && speaking?.voiceNotes !== false ? "1" : "0";
-      })(),
+      // Voice notes are stripped from server core: never advertise the tool.
+      RELAY_VOICE_NOTES: "0",
     },
   };
 }
@@ -3205,7 +3198,7 @@ const wireBot = (bot: BotRecord): WireBot => {
     ? { ...rest, approvalMode: "ask" as const, autoApprove: false }
     : rest;
   const relayVisible = RELAY_COMPUTER_DISABLED
-    ? { ...visible, computer: "off" as const, autoStartVps: false, voiceNotes: false, voice: undefined }
+    ? { ...visible, computer: "off" as const, autoStartVps: false }
     : visible;
   if (RELAY_SHARED_WORKSPACE) Object.assign(relayVisible, { composio: false, connectorTools: undefined });
   return { ...relayVisible, waitingForTeammates: activeCoordinationForThread(bot.threadId) && !threadBusy(bot.id, bot.threadId),
@@ -3217,7 +3210,7 @@ const wireBot = (bot: BotRecord): WireBot => {
 const wireTrustedApprovalBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
   const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ...rest } = bot;
   const relayVisible = RELAY_COMPUTER_DISABLED
-    ? { ...rest, computer: "off" as const, autoStartVps: false, voiceNotes: false, voice: undefined }
+    ? { ...rest, computer: "off" as const, autoStartVps: false }
     : rest;
   if (RELAY_SHARED_WORKSPACE) Object.assign(relayVisible, { composio: false, connectorTools: undefined });
   return { ...relayVisible, approvalMode: approvalModeFor(rest), avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
@@ -6670,7 +6663,7 @@ bus.subscribe((event: RuntimeEvent) => {
         const message = pushMessage({
           role: "bot",
           kind: "activity",
-          tool: { name, spoken: narrateTool(name) ?? undefined, summary: event.summary, input: event.input, itemId: event.itemId ?? event.eventId },
+          tool: { name, summary: event.summary, input: event.input, itemId: event.itemId ?? event.eventId },
           // attributed to its turn so the digest can count it
           turnId: liveTurnId,
         });
@@ -13276,11 +13269,6 @@ function configStatus() {
     box: boat.describeBoatAccount(cfg),
     vps: { configured: Boolean(vpsSshAlias(cfg)), sshAlias: vpsSshAlias(cfg) ?? "" },
     opencodeGo: { configured: Boolean(cfg.opencodeGo?.apiKey) },
-    // the chosen voice is a setting, not a secret; the key is reported the
-    // same configured-or-not way as every other credential
-    tts: RELAY_COMPUTER_DISABLED
-      ? { ...tts.describeVoice(cfg), configured: false, ready: false }
-      : tts.describeVoice(cfg),
     // the decision model: switches and configured-or-not, never the key
     decider: describeDecider(cfg),
     imageGen: avatarImageStatus(cfg),
@@ -15975,7 +15963,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const parked = turnAttachmentsByTurn.get(parkedKey) ?? [];
           const audio = parked.filter((attachment) => attachment.kind === "audio");
           if (!audio.length) {
-            return json(res, 400, { error: "no voice note to attach — call send_voice_note in this turn first" });
+            return json(res, 400, { error: "no audio to attach — attach an audio file in this turn first" });
           }
           stagedAttachments = audio.map((attachment) => ({
             kind: "audio" as const,
@@ -16376,46 +16364,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           store.patchMessage(fromThreadId, prior.id, { secret: { ...prior.secret, superseded: true } });
         }
         return json(res, 201, { messageId: message.id, label: target.label });
-      }
-      if (method === "POST" && path === "/api/internal/voice-note") {
-        const body = await readInternalBody();
-        const text = typeof body.text === "string" ? body.text.trim() : "";
-        if (!text) return json(res, 400, { error: "text required" });
-        if (text.length > 1000) return json(res, 413, { error: "voice notes are limited to 1000 characters" });
-        // Advertisement is presentation only; the capability is re-checked
-        // here so a call that reaches an unconfigured workspace answers with
-        // the setup guidance instead of a provider failure.
-        const voiceBot = botForThread(internalSender.id, internalCapability.threadId) ?? internalSender;
-        if (voiceBot.voiceNotes === false) {
-          return json(res, 403, { error: "voice notes are turned off for this bot" });
-        }
-        try {
-          const audio = await tts.speak(cfg, text, voiceBot.voice);
-          // Synthesis can outlive its turn: a stop or settle during the await
-          // revokes the capability and clears the live turn. Re-check both
-          // before saving so the clip cannot park under the :active fallback
-          // or onto a later turn's key (#1742).
-          requireActiveInternalCapability();
-          const turnId = liveTurnByThread.get(internalCapability.threadId);
-          if (!turnId) {
-            return json(res, 409, { error: "this turn has not started yet or already ended" });
-          }
-          const saved = saveAudio(Buffer.from(audio.bytes), audio.mime);
-          const key = turnAttachmentKey(internalCapability.threadId, turnId);
-          const current = turnAttachmentsByTurn.get(key) ?? [];
-          current.push({ kind: "audio", path: saved.path, mime: saved.mime, text });
-          turnAttachmentsByTurn.set(key, current);
-          return json(res, 201, { attached: true });
-        } catch (error) {
-          // "no voice configured" is a setup state, not a provider failure —
-          // 409 with the hint, exactly like /api/tts/speak.
-          if (error instanceof tts.NoVoiceConfigured) return json(res, 409, { error: error.message });
-          const status = (error as { status?: number }).status;
-          if (typeof status === "number" && status >= 400 && status < 500) {
-            return json(res, status, { error: error instanceof Error ? error.message : "voice note failed" });
-          }
-          throw error;
-        }
       }
       if (method === "POST" && path === "/api/internal/connectors/mcp") {
         const body = await readInternalBody();
@@ -18396,11 +18344,17 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (refusal) return json(res, 403, { error: refusal, code: "relay_disabled" });
       }
       const template = resolveBotCreationDefaults(cfg.newBotDefaults, body);
+      // Voice is stripped from server core: ignore voice-only creation fields.
+      if (template.profile) {
+        delete (template.profile as Record<string, unknown>).voice;
+        delete (template.profile as Record<string, unknown>).speakReplies;
+        delete (template.profile as Record<string, unknown>).voiceNotes;
+      }
       const settings = {
         ...template.profile,
         ...(RELAY_COMPUTER_DISABLED ? {
           computer: "off" as const,
-          autoStartVps: false, voiceNotes: false, voice: undefined,
+          autoStartVps: false,
         } : {}),
       ...(RELAY_SHARED_WORKSPACE ? { composio: false, connectorTools: undefined } : {}),
       };
@@ -18593,6 +18547,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (m && method === "PATCH") {
       const parsed = parseBotProfilePatch(await readBody(req), true);
       if (!parsed.ok) return json(res, 400, { error: parsed.error });
+      // Voice is stripped from server core: ignore voice-only profile fields.
+      delete (parsed.patch as Record<string, unknown>).voice;
+      delete (parsed.patch as Record<string, unknown>).speakReplies;
+      delete (parsed.patch as Record<string, unknown>).voiceNotes;
       if (parsed.patch.avatarUrl && !storedAvatarExists(parsed.patch.avatarUrl)) {
         return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
       }
@@ -18788,6 +18746,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       const patch: Record<string, unknown> = {};
       Object.assign(patch, profile.patch);
+      // Voice is stripped from server core: ignore voice-only fields.
+      delete patch.voice;
+      delete patch.speakReplies;
+      delete patch.voiceNotes;
       let section: string | undefined | null;
       if (body.section !== undefined) {
         if (body.section === null) section = null;
@@ -18837,13 +18799,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (typeof body.composio !== "boolean") return json(res, 400, { error: "composio must be true or false" });
         if (RELAY_SHARED_WORKSPACE && body.composio) return json(res, 403, { error: "Composio apps are not available in the Relay shared workspace." });
         patch.composio = body.composio;
-      }
-      // per-bot gate on sending voice notes: the toggle is about what this
-      // bot may do (an admin decision), not how it looks, so it lives here
-      // rather than the client-writable profile surface.
-      if (body.voiceNotes !== undefined) {
-        if (typeof body.voiceNotes !== "boolean") return json(res, 400, { error: "voiceNotes must be true or false" });
-        patch.voiceNotes = body.voiceNotes;
       }
       // which of those apps' tools this bot may call (connector grants 1/5:
       // data model only — enforcement lands with slice 2). null returns the
@@ -21617,14 +21572,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!planned.ok) return json(res, 400, { error: planned.error });
         patch.decider = planned.patch;
       }
-      const changingVoiceProvider = patch.tts?.provider !== undefined
-        && patch.tts.provider !== tts.voiceProvider(cfg);
-      if (changingVoiceProvider && patch.tts?.voice === undefined) {
-        // Voice ids are provider-owned opaque values. Never carry a default
-        // from one catalog into another. A caller may explicitly supply a
-        // voice for the newly selected provider in this same atomic patch.
-        patch.tts = { ...patch.tts, voice: "" };
-      }
       if (providerConfigBusy) return json(res, 409, { error: "provider settings are already being updated" });
       if (patch.box?.token !== undefined) patch.box.token = patch.box.token.trim();
       const currentBoatToken = cfg.box?.token?.trim() ?? "";
@@ -21855,18 +21802,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         );
         if (resourceError) return json(res, 409, { error: resourceError });
       }
-      // Each cloud voice provider owns its own credential. Validate the field
-      // against that provider rather than whichever provider happens to be
-      // selected, so switching engines never sends one service another's key.
-      const newTts = patch.tts;
-      if (newTts?.key?.trim()) {
-        const check = await tts.verifyKey("elevenlabs", newTts.key.trim());
-        if (!check.ok) return json(res, 400, { error: check.message });
-      }
-      if (newTts?.fishKey?.trim()) {
-        const check = await tts.verifyKey("fish", newTts.fishKey.trim());
-        if (!check.ok) return json(res, 400, { error: check.message });
-      }
       // A pasted decision-model key is tried once (one tiny yes/no call).
       // Only a refusal blocks the save: an offline or overloaded service must
       // not stop a person saving a key that may well be fine.
@@ -21884,12 +21819,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (conflict) return json(res, 409, { error: conflict });
       }
       const externalSecretStorage = url.searchParams.get("secretStorage") === "external";
-      // Provider-owned voice ids must be invalidated before the provider
-      // commit. If bots.json cannot be written, leave the old provider in
-      // place rather than committing a new provider with stale bot voices.
-      // A later config-write failure may leave voices cleared, which is the
-      // safe side of this cross-file mutation: no foreign id can be spoken.
-      if (changingVoiceProvider) store.clearVoiceSelections();
       if (externalSecretStorage) {
         // The packaged Electron caller commits supplied credentials to the
         // OS-encrypted store before entering this route. Persist every
@@ -21901,8 +21830,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (persisted.composio?.apiKey !== undefined) persisted.composio.apiKey = "";
         if (persisted.box?.token !== undefined) persisted.box.token = "";
         if (persisted.opencodeGo?.apiKey !== undefined) persisted.opencodeGo.apiKey = "";
-        if (persisted.tts?.key !== undefined) persisted.tts.key = "";
-        if (persisted.tts?.fishKey !== undefined) persisted.tts.fishKey = "";
         if (persisted.decider?.key !== undefined) persisted.decider.key = "";
         if (persisted.imageGen?.key !== undefined) persisted.imageGen.key = "";
         if (persisted.imageGen?.customApiKey !== undefined) persisted.imageGen.customApiKey = "";
@@ -21922,7 +21849,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         sharedComputers.close();
         sharedComputerControl.close();
       }
-      // Provider keys change the fleet. Profile, language, voice, VPS, room
+      // Provider keys change the fleet. Profile, language, VPS, room
       // timeout, and onboarding progress changes do not rebuild it: no driver
       // reads them, and they should not interrupt in-flight turns.
       const reloadKeys = providerReloadKeys(patch);
@@ -21952,49 +21879,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         for (const provider of transitioningProviders) computerProviderConfigTransitions.delete(provider);
         if (changingLocalVmMode) localVmModeChangeBusy = false;
         providerConfigBusy = false;
-      }
-    }
-
-    // ── voice ─────────────────────────────────────────────────────────
-    // Splitting text into utterances lives HERE, not in the renderer, for
-    // the same reason approvalKey does — it is the piece most likely to be
-    // tuned against real transcripts, and it belongs next to the transform
-    // that produced it.
-    if (method === "POST" && path === "/api/tts/prepare") {
-      const body = await readBody(req);
-      return json(res, 200, {
-        ready: tts.voiceReady(cfg, typeof body.voiceId === "string" ? body.voiceId : undefined),
-        utterances: toUtterances(String(body.text ?? "")),
-      });
-    }
-    if (method === "GET" && path === "/api/tts/voices") {
-      try {
-        return json(res, 200, { voices: await tts.listVoices(cfg) });
-      } catch (e) {
-        return json(res, 200, { voices: [], error: e instanceof Error ? e.message : String(e) });
-      }
-    }
-    if (method === "POST" && path === "/api/tts/speak") {
-      const body = await readBody(req);
-      const text = String(body.text ?? "").trim();
-      if (!text) return json(res, 400, { error: "text required" });
-      // The normal client sends <=320-character utterances. A hard ceiling
-      // prevents an arbitrary local request from turning the user's hosted
-      // voice account into an unbounded, billable synthesis job.
-      if (text.length > 500) return json(res, 413, { error: "voice utterances are limited to 500 characters" });
-      try {
-        const audio = await tts.speak(cfg, text, typeof body.voiceId === "string" ? body.voiceId : undefined);
-        res.writeHead(200, {
-          "content-type": audio.mime,
-          "content-length": String(audio.bytes.byteLength),
-          "cache-control": "no-store",
-        });
-        return res.end(Buffer.from(audio.bytes));
-      } catch (e) {
-        // "you haven't set this up yet" is not a provider failure — 409 so
-        // the client can point at App Settings instead of showing a 502
-        if (e instanceof tts.NoVoiceConfigured) return json(res, 409, { error: e.message });
-        return json(res, 502, { error: e instanceof Error ? e.message : String(e) });
       }
     }
 

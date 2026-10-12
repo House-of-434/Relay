@@ -32,8 +32,6 @@ export type BotPatch = Partial<
     | "alwaysAllow"
     | "autoApprove"
     | "approvalMode"
-    | "speakReplies"
-    | "voice"
     | "chiefOfStaff"
     | "managedSections"
     | "approvePeerComms"

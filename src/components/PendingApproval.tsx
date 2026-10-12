@@ -13,7 +13,6 @@ import { cn } from "@/lib/cn";
 import { t, tFromServer } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 import { SkillRequestPreview } from "@/components/SkillRequestPreview";
-import { toolLabel } from "./ApprovalCard";
 import { reviewedSkillSha256 } from "../../shared/skill-request";
 import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 
@@ -65,45 +64,6 @@ export function pendingApprovals(messages: Message[]): Pending[] {
       held: m.card!.held,
       heldCode: m.card!.heldCode,
     }));
-}
-
-/** Routine cards can carry every instruction the user asked for (up to
- * 20,000 characters). Calls should announce the concise, visible title and
- * let the user review those details on screen instead of reading them all. */
-export function spokenApprovalPrompt(pending: Pending, requester: string): string {
-  if (pending.message.card?.teamSetupRequest) return `${requester}: ${pending.message.card.title} Review the details and choose ${pending.message.card.options[0]} or Cancel.`;
-  const isRoutineRequest = isRoutineApproval(pending);
-  const isSkillRequest = isSkillApproval(pending);
-  const isProfileRequest = isProfileApproval(pending);
-  if (isSkillRequest) {
-    const updating = pending.message.card?.skillRequest?.action === "update";
-    const title = pending.message.card?.title.trim() || t(
-      updating ? "approval.voice.defaultUpdateSkill" : "approval.voice.defaultEnableSkill",
-    );
-    return t("approval.voice.skill", {
-      requester,
-      title: `${title}${/[.!?]$/.test(title) ? "" : "."}`,
-      action: t(updating ? "approval.voice.actionUpdate" : "approval.voice.actionEnable"),
-    });
-  }
-  if (isProfileRequest) {
-    // pending.detail is the full subtitle — the whole diff for a soul
-    // change. Speak the card's concise title instead, the same way the
-    // routine/skill branches do, and let the user read the diff on screen.
-    const title = pending.message.card?.title.trim() || t("approval.voice.defaultUpdateProfile");
-    return t("approval.voice.profile", { requester, title });
-  }
-  if (!isRoutineRequest) {
-    // pending.tool can be an ACP toolCall kind rather than a tool name —
-    // speak the same verb phrase the card header shows, so voice never
-    // reads "wants to other".
-    return t("approval.voice.command", { requester, tool: toolLabel(pending.tool), detail: pending.detail });
-  }
-  const title = pending.message.card?.title.trim() || t("approval.voice.defaultConfirmRoutine");
-  return t("approval.voice.routine", {
-    requester,
-    title: `${title}${/[.!?]$/.test(title) ? "" : "."}`,
-  });
 }
 
 function label(pending: Pending): string {

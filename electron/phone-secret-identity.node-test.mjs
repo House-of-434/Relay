@@ -124,7 +124,7 @@ test("rejects reuse of a completed operation id for another credential target", 
   const save = createPhoneSecretSaveCoordinator(async () => { calls += 1; });
   const first = { requestId: "operation_1", target: "xaiApiKey", value: "secret" };
   assert.equal((await save(first)).ok, true);
-  const mismatch = await save({ ...first, target: "ttsKey", value: "different" });
+  const mismatch = await save({ ...first, target: "boxToken", value: "different" });
   assert.equal(mismatch.ok, false);
   assert.match(mismatch.error, /did not match/i);
   assert.equal(calls, 1);

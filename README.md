@@ -42,7 +42,7 @@ Agents reach the database only through the Tool Layer's `relay_read` and
 (`/mcp/scout`, `/mcp/mercury`, or `/mcp/curator`), never from tool arguments.
 
 Set `RELAY_DISABLE_COMPUTER=1` in the server environment to disable computer,
-browser, phone-tool, scheduled-call, and voice features at runtime.
+browser, phone-tool, and scheduled-call features at runtime.
 
 ## Agents
 

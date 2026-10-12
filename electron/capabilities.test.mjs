@@ -14,17 +14,15 @@ const readyConnection = (mode = "embedded") => ({
 });
 
 describe("desktop capabilities", () => {
-  it("keeps Apple permissions, Settings, and speech actions unreachable on Linux", () => {
+  it("keeps Apple permissions and Settings actions unreachable on Linux", () => {
     expect(nativeDesktopActions("linux")).toEqual({
       appleMediaPermissions: false,
       applePrivacySettings: false,
-      appleSpeech: false,
     });
     expect(nativeDesktopActions("win32")).toEqual(nativeDesktopActions("linux"));
     expect(nativeDesktopActions("darwin")).toEqual({
       appleMediaPermissions: true,
       applePrivacySettings: true,
-      appleSpeech: true,
     });
   });
 
@@ -39,7 +37,6 @@ describe("desktop capabilities", () => {
       host: { platform: "darwin", label: "macOS", session: "unknown", packaged: true },
       windowChrome: "mac-inset",
       screenPreview: { available: true, interaction: "direct" },
-      dictation: { available: true, engine: "apple-speech", onDevice: true },
       localComputer: { available: true, support: "supported", enabled: true, status: "ready" },
     });
   });
@@ -119,7 +116,6 @@ describe("desktop capabilities", () => {
 
     expect(capabilities.windowChrome).toBe("native");
     expect(capabilities.screenPreview.available).toBe(false);
-    expect(capabilities.dictation.available).toBe(false);
     expect(capabilities.localComputer).toMatchObject({
       available: false,
       support: "unsupported",

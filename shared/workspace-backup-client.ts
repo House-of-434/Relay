@@ -11,7 +11,6 @@ export const WORKSPACE_BACKUP_CLIENT_KEYS = [
   "relay.sidebarCollapsedSections.v1",
   "relay.sidebarSectionOrder.v1",
   "relay-analytics-opt-out",
-  "relay.remote-voice.v1",
 ] as const;
 
 export type WorkspaceBackupClientState = Partial<Record<(typeof WORKSPACE_BACKUP_CLIENT_KEYS)[number], string>>;

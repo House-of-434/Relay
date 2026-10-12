@@ -7,7 +7,6 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { startCua, stopCua, registerCuaIpc, setCuaStateListener } from "./cua.mjs";
 import { createAndroidDeviceController } from "./android-device.mjs";
-import { finishSpeech, startSpeech, stopSpeech } from "./speech.mjs";
 import { openBlankTerminal } from "./terminal-launch.mjs";
 import { pasteMenuItem } from "./paste-menu-item.mjs";
 import { attachUpdaterWindow, startUpdater, registerUpdaterIpc } from "./updater.mjs";
@@ -464,7 +463,7 @@ async function secureComposioConfig() {
   }
 }
 
-// The remaining workspace credentials (xai/box/voice/OpenCode keys) get
+// The remaining workspace credentials (xai/box/OpenCode keys) get
 // the same at-rest treatment as the Composio key above. New packaged-app
 // saves go straight through credential:set below; this boot-time sweep also
 // migrates plaintext left by older versions or direct development clients.
@@ -1304,7 +1303,7 @@ async function startServerOn(port) {
       : {}),
     // "we could not read your keys" must not reach the UI as "you have none"
     RELAY_CREDENTIAL_STORE: credentialStoreUnavailable ? "unavailable" : "ok",
-    // one env var per stored workspace secret (xai/box/voice/OpenCode Go);
+    // one env var per stored workspace secret (xai/box/OpenCode Go);
     // the server prefers these over config.json, whose plaintext fields
     // the boot migration has deleted
     ...workspaceCredentialEnv(secureCredentials),
@@ -2588,7 +2587,6 @@ ipcMain.handle("perm:open-settings", localOnly("perm:open-settings", (_event, pa
   const panes = {
     mic: "Privacy_Microphone",
     screen: "Privacy_ScreenCapture",
-    speech: "Privacy_SpeechRecognition",
     accessibility: "Privacy_Accessibility",
   };
   // own-property lookup only — a renderer-supplied "__proto__"/"constructor"
@@ -2602,22 +2600,6 @@ ipcMain.handle("desktop:relaunch", localOnly("desktop:relaunch", (event) => {
   requireMainWindowSender(event);
   relaunchAfterDesktopRemoteChange();
   return true;
-}));
-
-ipcMain.handle("speech:start", localOnly("speech:start", (event, options) => {
-  const win = BrowserWindow.fromWebContents(event.sender);
-  if (!win) return;
-  if (!nativeActions.appleSpeech) {
-    win.webContents.send("speech:end", { code: 2, reason: "unsupported-platform" });
-    return;
-  }
-  startSpeech(win, options);
-}));
-ipcMain.handle("speech:stop", localOnly("speech:stop", () => {
-  if (nativeActions.appleSpeech) stopSpeech();
-}));
-ipcMain.handle("speech:finish", localOnly("speech:finish", () => {
-  if (nativeActions.appleSpeech) finishSpeech();
 }));
 
 // ── companion sidecar ──────────────────────────────────────────────────
@@ -3020,8 +3002,6 @@ const CREDENTIAL_PATCH = {
   xaiApiKey: (value) => ({ xai: { key: value } }),
   boxToken: (value) => ({ box: { token: value } }),
   opencodeGoApiKey: (value) => ({ opencodeGo: { apiKey: value } }),
-  ttsKey: (value) => ({ tts: { key: value } }),
-  fishAudioKey: (value) => ({ tts: { fishKey: value } }),
   jevApiKey: (value) => ({ decider: { key: value } }),
   openaiImageApiKey: (value) => ({ imageGen: { key: value } }),
   customImageApiKey: (value) => ({ imageGen: { customApiKey: value } }),
@@ -3405,9 +3385,6 @@ app.on("before-quit", (e) => {
   try {
     desktopCompanionRelay?.close?.();
   } catch {}
-  // a live dictation session runs its own helper child that holds the mic —
-  // stop it here so quitting never orphans a recording process
-  if (nativeActions.appleSpeech) stopSpeech();
   const ownedHelperCleanup = Promise.race([
     Promise.all([
       stopCua().catch(() => {}),

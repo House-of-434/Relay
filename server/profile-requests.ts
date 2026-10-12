@@ -1,5 +1,5 @@
 // propose_profile: a bot proposes changes to its own name, title, description,
-// SOUL.md, working folder, or alert/voice toggles; confirmed cards and Full Access submissions share
+// SOUL.md, working folder, or alert toggle; confirmed cards and Full Access submissions share
 // the same validated commit path. Same
 // shape as routine-requests.ts, much smaller: the profile commits in one
 // store call, and staleness is a hash of the five fields instead of a
@@ -25,13 +25,12 @@ const LABELS: Record<Exclude<(typeof PROFILE_REQUEST_FIELDS)[number], "soul" | "
   title: "Title",
   description: "Description",
   notifications: "Notifications",
-  speakReplies: "Speak replies",
 };
 const PRIVATE_WORKSPACE = "its private workspace";
-const CHOOSE_ONE = "Choose at least one of name, title, description, soul, cwd, notifications, speakReplies";
+const CHOOSE_ONE = "Choose at least one of name, title, description, soul, cwd, notifications";
 const toggleText = (value: boolean | undefined): string => (value ? "on" : "off");
 /** The fields that change what a bot is told: every card field except the
- * working folder and the two toggles. */
+ * working folder and the toggle. */
 const TEXT_FIELDS = ["name", "title", "description", "soul"] as const;
 
 export interface OptionCardLike {
@@ -62,7 +61,7 @@ export interface ProfileRequestStore {
     },
   ): { id: string };
   patchMessage(threadId: string, messageId: string, patch: { card: OptionCardLike }): { id: string } | null;
-  patchBotProfile(id: string, patch: Partial<Pick<BotRecord, "name" | "title" | "description" | "cwd" | "soul" | "notifications" | "speakReplies" | "lastProfileRequestId">>): BotRecord | null;
+  patchBotProfile(id: string, patch: Partial<Pick<BotRecord, "name" | "title" | "description" | "cwd" | "soul" | "notifications" | "lastProfileRequestId">>): BotRecord | null;
 }
 
 export interface ProfileRequestServiceOptions {
@@ -113,9 +112,8 @@ function reasonText(value: unknown): string {
   return redactSecretsInText(trimmed);
 }
 
-/** `parseBotProfilePatch` would silently accept a key like `voice` —
- * valid for the broader bot patch, not for a profile request (a voice pick
- * needs the harness catalog rendered on the card). Reject keys
+/** `parseBotProfilePatch` accepts a broader set of bot fields than a bot may
+ * propose for itself (extra keys need their own card surface). Reject keys
  * outside the proposable fields ourselves first, for exact copy. */
 function parseChanges(input: unknown): ProfileRequestChanges {
   if (typeof input !== "object" || input === null || Array.isArray(input)) {
@@ -150,7 +148,7 @@ function parseChanges(input: unknown): ProfileRequestChanges {
   for (const field of PROFILE_REQUEST_FIELDS) {
     if (field === "cwd") continue;
     const value = parsed.patch[field];
-    if (field === "notifications" || field === "speakReplies") {
+    if (field === "notifications") {
       if (value !== undefined) changes[field] = value as boolean;
       continue;
     }
@@ -199,7 +197,7 @@ export function profileCardCopy(
   for (const field of PROFILE_REQUEST_FIELDS) {
     if (field === "soul" || field === "cwd") continue;
     if (changes[field] === undefined) continue;
-    if (field === "notifications" || field === "speakReplies") {
+    if (field === "notifications") {
       lines.push(`${LABELS[field]}: ${toggleText(before[field] as boolean | undefined)} → ${toggleText(changes[field] as boolean | undefined)}`);
       continue;
     }
@@ -279,7 +277,7 @@ export class ProfileRequestService {
     const before: ProfileRequestChanges = {};
     const finalChanges: ProfileRequestChanges = {};
     for (const field of PROFILE_REQUEST_FIELDS) {
-      if (field === "notifications" || field === "speakReplies") {
+      if (field === "notifications") {
         const value = changes[field];
         if (value === undefined || value === snapshot[field]) continue;
         before[field] = snapshot[field];

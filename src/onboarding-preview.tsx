@@ -24,7 +24,7 @@ const PREVIEW_BOT = {
   soul: "",
 } as unknown as Bot;
 
-const BEATS = beatsFor({ dictation: true, reel: true });
+const BEATS = beatsFor({ reel: true });
 
 /** ?beat=engines&skin=linen&reduced=1&all=1 — so a screenshot script can
  * open any state directly. Unknown values fall back to the defaults. */
@@ -55,7 +55,6 @@ function Stage({ skin, beat, run, scale = 1, entrance }: { skin: SkinId; beat: B
         <WelcomeFlow
           key={`${skin}-${beat}-${run}`}
           embedded
-          dictation
           entrance={entrance}
           initialBeat={beat}
           bot={PREVIEW_BOT}

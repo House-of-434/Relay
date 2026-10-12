@@ -14,7 +14,6 @@ function nativeDesktopActions(platform) {
   return Object.freeze({
     appleMediaPermissions: appleNative,
     applePrivacySettings: appleNative,
-    appleSpeech: appleNative,
   });
 }
 
@@ -94,7 +93,7 @@ function desktopCapabilities({
   packaged = false,
   localConnection = null,
   homeDir = require("node:os").homedir(),
-  // The page asking is a remote server's UI: this computer's screen, voice
+  // The page asking is a remote server's UI: this computer's screen
   // and local control are not on offer, whatever the host could do.
   remote = false,
 } = {}) {
@@ -118,12 +117,6 @@ function desktopCapabilities({
     screenPreview.reasonCode =
       hostPlatform === "linux" ? "headless-session" : "unsupported-platform";
   }
-  const dictation = {
-    available: isMac,
-    engine: isMac ? "apple-speech" : "none",
-    onDevice: isMac,
-  };
-  if (!isMac) dictation.reasonCode = "unsupported-platform";
   const localComputer = {
     available: localAvailable,
     support:
@@ -171,7 +164,6 @@ function desktopCapabilities({
   if (remote) {
     const unavailable = { reasonCode: "remote-server" };
     Object.assign(screenPreview, { available: false, interaction: "none" }, unavailable);
-    Object.assign(dictation, { available: false, engine: "none", onDevice: false }, unavailable);
     Object.assign(localComputer, {
       available: false,
       support: "unsupported",
@@ -208,7 +200,6 @@ function desktopCapabilities({
     windowChrome:
       isMac ? "mac-inset" : hostPlatform === "win32" ? "win-caption" : "native",
     screenPreview,
-    dictation,
     localComputer,
   };
 }

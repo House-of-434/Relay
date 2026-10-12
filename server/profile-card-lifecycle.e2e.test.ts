@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
-it("confirms alert and voice proposals, expires stale cards, and supersedes credential requests in an isolated conversation", async () => {
+it("confirms alert proposals, expires stale cards, and supersedes credential requests in an isolated conversation", async () => {
   const gates = mkdtempSync(join(tmpdir(), "relay-profile-cards-"));
   const gate = join(gates, "finish");
   const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate });
@@ -55,7 +55,7 @@ it("confirms alert and voice proposals, expires stale cards, and supersedes cred
     await expect.poll(() => JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).pid,
       { timeout: 15_000 }).not.toBe(previousPid);
     token = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
-    const toggle = await propose({ notifications: false, speakReplies: true });
+    const toggle = await propose({ notifications: false });
     const credential = (reason: string) => api("POST", "/api/internal/request-credential", {
       fromBotId: bot.id, fromThreadId: bot.threadId, credentialId: "openaiImageApiKey", reason,
     }, 201, token);
@@ -67,7 +67,7 @@ it("confirms alert and voice proposals, expires stale cards, and supersedes cred
       { timeout: 15_000 }).toBe(false);
     await respond(toggle.requestId);
     const changed = (await api("GET", "/api/bots")).bots.find((candidate: any) => candidate.id === bot.id);
-    expect(changed).toMatchObject({ notifications: false, speakReplies: true, title: "" });
+    expect(changed).toMatchObject({ notifications: false, title: "" });
     const transcript = await api("GET", `/api/threads/${bot.threadId}/messages`);
     expect(transcript.messages.find((message: any) => message.card?.requestId === stale[0]!.requestId)?.card)
       .toMatchObject({ expired: true, options: [] });

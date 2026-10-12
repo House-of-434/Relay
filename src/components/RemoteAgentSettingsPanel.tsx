@@ -4,7 +4,6 @@ import { Bell, ChevronLeft, ImagePlus, Loader2, Trash2, X } from "lucide-react";
 import { api, useStore, type Bot } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { useCaptionChrome } from "@/components/DesktopCapabilities";
-import { VoiceSettings } from "./VoiceSettings";
 import { Switch } from "./SettingsPrimitives";
 import { BotAvatar } from "./Avatar";
 import { imageAttachmentFromFile } from "@/lib/composer-attachments";
@@ -12,7 +11,7 @@ import { botAvatarUrlFromStoredPath } from "../../shared/bot-avatar";
 import { BOT_PROFILE_LIMITS } from "../../shared/bot-profile";
 
 type RemoteProfilePatch = Partial<
-  Pick<Bot, "name" | "title" | "description" | "avatarUrl" | "avatarCrop" | "voice" | "speakReplies" | "notifications">
+  Pick<Bot, "name" | "title" | "description" | "avatarUrl" | "avatarCrop" | "notifications">
 >;
 
 export function RemoteAgentSettingsPanel({ bot }: { bot: Bot }) {
@@ -115,12 +114,6 @@ export function RemoteAgentSettingsPanel({ bot }: { bot: Bot }) {
               <textarea key={bot.id} defaultValue={bot.description ?? ""} maxLength={BOT_PROFILE_LIMITS.description} rows={4} onBlur={(event) => { if (event.currentTarget.value !== (bot.description ?? "")) void patch({ description: event.currentTarget.value }); }} className="mt-1 w-full resize-y rounded-lg bg-inset px-3 py-2 text-[13px] leading-relaxed text-ink focus:outline-none focus:ring-1 focus:ring-accent" />
             </label>
           </div>
-
-          <VoiceSettings
-            bot={bot}
-            workspaceConfigurationLocked
-            onPatch={(next) => void patch(next)}
-          />
 
           <div className="flex items-center justify-between gap-4 rounded-xl bg-card p-4">
             <div className="flex min-w-0 items-start gap-3">
