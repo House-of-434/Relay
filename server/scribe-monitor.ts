@@ -232,11 +232,15 @@ export class ScribeMonitor {
   /** Last time a signed-out admin alert was emitted (rate limit). In-memory: a
    *  restart resets it, which is acceptable for an operator alert. */
   private lastSignedOutAlertMs = Number.NEGATIVE_INFINITY;
+  private readonly deps: ScribeMonitorDeps;
+  private readonly config: ScribeMonitorConfig;
 
-  constructor(
-    private readonly deps: ScribeMonitorDeps,
-    private readonly config: ScribeMonitorConfig = scribeMonitorConfig(),
-  ) {}
+  // Explicit fields, not constructor parameter properties: the harness runs
+  // under Node's strip-only TypeScript mode, which rejects parameter properties.
+  constructor(deps: ScribeMonitorDeps, config: ScribeMonitorConfig = scribeMonitorConfig()) {
+    this.deps = deps;
+    this.config = config;
+  }
 
   start(): void {
     if (this.timer) return;
