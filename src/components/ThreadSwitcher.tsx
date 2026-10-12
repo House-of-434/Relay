@@ -66,7 +66,7 @@ export function ThreadSwitcher({
 
   const visible = entries
     .filter((entry) => !entry.hidden)
-    .toSorted((a, b) => entryTime(b) - entryTime(a));
+    .sort((a, b) => entryTime(b) - entryTime(a));
 
   const choose = (threadId: string) => {
     setOpen(false);
