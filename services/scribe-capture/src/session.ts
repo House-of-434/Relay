@@ -12,6 +12,7 @@ import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
 import { toSegment } from "./gmeet-segment.js";
 import { hostAllowed, nativeIdFor } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
+import { postMeetDisclosure } from "./chat.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
 /** One confirmed segment from the vendored gmeet pipeline (transcript.v1 view). */
@@ -120,6 +121,8 @@ class MeetSession {
   status: CaptureStatus = "joining";
   captureStartedAt: string | null = null;
   error: string | null = null;
+  /** Set once the join disclosure was posted to the meeting chat (once per capture). */
+  disclosurePosted = false;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private stopped = false;
@@ -163,6 +166,7 @@ class MeetSession {
       invitees: d.invitees ?? [],
       segment_count: this.spool.added,
       duration_seconds: this.lastEnd > 0 ? this.lastEnd : null,
+      disclosure_posted: this.disclosurePosted,
       ...extra,
     };
   }
@@ -248,6 +252,15 @@ class MeetSession {
       this.captureStartedAt = new Date().toISOString();
       this.captureStartMs = Date.now();
       this.status = "active";
+
+      // Join disclosure: once, after admission, Meet only, best-effort. A send
+      // failure is recorded (disclosure_posted=false) and never blocks capture.
+      if (isMeet && !this.config.gmeetProbe && this.config.disclosure && this.page) {
+        const outcome = await postMeetDisclosure(this.page, this.config.disclosure, {
+          log: (message) => console.log(message),
+        });
+        this.disclosurePosted = outcome !== "failed";
+      }
       if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
 
       if (isMeet) {

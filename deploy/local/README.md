@@ -141,6 +141,11 @@ capability; `tools` holds the ingest capability. The harness monitor arms
 captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
 `RELAY_SCRIBE_ENABLED` gates the whole feature.
 
+`RELAY_SCRIBE_DISCLOSURE` is the one-line notice the bot posts to the **Meet**
+chat once after admission (empty disables it; default "This meeting is
+transcribed by Relay AI."). It is best-effort: Meet selector drift is logged as
+a non-fatal `disclosure_posted=false`, never a capture failure.
+
 ### One-time browser logins (on the host that runs `scribe`)
 
 Providers bind sessions to egress IP, so logins must happen **in this compose

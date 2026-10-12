@@ -63,6 +63,8 @@ export interface MeetingRow {
   invitees?: string[];
   segment_count?: number;
   duration_seconds?: number | null;
+  /** Set once the join disclosure was posted to the meeting chat. */
+  disclosure_posted?: boolean;
 }
 
 export interface JoinOutcome {
