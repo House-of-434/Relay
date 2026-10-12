@@ -32,15 +32,33 @@ the service-role key stays only here. See `../../.env.secrets.example`.
 - `RELAY_TOOL_PORT` defaults to `8787`.
 
 Each Supabase URL is checked against its configured project ref. Startup fails
-if the Relay database cannot access `app.companies`. Newsletter tables remain
-unavailable until their per-table column shapes are configured; access fails
-closed rather than guessing columns.
+if the Relay database cannot access `app.companies`.
 
-Conversation history is readable by every agent and writable by none: a
-conversation belongs to the authenticated user, so `read` is scoped to the
-caller's own `user_id`. All `relay_read` and `relay_write` calls refuse to run
+Reads are open to every agent; only writes are per-agent. `relay_read` takes
+an explicit `select` list of allowlisted columns (no `select *`; each entry
+must exactly match, so embedding and casts cannot smuggle) and parameterized
+filters on shaped columns, applied with the client's `.eq()`/`.gte()` builders.
+`email` on all five `public.*` tables is PII and supports exact match only, so
+counts cannot binary-search addresses. `head:true` returns `{ total }` with no
+`rows` key at all. Every result carries `{ rows, total, limit, offset,
+nextOffset }` under the forced `(created_at desc, id asc)` order. Table names
+are normalized before matching and the denylist (`logs.*`, `auth.*`,
+`storage.*`, `vault.*`, `public.email_unsubscribe_tokens`) beats default-allow;
+a routed-but-unshaped table still fails closed at the shape registry.
+
+Conversation history is readable by every agent (scoped to the caller's own
+`user_id` — a "how many chats" answer covers only the asker) and writable by
+none. All `relay_read` and `relay_write` calls refuse to run
 without an authenticated actor; entity writes additionally stamp
 server-controlled provenance (`actor_user`, `actor_agent`).
+
+Every read is audited to `logs.tool_calls` (migration `0004_read_audit.sql`)
+with table, selected columns, filter keys (never values — values can be PII),
+and row count. Reads that select `email` beyond 50 rows are flagged
+(`flagged=true`) for review. Egress is a known residual risk: an agent with
+web tools could exfiltrate rows it legitimately read via URL query strings; a
+hard control there (blocking query strings matching just-read rows) is a
+bigger follow-up project.
 
 The BFF verifies Supabase identity and issues a Relay session through the
 internal portal-session route. That session's UUID `userId` is the account

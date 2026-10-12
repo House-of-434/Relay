@@ -10747,6 +10747,8 @@ describe("bot memory API", () => {
       });
       expect(before.body.sections.map((s: { id: string }) => s.id)).not.toContain("soul");
       expect(before.body.sections.map((s: { id: string }) => s.id)).toContain("memory");
+      expect(before.body.sections.map((s: { id: string }) => s.id)).toContain("relay-tables");
+      expect(before.body.sections.map((s: { id: string }) => s.id)).toContain("relay-day");
       // Only an OMB Cloud home tells its bots they run in the cloud.
       expect(before.body.sections.map((s: { id: string }) => s.id)).not.toContain("cloud-home");
       expect((await api("GET", "/api/config")).body).not.toHaveProperty("cloudHome");

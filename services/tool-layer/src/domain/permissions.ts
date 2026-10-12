@@ -69,14 +69,50 @@ function explicitlyDenied(table: string, operation: Operation): boolean {
   return operation === "write" && table.startsWith("public.");
 }
 
-/** Resolve project and authorize from the immutable agent route, never tool arguments. */
+const READABLE_SCHEMAS = new Set(["app", "history", "public"]);
+const TABLE_PART = /^[a-z_][a-z0-9_]*$/;
+
+/** Normalize a caller-supplied table name before any matching: trim,
+ * strip surrounding quotes, require `schema.relation`, fold to lowercase
+ * (Postgres folds unquoted identifiers), and reject anything else. The
+ * normalized name is the only string that reaches authorization, the shape
+ * registry, and the schema header — so `or=(...)`, mixed case, quoting, and
+ * unqualified names cannot smuggle past the denylist or the allowlist. */
+export function normalizeTable(input: unknown): string {
+  if (typeof input !== "string") throw new Error("table must be a schema-qualified name");
+  const text = input.trim();
+  const parts = text.split(".");
+  if (parts.length !== 2) throw new Error("table must be a schema-qualified name like app.companies");
+  const normalized = parts.map((part) => part.trim().replace(/["']/g, "").toLowerCase());
+  const [schema, relation] = normalized as [string, string];
+  if (!schema || !relation || !TABLE_PART.test(schema) || !TABLE_PART.test(relation)) {
+    throw new Error("table must be a schema-qualified name like app.companies");
+  }
+  return `${schema}.${relation}`;
+}
+
+/** Reads are default-allow for every agent (workspace team members, low
+ * sensitivity): any shaped table outside the denylist is readable. Writes
+ * stay per-agent via PERMISSIONS below — only reads are open. */
 export function authorize(agent: Agent, operation: Operation, table: string): Project {
-  if (explicitlyDenied(table, operation)) {
+  const normalized = normalizeTable(table);
+  if (explicitlyDenied(normalized, operation)) {
     throw new Error(`${operation} access denied for ${table}`);
   }
 
+  if (operation === "read") {
+    const schema = normalized.split(".")[0]!;
+    if (!READABLE_SCHEMAS.has(schema)) {
+      throw new Error(`${operation} access denied for ${table}`);
+    }
+    // The shape registry is the second gate: a routed-but-unshaped table
+    // (e.g. public.<unlisted>) still fails at getShape/validate time.
+    // Single Supabase project: everything readable lives on the relay client.
+    return "relay";
+  }
+
   const matches = PERMISSIONS[agent][operation]
-    .filter((entry) => entry.endsWith(`/${table}`))
+    .filter((entry) => entry.endsWith(`/${normalized}`))
     .map((entry) => entry.slice(0, entry.indexOf("/")) as Project);
 
   if (matches.length !== 1) {

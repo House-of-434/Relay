@@ -2,14 +2,14 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeGmail, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SEARCH_PERMISSIONS, normalizeTable, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
-import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
+import { getShape, prepareWrite, validateFilters, validateSelect } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
-import { instrumentToolCalls, type ToolCallLogger } from "./tool-log.js";
+import { auditRead, instrumentToolCalls, type ReadAudit, type ToolCallLogger } from "./tool-log.js";
 
 export interface RelayGmailContext {
   client: RelayGmailClient;
@@ -37,26 +37,40 @@ export function createAgentMcpServer(
   log?: ToolCallLogger | undefined,
 ): McpServer {
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
+  // Request-scoped read audit: relay_read sets this before returning and the
+  // wrapper records it with the call, then clears it. One server instance
+  // serves one request (http/server.ts constructs it per request).
+  const readMeta: { current?: ReadAudit | null } = {};
   // Record every served call before any tool is registered, so the browser and
   // search servers (registered below) are wrapped too.
-  if (log) instrumentToolCalls(server, log);
+  if (log) instrumentToolCalls(server, log, readMeta);
 
   server.registerTool(
     "relay_read",
     {
-      description: "Read rows from a table explicitly permitted for this Relay agent. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported.",
+      description: "Read rows from a Relay table (reads are open to every agent; writes are per-agent). Pass an explicit select list of allowlisted columns — no select *. Filters are parameterized via .eq()/.gte() builders on shaped columns (email supports exact match only). Use head:true for a count with no rows. Results are ordered (created_at desc, id asc) with { rows, total, limit, offset, nextOffset }.",
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
-    async ({ table, filters, limit }) => {
+    async ({ table, filters, select, head, limit, offset }) => {
       try {
         if (!userId) throw new Error("authenticated actor required");
-        const project = authorize(agent, "read", table);
-        const shape = getShape(table);
-        if (!shape.filterable) throw new Error(`No filter shape is configured for ${table}`);
-        const validatedFilters = validateFilters(table, filters ?? {});
-        const rows = await database.read(project, table, validatedFilters, Math.min(limit ?? 50, 100), userId);
-        return { content: [{ type: "text", text: JSON.stringify(rows) }] };
+        const normalized = normalizeTable(table);
+        const project = authorize(agent, "read", normalized);
+        const shape = getShape(normalized);
+        if (!shape.filterable) throw new Error(`No filter shape is configured for ${normalized}`);
+        const validatedFilters = validateFilters(normalized, filters ?? {});
+        const headOnly = head === true;
+        const columns = headOnly && select === undefined ? [] : validateSelect(normalized, select);
+        const envelope = await database.read(project, normalized, validatedFilters, {
+          select: columns,
+          limit: Math.min(limit ?? 50, 100),
+          offset: offset ?? 0,
+          head: headOnly,
+        }, userId);
+        const rowCount = headOnly ? 0 : (envelope.rows?.length ?? 0);
+        readMeta.current = auditRead(normalized, columns, validatedFilters.map((f) => `${f.column}:${f.operator}`), headOnly ? envelope.total : rowCount);
+        return { content: [{ type: "text", text: JSON.stringify(envelope) }] };
       } catch (error) {
         return toolError(error);
       }
@@ -73,8 +87,9 @@ export function createAgentMcpServer(
     async ({ table, operation, data, where }) => {
       try {
         if (!userId) throw new Error("authenticated actor required");
-        const project = authorize(agent, "write", table);
-        const prepared = prepareWrite(table, operation, data, where, { agent, userId });
+        const normalized = normalizeTable(table);
+        const project = authorize(agent, "write", normalized);
+        const prepared = prepareWrite(normalized, operation, data, where, { agent, userId });
         const result = await database.write(project, table, operation, prepared.values, prepared.where);
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (error) {

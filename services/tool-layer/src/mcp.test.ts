@@ -24,7 +24,11 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
     async read(...args: unknown[]) {
       calls.push({ method: "read", args });
       if (failRead) throw new Error("database unavailable");
-      return [{ id: "company-1", name: "Acme", status: "active" }];
+      const options = args[3] as { head?: boolean; limit?: number; offset?: number } | undefined;
+      if (options?.head) {
+        return { total: 1, limit: 50, offset: 0, nextOffset: null, order: ["created_at desc", "id asc"] };
+      }
+      return { rows: [{ id: "company-1", name: "Acme" }], total: 1, limit: 3, offset: 0, nextOffset: null, order: ["created_at desc", "id asc"] };
     },
     async write(...args: unknown[]) {
       calls.push({ method: "write", args });
@@ -45,15 +49,29 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), ["browser_extract", "browser_open", "browser_read", "relay_read", "relay_write", "web_search"]);
 
-    const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
+    const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", select: ["name"], limit: 3 } });
     assert.equal(read.isError, undefined);
     assert.equal(calls[0]?.method, "read");
     assert.equal(calls[0]?.args[0], "relay");
+    const envelope = JSON.parse((read.content as Array<{ text: string }>)[0]!.text);
+    assert.deepEqual(Object.keys(envelope).sort(), ["limit", "nextOffset", "offset", "order", "rows", "total"]);
+    assert.deepEqual(envelope.order, ["created_at desc", "id asc"]);
 
     failRead = true;
-    const readFailure = await client.callTool({ name: "relay_read", arguments: { table: "app.companies" } });
+    const readFailure = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", select: ["name"] } });
     assert.equal(readFailure.isError, true);
     failRead = false;
+
+    // select is required unless head:true; missing select refuses without a call.
+    const noSelect = await client.callTool({ name: "relay_read", arguments: { table: "app.companies" } });
+    assert.equal(noSelect.isError, true);
+
+    // head:true counts with no rows key at all.
+    const head = await client.callTool({ name: "relay_read", arguments: { table: "public.invitation_requests", filters: { created_at_gte: "2026-10-11T07:00:00-07:00" }, head: true } });
+    assert.equal(head.isError, undefined);
+    const counted = JSON.parse((head.content as Array<{ text: string }>)[0]!.text);
+    assert.equal("rows" in counted, false);
+    assert.equal(counted.total, 1);
 
     const denied = await client.callTool({
       name: "relay_write",
@@ -78,7 +96,9 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
         arguments: { table: "public.suppressed_emails", filters: { email: "recipient@example.com" } },
       });
       assert.equal(safetyRead.isError, true);
-      assert.equal(calls.filter((call) => call.method === "read").length, 2);
+      // read + readFailure + head reached the database; noSelect and the
+      // shapeless safetyRead refused before it.
+      assert.equal(calls.filter((call) => call.method === "read").length, 3);
     } finally {
       await mercuryClient.close();
     }

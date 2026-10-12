@@ -82,6 +82,28 @@ function applyFilters(query: any, filters: Filter[]): any {
   return query;
 }
 
+export interface ReadOptions {
+  /** Validated exact column names; joined server-side into the select string. */
+  select: string[];
+  limit: number;
+  /** Row offset under the forced order. Integer-only, so no query smuggling;
+   * offset paging can skip/dup under concurrent inserts — acceptable for an
+   * internal team tool; `total` + `nextOffset` make the window visible. */
+  offset: number;
+  /** Count-only: no rows cross the boundary at all. */
+  head: boolean;
+}
+
+export interface ReadEnvelope {
+  total: number;
+  limit: number;
+  offset: number;
+  nextOffset: number | null;
+  order: readonly ["created_at desc", "id asc"];
+  /** Absent (not empty) when head is true — the key itself must not exist. */
+  rows?: unknown[];
+}
+
 export class RelayDatabase {
   private readonly clients = new Map<Project, Client>();
 
@@ -154,23 +176,55 @@ export class RelayDatabase {
     return email;
   }
 
-  async read(project: Project, table: string, filters: Filter[], limit: number, userId: string | null): Promise<unknown[]> {
+  async read(project: Project, table: string, filters: Filter[], options: ReadOptions, userId: string | null): Promise<ReadEnvelope> {
     const client = this.client(project);
     if (project === "relay" && table === "history.conversations") {
-      return this.readOwnConversations(client, filters, limit, userId);
+      return this.readOwnConversations(client, filters, options, userId);
     }
 
+    // Schema comes from the normalized, validated table name only: authorize()
+    // rejects anything that is not `schema.relation` in lowercase identifier
+    // form, so this split cannot carry quoting, case tricks, or operators.
     const [schema, relation] = table.split(".");
-    let query: any = client.schema(schema!).from(relation!).select("*").limit(limit);
+    return this.runRead(client, schema!, relation!, table, filters, options);
+  }
+
+  private async runRead(
+    client: Client,
+    schema: string,
+    relation: string,
+    table: string,
+    filters: Filter[],
+    options: ReadOptions,
+  ): Promise<ReadEnvelope> {
+    // The select string is built here from validated exact column names —
+    // never from caller-joined text — so embedding and casts cannot smuggle.
+    // Head mode with no select still needs a target; "*" is safe there
+    // because head:true returns a count with no rows at all.
+    const selectList = options.select.length ? options.select.join(",") : "*";
+    let query: any = client.schema(schema).from(relation).select(selectList, { count: "exact", head: options.head });
 
     // service_role bypasses Postgres RLS, so preserve the agent classification
     // ceiling explicitly in the Tool Layer.
     if (INTERNAL_ONLY_TABLES.has(table)) query = query.eq("classification", "internal");
     query = applyFilters(query, filters);
+    // Deterministic order on every read: without a stable ORDER BY, offset
+    // paging can skip or duplicate rows under concurrent inserts.
+    query = query.order("created_at", { ascending: false }).order("id", { ascending: true });
+    if (!options.head) query = query.range(options.offset, options.offset + options.limit - 1);
 
-    const { data, error } = await query;
+    const { data, error, count } = await query;
     supabaseError(error);
-    return data ?? [];
+    const total = count ?? 0;
+    const order = ["created_at desc", "id asc"] as const;
+    if (options.head) {
+      // No `rows` key at all — not an empty array — so a pure count provably
+      // carries no row data.
+      return { total, limit: options.limit, offset: options.offset, nextOffset: null, order };
+    }
+    const rows = data ?? [];
+    const nextOffset = options.offset + rows.length < total ? options.offset + rows.length : null;
+    return { rows, total, limit: options.limit, offset: options.offset, nextOffset, order };
   }
 
   /**
@@ -181,16 +235,35 @@ export class RelayDatabase {
   private async readOwnConversations(
     client: Client,
     filters: Filter[],
-    limit: number,
+    options: ReadOptions,
     userId: string | null,
-  ): Promise<unknown[]> {
+  ): Promise<ReadEnvelope> {
     if (userId === null) throw new Error("conversation history requires an authenticated actor");
-    let query: any = client.schema("history").from("conversations").select("*").limit(limit);
+    return this.runReadScoped(client, filters, options, userId);
+  }
+
+  private async runReadScoped(
+    client: Client,
+    filters: Filter[],
+    options: ReadOptions,
+    userId: string,
+  ): Promise<ReadEnvelope> {
+    const selectList = options.select.length ? options.select.join(",") : "*";
+    let query: any = client.schema("history").from("conversations").select(selectList, { count: "exact", head: options.head });
     query = query.eq("user_id", userId);
     query = applyFilters(query, filters);
-    const { data, error } = await query;
+    query = query.order("created_at", { ascending: false }).order("id", { ascending: true });
+    if (!options.head) query = query.range(options.offset, options.offset + options.limit - 1);
+    const { data, error, count } = await query;
     supabaseError(error);
-    return data ?? [];
+    const total = count ?? 0;
+    const order = ["created_at desc", "id asc"] as const;
+    if (options.head) {
+      return { total, limit: options.limit, offset: options.offset, nextOffset: null, order };
+    }
+    const rows = data ?? [];
+    const nextOffset = options.offset + rows.length < total ? options.offset + rows.length : null;
+    return { rows, total, limit: options.limit, offset: options.offset, nextOffset, order };
   }
 
   async write(
@@ -241,6 +314,13 @@ export class RelayDatabase {
     argsHash: string;
     ms: number;
     error: string | null;
+    /** Read audit: filter KEYS only, never values — an `email eq` value is
+     * PII and the keys are enough for review. */
+    table?: string | null;
+    columns?: string[] | null;
+    filterKeys?: string[] | null;
+    rowCount?: number | null;
+    flagged?: boolean;
   }): Promise<void> {
     const { error } = await this.client("relay").schema("logs").from("tool_calls").insert({
       user_id: input.userId,
@@ -249,6 +329,11 @@ export class RelayDatabase {
       args_hash: input.argsHash,
       ms: input.ms,
       error: input.error,
+      table_name: input.table ?? null,
+      columns: input.columns ?? null,
+      filter_keys: input.filterKeys ?? null,
+      row_count: input.rowCount ?? null,
+      flagged: input.flagged ?? false,
     });
     supabaseError(error);
   }

@@ -38,7 +38,8 @@ Users on House of 434 tailnet
 ```
 
 Agents reach the database only through the Tool Layer's `relay_read` and
-`relay_write` tools. Agent identity comes from the configured MCP route
+`relay_write` tools. Reads are open to every agent; only writes are per-agent.
+Agent identity comes from the configured MCP route
 (`/mcp/scout`, `/mcp/mercury`, or `/mcp/curator`), never from tool arguments.
 
 Set `RELAY_DISABLE_COMPUTER=1` in the server environment to disable computer,

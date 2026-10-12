@@ -111,6 +111,7 @@ import { createMemoryUpkeep, upkeepEnabled } from "./memory-upkeep.ts";
 import { appendAboutMe, commitLearned, planLearned } from "./profile-learned.ts";
 import { canAccessTeam, canReachPeer, coordinatorSupervises, livePeerRoster, livePeerRosterBlock, peerAllowed, peerName, peerRosterSystemPrompt, peerStatus, peerStatusWords, reachablePeers, resolveTeammate, roomPeerRosterSystemPrompt, roomRosterLine, PEER_ACCESS_HELP } from "./peer-roster.ts";
 import { relayStatusSystemPrompt } from "./relay-status-capsule.ts";
+import { teamMidnightIso, teamTimeZone } from "./relay-day.ts";
 import {
   containerComputerAction,
   containerComputerExists,
@@ -404,9 +405,9 @@ import {
   userProfileSystemPrompt,
   cloudHomePrompt,
   computerPrompt,
-  composioSystemPrompt,
   customMcpPrompt,
   mailboxPromptPart,
+  relayPromptParts,
   CREDENTIAL_PROMPT,
   mentionPrompt,
   THREADS_PROMPT,
@@ -3281,6 +3282,8 @@ function previewSystemPrompt(bot: BotRecord) {
     destination: previewComputer,
   });
   const privateWorkspace = instance && supportsWorkspaceFiles(instance.driverKind);
+  const previewDayTz = teamTimeZone();
+  const previewRelayParts = relayPromptParts(teamMidnightIso(new Date(), previewDayTz), previewDayTz);
   const built = buildSystemPrompt(persona, bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     {
@@ -3299,8 +3302,9 @@ function previewSystemPrompt(bot: BotRecord) {
       computer: previewPlan.computer && previewPlan.computer !== "off" && computerPromptKind ? previewPlan.computer : null,
     }, { note: previewPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
-    { id: "composio", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? composioSystemPrompt(bot.connectorTools) : "" },
+    { id: "composio", label: "Connected apps", text: "" },
     mailboxPromptPart(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED),
+    ...previewRelayParts,
     { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(engineMcpServers(bot))) : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
@@ -9103,6 +9107,10 @@ async function startTurn(
         coordinationNode.parentId ? roomHandoffs.nodes.get(coordinationNode.parentId) : undefined))) {
         throw new DirectTurnSetupCancelled("Coordination access changed before dispatch");
       }
+      // Team-day for Relay data questions, computed at dispatch so routine
+      // runs (schedule/manual, incl. Curator's brief) get the run day's value.
+      const turnDayTz = teamTimeZone();
+      const turnRelayParts = relayPromptParts(teamMidnightIso(new Date(), turnDayTz), turnDayTz);
       const prompt = buildSystemPrompt(persona, liveBot?.soul ?? bot.soul ?? "", [
         { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
         // first after the soul: the block names agent tools, so it only goes
@@ -9116,8 +9124,9 @@ async function startTurn(
         { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
-        { id: "composio", label: "Connected apps", text: integrations.composio ? composioSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) : "" },
+        { id: "composio", label: "Connected apps", text: "" },
         mailboxPromptPart(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED),
+        ...turnRelayParts,
         { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
@@ -11291,6 +11300,8 @@ async function runGroupMemberTurn(
       });
     }
   }
+  const roomDayTz = teamTimeZone();
+  const roomRelayParts = relayPromptParts(teamMidnightIso(new Date(), roomDayTz), roomDayTz);
   const roomSystem = buildSystemPrompt(system, store.bot(bot.id)?.soul ?? bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
@@ -11300,6 +11311,7 @@ async function runGroupMemberTurn(
     { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
     mailboxPromptPart(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED),
+    ...roomRelayParts,
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
     { id: "recent", label: "Recent work", text: recentWorkPrompt(recentLines) },
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
