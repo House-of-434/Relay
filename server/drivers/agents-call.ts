@@ -579,7 +579,6 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   if (name === "post_to_room") {
     const groupId = String(args.group_id ?? "").trim();
     const message = String(args.message ?? "").trim();
-    const attachVoiceNote = args.attach_voice_note === true;
     if (!groupId || !message) {
       return { text: "post_to_room needs group_id (from list_rooms) and message.", isError: true };
     }
@@ -591,12 +590,12 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     }
     const r = await api("/api/internal/post-to-room", {
       method: "POST",
-      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, groupId, message, attachVoiceNote }),
+      body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, groupId, message }),
     });
     if (r.error) return { text: String(r.error), isError: true };
     turn.roomPostsThisTurn += 1;
     return {
-      text: `Posted in ${r.roomName ?? "the room"}${r.attachedVoiceNote ? " with the voice note attached" : ""}. Nobody's turn was started, so expect no reply — tell the user it is posted.`,
+      text: `Posted in ${r.roomName ?? "the room"}. Nobody's turn was started, so expect no reply — tell the user it is posted.`,
     };
   }
   if (name === "ask_bot") {
@@ -924,26 +923,6 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} request is ready. The desktop app and a freshly QR-paired mobile app show its secure entry card; older mobile pairings explain how to pair again or finish on the computer. End this turn; Relay will resume the task after the user saves or declines. Never ask them to paste the key into chat.`,
     };
   }
-  if (name === "send_voice_note") {
-    if (typeof args.text !== "string" || !args.text.trim()) {
-      return { text: "send_voice_note needs text: the short speakable note, at most 1000 characters.", isError: true };
-    }
-    const text = args.text.trim();
-    if (text.length > 1000) {
-      return { text: `send_voice_note is limited to 1000 characters; this one is ${text.length}. Shorten the note.`, isError: true };
-    }
-    try {
-      await api("/api/internal/voice-note", {
-        method: "POST",
-        body: JSON.stringify({ fromBotId: BOT_ID, fromThreadId: THREAD_ID, text }),
-      });
-      return { text: "Voice note recorded. It will be attached to this turn's reply when the turn ends; the note text is also the visible caption." };
-    } catch (error) {
-      // A missing voice setup is the user's to fix, not a failed turn: hand
-      // the harness's setup guidance straight to the model.
-      return { text: `Voice note not sent: ${error instanceof Error ? error.message : String(error)}`, isError: true };
-    }
-  }
   if (name === "list_routines") {
     const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
     const r = await api(`/api/internal/routines?${query.toString()}`);
@@ -1037,9 +1016,8 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     // A non-boolean toggle would be dropped silently while any valid half of
     // the request went through, applying a partial proposal the model never
     // described. Reject the whole call instead.
-    if ((args.notifications !== undefined && typeof args.notifications !== "boolean")
-      || (args.speakReplies !== undefined && typeof args.speakReplies !== "boolean")) {
-      return { text: "propose_profile notifications and speakReplies must be true or false.", isError: true };
+    if (args.notifications !== undefined && typeof args.notifications !== "boolean") {
+      return { text: "propose_profile notifications must be true or false.", isError: true };
     }
     const changes: Json = {};
     if (typeof args.name === "string") changes.name = args.name.trim();
@@ -1048,9 +1026,8 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     if (typeof args.soul === "string") changes.soul = args.soul;
     if (typeof args.cwd === "string") changes.cwd = args.cwd.trim();
     if (typeof args.notifications === "boolean") changes.notifications = args.notifications;
-    if (typeof args.speakReplies === "boolean") changes.speakReplies = args.speakReplies;
     if (!Object.keys(changes).length) {
-      return { text: "propose_profile needs at least one of name, title, description, soul, cwd, notifications, or speakReplies.", isError: true };
+      return { text: "propose_profile needs at least one of name, title, description, soul, cwd, or notifications.", isError: true };
     }
     const forBotId = String(args.for_bot_id ?? "").trim();
     const r = await api("/api/internal/profile-requests", {

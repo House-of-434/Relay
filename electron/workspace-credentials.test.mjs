@@ -20,6 +20,8 @@ describe("workspace credential migration", () => {
     const config = {
       xai: { key: "xai-secret", url: "https://api.example.test/v1" },
       box: { token: "boat-secret" },
+      // Retired voice secrets are not migrated: the server no longer reads
+      // them, so they stay in the file untouched.
       tts: { key: "tts-secret", fishKey: "fish-secret", voice: "narrator" },
       imageGen: { key: "image-secret" },
       opencodeGo: { apiKey: "ocg-secret" },
@@ -31,17 +33,15 @@ describe("workspace credential migration", () => {
     expect(result.credentials).toEqual({
       xaiApiKey: "xai-secret",
       boxToken: "boat-secret",
-      ttsKey: "tts-secret",
-      fishAudioKey: "fish-secret",
       opencodeGoApiKey: "ocg-secret",
       openaiImageApiKey: "image-secret",
     });
     // secrets are DELETED (not blanked) so "" stays meaningful as "cleared";
-    // non-secret siblings (endpoint url, chosen voice) stay in the file
+    // non-secret siblings (endpoint url, unmigrated voice settings) stay in the file
     expect(result.config).toEqual({
       xai: { url: "https://api.example.test/v1" },
       box: {},
-      tts: { voice: "narrator" },
+      tts: { key: "tts-secret", fishKey: "fish-secret", voice: "narrator" },
       imageGen: {},
       opencodeGo: {},
       profile: { name: "Ada" },
@@ -52,7 +52,7 @@ describe("workspace credential migration", () => {
 
   it("is idempotent: a second boot over migrated output changes nothing", () => {
     const first = migrateWorkspaceCredentials(
-      { xai: { key: "xai-secret" }, tts: { key: "tts-secret", voice: "narrator" } },
+      { xai: { key: "xai-secret" }, box: { token: "boat-secret" } },
       {},
     );
     const second = migrateWorkspaceCredentials(first.config, first.credentials);
@@ -78,13 +78,13 @@ describe("workspace credential migration", () => {
     // config.json while the real key goes to credentials.bin — a boot that
     // read "" as "cleared" would delete freshly saved keys on every restart.
     const result = migrateWorkspaceCredentials(
-      { xai: { key: "" }, tts: { key: "   " } },
-      { xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", boxToken: "box-keep" },
+      { xai: { key: "" }, box: { token: "   " } },
+      { xaiApiKey: "xai-OLD", boxToken: "box-OLD", opencodeGoApiKey: "ocg-keep" },
     );
     expect(result.credentialsChanged).toBe(false);
-    expect(result.credentials).toEqual({ xaiApiKey: "xai-OLD", ttsKey: "tts-OLD", boxToken: "box-keep" });
+    expect(result.credentials).toEqual({ xaiApiKey: "xai-OLD", boxToken: "box-OLD", opencodeGoApiKey: "ocg-keep" });
     // the swept field itself is still removed from the file
-    expect(result.config).toEqual({ xai: {}, tts: {} });
+    expect(result.config).toEqual({ xai: {}, box: {} });
     expect(result.configChanged).toBe(true);
   });
 
@@ -125,8 +125,6 @@ describe("workspace credential env", () => {
       workspaceCredentialEnv({
         xaiApiKey: "xai-secret",
         boxToken: "boat-secret",
-        ttsKey: "tts-secret",
-        fishAudioKey: "fish-secret",
         opencodeGoApiKey: "ocg-secret",
         openaiImageApiKey: "image-secret",
         composioApiKey: "ak_handled-separately",
@@ -134,8 +132,6 @@ describe("workspace credential env", () => {
     ).toEqual({
       XAI_API_KEY: "xai-secret",
       BOX_TOKEN: "boat-secret",
-      RELAY_TTS_KEY: "tts-secret",
-      RELAY_FISH_AUDIO_API_KEY: "fish-secret",
       OPENCODE_API_KEY: "ocg-secret",
       RELAY_OPENAI_IMAGE_KEY: "image-secret",
     });

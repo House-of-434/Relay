@@ -17,7 +17,6 @@ import { SkillsSection } from "./bot-settings/SkillsSection";
 import { AccessSection } from "./bot-settings/AccessSection";
 import { ModelSection } from "./bot-settings/ModelSection";
 import { PermissionsSection } from "./bot-settings/PermissionsSection";
-import { VoiceSection } from "./bot-settings/VoiceSection";
 import { useBotSettingsDerived } from "./bot-settings/useBotSettingsDerived";
 import { BotEditorContext } from "./bot-settings/BotEditorContext";
 import { inputCls } from "./bot-settings/field";
@@ -26,7 +25,7 @@ import { FullAccessWarning } from "./FullAccessWarning";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { SharePresetDialog } from "./SharePresetDialog";
 
-const SECTIONS = ["Identity", "Soul", "Skills", "Memory", "Routines", "Access", "Model", "Permissions", "Voice & alerts"] as const;
+const SECTIONS = ["Identity", "Soul", "Skills", "Memory", "Routines", "Access", "Model", "Permissions"] as const;
 type Section = typeof SECTIONS[number];
 
 /** Companion pairing permits creation, but not reading host defaults or
@@ -255,7 +254,7 @@ function DraftSection({ active, draft, defaultsMode }: { active: Section; draft:
   if (active === "Access") return <AccessSection bot={bot} derived={derived} />;
   if (active === "Model") return <ModelSection bot={bot} />;
   if (active === "Permissions") return <PermissionsSection bot={bot} derived={derived} />;
-  return <VoiceSection bot={bot} derived={derived} />;
+  return null;
 }
 
 /** Starting role: presets from the organization and imported files first,

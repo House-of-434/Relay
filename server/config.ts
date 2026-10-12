@@ -268,26 +268,6 @@ const appConfigSchema = z.object({
   vps: vpsConfigSchema.optional(),
   /** Optional OpenCode key; persisted write-only and passed only to its child. */
   opencodeGo: z.object({ apiKey: optionalText }).optional(),
-  /** Voice settings and the selected voice id. `provider` picks the
-   * engine: "elevenlabs" (default; needs `key`), "fish" (needs its own
-   * `fishKey`), "system" (the Mac's built-in voices, no key), or
-   * "xai" (Grok TTS, reusing `xai.key`), or
-   * "chatterbox" (a local OpenAI-compatible Chatterbox server; `baseUrl`
-   * and `model` are settings, not secrets). Cloud keys stay separate so
-   * switching providers never overwrites or misuses the other key. */
-  tts: z.object({
-    key: optionalText,
-    fishKey: optionalText,
-    voice: optionalText,
-    provider: z.enum(["elevenlabs", "fish", "system", "chatterbox", "xai"]).optional(),
-    baseUrl: z
-      .string()
-      .trim()
-      .max(2048)
-      .refine((value) => !value || /^https?:\/\//i.test(value), "the Chatterbox server address must start with http:// or https://")
-      .optional(),
-    model: optionalText,
-  }).optional(),
   /** The decision model (server/decider): a fast classifier that picks
    * things for bots, starting with who answers a room message. `key` is
    * write-only like every credential; `baseUrl` points at a Jev-compatible
@@ -400,7 +380,6 @@ export interface AppConfig {
   /** A named host from the user's SSH config. Authentication stays with SSH. */
   vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
-  tts?: { key?: string; fishKey?: string; voice?: string; provider?: "elevenlabs" | "fish" | "system" | "chatterbox" | "xai"; baseUrl?: string; model?: string };
   /** The decision model; see the schema above and server/decider. */
   decider?: { enabled?: boolean; provider?: "jev" | "off"; key?: string; baseUrl?: string; jobs?: { roomRouting?: boolean } };
   imageGen?: ImageGenerationConfig;
@@ -605,7 +584,6 @@ export function cloudOverflowAllowlistedThreads(cfg: AppConfig): Set<string> {
 export const FLEET_NEUTRAL_KEYS: ReadonlySet<string> = new Set([
   "profile",
   "language",
-  "tts",
   // no engine reads it: the harness asks it before a turn starts
   "decider",
   "imageGen",
@@ -730,13 +708,6 @@ export function loadConfig(): AppConfig {
   if (process.env.BOX_TOKEN !== undefined) cfg.box.token = process.env.BOX_TOKEN;
   cfg.opencodeGo = { ...cfg.opencodeGo };
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
-  cfg.tts = { ...cfg.tts };
-  if (process.env.RELAY_TTS_KEY !== undefined) cfg.tts.key = process.env.RELAY_TTS_KEY;
-  // A preset ElevenLabs voice (Cloud Pro sets one) is only a default: a voice or
-  // another speech provider the person picked in Settings always wins.
-  const presetVoice = process.env.RELAY_TTS_DEFAULT_VOICE?.trim();
-  if (presetVoice && !cfg.tts.voice?.trim() && (cfg.tts.provider ?? "elevenlabs") === "elevenlabs") cfg.tts.voice = presetVoice;
-  if (process.env.RELAY_FISH_AUDIO_API_KEY !== undefined) cfg.tts.fishKey = process.env.RELAY_FISH_AUDIO_API_KEY;
   cfg.decider = { ...cfg.decider };
   if (process.env.RELAY_JEV_API_KEY !== undefined) cfg.decider.key = process.env.RELAY_JEV_API_KEY;
   cfg.imageGen = { ...cfg.imageGen };
@@ -783,8 +754,6 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
     [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
-    [patch.tts?.key, "RELAY_TTS_KEY"],
-    [patch.tts?.fishKey, "RELAY_FISH_AUDIO_API_KEY"],
     [patch.decider?.key, "RELAY_JEV_API_KEY"],
     [patch.imageGen?.key, "RELAY_OPENAI_IMAGE_KEY"],
     [patch.imageGen?.customApiKey, "RELAY_CUSTOM_IMAGE_KEY"],
@@ -825,8 +794,6 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "OPENAI_COMPAT_URL",
   "BOX_TOKEN",
   "OPENCODE_API_KEY",
-  "RELAY_TTS_KEY",
-  "RELAY_FISH_AUDIO_API_KEY",
   "RELAY_JEV_API_KEY",
   "RELAY_OPENAI_IMAGE_KEY",
   "RELAY_CUSTOM_IMAGE_KEY",
@@ -923,7 +890,7 @@ export function saveConfig(
   }
   const checkedPatch = appConfigSchema.partial().extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() }).parse(patch);
   const before = configSaveListeners.size ? structuredClone(disk) : disk;
-  for (const key of ["xai", "anthropic", "mistral", "openaiCompat", "composio", "box", "opencodeGo", "tts", "decider", "imageGen", "profile", "rooms", "threads", "context", "memory", "localVm", "features", "cloudOverflow", "budgets", "billing", "decisions", "onboarding", "newBots"] as const) {
+  for (const key of ["xai", "anthropic", "mistral", "openaiCompat", "composio", "box", "opencodeGo", "decider", "imageGen", "profile", "rooms", "threads", "context", "memory", "localVm", "features", "cloudOverflow", "budgets", "billing", "decisions", "onboarding", "newBots"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);

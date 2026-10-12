@@ -120,8 +120,6 @@ export function hintSeenPatch(
 export type BeatId = "hello" | "reel" | "engines" | "permissions" | "phone" | "bot";
 
 export interface BeatOptions {
-  /** The desktop app can ask for the microphone; a browser cannot. */
-  dictation: boolean;
   /** The feature reel ships in a later phase; it is a beat the machine
    * already knows so that turning it on is one flag. */
   reel: boolean;
@@ -135,7 +133,7 @@ export interface BeatOptions {
 /** Beats in order for this session. The exit beat is always last so the
  * seeded bot is named even when everything else was skipped. A hosted
  * workspace gets a greeting and the bot: its organisation assigns the models,
- * and the reel, engines, microphone and phone beats all describe this
+ * and the reel, engines and phone beats all describe this
  * computer, which a hosted workspace is not. */
 export function beatsFor(options: BeatOptions): BeatId[] {
   if (options.sharedWorkspace) return ["hello"];
@@ -143,7 +141,6 @@ export function beatsFor(options: BeatOptions): BeatId[] {
   const beats: BeatId[] = ["hello"];
   if (options.reel) beats.push("reel");
   beats.push("engines");
-  if (options.dictation) beats.push("permissions");
   beats.push("phone", "bot");
   return beats;
 }

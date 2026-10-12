@@ -48,14 +48,14 @@ const baseContext = (keyId: string): Omit<PhoneSecretContext, "encapsulatedKey" 
   botId: "bot-1",
   threadId: "thread-1",
   messageId: "message-1",
-  target: "ttsKey",
+  target: "xaiApiKey",
   requestKey: "credential-request-1",
 });
 
 async function seal(
   context: Omit<PhoneSecretContext, "encapsulatedKey" | "ciphertext">,
   publicKey: CryptoKey,
-  value = "elevenlabs-secret",
+  value = "xai-secret",
 ): Promise<PhoneSecretContext> {
   const encrypted = await suite.seal(
     { recipientPublicKey: publicKey, info: new TextEncoder().encode(PHONE_SECRET_INFO) },
@@ -82,6 +82,8 @@ describe("PhoneSecretBridge", () => {
       return true;
     });
     bridge = new PhoneSecretBridge(send, 200);
+    // Historical CryptoKit vector sealed with target "ttsKey" — kept as opaque
+    // crypto test data (AAD binds the target, so it cannot be renamed).
     bridge.receive({
       type: "relay:phone-secret-key",
       version: 1,
@@ -114,8 +116,8 @@ describe("PhoneSecretBridge", () => {
     const material = await keyMaterial();
     let bridge!: PhoneSecretBridge;
     const send = vi.fn((message: { requestId: string; value: string; target: string }) => {
-      expect(message.value).toBe("elevenlabs-secret");
-      expect(message.target).toBe("ttsKey");
+      expect(message.value).toBe("xai-secret");
+      expect(message.target).toBe("xaiApiKey");
       queueMicrotask(() => bridge.receive({
         type: "relay:phone-secret-save-result",
         requestId: message.requestId,
@@ -237,7 +239,7 @@ describe("phoneSecretAAD", () => {
       "bot-1",
       "thread-1",
       "message-1",
-      "ttsKey",
+      "xaiApiKey",
       "credential-request-1",
     ].join("\n"));
   });
@@ -245,16 +247,16 @@ describe("phoneSecretAAD", () => {
   it("binds an envelope to the authenticated phone and pending card", () => {
     const context = baseContext("AAAAAAAAAAAAAAAAAAAAAA");
     expect(() => assertPhoneSecretRequestMatches(context, "paired-device-1", {
-      target: "ttsKey",
+      target: "xaiApiKey",
       requestKey: "credential-request-1",
     })).not.toThrow();
     for (const candidate of [
       { ...context, deviceId: "another-device" },
-      { ...context, target: "xaiApiKey" },
+      { ...context, target: "boxToken" },
       { ...context, requestKey: "another-request" },
     ]) {
       expect(() => assertPhoneSecretRequestMatches(candidate, "paired-device-1", {
-        target: "ttsKey",
+        target: "xaiApiKey",
         requestKey: "credential-request-1",
       })).toThrow(expect.objectContaining({ status: 409 }));
     }

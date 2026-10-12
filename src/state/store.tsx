@@ -35,9 +35,7 @@ import {
 import type { Routine, RoutineInput, RoutineRun, RoutineRunStatusFilter } from "@/lib/routines";
 import type { WebhookAttempt, WebhookIngressStatus, WebhookTrigger } from "@/lib/webhooks";
 import { answerResponse, dismissResponse } from "@/lib/card-answer";
-import { currentCall } from "@/lib/call";
 import { showNotification, type NotificationTarget } from "@/lib/notify";
-import { speaker } from "@/lib/tts";
 import { roleProfilePatch, type BotRole } from "@/lib/bot-roles";
 import { t } from "@/lib/i18n";
 import { createBotPatchQueue, type BotUpdatePatch } from "./bot-patch-queue";
@@ -415,12 +413,6 @@ export interface Bot {
   approvalMode?: ApprovalMode;
   /** tools this bot may always use without asking */
   alwaysAllow?: string[];
-  /** speak this bot's replies aloud as they settle */
-  speakReplies?: boolean;
-  /** this bot's own voice id (falls back to the app-wide one) */
-  voice?: string;
-  /** whether this bot may send voice notes (on unless switched off) */
-  voiceNotes?: boolean;
   pinned?: boolean;
   hidden?: boolean;
   /** Sidebar section this bot renders under; absent = unsectioned. */
@@ -619,20 +611,6 @@ export interface ConfigStatus {
   automaticRecovery?: { enabled: boolean; backup?: ModelSelection };
   localVm: { mode: "shared" | "per-bot" | "pool"; maxInstances: number };
   opencodeGo?: { configured: boolean };
-  /** Voice. `configured` = the engine has what it needs (an ElevenLabs or
-   * Fish Audio key, or a Chatterbox server address); `ready` = that AND a voice, which is
-   * what it takes to actually speak. The key itself is never echoed back;
-   * `baseUrl`/`model` are Chatterbox settings, not credentials. */
-  tts?: {
-    configured: boolean;
-    ready: boolean;
-    voice: string;
-    provider?: "elevenlabs" | "fish" | "system" | "chatterbox" | "xai";
-    baseUrl?: string;
-    model?: string;
-    /** ElevenLabs voice comes with Cloud Pro; no key is saved. */
-    included?: boolean;
-  };
   /** The decision model: switches and whether a key is on file. The key
    * itself never comes back. `enabled` is the switch as it takes effect
    * (off while no key is saved). `included`: Cloud Pro's decisions, no key
@@ -692,7 +670,7 @@ export interface ManagedPolicySummary {
 // Settings shows (a saved key's Test button used to vanish that way).
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "mistral" | "anthropic" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "threads" | "automaticRecovery" | "localVm" | "opencodeGo" | "tts" | "decider" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "sharedWorkspace" | "computerDisabled"
+  "xai" | "mistral" | "anthropic" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "threads" | "automaticRecovery" | "localVm" | "opencodeGo" | "decider" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "sharedWorkspace" | "computerDisabled"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -710,7 +688,6 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     automaticRecovery: frame.automaticRecovery,
     localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
-    tts: frame.tts,
     decider: frame.decider,
     imageGen: frame.imageGen,
     profile: frame.profile,
@@ -840,7 +817,6 @@ export type BotSettingsSection =
   | "access"
   | "model"
   | "permissions"
-  | "voice"
   | "visibility"
   | "history"
   | "usage";
@@ -3674,19 +3650,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           // a settled assistant bubble replaces the in-flight stream
           if (frame.message?.role === "bot" && frame.message?.kind === "text") {
             clearStream(frame.threadId);
-            // Auto-speak lives HERE rather than in the chat view so a bot
-            // you switched away from still reads its answer out — which is
-            // the whole point of listening while you do something else. A
-            // Auto-speak is disabled during any call. Call mode owns both the
-            // singleton speaker and microphone ordering for its whole lifetime.
-            const owner = stateRef.current.bots.find((b) => b.threadId === frame.threadId || b.tasks?.some((task) => task.threadId === frame.threadId));
-            if (owner?.speakReplies && currentCall() === null && frame.message.text?.trim()) {
-              void speaker.speak(frame.message.text, {
-                botId: owner.id,
-                messageId: frame.message.id,
-                voiceId: owner.voice,
-              });
-            }
           }
           break;
         }

@@ -8,7 +8,6 @@ import { ApprovalCard } from "./ApprovalCard";
 import {
   PendingApprovalActions,
   PendingApprovalPanel,
-  spokenApprovalPrompt,
   type Pending,
 } from "./PendingApproval";
 
@@ -84,15 +83,6 @@ describe("German approval cards", () => {
     expect(markup).toContain('aria-label="Details zur Freigabe prüfen"');
   });
 
-  it("speaks a command approval in German", () => {
-    setLocale("de");
-    const { pending } = commandApproval();
-
-    expect(spokenApprovalPrompt(pending, "Mochi")).toBe(
-      "Mochi möchte einen Befehl ausführen. pnpm test. Soll ich das erlauben?",
-    );
-  });
-
   it("renders command approval actions in German", () => {
     setLocale("de");
     const { pending } = commandApproval();
@@ -115,43 +105,6 @@ describe("German approval cards", () => {
     expect(markup).toContain("Bei Mochi nicht mehr nach Bash:pnpm test fragen");
   });
 });
-
-/** Skill approvals are the one place pt-BR needs a different shape than the
- * other packs: "Should I {action} it?" becomes an enclitic pronoun, so the
- * action strings carry it ("atualizá-la") instead of a bare infinitive. */
-function skillUpdateApproval(): Pending {
-  const message: Message = {
-    id: "skill-update-card",
-    role: "bot",
-    kind: "options",
-    at: 1,
-    card: {
-      title: "Atualizar a habilidade \"lancar-despesa\"?",
-      subtitle: "Lança uma despesa no portal da empresa.",
-      options: ["Atualizar", "Negar"],
-      requestId: "skill-update-request",
-      tool: "update_skill",
-      skillRequest: {
-        version: 1,
-        requestId: "skill-update-request",
-        botId: "bot-1",
-        threadId: "thread-1",
-        stagedId: "staged-update",
-        action: "update",
-        name: "lancar-despesa",
-        gist: "Lança uma despesa no portal da empresa.",
-        warnings: [],
-        createdAt: 1,
-      },
-    },
-  };
-  return {
-    message,
-    requestId: "skill-update-request",
-    tool: "update_skill",
-    detail: message.card!.subtitle,
-  };
-}
 
 describe("Brazilian Portuguese approval cards", () => {
   it("renders a pending command approval in Brazilian Portuguese", () => {
@@ -192,24 +145,6 @@ describe("Brazilian Portuguese approval cards", () => {
     expect(markup).toContain("2 de 3");
     expect(markup).toContain("Aprovação de comando solicitada");
     expect(markup).toContain('aria-label="Detalhes da aprovação para revisar"');
-  });
-
-  it("speaks a command approval in Brazilian Portuguese", () => {
-    setLocale("pt-BR");
-    const { pending } = commandApproval();
-
-    expect(spokenApprovalPrompt(pending, "Mochi")).toBe(
-      "Mochi quer executar um comando. pnpm test. Devo permitir?",
-    );
-  });
-
-  it("speaks a skill approval with the pronoun attached to the verb", () => {
-    setLocale("pt-BR");
-
-    expect(spokenApprovalPrompt(skillUpdateApproval(), "Mochi")).toBe(
-      "Mochi pergunta: Atualizar a habilidade \"lancar-despesa\"? "
-        + "Confira a habilidade na tela. Devo atualizá-la?",
-    );
   });
 
   it("renders command approval actions in Brazilian Portuguese", () => {

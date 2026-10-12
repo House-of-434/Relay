@@ -33,13 +33,25 @@ describe("parseBotProfilePatch (strict — the paired boundary)", () => {
 
   it("accepts the full identity surface", () => {
     const result = parseBotProfilePatch(
-      { name: "Mira", title: "Lead", description: "plans", notifications: true, voice: "vx", speakReplies: false },
+      { name: "Mira", title: "Lead", description: "plans", notifications: true },
       true,
     );
     expect(result).toEqual({
       ok: true,
-      patch: { name: "Mira", title: "Lead", description: "plans", notifications: true, voice: "vx", speakReplies: false },
+      patch: { name: "Mira", title: "Lead", description: "plans", notifications: true },
     });
+  });
+
+  it("refuses retired voice fields by name in strict mode, and drops them when lenient", () => {
+    for (const field of ["voice", "speakReplies", "voiceNotes"]) {
+      const strict = parseBotProfilePatch({ name: "Mira", [field]: "x" } as never, true);
+      expect(strict.ok, field).toBe(false);
+      if (!strict.ok) expect(strict.error).toContain(field);
+      expect(parseBotProfilePatch({ name: "Mira", [field]: "x" } as never, false)).toEqual({
+        ok: true,
+        patch: { name: "Mira" },
+      });
+    }
   });
 });
 

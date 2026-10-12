@@ -14,7 +14,6 @@
 // granted to or paired with this computer.
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { MausAvatar } from "@/components/Avatar";
-import { useDesktopCapabilities } from "@/components/DesktopCapabilities";
 import { setEmailGateDone, track } from "@/lib/analytics";
 import { brand } from "@/lib/brand";
 import { cn } from "@/lib/cn";
@@ -76,7 +75,6 @@ export function WelcomeFlow({
   initialBeat,
   embedded = false,
   reel = true,
-  dictation,
   entrance = "arrive",
   hosted = false,
   sharedWorkspace = false,
@@ -93,8 +91,6 @@ export function WelcomeFlow({
   embedded?: boolean;
   /** The feature reel beat; the preview gallery turns it off. */
   reel?: boolean;
-  /** Preview only: pretend the microphone can be asked for (or not). */
-  dictation?: boolean;
   /** The guide's first motion beat on mount. */
   entrance?: Motion;
   /** A hosted team workspace: the hosted beat set, no email field. */
@@ -103,8 +99,7 @@ export function WelcomeFlow({
   sharedWorkspace?: boolean;
 }) {
   const { dispatch } = useStore();
-  const { capabilities } = useDesktopCapabilities();
-  const beats = beatsFor({ dictation: dictation ?? capabilities.dictation.available, reel, hosted, sharedWorkspace });
+  const beats = beatsFor({ reel, hosted, sharedWorkspace });
   const [beat, setBeat] = useState<BeatId>(() => (initialBeat && beats.includes(initialBeat) ? initialBeat : "hello"));
   const [mascot, setMascot] = useState<MausState>(MASCOT_FOR_BEAT[beat]);
   const [motion, setMotion] = useState<{ kind: Motion; key: number }>({ kind: "blink", key: 0 });

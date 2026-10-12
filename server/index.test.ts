@@ -8,7 +8,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -4331,8 +4331,6 @@ describe("harness HTTP API", () => {
         notifications: false,
         avatarUrl,
         avatarCrop: "circle",
-        voice: "voice_fixture",
-        speakReplies: true,
       });
       expect(saved.status).toBe(200);
       expect(saved.body.bot).toMatchObject({
@@ -4342,8 +4340,6 @@ describe("harness HTTP API", () => {
         notifications: false,
         avatarUrl,
         avatarCrop: "circle",
-        voice: "voice_fixture",
-        speakReplies: true,
       });
       const frame = await stream.until(
         (candidate) => candidate.kind === "bot" && candidate.bot?.id === bot.id,
@@ -4357,8 +4353,6 @@ describe("harness HTTP API", () => {
         { avatarCrop: "hexagon" },
         { name: 42 },
         { notifications: "yes" },
-        { voice: null },
-        { speakReplies: 1 },
       ]) {
         expect((await api("PATCH", `/api/bots/${bot.id}/profile`, invalid)).status).toBe(400);
       }
@@ -4366,15 +4360,11 @@ describe("harness HTTP API", () => {
       const cleared = await api("PATCH", `/api/bots/${bot.id}/profile`, {
         avatarUrl: null,
         avatarCrop: "mascot",
-        voice: "",
-        speakReplies: false,
       });
       expect(cleared.status).toBe(200);
       expect(cleared.body.bot).toMatchObject({
         avatarUrl: null,
         avatarCrop: "mascot",
-        voice: "",
-        speakReplies: false,
       });
     } finally {
       stream.close();
@@ -6618,69 +6608,6 @@ describe("harness HTTP API", () => {
 
     const nothing = await api("PUT", "/api/config", {});
     expect(nothing.status).toBe(400);
-  });
-
-  it.each(["fish", "xai"])("clears incompatible default and per-agent voices when switching to %s", async (provider) => {
-    let botId = "";
-    try {
-      expect((await api("PUT", "/api/config", {
-        tts: { provider: "elevenlabs", voice: "eleven-default" },
-      })).status).toBe(200);
-      const created = await api("POST", "/api/bots");
-      botId = created.body.bot.id;
-      expect((await api("PATCH", `/api/bots/${botId}/profile`, {
-        voice: "eleven-agent",
-      })).status).toBe(200);
-
-      const changed = await api("PUT", "/api/config", { tts: { provider } });
-      expect(changed.status).toBe(200);
-      expect(changed.body.tts).toMatchObject({ provider, voice: "", ready: false });
-      const bot = (await api("GET", "/api/bots?messages=0")).body.bots.find(
-        (candidate: { id: string }) => candidate.id === botId,
-      );
-      expect(bot).not.toHaveProperty("voice");
-      const disk = JSON.parse(readFileSync(join(home, ".relay", "config.json"), "utf8"));
-      expect(disk.tts).toMatchObject({ provider, voice: "" });
-    } finally {
-      if (botId) await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
-      await api("PUT", "/api/config", { tts: { provider: "elevenlabs", voice: "" } }).catch(() => undefined);
-    }
-  });
-
-  it("does not switch voice providers when per-agent voices cannot be cleared", async () => {
-    let botId = "";
-    const botsPath = join(home, ".relay", "bots.json");
-    const backupPath = `${botsPath}.voice-switch-test`;
-    let blocked = false;
-    try {
-      expect((await api("PUT", "/api/config", {
-        tts: { provider: "elevenlabs", voice: "eleven-default" },
-      })).status).toBe(200);
-      const created = await api("POST", "/api/bots");
-      botId = created.body.bot.id;
-      expect((await api("PATCH", `/api/bots/${botId}/profile`, {
-        voice: "eleven-agent",
-      })).status).toBe(200);
-
-      renameSync(botsPath, backupPath);
-      mkdirSync(botsPath);
-      blocked = true;
-      const changed = await api("PUT", "/api/config", { tts: { provider: "fish" } });
-      expect(changed.status).toBe(500);
-      const config = await api("GET", "/api/config");
-      expect(config.body.tts).toMatchObject({ provider: "elevenlabs", voice: "eleven-default" });
-      const bot = (await api("GET", "/api/bots?messages=0")).body.bots.find(
-        (candidate: { id: string }) => candidate.id === botId,
-      );
-      expect(bot).toMatchObject({ voice: "eleven-agent" });
-    } finally {
-      if (blocked) {
-        rmSync(botsPath, { recursive: true, force: true });
-        renameSync(backupPath, botsPath);
-      }
-      if (botId) await api("DELETE", `/api/bots/${botId}`).catch(() => undefined);
-      await api("PUT", "/api/config", { tts: { provider: "elevenlabs", voice: "" } }).catch(() => undefined);
-    }
   });
 
   it("keeps Boat resources attached while allowing a proven same-account token rotation", async () => {

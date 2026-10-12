@@ -47,7 +47,7 @@ const COMPANY_BACKUP_CLIENT_KEYS = [
   "relay-drafts", "relay-draft-attachments", "relay-draft-send-ids", "relay-draft-channel-modes",
   "relay-skin", "relay-show-threads", "relay.sidebarDensity",
   "relay.sidebarCollapsedSections.v1", "relay.sidebarSectionOrder.v1",
-  "relay-analytics-opt-out", "relay.remote-voice.v1",
+  "relay-analytics-opt-out",
 ];
 if (isLocalPage && !desktopRemoteClient && process.argv.includes("--relay-company-desktop=1")) {
   ipcRenderer.on("company-backups:collect-client-state", (_event, request) => {
@@ -141,19 +141,6 @@ const bridge = {
     input: (serial, payload) =>
       ipcRenderer.invoke("android-device:input", serial, payload).then(() => undefined),
   },
-  speechStart: (options) => ipcRenderer.invoke("speech:start", options),
-  speechStop: () => ipcRenderer.invoke("speech:stop"),
-  speechFinish: () => ipcRenderer.invoke("speech:finish"),
-  onSpeechTranscript: (cb) => {
-    const handler = (_event, line) => cb(line);
-    ipcRenderer.on("speech:transcript", handler);
-    return () => ipcRenderer.removeListener("speech:transcript", handler);
-  },
-  onSpeechEnd: (cb) => {
-    const handler = (_event, info) => cb(info);
-    ipcRenderer.on("speech:end", handler);
-    return () => ipcRenderer.removeListener("speech:end", handler);
-  },
   /** The app menu's Preferences… item; local shell only (the remote-safe
    * subset never sees it). */
   onOpenAppSettings: (cb) => {
@@ -181,7 +168,7 @@ const bridge = {
   permStatus: () => ipcRenderer.invoke("perm:status"),
   /** Triggers the macOS microphone prompt; resolves true when granted. */
   permRequestMic: () => ipcRenderer.invoke("perm:request-mic"),
-  /** Opens System Settings on the given privacy pane: mic|screen|speech. */
+  /** Opens System Settings on the given privacy pane: mic|screen. */
   permOpenSettings: (pane) => ipcRenderer.invoke("perm:open-settings", pane),
   /** Relaunch the local macOS app after a permission grant. */
   relaunch: () => ipcRenderer.invoke("desktop:relaunch"),

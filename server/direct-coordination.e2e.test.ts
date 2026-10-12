@@ -307,7 +307,7 @@ it("does not treat self-opened work or an abandoned human branch as new human au
   const post = (message: string, expectError = false) => ({ tool: "post_to_room", arguments: { group_id: room.id, message }, expectError });
   f.plan[f.chief.id] = { turns: [
     { steps: [post("First update"), post("Second update"), { tool: "start_thread", arguments: { title: "Independent job", message: "Continue the separate check." } }], reply: "Opened the independent job" },
-    { steps: [post("A self-opened job is not another human answer", true), { tool: "request_credential", arguments: { credential_id: "ttsKey", reason: "Fixture continuation" } }], reply: "Waiting for the fixture credential decision" },
+    { steps: [post("A self-opened job is not another human answer", true), { tool: "request_credential", arguments: { credential_id: "xaiApiKey", reason: "Fixture continuation" } }], reply: "Waiting for the fixture credential decision" },
     { reply: "This alternative human branch will be abandoned" },
     { steps: [{ tool: "start_thread", arguments: { title: "Recursive job", message: "Must not start." }, expectError: true }], reply: "Continuing only the original self-opened job" },
     { steps: [post("A real user explicitly asked for this update")], reply: "Posted the requested update" },

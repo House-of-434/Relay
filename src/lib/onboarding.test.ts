@@ -205,33 +205,27 @@ describe("persistence patches", () => {
 
 describe("beat machine", () => {
   it("lists beats for the desktop app with the reel off", () => {
-    expect(beatsFor({ dictation: true, reel: false })).toEqual(["hello", "engines", "permissions", "phone", "bot"]);
-  });
-
-  it("drops the permissions beat where there is no microphone to ask for", () => {
-    expect(beatsFor({ dictation: false, reel: false })).toEqual(["hello", "engines", "phone", "bot"]);
+    expect(beatsFor({ reel: false })).toEqual(["hello", "engines", "phone", "bot"]);
   });
 
   it("slots the reel after hello when enabled", () => {
-    expect(beatsFor({ dictation: false, reel: true })).toEqual(["hello", "reel", "engines", "phone", "bot"]);
+    expect(beatsFor({ reel: true })).toEqual(["hello", "reel", "engines", "phone", "bot"]);
   });
 
   it("always ends on the bot beat", () => {
-    for (const dictation of [true, false]) {
-      for (const reel of [true, false]) {
-        expect(beatsFor({ dictation, reel }).at(-1)).toBe("bot");
-        expect(beatsFor({ dictation, reel, hosted: true }).at(-1)).toBe("bot");
-      }
+    for (const reel of [true, false]) {
+      expect(beatsFor({ reel }).at(-1)).toBe("bot");
+      expect(beatsFor({ reel, hosted: true }).at(-1)).toBe("bot");
     }
   });
 
   it("gives a hosted workspace a greeting and the bot, nothing about this computer", () => {
-    expect(beatsFor({ dictation: true, reel: true, hosted: true })).toEqual(["hello", "bot"]);
-    expect(beatsFor({ dictation: true, reel: true, hosted: false })).toEqual(["hello", "reel", "engines", "permissions", "phone", "bot"]);
+    expect(beatsFor({ reel: true, hosted: true })).toEqual(["hello", "bot"]);
+    expect(beatsFor({ reel: true, hosted: false })).toEqual(["hello", "reel", "engines", "phone", "bot"]);
   });
 
   it("walks forward and back and stops at the ends", () => {
-    const beats = beatsFor({ dictation: true, reel: false });
+    const beats = beatsFor({ reel: false });
     expect(nextBeat(beats, "hello")).toBe("engines");
     expect(nextBeat(beats, "bot")).toBeNull();
     expect(previousBeat(beats, "engines")).toBe("hello");

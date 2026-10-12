@@ -29,7 +29,7 @@ const SCENARIOS: ScenarioLabels = {
   drowsy: "Overnight / async",
   working: "Code / build",
   thinking: "Research / strategy",
-  listening: "Dictation / voice",
+  listening: "Listening",
   sleeping: "Paused / stopped",
   suspicious: "Review / audit",
   proud: "Task completed",

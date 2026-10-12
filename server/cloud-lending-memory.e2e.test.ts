@@ -514,8 +514,8 @@ it("only the owner changes what a bot is told about itself; a guest keeps its pi
     expect((await api("PATCH", `/api/bots/${bot.id}/profile`, { token: guest, body })).status, JSON.stringify(body)).toBe(403);
   }
   expect((await local("PATCH", `/api/bots/${bot.id}/profile`, { soul: "GUEST-SOUL" })).status).toBe(403);
-  // Its voice, and resending a value that is already there, are fine.
-  expect((await api("PATCH", `/api/bots/${bot.id}/profile`, { token: guest, body: { voice: "alloy", speakReplies: true, name: "Profile" } })).status).toBe(200);
+  // Resending a value that is already there is fine.
+  expect((await api("PATCH", `/api/bots/${bot.id}/profile`, { token: guest, body: { name: "Profile" } })).status).toBe(200);
   expect((await api("PATCH", `/api/bots/${bot.id}/profile`, { token: owner, body: { soul: "OWNER-SOUL: keep answers short." } })).status).toBe(200);
   await toolsFor(async () => say(owner, bot, "Read plan.md from my Mac.", await newThread(bot)));
   const system = JSON.stringify(JSON.parse(readFileSync(dumpOf("held"), "utf8")).systemPrompt ?? "");

@@ -5,4 +5,4 @@
 
 These unchanged stdlib JSON datasets derive from **Moby Word II** and describe names used in English-speaking countries. They are not country-specific rankings or an exhaustive list of identities. The database is dedicated under PDDL-1.0 and its contents under CC0-1.0; the upstream license files are retained beside the data.
 
-The picker trims whitespace, removes case-insensitive duplicates, and samples uniformly locally. It avoids the current name and existing bot names when alternatives remain. No network or model request is made when choosing a name. These labels select a name list only; they do not set the bot voice, role, avatar, or other profile fields.
+The picker trims whitespace, removes case-insensitive duplicates, and samples uniformly locally. It avoids the current name and existing bot names when alternatives remain. No network or model request is made when choosing a name. These labels select a name list only; they do not set the bot role, avatar, or other profile fields.

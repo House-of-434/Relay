@@ -294,7 +294,7 @@ try {
   if (!capabilities.screenPreview.available || capabilities.screenPreview.interaction !== expectedPreview) {
     throw new Error(`${wayland ? "Wayland" : "X11"} screen preview capability was not available`);
   }
-  if (capabilities.dictation.available) throw new Error("dictation must be unavailable on Linux");
+  if (capabilities.dictation?.available) throw new Error("dictation must be unavailable on Linux");
   if (sessionBlocked) {
     if (
       initialCapabilities.localComputer.available ||

@@ -7,7 +7,7 @@ import { createHash } from "node:crypto";
 import type { ProfileRequestChanges } from "../shared/profile-request.ts";
 
 export function profileSnapshot(
-  bot: { name: string; title: string; description: string; soul?: string; cwd?: string; notifications?: boolean; speakReplies?: boolean },
+  bot: { name: string; title: string; description: string; soul?: string; cwd?: string; notifications?: boolean },
 ): Required<ProfileRequestChanges> {
   return {
     name: bot.name,
@@ -16,12 +16,11 @@ export function profileSnapshot(
     soul: bot.soul ?? "",
     cwd: bot.cwd ?? "",
     notifications: bot.notifications ?? true,
-    speakReplies: bot.speakReplies ?? false,
   };
 }
 
 export function profileRevision(
-  bot: { name: string; title: string; description: string; soul?: string; cwd?: string; notifications?: boolean; speakReplies?: boolean; lastProfileRequestId?: string },
+  bot: { name: string; title: string; description: string; soul?: string; cwd?: string; notifications?: boolean; lastProfileRequestId?: string },
 ): string {
   // A later proposal can restore identical text. Keep its private receipt
   // in the opaque revision so an older, interrupted card cannot apply twice.

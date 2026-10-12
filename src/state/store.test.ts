@@ -907,7 +907,6 @@ describe("config status frames", () => {
         threads: { maxConcurrentPerBot: 10 },
         localVm: { mode: "per-bot", maxInstances: 3 },
         opencodeGo: { configured: true },
-        tts: { configured: true, ready: true, voice: "Ada" },
         profile: { name: "Ian", email: "ian@example.test" },
         features: { skillAuthoring: true },
       }),
@@ -920,7 +919,6 @@ describe("config status frames", () => {
       threads: { maxConcurrentPerBot: 10 },
       localVm: { mode: "per-bot", maxInstances: 3 },
       opencodeGo: { configured: true },
-      tts: { configured: true, ready: true, voice: "Ada" },
       profile: { name: "Ian", email: "ian@example.test" },
       features: { skillAuthoring: true },
     });

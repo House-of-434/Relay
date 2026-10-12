@@ -41,12 +41,6 @@ const __APP_VERSION__: string;
       interaction: "direct" | "portal-picker" | "none";
       reasonCode?: string;
     };
-    dictation: {
-      available: boolean;
-      engine: "apple-speech" | "none";
-      onDevice: boolean;
-      reasonCode?: string;
-    };
     localComputer: {
       available: boolean;
       support: "supported" | "limited" | "unsupported";
@@ -191,16 +185,6 @@ const __APP_VERSION__: string;
         frame(serial: string): Promise<{ serial: string; dataUrl: string }>;
         input(serial: string, payload: AndroidDeviceInput): Promise<void>;
       };
-      /** Start native dictation. Call mode supplies endpointMs so silence
-       * finalizes a turn; composer dictation omits it and remains manual. */
-      speechStart(options?: { endpointMs?: number }): Promise<void>;
-      speechStop(): Promise<void>;
-      /** Finish capture and emit the recognizer's final transcript. */
-      speechFinish?(): Promise<void>;
-      onSpeechTranscript(
-        cb: (line: { partial?: boolean; text?: string; error?: string }) => void,
-      ): () => void;
-      onSpeechEnd(cb: (info: { code: number | null; reason?: string }) => void): () => void;
       /** Absolute path of a dropped File ("" when the drag carried no
        * file on disk). Absent in older builds of the shell. */
       getPathForFile?(file: File): string;
@@ -210,8 +194,8 @@ const __APP_VERSION__: string;
       permStatus(): Promise<{ mic: string }>;
       /** Triggers the macOS microphone prompt; resolves true when granted. */
       permRequestMic(): Promise<boolean>;
-      /** Opens System Settings on a privacy pane: mic|screen|speech|accessibility. */
-      permOpenSettings(pane: "mic" | "screen" | "speech" | "accessibility"): Promise<void>;
+      /** Opens System Settings on a privacy pane: mic|screen|accessibility. */
+      permOpenSettings(pane: "mic" | "screen" | "accessibility"): Promise<void>;
       /** Relaunch the local macOS app after a permission grant. */
       relaunch?(): Promise<boolean>;
       /** Copies an engine install command and opens a blank terminal. False
@@ -277,7 +261,7 @@ const __APP_VERSION__: string;
       saveFile?(filePath: string): Promise<string | null>;
       /** Save a provider credential through Electron's OS-backed store. */
       setCredential?(
-        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "ttsKey" | "fishAudioKey" | "jevApiKey" | "openaiImageApiKey" | "customImageApiKey",
+        name: "composioApiKey" | "xaiApiKey" | "boxToken" | "opencodeGoApiKey" | "jevApiKey" | "openaiImageApiKey" | "customImageApiKey",
         value: string,
       ): Promise<ConfigStatus>;
       /** In-app auto-update (packaged app only; dormant in dev). onState

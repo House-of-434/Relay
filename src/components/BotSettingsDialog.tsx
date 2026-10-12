@@ -22,7 +22,6 @@ import { RoutinesSection } from "./bot-settings/RoutinesSection";
 import { AccessSection } from "./bot-settings/AccessSection";
 import { ModelSection } from "./bot-settings/ModelSection";
 import { PermissionsSection } from "./bot-settings/PermissionsSection";
-import { VoiceSection } from "./bot-settings/VoiceSection";
 import { HistorySection, type HistoryRow } from "./bot-settings/HistorySection";
 import { UsageSection } from "./bot-settings/UsageSection";
 import { VisibilitySection } from "./bot-settings/VisibilitySection";
@@ -286,8 +285,6 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
         return !state.config?.sharedWorkspace ? <ModelSection bot={bot} /> : null;
       case "permissions":
         return <PermissionsSection bot={bot} derived={derived} />;
-      case "voice":
-        return <VoiceSection bot={bot} derived={derived} />;
       case "visibility":
         return <VisibilitySection bot={bot} />;
       case "history":

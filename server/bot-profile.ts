@@ -28,8 +28,6 @@ export const BOT_PROFILE_PATCH_FIELDS = [
   "avatarFocusX",
   "avatarFocusY",
   "mascotBody",
-  "voice",
-  "speakReplies",
 ] as const;
 
 export const profilePatchSchema = z.object({
@@ -65,11 +63,6 @@ export const profilePatchSchema = z.object({
   avatarFocusX: z.number({ error: "avatarFocusX must be a number from 0 to 1" }).finite().min(0).max(1).optional(),
   avatarFocusY: z.number({ error: "avatarFocusY must be a number from 0 to 1" }).finite().min(0).max(1).optional(),
   mascotBody: mascotBodySchema.optional(),
-  voice: z
-    .string({ error: "voice must be a string" })
-    .max(BOT_PROFILE_LIMITS.voice, { error: "voice must be at most 200 characters" })
-    .optional(),
-  speakReplies: z.boolean({ error: "speakReplies must be true or false" }).optional(),
 });
 
 export type BotProfilePatchInput = z.input<typeof profilePatchSchema>;
@@ -88,8 +81,6 @@ export type BotProfilePatch = Partial<
     | "avatarFocusX"
     | "avatarFocusY"
     | "mascotBody"
-    | "voice"
-    | "speakReplies"
   >
 >;
 
