@@ -4,7 +4,7 @@
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activeLocale, t } from "@/lib/i18n";
-import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, PanelLeftClose, PanelLeftOpen, Pin, PinOff, Plus, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -952,7 +952,12 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
     </section>
   );
 }
-export function GroupView({ group }: { group: Group }) {
+export function GroupView({ group, sidebarOpen = true, onToggleSidebar }: {
+  group: Group;
+  /** Desktop sidebar state; the toggle renders only when a handler is given. */
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+}) {
   const { state, dispatch } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
   // Same Windows caption handling as ChatView: drag on the header, shift the
@@ -1155,6 +1160,11 @@ export function GroupView({ group }: { group: Group }) {
     dispatch({ type: "loadOlderMessages", threadId: group.threadId });
   };
   const oldestId = group.messages[0]?.id;
+  // The inverse of the new-thread guard below: a thread known to be blank
+  // has nothing to start anew from and nothing to export, so both header
+  // buttons hide. Group transcripts arrive atomically, so an empty list
+  // with no scrollback is a truly empty thread.
+  const threadIsEmpty = group.messages.length === 0 && !group.hasMore;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const captured = preExpandHeight.current;
@@ -1219,6 +1229,17 @@ export function GroupView({ group }: { group: Group }) {
             do not fold to icons, so it wraps below 48rem rather than 30rem. */}
         <div data-roomhead-row className="flex items-center justify-between @max-3xl/roomhead:flex-wrap @max-3xl/roomhead:gap-y-1">
         <div data-roomhead-identity className="flex min-w-0 items-center gap-2 @max-3xl/roomhead:basis-full" style={headerNoDragStyle}>
+          {onToggleSidebar && (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              aria-label={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
+              title={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
+              className="hidden size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
+            >
+              {sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+            </button>
+          )}
           <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
           {!group.dm && (
             <>
@@ -1244,20 +1265,10 @@ export function GroupView({ group }: { group: Group }) {
           // control row 16px (visual only) below the 26px overlay.
           style={controlsShiftStyle}
         >
-          {!remoteClient && !setupPending && !group.dm && (
+          {!remoteClient && !setupPending && !group.dm && !threadIsEmpty && (
             <button
               type="button"
-              onClick={() => {
-                // The current thread is already blank: creating another
-                // would pile up empties, so stay and hand the writer the
-                // composer. Group transcripts arrive atomically, so an
-                // empty list with no scrollback is a truly empty thread.
-                if (group.messages.length === 0 && !group.hasMore) {
-                  document.querySelector<HTMLTextAreaElement>("[data-composer-input]")?.focus();
-                  return;
-                }
-                dispatch({ type: "newGroupTask", groupId: group.id });
-              }}
+              onClick={() => dispatch({ type: "newGroupTask", groupId: group.id })}
               aria-label={t("thread.new")}
               title={t("thread.new")}
               className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
@@ -1265,11 +1276,13 @@ export function GroupView({ group }: { group: Group }) {
               <Plus size={18} />
             </button>
           )}
+          {!threadIsEmpty && (
           <ExportTranscriptMenu
             title={group.name}
             messages={group.messages}
             isGroup
           />
+          )}
           <GroupUsageChip usage={group.usage} />
           {!remoteClient && !setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
           {!remoteClient && !setupPending && !group.dm && <DefaultResponderSelect group={group} members={members} />}

@@ -17,8 +17,6 @@ import {
   Loader2,
   MoreHorizontal,
   Pencil,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pin,
   PinOff,
   Plus,
@@ -26,7 +24,6 @@ import {
   Puzzle,
   Share2,
   Trash2,
-  Smartphone,
   Users,
   X,
 } from "lucide-react";
@@ -44,7 +41,7 @@ import type { LocaleKey } from "@/locales";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { WorkingDots } from "./WorkingIndicator";
 import { nextRename } from "@/lib/rename";
-import { useDesktopCapabilities } from "./DesktopCapabilities";
+import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 import { MIN_QUERY, SearchResults } from "./SearchResults";
 import { TeamLibraryPanel } from "./TeamLibraryPanel";
 import { ShareTeamDialog } from "./ShareTeamDialog";
@@ -54,10 +51,8 @@ import { BotPickerList } from "./BotPickerList";
 import {
   loadCollapsedSections,
   loadSectionOrder,
-  loadSidebarDensity,
   saveCollapsedSections,
   saveSectionOrder,
-  saveSidebarDensity,
   toggleCollapsedSection,
   type SidebarDensity,
 } from "@/lib/sidebar-preferences";
@@ -83,11 +78,10 @@ import {
 } from "@/lib/sidebar-layout";
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { botListItemPointerIntent } from "@/lib/sidebar-selection";
-import { phoneSettingsAction, SidebarPhoneButton } from "./SidebarPhoneButton";
 import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
-import { appSettingsLabels, IdentityAvatar, SidebarProfileMenu, useSidebarIdentity } from "./SidebarProfileMenu";
+import { SidebarProfileMenu } from "./SidebarProfileMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
 import { ShortcutHint } from "./ShortcutHint";
 
@@ -1306,13 +1300,20 @@ export function TeamMenuItems({ onAddBots, onRename, onShare, onDelete }: {
   );
 }
 
-export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
+export function Sidebar({ open, onClose, desktopOpen = true }: {
+  open: boolean;
+  onClose: () => void;
+  /** Desktop (md+) visibility; the mobile drawer follows `open` regardless. */
+  desktopOpen?: boolean;
+}) {
   const { state, dispatch } = useStore();
   const cloudOwner = useCloudOwner(state.config?.cloudHome === true);
-  const identity = useSidebarIdentity();
-  const identityLabels = appSettingsLabels(identity);
   const remoteClient = window.ogb?.remoteClient?.active === true;
-  const { capabilities } = useDesktopCapabilities();
+  // Every plus-menu action is admin scope: new bots need tool/DB access
+  // decisions, group-chat setup needs an admin session, and teams carry
+  // shared instructions. Same gate as SettingsModal/BotSettingsDialog —
+  // null while loading counts as hidden.
+  const canManage = useOwnerOrAdmin() === true;
   const importReturnRef = useRef<HTMLButtonElement>(null);
   const sidebarRef = useRef<HTMLElement>(null);
   const [confirm, setConfirm] = useState<{ kind: BotConfirmKind; bot: Bot } | null>(null);
@@ -1357,16 +1358,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     restoreBot?: { id: string; name: string };
   } | null>(null);
   const [query, setQuery] = useState("");
-  const [density, setDensityState] = useState<SidebarDensity>(() => loadSidebarDensity());
-  const [lastExpandedDensity, setLastExpandedDensity] = useState<Exclude<SidebarDensity, "icons">>(() => {
-    const saved = loadSidebarDensity();
-    return saved === "icons" ? "comfortable" : saved;
-  });
-  const [densityOpen, setDensityOpen] = useState(false);
-  const densityMotion = useMenuMotion(densityOpen);
-  // Compact is the quiet sidebar: a row is its name and its status, nothing
-  // else (see the `quiet` prop on BotListItem and GroupListItem).
-  const quietRows = density === "compact";
+  // Website sidebar is always comfortable: the drawer open/close button
+  // handles collapsing, so there is no density picker (comfortable / compact
+  // / avatars-only). Row components still accept a density prop for tests.
+  const density: SidebarDensity = "comfortable";
   const [collapsedSections, setCollapsedSections] = useState<string[]>(() => loadCollapsedSections());
   const [sectionOrder, setSectionOrder] = useState<string[]>(() => loadSectionOrder());
   const [draggingSectionId, setDraggingSectionId] = useState<string | null>(null);
@@ -1376,24 +1371,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     from: string | null;
     over: { id: string; place: SectionDropPlace } | null;
   }>({ from: null, over: null });
-
-  const setDensity = (next: SidebarDensity) => {
-    setDensityState(next);
-    if (next !== "icons") setLastExpandedDensity(next);
-    // Search is hidden in avatar-only mode. Keeping its value would silently
-    // filter bots, rooms, and message results with no visible way to clear it.
-    else setQuery("");
-    saveSidebarDensity(next);
-    setDensityOpen(false);
-  };
-
-  const toggleCollapsed = () => {
-    if (density === "icons") setDensity(lastExpandedDensity);
-    else {
-      setLastExpandedDensity(density);
-      setDensity("icons");
-    }
-  };
 
   // Esc closes the drawer, mirroring ApiKeys.tsx:75-85. Bound only while the
   // drawer is open — on mobile, exactly when a bot/room context menu or the
@@ -1407,15 +1384,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
     document.addEventListener("keydown", closeOnEscape);
     return () => document.removeEventListener("keydown", closeOnEscape);
   }, [open, onClose, confirm]);
-
-  useEffect(() => {
-    if (!densityOpen) return;
-    const closeDensityMenu = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setDensityOpen(false);
-    };
-    window.addEventListener("keydown", closeDensityMenu);
-    return () => window.removeEventListener("keydown", closeDensityMenu);
-  }, [densityOpen]);
 
   useEffect(() => {
     if (remoteClient) return;
@@ -1477,23 +1445,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       setTeamFeedback({ error: true, text: cause instanceof Error ? cause.message : String(cause) });
     }
   };
-
-  const macInset = capabilities.windowChrome === "mac-inset";
-  const browser = capabilities.host.label === "Browser";
-  // macOS owns inset traffic lights; Windows hides the native bar and draws
-  // caption buttons over the header's right end. Either way this top row is
-  // the window's drag handle (ChatView/GroupView headers do the same).
-  const draggableChrome = macInset || capabilities.windowChrome === "win-caption";
-  // SAFETY: Electron's documented -webkit-app-region CSS property is not in
-  // React's CSSProperties type, but the renderer accepts it as an inline style.
-  const windowDragStyle = draggableChrome
-    ? ({ WebkitAppRegion: "drag" } as React.CSSProperties)
-    : undefined;
-  // SAFETY: Same Electron-only CSS property as windowDragStyle; interactive
-  // buttons must explicitly opt out of the draggable title-bar region.
-  const windowNoDragStyle = draggableChrome
-    ? ({ WebkitAppRegion: "no-drag" } as React.CSSProperties)
-    : undefined;
 
   const q = query.trim().toLowerCase();
 
@@ -1628,7 +1579,10 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       data-sidebar
       className={cn(
         "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
-        density === "icons" ? "w-[80px]" : density === "compact" ? "w-[272px]" : "w-[320px]",
+        "w-[320px]",
+        // Desktop toggle (chat-header button): hidden on md+ only, so the
+        // mobile drawer keeps working off `open` below md.
+        !desktopOpen && "md:hidden",
         // Below md only: the sidebar leaves the flow and slides in over the chat.
         // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
         // v4 emits the native `translate` property, and any value other than
@@ -1641,78 +1595,12 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
       )}
     >
-      {/* macOS owns inset traffic lights; Linux/Windows use native chrome. */}
-      <div
-        className={cn("flex items-center pt-3.5 pb-1", density === "icons" ? "flex-col gap-1 px-2" : "justify-between px-4")}
-        style={windowDragStyle}
-      >
-        {macInset ? (
-          <div className={density === "icons" ? "h-5 w-full" : "w-14"} />
-        ) : browser ? (
-          <div className="flex items-center gap-2">
-            <span className="size-3 rounded-full bg-[#ff5f57]" />
-            <span className="size-3 rounded-full bg-[#febc2e]" />
-            <span className="size-3 rounded-full bg-[#28c840]" />
-          </div>
-        ) : <div />}
-        <div
-          className={cn("relative flex items-center", density === "icons" ? "flex-col gap-1" : "gap-1")}
-          style={windowNoDragStyle}
-        >
-          <button
-            type="button"
-            onClick={toggleCollapsed}
-            aria-label={density === "icons" ? t("sidebar.density.expand") : t("sidebar.density.collapseAria")}
-            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-            title={density === "icons" ? t("sidebar.density.expand") : t("sidebar.density.collapse")}
-          >
-            {density === "icons" ? <PanelLeftOpen size={20} /> : <PanelLeftClose size={20} />}
-          </button>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setDensityOpen((value) => !value)}
-              aria-label={t("sidebar.density.chooseAria")}
-              aria-expanded={densityOpen}
-              className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
-              title={t("sidebar.density.title")}
-            >
-              <span aria-hidden="true" className="flex size-5 flex-col items-center justify-center gap-[3px]">
-                <span className="h-px w-3.5 rounded-full bg-current" />
-                <span className="h-px w-2.5 rounded-full bg-current" />
-                <span className="h-px w-3.5 rounded-full bg-current" />
-              </span>
-            </button>
-            {densityMotion.shown && (
-              <>
-                <div className={cn("fixed inset-0 z-30", densityMotion.closing && "pointer-events-none")} onMouseDown={() => setDensityOpen(false)} />
-                <div className={cn(
-                  "absolute top-full z-40 mt-1 w-40 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60",
-                  density === "icons" ? "left-0" : "right-0",
-                  densityMotion.className,
-                )} {...densityMotion.exitProps}>
-                  {(["comfortable", "compact", "icons"] as const).map((option) => (
-                    <button
-                      key={option}
-                      type="button"
-                      onClick={() => setDensity(option)}
-                      className={cn(
-                        "flex w-full items-center justify-between px-3 py-2 rounded-lg text-left text-[13px] hover:bg-raised/70",
-                        density === option ? "text-accent" : "text-ink",
-                      )}
-                    >
-                      {option === "icons"
-                        ? t("sidebar.density.iconsOnly")
-                        : option === "compact"
-                          ? t("sidebar.density.compact")
-                          : t("sidebar.density.comfortable")}
-                      {density === option && <Check size={14} />}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
+      {/* Website header: no traffic lights, no density picker — the drawer
+          button owns show/hide. The new-item action is admin-only (see
+          canManage) and right-aligned. */}
+      <div className="flex items-center justify-end px-4 pb-1 pt-3.5">
+        {canManage && (
+        <div className="relative flex items-center gap-1">
           <button
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
@@ -1726,8 +1614,7 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             <>
               <div className={cn("fixed inset-0 z-30", plusMotion.closing && "pointer-events-none")} onMouseDown={() => setPlusOpen(false)} />
               <div className={cn(
-                "absolute top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60",
-                density === "icons" ? "left-0" : "right-0",
+                "absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60",
                 plusMotion.className,
               )} {...plusMotion.exitProps}>
                 <button
@@ -1787,12 +1674,13 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
             </>
           )}
         </div>
+        )}
       </div>
 
-      <DesktopWorkspaceSwitcher compact={density === "icons"} cloudHome={state.config?.cloudHome === true} owner={cloudOwner} />
-      <OrganizationIdentity compact={density === "icons"} />
+      <DesktopWorkspaceSwitcher compact={false} cloudHome={state.config?.cloudHome === true} owner={cloudOwner} />
+      <OrganizationIdentity compact={false} />
       {/* Search */}
-      <div className={cn("pt-1 pb-3", density === "icons" ? "hidden" : "px-3")}>
+      <div className="px-3 pb-3 pt-1">
         <div className="flex items-center gap-2 rounded-md border border-hairline/40 bg-inset/40 px-2.5 py-1.5 focus-within:border-focus">
           <Search size={14} className="text-ink-secondary" />
           <input
@@ -1817,7 +1705,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
               <BotListItem
                 bot={unsectionedChief}
                 density={density}
-                quiet={quietRows}
                 onMenu={setMenu}
               />
             </div>
@@ -1858,37 +1745,35 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                 onDrop={dropSection}
                 className={cn(
                   "flex flex-col gap-0.5",
-                  density !== "icons" && index > 0 && "pt-3",
+                  index > 0 && "pt-3",
                 )}
               >
                 {dropTarget?.id === id && dropTarget.place === "before" && draggingSectionId !== id && (
                   <div className="mx-2 h-0.5 rounded-full bg-accent" />
                 )}
-                {density !== "icons" && (
-                  <SidebarSectionHeader
-                    name={sectionLabel(id)}
-                    onContextMenu={!remoteClient && layoutInteractive && sectionName ? (event) => {
-                      event.preventDefault();
-                      teamMenuReturn.current = event.currentTarget.querySelector<HTMLElement>("button") ?? event.currentTarget;
-                      setTeamMenu({ name: sectionName, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 230)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 150)) });
-                    } : undefined}
-                    collapsed={collapsed}
-                    attention={attention}
-                    onToggle={layoutInteractive ? () => toggleSection(id) : undefined}
-                    reorderable={layoutInteractive && sectionIds.length > 1}
-                    dragging={draggingSectionId === id}
-                    onDragStart={(event) => {
-                      event.dataTransfer.effectAllowed = "move";
-                      event.dataTransfer.setData("application/x-relay-sidebar-section", id);
-                      event.dataTransfer.setData("text/plain", id);
-                      sectionDragRef.current = { from: id, over: null };
-                      setDraggingSectionId(id);
-                    }}
-                    onDragEnd={resetSectionDrag}
-                    onMove={(direction) => moveSidebarSection(id, direction)}
-                    onDelete={!remoteClient && sectionName ? () => setDeletingTeam(sectionName) : undefined}
-                  />
-                )}
+                <SidebarSectionHeader
+                  name={sectionLabel(id)}
+                  onContextMenu={!remoteClient && layoutInteractive && sectionName ? (event) => {
+                    event.preventDefault();
+                    teamMenuReturn.current = event.currentTarget.querySelector<HTMLElement>("button") ?? event.currentTarget;
+                    setTeamMenu({ name: sectionName, x: Math.max(8, Math.min(event.clientX, window.innerWidth - 230)), y: Math.max(8, Math.min(event.clientY, window.innerHeight - 150)) });
+                  } : undefined}
+                  collapsed={collapsed}
+                  attention={attention}
+                  onToggle={layoutInteractive ? () => toggleSection(id) : undefined}
+                  reorderable={layoutInteractive && sectionIds.length > 1}
+                  dragging={draggingSectionId === id}
+                  onDragStart={(event) => {
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("application/x-relay-sidebar-section", id);
+                    event.dataTransfer.setData("text/plain", id);
+                    sectionDragRef.current = { from: id, over: null };
+                    setDraggingSectionId(id);
+                  }}
+                  onDragEnd={resetSectionDrag}
+                  onMove={(direction) => moveSidebarSection(id, direction)}
+                  onDelete={!remoteClient && sectionName ? () => setDeletingTeam(sectionName) : undefined}
+                />
                 {!collapsed && (
                   <>
                     {sectionChiefItems.map((bot) => (
@@ -1896,7 +1781,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         key={bot.id}
                         bot={bot}
                         density={density}
-                        quiet={quietRows}
                         onMenu={setMenu}
                       />
                     ))}
@@ -1905,7 +1789,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         key={group.id}
                         group={group}
                         density={density}
-                        quiet={quietRows}
                         onMenu={setRoomMenu}
                       />
                     ))}
@@ -1914,7 +1797,6 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
                         key={bot.id}
                         bot={bot}
                         density={density}
-                        quiet={quietRows}
                         onMenu={setMenu}
                       />
                     ))}
@@ -1940,95 +1822,39 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
       </p>
 
       {/* Footer */}
-      <div className={cn("pb-3 pt-2", density === "icons" ? "px-2" : "px-3")}>
-        {density === "icons" && (
-          <>
-          <button
-            data-tour="nav-automations"
-            onClick={() => dispatch({ type: "showRoutines" })}
-            aria-label={density === "icons" ? t("sidebar.nav.automations") : undefined}
-            title={density === "icons" ? t("sidebar.nav.automations") : undefined}
-            className={cn(
-              "flex min-h-10 w-full items-center rounded-xl py-2 text-left transition-colors",
-              density === "icons" ? "justify-center px-2" : "gap-3 px-3",
-              state.activeView === "routines" ? "bg-raised text-ink" : "text-ink hover:bg-raised/50",
-            )}
-          >
-            <CalendarDays size={20} className={state.activeView === "routines" ? "text-accent" : "text-ink-secondary"} />
-            <span className={cn("flex-1 text-[14px]", density === "icons" && "hidden")}>{t("sidebar.nav.automations")}</span>
-            {state.routineRuns.some((run) => isRoutineProblemRun(run) && !run.seenAt) && (
-              <span className="size-2 rounded-full bg-danger" />
-            )}
-          </button>
-          <button
-            onClick={() => dispatch({ type: "togglePlugins", open: true })}
-            className={cn("flex min-h-10 w-full items-center rounded-xl py-2 text-left hover:bg-raised/50", density === "icons" ? "justify-center px-2" : "gap-3 px-3")}
-            aria-label={density === "icons" ? t("settings.section.connections") : undefined}
-            title={density === "icons" ? t("settings.section.connections") : undefined}
-          >
-            <Puzzle size={20} className="text-ink-secondary" />
-            <span className={cn("text-[14px] text-ink", density === "icons" && "hidden")}>{t("settings.section.connections")}</span>
-          </button>
-          </>
-        )}
-        {density === "icons" && state.config?.sharedWorkspace ? (
-          <button type="button" disabled aria-label="Phone tools coming soon" title="Coming soon"
-            className="flex size-10 cursor-not-allowed items-center justify-center rounded-md text-ink-secondary opacity-35">
-            <Smartphone size={18} />
-          </button>
-        ) : density === "icons" && (
-          <SidebarPhoneButton
-            density={density}
-            onOpen={() => dispatch(phoneSettingsAction())}
-          />
-        )}
-          {density !== "icons" && (
-          <SidebarMoreMenu
-            items={[
-              {
-                key: "routines",
-                tourId: "nav-automations",
-                label: t("sidebar.nav.automations"),
-                icon: <CalendarDays size={18} />,
-                active: state.activeView === "routines",
-                // folded away, this dot would otherwise vanish with the row
-                attention: state.routineRuns.some(
-                  (run) => isRoutineProblemRun(run) && !run.seenAt,
-                ),
-                onSelect: () => dispatch({ type: "showRoutines" }),
-              },
-              {
-                key: "plugins",
-                tourId: "nav-apps",
-                label: t("settings.section.connections"),
-                icon: <Puzzle size={18} />,
-                onSelect: () => dispatch({ type: "togglePlugins", open: true }),
-              },
-            ]}
-          />
-        )}
-        {density === "icons" ? (
-          <div className="flex items-center justify-center">
-            <button
-              onClick={() => dispatch({ type: "toggleAppSettings" })}
-              className="flex min-w-0 items-center justify-center rounded-xl px-2 py-2 text-left hover:bg-raised/50"
-              aria-label={identityLabels.ariaLabel}
-              title={identityLabels.title}
-            >
-              <IdentityAvatar identity={identity} size={28} />
-            </button>
-          </div>
-        ) : (
-          // The Tools row and the profile row are two different kinds of
-          // thing — places to go, versus who you are and what the app is —
-          // so they get clear space between them. A hairline lived here
-          // briefly and made it worse: full-bleed, it ran within a few pixels
-          // of the profile row's rounded hover pill, and the two hover states
-          // read as one crowded block rather than two rows.
-          <div className="mt-3">
-            <SidebarProfileMenu />
-          </div>
-        )}
+      <div className="px-3 pb-3 pt-2">
+        <SidebarMoreMenu
+          items={[
+            {
+              key: "routines",
+              tourId: "nav-automations",
+              label: t("sidebar.nav.automations"),
+              icon: <CalendarDays size={18} />,
+              active: state.activeView === "routines",
+              // folded away, this dot would otherwise vanish with the row
+              attention: state.routineRuns.some(
+                (run) => isRoutineProblemRun(run) && !run.seenAt,
+              ),
+              onSelect: () => dispatch({ type: "showRoutines" }),
+            },
+            {
+              key: "plugins",
+              tourId: "nav-apps",
+              label: t("settings.section.connections"),
+              icon: <Puzzle size={18} />,
+              onSelect: () => dispatch({ type: "togglePlugins", open: true }),
+            },
+          ]}
+        />
+        {/* The Tools row and the profile row are two different kinds of
+            thing — places to go, versus who you are and what the app is —
+            so they get clear space between them. A hairline lived here
+            briefly and made it worse: full-bleed, it ran within a few pixels
+            of the profile row's rounded hover pill, and the two hover states
+            read as one crowded block rather than two rows. */}
+        <div className="mt-3">
+          <SidebarProfileMenu />
+        </div>
       </div>
 
       <BotContextMenu

@@ -8,6 +8,8 @@ import {
   Copy,
   Crown,
   MessageSquareReply,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Pin,
   PinOff,
@@ -908,7 +910,12 @@ function PinnedBanner({
   );
 }
 
-export function ChatView({ bot: profile }: { bot: Bot }) {
+export function ChatView({ bot: profile, sidebarOpen = true, onToggleSidebar }: {
+  bot: Bot;
+  /** Desktop sidebar state; the toggle renders only when a handler is given. */
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+}) {
   const bot = useMemo(() => currentTaskBot(profile), [profile]);
   const { state, dispatch } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
@@ -1202,6 +1209,11 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
   const routineExecution = state.routineRuns.find((run) => run.target === "bot" && run.botId === bot.id && run.threadId === bot.threadId);
   const resultsThreadId = routineExecution?.resultsThreadId ?? routineExecution?.sourceThreadId;
   const canOpenResults = resultsThreadId && [...state.bots, ...state.groups].some((owner) => owner.threadId === resultsThreadId || owner.tasks?.some((task) => task.threadId === resultsThreadId));
+  // The inverse of the new-thread guard below: a thread known to be blank
+  // has nothing to start anew from and nothing to export, so both header
+  // buttons hide. An unloaded thread counts as non-empty — the buttons must
+  // still work while the snapshot is on its way.
+  const threadIsEmpty = !bot.awaitingThreadSnapshot && messages.length === 0 && !bot.hasMore;
 
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
@@ -1224,6 +1236,17 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
             header wraps: name line on top, chips underneath on the right. */}
         <div data-chathead-row className="flex items-center justify-between @max-[30rem]/chathead:flex-wrap @max-[30rem]/chathead:gap-y-1">
         <div data-chathead-identity className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
+          {onToggleSidebar && (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              aria-label={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
+              title={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
+              className="hidden size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
+            >
+              {sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
+            </button>
+          )}
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg">
             <BotAvatar
               bot={bot}
@@ -1270,19 +1293,10 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
-          {!remoteClient && (
+          {!remoteClient && !threadIsEmpty && (
             <button
               type="button"
-              onClick={() => {
-                // The current thread is already blank: creating another would
-                // pile up empties, so stay and hand the writer the composer.
-                // An unloaded thread counts as non-empty — + must still work.
-                if (!bot.awaitingThreadSnapshot && visibleMessages(bot).length === 0 && !bot.hasMore) {
-                  document.querySelector<HTMLTextAreaElement>("[data-composer-input]")?.focus();
-                  return;
-                }
-                dispatch({ type: "newTask", botId: bot.id });
-              }}
+              onClick={() => dispatch({ type: "newTask", botId: bot.id })}
               aria-label={t("thread.new")}
               title={t("thread.new")}
               className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
@@ -1290,11 +1304,13 @@ export function ChatView({ bot: profile }: { bot: Bot }) {
               <Plus size={18} />
             </button>
           )}
+          {!threadIsEmpty && (
           <ExportTranscriptMenu
             title={bot.name}
             messages={messages}
             botName={bot.name}
           />
+          )}
           {(bot.busy || bot.waitingForTeammates) && (
             <button
               onClick={() => dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId })}

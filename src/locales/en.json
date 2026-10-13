@@ -728,6 +728,8 @@
   "sidebar.density.comfortable": "Comfortable",
   "sidebar.density.compact": "Compact",
   "sidebar.density.iconsOnly": "Avatars only",
+  "sidebar.toggle.open": "Open sidebar",
+  "sidebar.toggle.close": "Close sidebar",
   "sidebar.new": "New",
   "sidebar.newOrShare": "New or share",
   "sidebar.newBot": "New Bot",
