@@ -1,76 +1,111 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import { t } from "@/lib/i18n";
+import { MausAvatar } from "./Avatar";
 
 /** Shown only by the web BFF when the browser has no Relay session. Desktop
  * pairing and local-owner flows keep their existing PairPage.
  *
- * Minimal and classy: the app background, a soft blurred orb behind a crisp
- * orb, "House of 434" up top, one white pill to continue. No cards, no
- * chevrons, no toggles. */
+ * Minimal: a blurred mock of the chat UI behind everything, the stacks mark
+ * and House of 434 up top, one Google pill centered. No cards, no chevrons,
+ * no toggles. */
 export function RelaySignInPage() {
   const [opening, setOpening] = useState(false);
   const denied = typeof window !== "undefined" &&
     new URLSearchParams(window.location?.search ?? "").get("authError") === "not-allowed";
 
   return (
-    <main className="relative flex min-h-dvh flex-col items-center justify-center overflow-hidden bg-app px-5 py-10 text-ink">
-      {/* Blurred stacks watermark — same theme background, just depth */}
-      <div aria-hidden="true" className="pointer-events-none absolute inset-0 flex items-center justify-center">
-        <StacksMark className="size-[420px] opacity-20 blur-3xl" />
-      </div>
+    <main className="relative flex min-h-dvh flex-col overflow-hidden bg-app text-ink">
+      <BlurredChatBackdrop />
 
-      <header className="relative flex flex-col items-center text-center">
-        <h1
-          className="text-[44px] font-medium leading-none sm:text-[52px]"
+      {/* Top bar: stacks mark left, House of 434 right — nothing else */}
+      <header className="relative flex items-center justify-between px-6 py-5 sm:px-10">
+        <StacksMark className="h-8 w-auto" />
+        <a
+          href="https://www.houseof434.com"
+          target="_blank"
+          rel="noopener noreferrer"
           style={{
             fontFamily: '"Inter Tight", "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
-            letterSpacing: "-0.03em",
           }}
+          className="text-[12px] tracking-wide text-ink-secondary/70 underline-offset-4 hover:underline"
         >
-          Relay
-        </h1>
+          House of 434
+        </a>
       </header>
 
-      {/* The two stacks only — no tile, background stays the theme */}
-      <div className="relative flex items-center justify-center py-16">
-        <StacksMark className="h-[148px] w-auto" />
-      </div>
+      {/* Wordmark, subtitle, and Google pill — dropped below center so the
+          block clears the blurred mascots behind it */}
+      <div className="relative flex flex-1 flex-col items-center justify-end px-5 pb-[9vh]">
+        <div className="flex w-full flex-col items-center">
+          {denied && (
+            <p role="alert" className="mb-6 max-w-[340px] rounded-lg border border-danger/25 bg-danger/10 px-3 py-2.5 text-center text-[12.5px] leading-relaxed text-danger">
+              {t("signIn.workspace.denied")}
+            </p>
+          )}
 
-      <div className="relative mt-4 flex w-full flex-col items-center">
+          <h1
+            className="text-[40px] font-medium leading-none"
+            style={{
+              fontFamily: '"Inter Tight", "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
+              letterSpacing: "-0.03em",
+            }}
+          >
+            Relay
+          </h1>
+          <p className="mt-2 max-w-[300px] whitespace-nowrap text-center text-[13px] leading-relaxed text-ink-secondary">
+            {t("signIn.workspace.tagline")}
+          </p>
 
-      {denied && (
-        <p role="alert" className="relative mb-6 max-w-[340px] rounded-lg border border-danger/25 bg-danger/10 px-3 py-2.5 text-center text-[12.5px] leading-relaxed text-danger">
-          {t("signIn.workspace.denied")}
-        </p>
-      )}
-
-      <a
-        href="/auth/login"
-        aria-disabled={opening}
-        onClick={(event) => {
-          if (opening) {
-            event.preventDefault();
-            return;
-          }
-          setOpening(true);
-        }}
-        className="relative flex min-h-11 w-full max-w-[280px] items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-[14px] font-medium text-black transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black aria-disabled:cursor-wait aria-disabled:opacity-70"
-      >
-        {opening ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <GoogleG />}
-        {t("signIn.workspace.continue")}
-      </a>
-
-      <a
-        href="https://www.houseof434.com"
-        target="_blank"
-        rel="noopener noreferrer"
-        className="relative mt-4 text-[12px] tracking-wide text-ink-secondary/70 underline-offset-4 hover:underline"
-      >
-        House of 434
-      </a>
+          <a
+            href="/auth/login"
+            aria-disabled={opening}
+            onClick={(event) => {
+              if (opening) {
+                event.preventDefault();
+                return;
+              }
+              setOpening(true);
+            }}
+            className="mt-6 flex min-h-10 w-full max-w-[240px] items-center justify-center gap-2 rounded-full border border-hairline/60 bg-panel/70 px-5 py-2.5 text-[14px] font-medium text-ink shadow-2xl shadow-black/20 backdrop-blur-xl transition hover:bg-panel/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70 focus-visible:ring-offset-2 focus-visible:ring-offset-black aria-disabled:cursor-wait aria-disabled:opacity-70"
+          >
+            {opening ? <Loader2 size={16} className="animate-spin" aria-hidden="true" /> : <GoogleG />}
+            {t("signIn.workspace.continue")}
+          </a>
+        </div>
       </div>
     </main>
+  );
+}
+
+/** The three seeded bots — Scout, Mercury, Curator — blurred out behind
+ * the pill. Shapes only, no transcript, no text-like lines: thin bars blur
+ * into smeared text and look broken. Static poses, no animation. Purely
+ * decorative. */
+function BlurredChatBackdrop() {
+  return (
+    <div aria-hidden="true" className="absolute inset-0 overflow-hidden">
+      {/* Color glows so the trio pops through the blur */}
+      <div className="absolute inset-0 flex items-center justify-center">
+        <span className="absolute size-[420px] -translate-x-40 rounded-full bg-[#377FE6]/25 blur-3xl" />
+        <span className="absolute size-[420px] translate-x-40 rounded-full bg-[#E78531]/20 blur-3xl" />
+        <span className="absolute size-[380px] translate-y-24 rounded-full bg-[#01A492]/20 blur-3xl" />
+      </div>
+      <div className="absolute inset-0 flex -translate-y-[5vh] items-center justify-center gap-6 opacity-80 blur-xl sm:gap-10">
+        <span className="translate-y-10">
+          <MausAvatar color="blue" state="happy" size={148} motion="none" animated={false} />
+        </span>
+        <span className="-translate-y-8">
+          <MausAvatar color="orange" state="happy" size={184} motion="none" animated={false} />
+        </span>
+        <span className="translate-y-10">
+          <MausAvatar color="teal" state="happy" size={148} motion="none" animated={false} />
+        </span>
+      </div>
+      {/* Scrim: theme-tinted wash so the pill always reads */}
+      <div className="absolute inset-0 bg-app/55" />
+      <div className="absolute inset-0 bg-gradient-to-b from-app/50 via-transparent to-app/80" />
+    </div>
   );
 }
 

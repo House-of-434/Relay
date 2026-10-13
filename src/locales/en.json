@@ -1338,6 +1338,7 @@
   "onboarding.team.done": "Start chatting",
   "signIn.workspace.title": "Sign in to Relay",
   "signIn.workspace.body": "Use your House of 434 Google account to continue.",
+  "signIn.workspace.tagline": "Internal AI workspace for 434",
   "signIn.workspace.continue": "Continue with Google",
   "signIn.workspace.denied": "This Google account is not authorized for the House of 434 workspace. Sign in with your company account.",
   "settings.welcome.title": "Welcome tour",
