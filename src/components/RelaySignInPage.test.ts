@@ -9,6 +9,7 @@ it("shows a company Google sign-in and nothing more", () => {
   try {
     const html = renderToStaticMarkup(createElement(RelaySignInPage));
     expect(html).toContain(">Relay<");
+    expect(html).toContain("Internal AI workspace for 434");
     expect(html).toContain("House of 434");
     expect(html).toContain('href="/auth/login"');
     expect(html).toContain("Continue with Google");
