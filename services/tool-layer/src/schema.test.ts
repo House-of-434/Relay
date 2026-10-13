@@ -9,8 +9,9 @@ const init = source("../../../supabase/migrations/0001_init.sql");
 const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const transcripts = source("../../../supabase/migrations/0004_transcripts.sql");
+const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const serviceActors = source("../../../supabase/migrations/0005_service_actors.sql");
-const migrations = `${init}\n${stores}\n${transcripts}\n${serviceActors}`;
+const migrations = `${init}\n${stores}\n${transcripts}\n${ownership}\n${serviceActors}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
 // model. It does not prove Postgres accepts the SQL or that the constraints and
