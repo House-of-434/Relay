@@ -12,6 +12,8 @@ release
 *.log
 electron/resources/cloudflared*
 .relay-scratch
+.omb-scratch
+plans
 .env
 **/.env
 **/.env.*

@@ -17,6 +17,8 @@ worktrees/
 .worktrees/
 dist-server
 .relay-scratch
+.omb-scratch/
+plans/
 .wrangler/
 .dev.vars
 .dev.vars.*
