@@ -77,6 +77,23 @@ export type RoutineRunStatus =
   | "cancelled"
   | "missed";
 
+/** Leading context for a confirmed one-shot research execution. The run
+ * dispatches as its agent, whose standing instruction is to propose first —
+ * without this override the execution proposes a nested run from its own
+ * thread instead of investigating. */
+export const RESEARCH_EXECUTION_PREAMBLE = [
+  "This is the confirmed one-shot deep-research execution: the user already approved this investigation.",
+  "Do the investigation now with web_search for discovery and browser_open/browser_read/browser_extract for real reading, then deliver the cited report in this conversation.",
+  "Do not ask for confirmation and do not call propose_deep_research from this run.",
+].join(" ");
+
+/** Whether a run is a live research execution (queued, running, or waiting).
+ * Terminal research runs and every other trigger source return false, so a
+ * follow-up proposal after completion is never mistaken for nesting. */
+export function isLiveResearchExecution(run: Pick<RoutineRun, "triggerSource" | "status"> | undefined): boolean {
+  return run?.triggerSource === "research" && ["queued", "running", "waiting"].includes(run.status);
+}
+
 export interface Routine {
   id: string;
   name: string;
@@ -1390,7 +1407,12 @@ export class RoutineManager {
    * never runs) stays clean. Idempotent per researchId: confirming twice or
    * retrying the resolve returns the existing run instead of queueing another.
    * The prompt snapshot travels on the run itself, so there is no definition
-   * to be edited or deleted mid-flight. */
+   * to be edited or deleted mid-flight.
+   *
+   * The stored prompt leads with the execution preamble: without it the
+   * agent's standing propose-first instruction fires again inside its own
+   * execution thread, nesting a second confirmation whose run then defers
+   * behind the busy bot, so nothing ever starts. */
   enqueueResearch(input: {
     researchId: string;
     title: string;
@@ -1401,9 +1423,7 @@ export class RoutineManager {
     timeoutMinutes?: number;
     requestedAt: number;
   }): { id: string } {
-    const active = this.runs.find((run) => run.routineId === input.researchId &&
-      run.triggerSource === "research" &&
-      ["queued", "running", "waiting"].includes(run.status));
+    const active = this.runs.find((run) => run.routineId === input.researchId && isLiveResearchExecution(run));
     if (active) return { id: active.id };
     if (this.options.botState(input.botId) === "missing") {
       throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
@@ -1412,7 +1432,7 @@ export class RoutineManager {
       id: randomUUID(),
       routineId: input.researchId,
       routineName: input.title,
-      prompt: input.brief,
+      prompt: `${RESEARCH_EXECUTION_PREAMBLE}\n\n${input.brief}`,
       target: "bot",
       botId: input.botId,
       runOn: input.runOn,

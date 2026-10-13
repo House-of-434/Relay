@@ -415,7 +415,7 @@ import { LocalVmSeatPool, type LocalVmSeatHolder } from "./local-vm-seat-pool.ts
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
-import { resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { isLiveResearchExecution, resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createOptionsCard } from "./options-card.ts";
@@ -14880,6 +14880,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const role = from.relayAgent;
         if (role !== "scout") return json(res, 403, { error: "only Scout may propose deep research" });
         if (!researchJobs) return json(res, 503, { error: "research proposals are unavailable" });
+        // A live research execution thread is the confirmed run itself.
+        // Proposing from inside it would nest a second confirmation whose
+        // run then defers behind this busy bot, so nothing ever starts.
+        // Scope the check to this thread's own run: other active runs by the
+        // same bot never block a proposal, and terminal runs stay open to
+        // legitimate follow-up research.
+        if (routines) {
+          const executionRunId = store.taskByThread(from.id, body.fromThreadId)?.routineRunId;
+          if (executionRunId) {
+            const execution = routines.listRuns().find((run) => run.id === executionRunId);
+            if (isLiveResearchExecution(execution)) {
+              return json(res, 409, { error: "this conversation is already the confirmed deep-research execution — do the investigation here with web_search and the browser tools and deliver the cited report, instead of calling propose_deep_research again" });
+            }
+          }
+        }
         let job;
         try {
           job = researchJobs.submit({

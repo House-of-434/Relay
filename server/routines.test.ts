@@ -8,7 +8,9 @@ import { ensureDirs } from "./config.ts";
 import { BoatAgentDriver } from "./drivers/boatagent.ts";
 import {
   cleanRoutineOwner,
+  isLiveResearchExecution,
   nextOccurrence,
+  RESEARCH_EXECUTION_PREAMBLE,
   resolveRoutineOwner,
   RoutineManager,
   RoutineScheduleError,
@@ -1699,6 +1701,26 @@ describe("RoutineManager", () => {
     expect(h.triggerSources).toEqual(["research"]);
     // Research runs get their own task thread, never the live chat.
     expect(h.taskActivations).toEqual([false]);
+    // The execution carries the confirmed-run preamble ahead of the brief,
+    // so the agent investigates instead of proposing a nested run.
+    const dispatched = h.started.find((turn) => turn.threadId === h.manager.listRuns().find((run) => run.id === first.id)?.threadId);
+    expect(dispatched?.prompt).toContain(RESEARCH_EXECUTION_PREAMBLE);
+    expect(dispatched?.prompt).toContain("Investigate the four headline claims with cited sources.");
+  });
+
+  it("treats only live research executions as nesting", () => {
+    const research = (status: RoutineRun["status"]) => ({ triggerSource: "research" as const, status });
+    expect(isLiveResearchExecution(research("queued"))).toBe(true);
+    expect(isLiveResearchExecution(research("running"))).toBe(true);
+    expect(isLiveResearchExecution(research("waiting"))).toBe(true);
+    for (const status of ["completed", "failed", "cancelled", "missed"] as const) {
+      expect(isLiveResearchExecution(research(status))).toBe(false);
+    }
+    // Other trigger sources are never research executions, even while live.
+    for (const triggerSource of ["schedule", "manual", "webhook"] as const) {
+      expect(isLiveResearchExecution({ triggerSource, status: "running" })).toBe(false);
+    }
+    expect(isLiveResearchExecution(undefined)).toBe(false);
   });
 
   it("retains an old waiting run when trimming terminal receipt history", async () => {
