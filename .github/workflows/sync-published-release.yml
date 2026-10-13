@@ -1,8 +1,10 @@
 name: Sync published release
 
+# DISABLED (2026-10): auto-mirror off while the product is server-only. This
+# mirrors desktop/feed assets (Relay*.deb/.dmg/.exe, latest*.yml) to the legacy
+# updater repo, which no server-only release produces. Recovery runs by hand
+# still work. See chore/ci-server-only.
 on:
-  release:
-    types: [published]
   workflow_dispatch:
     inputs:
       tag:

@@ -73,9 +73,11 @@ describe("CI concurrency", () => {
     for (const name of ["electron-smokes", "ios", "android", "windows-cua", "control-plane", "package-linux"]) {
       expect(workflow.jobs[name]).toBeUndefined();
     }
-    // The nightly iOS suite stays paused while browser-only.
+    // The iOS suite stays fully manual while server-only: the ios/ tree is
+    // gone, so even the push trigger (which could never fire without ios/**)
+    // is off. Re-enable with the suite when iOS work resumes.
     const ui = parse(readFileSync(new URL("../.github/workflows/ios-thread-ui.yml", import.meta.url), "utf8"));
-    expect(Object.keys(ui.on).sort()).toEqual(["push", "workflow_dispatch"]);
+    expect(Object.keys(ui.on).sort()).toEqual(["workflow_dispatch"]);
   });
 
   it("makes a release wait for its commit's CI gate before any draft", () => {

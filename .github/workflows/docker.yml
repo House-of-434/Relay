@@ -23,6 +23,14 @@ on:
       - deploy/local/**
       - .dockerignore
       - compose.yaml
+      - server/**
+      - services/**
+      - shared/**
+      - packages/**
+      - src/**
+      - scripts/bundle-server.mjs
+      - package.json
+      - pnpm-lock.yaml
       - .github/workflows/docker.yml
 
 permissions:
