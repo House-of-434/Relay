@@ -7,6 +7,7 @@ import { AGENTS } from "./domain/permissions.js";
 const source = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 const init = source("../../../supabase/migrations/0001_init.sql");
 const stores = source("../../../supabase/migrations/0002_stores.sql");
+const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const migrations = `${init}\n${stores}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
@@ -73,6 +74,17 @@ test("tool calls reference a conversation and stay out of member reach", () => {
   assert.doesNotMatch(stores, /turn_id/);
   assert.match(stores, /revoke all on all tables in schema logs from public, anon, authenticated/);
   assert.doesNotMatch(stores, /create policy[^;]*on logs\./);
+});
+
+test("per-user ownership columns are stamped on the frozen tables", () => {
+  for (const table of ["companies", "people", "events"]) {
+    assert.match(ownership, new RegExp(`alter table app\\.${table} add column if not exists owner_user_id uuid`), table);
+    assert.match(ownership, new RegExp(`alter table app\\.${table} add column if not exists scope text not null default 'private'`), table);
+  }
+  assert.match(ownership, /alter table history\.conversations add column if not exists bot_id uuid/);
+  assert.match(ownership, /alter table history\.conversations add column if not exists thread_id uuid/);
+  // The backfill is documented but not run: new rows default to private.
+  assert.match(ownership, /update app\.companies set scope = 'org'/);
 });
 
 test("PostgREST exposes only the three Relay schemas", () => {

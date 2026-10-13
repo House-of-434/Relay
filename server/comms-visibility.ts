@@ -48,7 +48,8 @@ export function getOrCreateChannel(
     }
     return existing;
   }
-  return store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true, from.section);
+  const setup = from.ownerUserId ? { ownerUserId: from.ownerUserId } : undefined;
+  return store.createGroup(`${from.name} ⇄ ${target.name}`, [from.id, target.id], true, from.section, setup);
 }
 
 /** Whether this mirror is worth a badge, and the group frame either way.

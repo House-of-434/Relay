@@ -2,6 +2,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { RelayDatabase } from "../infra/database.js";
+import type { RelayActorContext } from "../infra/actor-assertion.js";
 import { isAgent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
@@ -11,26 +12,16 @@ import { createAgentMcpServer } from "../mcp/agent-server.js";
 import { databaseToolCallLogger } from "../mcp/tool-log.js";
 import { assertValidPort, bffConfig, bladeConfig, searchConfig, toolHost, toolPort } from "../config.js";
 
-function bearerToken(request: IncomingMessage): string | null {
-  const authorization = request.headers.authorization;
-  if (authorization === undefined) return null;
-  const match = /^Bearer\s+(\S+)$/i.exec(authorization);
-  if (!match) throw new Error("Authorization must contain a Bearer access token");
-  return match[1]!;
-}
-
-async function mcpActor(request: IncomingMessage, database: RelayDatabase): Promise<{
-  userId: string | null;
+function mcpActor(request: IncomingMessage, database: RelayDatabase): {
+  actor: RelayActorContext | undefined;
   actorAssertion: string | undefined;
-}> {
-  const token = bearerToken(request);
-  if (token) return { userId: await database.authenticateUser(token), actorAssertion: undefined };
+} {
   const header = request.headers["x-relay-actor-user"];
-  if (header === undefined) return { userId: null, actorAssertion: undefined };
+  if (header === undefined) return { actor: undefined, actorAssertion: undefined };
   if (typeof header !== "string") throw new Error("actor context must contain one signed assertion");
   // The raw assertion is forwarded so the BFF can verify the same signature
   // itself; the BFF never trusts that this process called it.
-  return { userId: database.authenticateActorAssertion(header), actorAssertion: header };
+  return { actor: database.authenticateActorAssertion(header), actorAssertion: header };
 }
 
 function sendJson(response: ServerResponse, status: number, body: unknown): void {
@@ -82,9 +73,9 @@ export async function createRelayToolServer(
         return;
       }
 
-      let actor: { userId: string | null; actorAssertion: string | undefined };
+      let actor: { actor: RelayActorContext | undefined; actorAssertion: string | undefined };
       try {
-        actor = await mcpActor(request, database);
+        actor = mcpActor(request, database);
       } catch (error) {
         sendJson(response, 401, { error: error instanceof Error ? error.message : "invalid actor context" });
         return;
@@ -93,10 +84,11 @@ export async function createRelayToolServer(
       // The HMAC actor assertion is the real boundary (compose exposes this
       // service on the container network). service_role bypasses Postgres RLS,
       // so unauthenticated relay reads would leak shared internal rows.
-      if (!actor.userId) {
+      if (!actor.actor) {
         sendJson(response, 401, { error: "authenticated actor required" });
         return;
       }
+      const userId = actor.actor.userId;
 
       // Gmail and Calendar are exposed only to a caller that proved a signed
       // actor identity; without one there is no mailbox or calendar the BFF
@@ -114,18 +106,15 @@ export async function createRelayToolServer(
       // across requests. Search carries no per-user state, so the provider
       // is built unconditionally — visibility is decided per agent below.
       const blade = bladeConfig();
-      if (actor.userId) {
-        sharedBladePool ??= new BladeBrowserPool({
-          dataRoot: blade.dataRoot,
-          binary: blade.binary,
-          chromePath: blade.chromePath,
-          proxy: blade.proxy,
-          timezone: blade.timezone,
-          locale: blade.locale,
-        });
-      }
-      const browser =
-        actor.userId && sharedBladePool ? { pool: sharedBladePool, userId: actor.userId } : undefined;
+      sharedBladePool ??= new BladeBrowserPool({
+        dataRoot: blade.dataRoot,
+        binary: blade.binary,
+        chromePath: blade.chromePath,
+        proxy: blade.proxy,
+        timezone: blade.timezone,
+        locale: blade.locale,
+      });
+      const browser = sharedBladePool ? { pool: sharedBladePool, userId } : undefined;
 
       const searchConfigValue = searchConfig();
       const search = {
@@ -136,8 +125,12 @@ export async function createRelayToolServer(
         }),
       };
 
-      const mcp = createAgentMcpServer(agentName, actor.userId, database, gmail, calendar, browser, search,
-        databaseToolCallLogger(database, agentName, actor.userId));
+      const mcp = createAgentMcpServer(
+        agentName,
+        { userId, botId: actor.actor.botId, threadId: actor.actor.threadId },
+        database, gmail, calendar, browser, search,
+        databaseToolCallLogger(database, agentName, userId),
+      );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {
         await mcp.connect(transport);

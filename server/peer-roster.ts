@@ -9,6 +9,9 @@ import type { BotActivity } from "./store.ts";
 
 export interface RosterMember {
   id: string;
+  /** The owning account's UUID. A bot may only reach a bot of the same owner;
+   * an ownerless bot reaches no one. */
+  ownerUserId?: string;
   name: string;
   title?: string;
   description?: string;
@@ -121,7 +124,11 @@ export const peerAllowed = (
 };
 
 export function canReachPeer(from: RosterMember, target: RosterMember): boolean {
-  return from.id !== target.id && !target.hidden && canAccessTeam(from, target.section) && peerAllowed(from, target);
+  // Strict isolation: a bot reaches only its own account's bots. An ownerless
+  // bot, or the reserved system:relay principal, reaches no one.
+  return from.id !== target.id && !target.hidden &&
+    Boolean(from.ownerUserId) && from.ownerUserId === target.ownerUserId &&
+    canAccessTeam(from, target.section) && peerAllowed(from, target);
 }
 
 /** The peers a bot can both see and reach right now. The roster, list_bots

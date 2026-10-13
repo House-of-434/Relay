@@ -18,6 +18,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { saveChatFollowup } from "./message-db.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -510,6 +511,7 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
   let drainGate: string;
   let stopGate: string;
   let stopRpcDump: string;
+  let ownerToken = "";
   let earlyGate: string;
   let receiptGate: string;
   let dispatchGate: string;
@@ -530,7 +532,10 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
   const api = async (method: string, path: string, body?: ApiBody): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: {
+        ...(body ? { "content-type": "application/json" } : {}),
+        authorization: `Bearer ${ownerToken}`,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     const result = { status: res.status, body: await res.json() };
@@ -660,10 +665,12 @@ describe("steer-queue e2e (fake ACP fleet)", () => {
       }),
     );
 
+    ownerToken = prepareOwnerSession(join(home, ".relay"));
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
       RELAY_PORT: String(PORT),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     // Without SystemRoot, winsock fails to initialize in the child.

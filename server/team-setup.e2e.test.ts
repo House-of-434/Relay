@@ -13,7 +13,8 @@ it("Clive reviews multi-provider teams once, continues after each decision, and 
   const evidence: unknown[] = [{ fixture: fixture.info }];
   const api = async (method: string, path: string, body?: unknown, expected = 200, token?: string, fromApp = true) => {
     const response = await fetch(fixture.info.url + path, { method, headers: { "content-type": "application/json",
-      ...(fromApp ? { origin: fixture.info.url } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+      ...(fromApp ? { origin: fixture.info.url } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(!fromApp && !token ? { "x-relay-test-anonymous": "1" } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
     const result = await response.json() as any;
     // Never record provider environment/capabilities. Keep actions and safe results.
@@ -113,15 +114,19 @@ it("Clive reviews multi-provider teams once, continues after each decision, and 
     expect(card.teamSetupRequest.operations).toHaveLength(3);
     expect(card.subtitle).toContain("Authorize @Clive");
     expect(card.subtitle).toContain("Chief of Staff: No → Yes");
-    // Origin is forgeable by an active bot shell: it cannot self-grant teams.
-    await api("POST", `/api/threads/${chief.threadId}/respond`, { requestId: proposed.requestId, behavior: "allow" }, 403);
+    // Origin is forgeable by an active bot shell, and a loopback request with
+    // no session owns nothing: it cannot self-grant teams (404, not 403).
+    const shell = await fetch(fixture.info.url + `/api/threads/${chief.threadId}/respond`, { method: "POST",
+      headers: { "content-type": "application/json", origin: fixture.info.url, "x-relay-test-anonymous": "1" },
+      body: JSON.stringify({ requestId: proposed.requestId, behavior: "allow" }) });
+    expect(shell.status).toBe(404);
     expect(await setupBots()).toHaveLength(0);
     await finish();
     const waiting = await requestSnapshot();
     expect(waiting).toMatchObject({ messageId: guardedMessageId, phase: "waiting", activeTurnId: null, executionId: expect.any(String) });
     expect(waiting.messages[0]).toMatchObject({ id: guardedMessageId, sendId: setupSendId, role: "user" });
     expect(waiting.messages.at(-1).id).toBe(waiting.activeLeafId);
-    await api("POST", `/api/threads/${chief.threadId}/respond`, { requestId: proposed.requestId, behavior: "allow" }, 403, undefined, false);
+    await api("POST", `/api/threads/${chief.threadId}/respond`, { requestId: proposed.requestId, behavior: "allow" }, 404, undefined, false);
     const approved = await api("POST", `/api/threads/${chief.threadId}/respond`, { requestId: proposed.requestId, behavior: "allow" });
     expect(approved.result.state).toBe("applied"); await continueOnce(proposed.requestId);
     const settled = await requestSnapshot();
@@ -168,7 +173,11 @@ it("Clive reviews multi-provider teams once, continues after each decision, and 
     token = await start("Delete Patch as a separately confirmed cleanup.");
     const deletion = await api("POST", "/api/internal/bot-deletion-requests", { targetBotId: engineer.id, reason: "User explicitly requested deletion" }, 201, token);
     expect(deletion.detail).toContain("Permanently removes");
-    await api("POST", `/api/threads/${chief.threadId}/respond`, { requestId: deletion.requestId, behavior: "allow" }, 403);
+    // A session-less loopback answer owns nothing, so the card is hidden (404).
+    const bare = await fetch(fixture.info.url + `/api/threads/${chief.threadId}/respond`, { method: "POST",
+      headers: { "content-type": "application/json", origin: fixture.info.url, "x-relay-test-anonymous": "1" },
+      body: JSON.stringify({ requestId: deletion.requestId, behavior: "allow" }) });
+    expect(bare.status).toBe(404);
     expect((await state()).some((bot: any) => bot.id === engineer.id)).toBe(true);
     await finish();
     expect((await api("POST", `/api/threads/${chief.threadId}/respond`, { requestId: deletion.requestId, behavior: "allow" })).result.bots).toEqual([{ id: engineer.id, name: "Patch", action: "deleted" }]);

@@ -22,9 +22,9 @@ export const SHAPES: Record<string, Shape> = {
     ],
     serverSet: [
       "actor_user", "actor_agent", "classification", "embedding", "created_at",
-      "updated_at", "captured_at",
+      "updated_at", "captured_at", "owner_user_id", "scope",
     ],
-    filterable: ["name", "domains", "classification", "observed_at", "actor_user"],
+    filterable: ["name", "domains", "classification", "observed_at", "actor_user", "owner_user_id", "scope"],
     require: [
       { f: "name", r: "nonempty" },
       { f: "source_url", r: "url" },
@@ -38,8 +38,9 @@ export const SHAPES: Record<string, Shape> = {
     ],
     serverSet: [
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
+      "owner_user_id", "scope",
     ],
-    filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user"],
+    filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user", "owner_user_id", "scope"],
     valueEnums: { person_type: ["founder", "investor", "partner", "other"] },
     require: [
       { f: "full_name", r: "nonempty" },
@@ -56,8 +57,9 @@ export const SHAPES: Record<string, Shape> = {
     ],
     serverSet: [
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
+      "owner_user_id", "scope",
     ],
-    filterable: ["title", "type", "company_id", "tags", "occurred_at", "actor_user"],
+    filterable: ["title", "type", "company_id", "tags", "occurred_at", "actor_user", "owner_user_id", "scope"],
     valueEnums: { type: ["meeting", "gathering", "fundraising", "talk", "demo_day"] },
     require: [
       { f: "title", r: "nonempty" },
@@ -70,7 +72,7 @@ export const SHAPES: Record<string, Shape> = {
   // authenticated user, and the trusted server path writes it.
   "history.conversations": {
     writable: [],
-    serverSet: ["user_id", "agent", "created_at", "updated_at"],
+    serverSet: ["user_id", "bot_id", "thread_id", "agent", "created_at", "updated_at"],
     filterable: ["id", "agent", "status", "created_at", "updated_at"],
     valueEnums: {
       agent: ["scout", "mercury", "curator"],
@@ -134,7 +136,13 @@ export function validateFilters(table: string, filters: Record<string, unknown>)
 }
 
 export type WriteOperation = "insert" | "update";
-export type ActorContext = { agent: Agent; userId: string | null };
+export type ActorContext = {
+  agent: Agent;
+  userId: string | null;
+  /** The bot and thread the turn ran as, from the verified actor assertion. */
+  botId?: string | null;
+  threadId?: string | null;
+};
 export type PreparedWrite = { values: Record<string, unknown>; where?: { column: string; value: string } };
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -256,6 +264,10 @@ export function prepareWrite(
     if (shape.serverSet.includes("actor_user")) values.actor_user = actor.userId;
     if (shape.serverSet.includes("actor_agent")) values.actor_agent = actor.agent;
     if (shape.serverSet.includes("classification")) values.classification = "internal";
+    if (shape.serverSet.includes("owner_user_id")) values.owner_user_id = actor.userId;
+    if (shape.serverSet.includes("scope")) values.scope = "private";
+    if (shape.serverSet.includes("bot_id")) values.bot_id = actor.botId ?? null;
+    if (shape.serverSet.includes("thread_id")) values.thread_id = actor.threadId ?? null;
     if (shape.serverSet.includes("updated_at")) values.updated_at = now;
     return { values, where: { column: updateKey, value: whereValue as string } };
   }
@@ -268,6 +280,10 @@ export function prepareWrite(
   if (shape.serverSet.includes("actor_agent")) values.actor_agent = actor.agent;
   if (shape.serverSet.includes("classification")) values.classification = "internal";
   if (shape.serverSet.includes("created_by")) values.created_by = actor.userId;
+  if (shape.serverSet.includes("owner_user_id")) values.owner_user_id = actor.userId;
+  if (shape.serverSet.includes("scope")) values.scope = "private";
+  if (shape.serverSet.includes("bot_id")) values.bot_id = actor.botId ?? null;
+  if (shape.serverSet.includes("thread_id")) values.thread_id = actor.threadId ?? null;
   if (shape.serverSet.includes("created_at")) values.created_at = now;
   if (shape.serverSet.includes("updated_at")) values.updated_at = now;
   if (shape.serverSet.includes("captured_at")) values.captured_at = now;

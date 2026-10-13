@@ -22,12 +22,13 @@ import {
 
 import type { LivePeer } from "./peer-roster.ts";
 
+const OWNER = "owner-uuid";
 const fleet: RosterMember[] = [
-  { id: "self", name: "Ada", section: "Work" },
-  { id: "writer", name: "Quill", title: "Writer", description: "Drafts concise copy", section: "Work" },
-  { id: "coder", name: "Patch", title: "Engineer", busy: true, section: "Work" },
-  { id: "hidden", name: "Secret", hidden: true, section: "Work" },
-  { id: "elsewhere", name: "Scout", title: "Travel planner", section: "Personal" },
+  { id: "self", name: "Ada", ownerUserId: OWNER, section: "Work" },
+  { id: "writer", name: "Quill", title: "Writer", description: "Drafts concise copy", ownerUserId: OWNER, section: "Work" },
+  { id: "coder", name: "Patch", title: "Engineer", busy: true, ownerUserId: OWNER, section: "Work" },
+  { id: "hidden", name: "Secret", hidden: true, ownerUserId: OWNER, section: "Work" },
+  { id: "elsewhere", name: "Scout", title: "Travel planner", ownerUserId: OWNER, section: "Personal" },
 ];
 
 const self = fleet[0]!;
@@ -201,7 +202,7 @@ describe("resolveTeammate", () => {
   });
 
   it("refuses a name two reachable teammates share instead of picking one", () => {
-    const twins = [...fleet, { id: "writer2", name: "quill", section: "Work" }];
+    const twins = [...fleet, { id: "writer2", name: "quill", ownerUserId: OWNER, section: "Work" }];
     expect(resolveTeammate(twins, self, "Quill")).toEqual({
       error: '2 reachable teammates are named "Quill" — call list_bots and use the id of the one you mean',
     });
@@ -350,9 +351,9 @@ describe("renderRoster status wording", () => {
 });
 
 describe("bot visibility between teammates", () => {
-  const hr: RosterMember = { id: "hr", name: "Payroll", section: "Work", visibility: { people: ["ada@example.test"] } };
-  const hr2: RosterMember = { id: "hr2", name: "Benefits", section: "Work", visibility: { people: ["ada@example.test"] } };
-  const admins: RosterMember = { id: "adm", name: "Board", section: "Work", visibility: "admins" };
+  const hr: RosterMember = { id: "hr", name: "Payroll", ownerUserId: OWNER, section: "Work", visibility: { people: ["ada@example.test"] } };
+  const hr2: RosterMember = { id: "hr2", name: "Benefits", ownerUserId: OWNER, section: "Work", visibility: { people: ["ada@example.test"] } };
+  const admins: RosterMember = { id: "adm", name: "Board", ownerUserId: OWNER, section: "Work", visibility: "admins" };
 
   it("reaches only teammates exactly the same people can see", () => {
     // A bot everyone sees must not carry a restricted bot's answers back to everyone …
@@ -368,6 +369,22 @@ describe("bot visibility between teammates", () => {
     expect(resolveTeammate([...fleet, hr], self, "Payroll")).toMatchObject({ error: expect.stringContaining("No bot with id or name") });
     // an id alone (no record) keeps the list-only rule, as before
     expect(peerAllowed(self, "hr")).toBe(true);
+  });
+});
+
+describe("owner isolation between teammates", () => {
+  it("reaches only same-owner bots, and never an ownerless or system:relay bot", () => {
+    const ownerless: RosterMember = { id: "ghost", name: "Ghost", section: "Work" };
+    const system: RosterMember = { id: "support", name: "Support", section: "Work", ownerUserId: "system:relay" };
+    // Same owner reaches; a bot with no owner, or the reserved principal,
+    // reaches no one and is reached by no one.
+    expect(canReachPeer(fleet[0]!, fleet[1]!)).toBe(true);
+    expect(canReachPeer(ownerless, fleet[1]!)).toBe(false);
+    expect(canReachPeer(fleet[0]!, ownerless)).toBe(false);
+    expect(canReachPeer(ownerless, { id: "ghost2", name: "Ghost2", section: "Work" })).toBe(false);
+    expect(canReachPeer(system, fleet[1]!)).toBe(false);
+    expect(canReachPeer(fleet[0]!, system)).toBe(false);
+    expect(reachablePeers([...fleet, ownerless, system], fleet[0]!).map((bot) => bot.id)).toEqual(["writer", "coder"]);
   });
 });
 

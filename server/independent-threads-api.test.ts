@@ -251,13 +251,11 @@ describe("independent bot tasks through the isolated control surface", () => {
     await expect.poll(async () => (await botState(botId)).tasks.filter((task: any) => task.activity === "waiting-on-you").length).toBe(2);
     await tool("switch_task", { target_type: "bot", target_id: botId, task_id: threadA });
 
-    const invitation = await api("POST", "/api/auth/pairing", { label: "Isolated iOS approval fixture", scopes: ["client", "admin"] });
-    expect(invitation.status).toBe(200);
-    const accepted = await api("POST", "/api/auth/pair", { code: invitation.body.code, label: "Isolated iOS client" });
-    expect(accepted.status).toBe(200);
+    // Pairing sessions carry no user id and see nothing; the owner reads its
+    // own background threads through its own session (pairing model retired).
     const paired = async (method: string, path: string, body?: unknown) => {
       const response = await fetch(`${session.info.url}${path}`, {
-        method, headers: { "content-type": "application/json", authorization: `Bearer ${accepted.body.token}` },
+        method, headers: { "content-type": "application/json", authorization: `Bearer ${session.info.token}` },
         ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       });
       return { status: response.status, body: await response.json() as any };
@@ -297,9 +295,13 @@ describe("independent bot tasks through the isolated control surface", () => {
     const second = await tool("create_task", { target_type: "bot", target_id: botId, title: "Independent B" });
     const taskB = second.task.taskId;
     await control(["set-model", "--bot", botId, "--task", taskB, "--instance", "claude", "--model", models[1]]);
-    // Loosening approval from an originless agent request stays forbidden;
-    // this settings action models the trusted app's same-origin request.
-    expect((await api("PATCH", `/api/bots/${botId}/tasks/${taskB}`, { approvalMode: "auto" })).status).toBe(409);
+    // An originless, session-less request cannot loosen approval at all: the
+    // gate hides the bot first (404). The signed-in owner's same-origin
+    // request below is the allowed path.
+    const bare = await fetch(`${session.info.url}/api/bots/${botId}/tasks/${taskB}`, { method: "PATCH",
+      headers: { "content-type": "application/json", "x-relay-test-anonymous": "1" },
+      body: JSON.stringify({ approvalMode: "auto" }) });
+    expect(bare.status).toBe(404);
     expect((await api("PATCH", `/api/bots/${botId}/tasks/${taskB}`, { approvalMode: "auto" }, true)).status).toBe(200);
     await control(["send", "--bot", botId, "--task", taskB, "--text", "ONLY_B"]);
     const launchedB = await dump(models[1]);
@@ -362,9 +364,10 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect((await api("POST", `/api/bots/${botId}/active-branch`, { threadId: taskB, messageId: userA.id })).status).toBe(404);
 
     // Compatibility: changing the profile model updates only the selected
-    // idle task, not the independently configured sibling.
+    // idle task, not the independently configured sibling. A multi-thread
+    // bot needs its thread pinned (session callers get 409 otherwise).
     const legacyModel = models.at(-1)!;
-    expect((await api("PATCH", `/api/bots/${botId}`, { modelSelection: { instanceId: "claude", model: legacyModel } })).status).toBe(200);
+    expect((await api("PATCH", `/api/bots/${botId}/tasks/${taskB}`, { modelSelection: { instanceId: "claude", model: legacyModel }, updateBotDefault: true })).status).toBe(200);
     const final = await botState(botId);
     expect(final.tasks.find((task: any) => task.taskId === taskB).modelSelection.model).toBe(legacyModel);
     expect(final.tasks.find((task: any) => task.taskId === taskA).modelSelection.model).toBe(models[0]);
@@ -386,9 +389,10 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect(run.threadId).not.toBe(selectedThread);
     expect((await botState(botId)).tasks.find((task: any) => task.taskId === run.threadId)?.busy).toBe(true);
     // An offline profile default is supported; it must not become the
-    // cancellation target for an already-running task on Claude.
-    expect((await api("PATCH", `/api/bots/${botId}`, {
-      modelSelection: { instanceId: "offline-fixture", model: "offline-model" },
+    // cancellation target for an already-running task on Claude. Pin the
+    // idle selected thread when updating the default on a multi-thread bot.
+    expect((await api("PATCH", `/api/bots/${botId}/tasks/${selectedThread}`, {
+      modelSelection: { instanceId: "offline-fixture", model: "offline-model" }, updateBotDefault: true,
     })).status).toBe(200);
     expect((await api("POST", `/api/routine-runs/${run.id}/cancel`)).status).toBe(200);
     await expect.poll(async () => (await botState(botId)).tasks.find((task: any) => task.taskId === run.threadId)?.busy,

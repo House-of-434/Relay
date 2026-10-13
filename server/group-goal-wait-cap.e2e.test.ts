@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 // A room waits for a busy teammate, but not forever, and a goal survives one
@@ -25,6 +26,7 @@ let child: ChildProcess;
 let home = "";
 let base = "";
 let stderr = "";
+let ownerToken = "";
 
 const envelope = (payload: Record<string, string>) => `<relay-goal>${JSON.stringify(payload)}</relay-goal>`;
 
@@ -39,7 +41,10 @@ const reassignLeadReplies = [
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
   const response = await fetch(`${base}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: response.status, body: await response.json() };
@@ -76,6 +81,7 @@ beforeAll(async () => {
       crash: fixture("Crashing lead", { FAKE_CLAUDE_MODE: "exit-early" }),
     },
   }));
+  ownerToken = prepareOwnerSession(data);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -87,6 +93,7 @@ beforeAll(async () => {
       USERPROFILE: home,
       RELAY_PORT: String(port),
       RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       RELAY_STATIC_DIR: staticDir,
       // seconds, not minutes: the point of this file is the cap firing
       RELAY_GOAL_WAIT_MAX_MS: "1500",

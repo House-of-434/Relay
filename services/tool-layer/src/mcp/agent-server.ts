@@ -26,9 +26,17 @@ function toolError(error: unknown) {
   return { isError: true, content: [{ type: "text" as const, text: message }] };
 }
 
+/** The verified actor a turn runs as: the owning account plus the bot and
+ * thread, taken from the signed assertion, never from tool arguments. */
+export interface RelayActorContext {
+  userId: string | null;
+  botId?: string | null;
+  threadId?: string | null;
+}
+
 export function createAgentMcpServer(
   agent: Agent,
-  userId: string | null,
+  actor: RelayActorContext,
   database: RelayDatabase,
   gmail: RelayGmailContext | undefined,
   calendar: RelayCalendarContext | undefined,
@@ -36,6 +44,7 @@ export function createAgentMcpServer(
   search?: SearchToolContext | undefined,
   log?: ToolCallLogger | undefined,
 ): McpServer {
+  const userId = actor.userId;
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
   // Record every served call before any tool is registered, so the browser and
   // search servers (registered below) are wrapped too.
@@ -74,7 +83,12 @@ export function createAgentMcpServer(
       try {
         if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "write", table);
-        const prepared = prepareWrite(table, operation, data, where, { agent, userId });
+        const prepared = prepareWrite(table, operation, data, where, {
+          agent,
+          userId,
+          botId: actor.botId ?? null,
+          threadId: actor.threadId ?? null,
+        });
         const result = await database.write(project, table, operation, prepared.values, prepared.where);
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (error) {

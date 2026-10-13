@@ -328,7 +328,7 @@ async function api(port: number, path: string, init: { method?: string; body?: s
 export const SERVICE_TRUST_HELP = "This server does not treat commands on this computer as its owner (RELAY_LOOPBACK_TRUST=service, or a hosted workspace), so it will not pair devices or list sessions for them. Sign in as an admin and use Settings → Remote access, let people sign in with their email (relay access add you@example.com), or restart the server with RELAY_LOOPBACK_TRUST=owner.";
 
 function refusedAsService(status: number, body: any): boolean {
-  return status === 403 && typeof body?.error === "string" && /shared server|Sign in through the workspace portal/.test(body.error);
+  return (status === 403 || status === 404) && typeof body?.error === "string" && /shared server|Sign in through the workspace portal/.test(body.error);
 }
 
 async function serverUp(port: number, pid?: number): Promise<boolean> {

@@ -71,7 +71,7 @@ describe.skipIf(process.platform === "win32")("relay serve under service loopbac
   it("refuses everyone else on this machine the pairing route", async () => {
     for (const headers of [{}, { "x-relay-cli-owner": "x".repeat(43) }]) {
       const minted = await fetch(`http://127.0.0.1:${PORT}/api/auth/pairing`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: "{}" });
-      expect(minted.status).toBe(403);
+      expect(minted.status).toBe(404);
     }
   });
 

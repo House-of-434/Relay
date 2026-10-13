@@ -153,12 +153,8 @@ describe("spend cap and prices through real turns", () => {
     const created = await control(["new-bot", "--name", "Cap probe"]);
     const botId = created.bot.id as string;
 
-    // Admins hear about the warning and the cap once each; a chat-only
-    // device's stream carries neither.
-    const opened = (await (await api("/api/auth/pairing", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ scopes: ["client"] }) })).json()) as { code: string };
-    const paired = (await (await api("/api/auth/pair", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: opened.code, label: "Member phone" }) })).json()) as { token: string };
+    // The owner hears about the warning and the cap once each.
     const adminStream = await openSse(`${session.info.url}/api/events`);
-    const memberStream = await openSse(`${session.info.url}/api/events`, { authorization: `Bearer ${paired.token}` });
     const spendNotices = (frames: any[]) => frames.filter((frame) => frame.kind === "notify" && frame.notification?.kind === "spend");
 
     try {
@@ -172,11 +168,8 @@ describe("spend cap and prices through real turns", () => {
         expect.objectContaining({ kind: "spend", botId, title: "Spend is at 67% of the monthly limit", body: expect.stringContaining("$0.01 of $0.015 spent this month") }),
         expect.objectContaining({ kind: "spend", botId, title: "Monthly spend limit reached" }),
       ]);
-      expect(memberStream.frames.some((frame) => frame.kind === "notify" && frame.notification?.kind === "done")).toBe(true);
-      expect(spendNotices(memberStream.frames)).toEqual([]);
     } finally {
       adminStream.close();
-      memberStream.close();
     }
     const refused = await send(botId, "third");
     expect(refused.status).toBe(409);

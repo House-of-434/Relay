@@ -144,7 +144,6 @@ import {
   saveConfig,
   showToolCallsEnabled,
   routinesInConversationEnabled,
-  claudeUserMcpEnabled,
   skillAuthoringEnabled,
   autoRecallEnabled,
   captureQuietMs,
@@ -166,7 +165,6 @@ import {
   DATA_DIR,
   EVENTS_DIR,
   NATIVE_DIR,
-  customMcpServers,
   roomHandoffLimits,
   onConfigSaved,
 } from "./config.ts";
@@ -198,15 +196,7 @@ import {
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 import { recoveryCapabilityError } from "./automatic-recovery.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import {
-  MAX_MCP_SERVERS,
-  listMcpServers,
-  mcpServerNameError,
-  parseMcpServerMutation,
-  parseMcpServersImport,
-  parseStoredMcpServer,
-} from "./mcp-registry.ts";
-import { bindRelayMcpForBot, relayAgentBotIds, relayToolMcpServer, signedActorContext } from "./relay-mcp.ts";
+import { bindRelayMcpForBot, relayToolMcpServer, signedActorContext } from "./relay-mcp.ts";
 import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
 import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
@@ -216,7 +206,6 @@ import {
   relayComputerRouteDisabled,
   relayComputerSettingsRefusal,
 } from "./relay-policy.ts";
-import { probeMcpServer } from "./mcp-probe.ts";
 import {
   GROUP_GOAL_MAX_TURNS,
   groupGoalAssignmentKey,
@@ -535,7 +524,7 @@ import {
   roomFeeds,
   routineVisible,
   sameAudience,
-  SEES_EVERYTHING,
+  NO_VIEWER,
   VisibleSet,
   type FrameContext,
   type PathSubject,
@@ -788,10 +777,18 @@ function messageSender(auth: RequestAuth): ResolvedSender | undefined {
 }
 
 function threadActorContext(threadId: string): { userId?: string; email?: string } | undefined {
-  // The recorded owner is server truth: stamped from verified session
-  // identity at send time, never derived from conversation contents.
-  const owner = recordedThreadOwner(DATA_DIR, threadId);
-  if (owner) return { userId: owner.userId, email: owner.email };
+  // The owning bot or room is the authority on whose workspace a thread is,
+  // including every sub-thread (a task belongs to its bot). The recorded
+  // thread-owners map is no longer an owner source: it is consulted only for
+  // the owner's email, which is contact metadata.
+  const bot = store.botByThread(threadId);
+  const group = bot ? undefined : store.groupByThread(threadId);
+  const ownerUserId = bot?.ownerUserId ?? group?.ownerUserId;
+  const recorded = recordedThreadOwner(DATA_DIR, threadId);
+  if (ownerUserId) return { userId: ownerUserId, ...(recorded?.email ? { email: recorded.email } : {}) };
+  // Fallbacks for records with no owner stamped (legacy/unowned): the recorded
+  // owner, then the last verified sender.
+  if (recorded) return { userId: recorded.userId, email: recorded.email };
   const sender = store.messagesFor(threadId).findLast((message) => message.role === "user")?.sender;
   if (sender) return { userId: sender.actorUserId, email: sender.email };
   // Unattended threads have no user sender: a routine execution (or a peer
@@ -1183,8 +1180,13 @@ async function answeringCardAs(auth: RequestAuth, threadId: string, requestId: s
  * worker) and admin sessions see every bot; any other session is a member,
  * known by the email it signed in with. */
 function viewerFor(auth: RequestAuth): Viewer {
-  if (auth.kind === "loopback" || auth.scopes.includes("admin")) return SEES_EVERYTHING;
-  return { kind: "member", ...(auth.session.email ? { email: auth.session.email } : {}) };
+  // Strict isolation: only a verified account session with a Supabase UUID is
+  // a viewer. Loopback (owner, desktop, companion, CLI), service-trust and
+  // admin-scope sessions own nothing and see nothing.
+  if (auth.kind === "session" && typeof auth.session.userId === "string" && auth.session.userId) {
+    return { kind: "user", userId: auth.session.userId.toLowerCase() };
+  }
+  return NO_VIEWER;
 }
 
 /** Thread → the bot or room that owns it, and one VisibleSet per viewer,
@@ -1204,7 +1206,7 @@ function threadOwner(threadId: string): ThreadOwner | undefined {
   return owner ?? undefined;
 }
 function visibleTo(viewer: Viewer): VisibleSet {
-  const key = viewer.kind === "all" ? "*" : `member:${viewer.email?.trim().toLowerCase() ?? ""}`;
+  const key = viewer.kind === "all" ? "*" : `user:${viewer.userId}`;
   let set = visibleSets.get(key);
   if (!set) {
     set = new VisibleSet(store.bots, store.groups, viewer, threadOwner);
@@ -1216,6 +1218,30 @@ function visibleTo(viewer: Viewer): VisibleSet {
 function forgetVisibility(): void {
   threadOwners.clear();
   visibleSets.clear();
+}
+
+// ── per-user workspace seeding ─────────────────────────────────────────
+const ensuredWorkspaces = new Set<string>();
+const workspaceSeeding = new Map<string, Promise<void>>();
+/** Create a user's three agents on first sight. Idempotent per role per owner
+ * (store.seedRelayAgentsForOwner), so a retry after a partial failure creates
+ * only the missing roles. The ensured set is marked only once every role
+ * succeeds; the in-flight promise is cleared either way so a retry can run. */
+async function ensureUserWorkspace(userId: string): Promise<void> {
+  if (ensuredWorkspaces.has(userId)) return;
+  let inFlight = workspaceSeeding.get(userId);
+  if (!inFlight) {
+    inFlight = (async () => {
+      store.seedRelayAgentsForOwner(userId, RELAY_AGENT_SEEDS);
+      ensuredWorkspaces.add(userId);
+    })();
+    workspaceSeeding.set(userId, inFlight);
+  }
+  try {
+    await inFlight;
+  } finally {
+    workspaceSeeding.delete(userId);
+  }
 }
 
 /** Which threads mention an attachment, for a member's file request while a
@@ -1299,7 +1325,9 @@ function recentWorkFilter(): { include?: (threadId: string) => boolean } {
  * rooms roomFeedsBot allows. */
 function recentWorkSources(bot: BotRecord) {
   return {
-    groups: store.groups.filter((group) => !group.memberIds.includes(bot.id) || roomFeedsBot(group, bot)),
+    // Only the bot's own account's rooms can feed its brief.
+    groups: store.groups.filter((group) => group.ownerUserId === bot.ownerUserId &&
+      (!group.memberIds.includes(bot.id) || roomFeedsBot(group, bot))),
     taskByThread: (botId: string, threadId: string) => store.taskByThread(botId, threadId),
   };
 }
@@ -1314,6 +1342,7 @@ function autoRecallPrompt(bot: BotRecord, threadId: string, message: string, opt
   const roomByThread = new Map<string, GroupRecord>();
   if (opts.conversations) {
     for (const group of store.groups) {
+      if (group.ownerUserId !== bot.ownerUserId) continue;
       if (!group.memberIds.includes(bot.id) || !roomFeedsBot(group, bot)) continue;
       roomByThread.set(group.threadId, group);
       for (const task of group.tasks ?? []) roomByThread.set(task.threadId, group);
@@ -3071,7 +3100,6 @@ function packageImportDeps(selection: ModelSelection): PackageImportDeps {
     routines: routines!,
     skills: { install: installSkill, setEnabled: setSkillEnabled, installOrg: installOrgSkill },
     memory: { writeIndex: writeMemoryFile, writeTopic: writeMemoryTopic },
-    mcp: { servers: () => cfg.mcpServers ?? {}, refusal: mcpPolicyRefusal, persist: persistMcpServers },
     sections: { writeBrief: (section, text) => void writeSectionContext(section, text) },
     images: {
       save: (bytes, mime) => {
@@ -3160,11 +3188,8 @@ const teamComputers = new TeamComputers(join(DATA_DIR, "team-computers.json"), E
 let followupsReady = false;
 const sendSequencer = new SendSequencer();
 bootSelection = await defaultSelection();
-if (RELAY_SHARED_WORKSPACE) {
-  store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS);
-  relayAgentBotIds(store.bots, process.env);
-}
-else store.seedIfEmpty();
+// Per-user workspaces seed lazily on first sign-in (ensureUserWorkspace):
+// each account gets its own Scout, Mercury and Curator.
 // Bots seeded before any engine was runnable carry an empty selection; adopt
 // the now-resolved workspace default so the shipped roster can run.
 store.healEmptyModelSelections();
@@ -3190,7 +3215,7 @@ const wireTask = (task: TaskRecord): WireTask => {
 };
 
 const wireBot = (bot: BotRecord): WireBot => {
-  const { resumeCursors: _resumeCursors, tasks, approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ownerUserId: _ownerUserId, ...rest } = bot;
   // An elevated selection is inert until the desktop confirms its exact
   // private reply. Every ordinary client sees the effective Ask state during
   // that two-phase window, never a grant that may still roll back.
@@ -3208,7 +3233,7 @@ const wireBot = (bot: BotRecord): WireBot => {
 /** The correlated private response carries the requested value so Electron
  * can validate it before sending the confirmation that makes it effective. */
 const wireTrustedApprovalBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
-  const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ownerUserId: _ownerUserId, ...rest } = bot;
   const relayVisible = RELAY_COMPUTER_DISABLED
     ? { ...rest, computer: "off" as const, autoStartVps: false }
     : rest;
@@ -3955,6 +3980,11 @@ function createChannel(value: unknown): GroupRecord {
   const { memberIds } = roster;
   const audienceConflict = roomAudienceConflict(memberIds);
   if (audienceConflict) throw Object.assign(new Error(audienceConflict), { status: 400 });
+  // Strict isolation: every bot in a room belongs to one account, and the room
+  // is owned by that account. An ownerless member leaves the room ownerless.
+  const owners = new Set(memberIds.map((id) => store.bot(id)?.ownerUserId).filter((owner): owner is string => Boolean(owner)));
+  if (owners.size > 1) throw Object.assign(new Error("a room's bots must belong to the same account"), { status: 400 });
+  const ownerUserId = [...owners][0];
   if (body.name !== undefined && typeof body.name !== "string") {
     throw Object.assign(new Error("channel name must be a string"), { status: 400 });
   }
@@ -3988,7 +4018,8 @@ function createChannel(value: unknown): GroupRecord {
   }
   // A new room with no routing of its own starts on Auto while the decision
   // model is on for rooms; otherwise it gets today's default (first member).
-  return store.createGroup(name, memberIds, false, section, setup ?? (deciderReady(cfg, "roomRouting") ? { defaultResponder: { kind: "auto" } } : undefined));
+  const baseSetup = setup ?? (deciderReady(cfg, "roomRouting") ? { defaultResponder: { kind: "auto" as const } } : undefined);
+  return store.createGroup(name, memberIds, false, section, { ...baseSetup, ...(ownerUserId ? { ownerUserId } : {}) });
 }
 
 function updateChannel(groupId: string, value: unknown): GroupRecord {
@@ -4334,7 +4365,7 @@ const groupUsageReader = new GroupUsageReader(DATA_DIR);
 try { groupUsageReader.refresh(); } catch { /* accounting must not block startup */ }
 function publicGroupState(record: GroupRecord): WireGroup {
   // The organization library's part hashes stay server-side.
-  const { installedPackage: _installedPackage, ...group } = record;
+  const { installedPackage: _installedPackage, ownerUserId: _ownerUserId, ...group } = record;
   let usage: WireGroup["usage"];
   try { usage = groupUsageReader.forThread(group.threadId); } catch { /* accounting must not block chat */ }
   return { ...group, usage: usage ?? null, working: groupIsWorking(group) || [...roomHandoffs.nodes.values()].some(n => n.groupId === group.id && !["completed", "failed", "cancelled"].includes(n.status)) };
@@ -4895,7 +4926,7 @@ let audienceChangedAt = 0;
 function audienceChanged(): void {
   audienceChangedAt = lastSeq;
   for (const client of sseClients) {
-    if (client.viewer.kind !== "member") continue;
+    if (client.viewer.kind === "all") continue;
     sseClients.delete(client);
     try {
       client.res.end();
@@ -8499,10 +8530,7 @@ async function startTurn(
       // composio — only to a driver that can mount them. Their tools are
       // never pre-allowed, so every call rides the normal permission flow.
       if (instance.adapter.capabilities.customMcp === true) {
-        const actor = opts?.sender
-          ? { userId: opts.sender.actorUserId, email: opts.sender.email }
-          : threadActorContext(threadId);
-        const custom = engineMcpServers(bot, actor);
+        const custom = engineMcpServers(bot, threadId);
         if (Object.keys(custom).length) integrations.custom = custom;
       }
       // CLI engines work inside the bot's own workspace directory rather
@@ -9117,7 +9145,7 @@ async function startTurn(
         // must still deliver their note (SendTurnInput.mentionTurn)
         mentionTurn: tagged.length > 0,
         integrations,
-        mcpFromUserConfig: claudeUserMcpEnabled(cfg) && !managedPolicy.restrictsMcp(),
+        mcpFromUserConfig: false,
         cwd,
       }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await instance.adapter.interruptTurn(threadId).catch(() => {});
@@ -10751,7 +10779,7 @@ async function runGroupMemberTurn(
   }
   // user-configured MCP servers: same gating as the 1:1 site above.
   if (instance.adapter.capabilities.customMcp === true) {
-    const custom = engineMcpServers(bot, threadActorContext(threadId));
+    const custom = engineMcpServers(bot, threadId);
     if (Object.keys(custom).length) integrations.custom = custom;
   }
   // Connected-app discovery is intentionally awaited before a provider owns
@@ -11241,7 +11269,7 @@ async function runGroupMemberTurn(
         systemVolatile: roomSystem.volatile,
         cwd,
         integrations,
-        mcpFromUserConfig: claudeUserMcpEnabled(cfg) && !managedPolicy.restrictsMcp(),
+        mcpFromUserConfig: false,
         ...(instance.instanceId === readyBot.modelSelection.instanceId
           ? memberTurnSelection(readyBot.modelSelection)
           : { model: instance.models.default }),
@@ -12189,13 +12217,17 @@ function ensureCalendarCallRoom(call: CalendarCall): GroupRecord {
   let group = linked && sameCalendarRoster(linked, call.botIds) && !roomSetupPending(linked)
     ? linked
     : undefined;
-  // A call's room is a room like any other: one audience.
+  // A call's room is a room like any other: one audience, one owner.
   const conflict = group ? null : roomAudienceConflict(call.botIds);
   if (conflict) throw Object.assign(new Error(conflict), { status: 400 });
+  const owners = new Set(call.botIds.map((id) => store.bot(id)?.ownerUserId).filter((owner): owner is string => Boolean(owner)));
+  if (owners.size > 1) throw Object.assign(new Error("a room's bots must belong to the same account"), { status: 400 });
+  const ownerUserId = [...owners][0];
   group ??= store.createGroup(call.name, call.botIds, false, undefined, {
     bulletin: "",
     defaultResponder: { kind: "everyone" },
     completed: true,
+    ...(ownerUserId ? { ownerUserId } : {}),
   });
   if (call.roomId !== group.id) calendarCalls!.linkRoom(call.id, group.id);
   return group;
@@ -13306,7 +13338,7 @@ function configStatus() {
       sharedComputers: !RELAY_COMPUTER_DISABLED && sharedComputersEnabled(cfg),
       // Plugins → MCP servers switch: Claude bots also see this machine's
       // own Claude Code MCP servers
-      claudeUserMcp: claudeUserMcpEnabled(cfg),
+      claudeUserMcp: false,
       autoRecall: autoRecallEnabled(cfg),
     },
     // first-run progress — not a secret; the app decides whether to show
@@ -13338,52 +13370,26 @@ function configForAccess(status: ReturnType<typeof configStatus>, admin: boolean
   };
 }
 
-function mcpServerResponse() {
-  // While enrolled with custom servers off, say which servers stay configured
-  // but never reach bots, and why. Nothing here is written to config.json.
-  const policy = managedPolicy.current();
-  const servers = listMcpServers(cfg.mcpServers).map(server =>
-    managedPolicy.mcpAllowed(server.name, "url" in server ? server.url : undefined) ? server : { ...server, managedBy: policy!.organizationName });
-  return { servers, ...(policy && !policy.mcp.allowCustom ? { managed: { organizationName: policy.organizationName, allowlist: policy.mcp.allowlist } } : {}) };
-}
-/** Adding or editing a server the organisation has not approved is refused. */
-function mcpPolicyRefusal(name: string, server: object): string | undefined {
-  return managedPolicy.mcpRefusal(name, "url" in server && typeof server.url === "string" ? server.url : undefined);
-}
-
-/** The fields a new server may set, in whichever shape the form sent — a
- * command to run or a URL to reach. Absent keys stay absent, so the strict
- * schema of one shape never sees the other shape's `undefined`s. */
-function mcpServerBody(body: unknown): Record<string, unknown> {
-  const out: Record<string, unknown> = {};
-  if (!body || typeof body !== "object") return out;
-  const record = body as Record<string, unknown>;
-  for (const key of ["command", "args", "env", "type", "url", "headers", "enabled"]) {
-    if (record[key] !== undefined) out[key] = record[key];
-  }
-  return out;
-}
-
-/** Configured MCP servers that may reach this bot's engine. While enrolled,
- * the organisation's allow-list filters them; config.json is never changed. */
-function engineMcpServers(bot: BotRecord, actor?: { userId?: string; email?: string }) {
-  const configured = RELAY_SHARED_WORKSPACE ? {} : customMcpServers(cfg, bot.mcpServers);
+/** The only MCP route a bot ever mounts: the harness-owned Relay Tool Layer
+ * route. Employees cannot plug in their own MCP servers. */
+function engineMcpServers(bot: BotRecord, threadId?: string) {
+  // Employees cannot plug in their own MCP servers: the only MCP route a bot
+  // ever mounts is the harness-owned Relay Tool Layer route.
+  // The actor is signed from the bot's owner, and only when the thread really
+  // belongs to that owner: the bot's own chat or task, or a room this account
+  // owns. A thread resolving to another owner (or none) is never signed.
+  const threadOwner = threadId
+    ? store.botByThread(threadId)?.ownerUserId ?? store.groupByThread(threadId)?.ownerUserId
+    : undefined;
+  const ownerUserId = bot.ownerUserId && threadOwner === bot.ownerUserId ? bot.ownerUserId : undefined;
   return managedPolicy.filterMcp(bindRelayMcpForBot(
     bot.id,
-    actor,
-    configured,
-    relayAgentBotIds(store.bots, process.env),
+    bot.relayAgent,
+    ownerUserId,
+    threadId,
+    {},
     RELAY_TOOL_URL,
   ));
-}
-
-function persistMcpServers(next: Record<string, unknown>): void {
-  saveConfig({ mcpServers: next });
-  // Do not reload the provider fleet: integrations are assembled from cfg at
-  // the next turn boundary. Updating this property directly also correctly
-  // clears the final entry; Object.assign(loadConfig()) would leave it stale
-  // when an empty section is omitted by an older config file.
-  cfg.mcpServers = next;
 }
 
 async function describeInstances() {
@@ -13561,9 +13567,6 @@ async function reloadProviders() {
 // another's changes or dispose a fleet while another reload is creating it.
 let providerConfigBusy = false;
 const providerInstancesChanging = new Set<string>();
-let mcpConfigBusy = false;
-const MAX_CONCURRENT_MCP_PROBES = 2;
-let mcpProbesInFlight = 0;
 // One updater per executable: multiple Claude instances can point at the same
 // install, and running two self-updates against it would race its files.
 const claudeUpdatesInFlight = new Set<string>();
@@ -13737,7 +13740,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     if (RELAY_SHARED_WORKSPACE && (
       path === "/api/connectors" || path.startsWith("/api/connectors/") ||
-      path === "/api/mcp/servers" || path.startsWith("/api/mcp/servers/") ||
       path.startsWith("/api/internal/connectors/")
     )) {
       req.resume();
@@ -13962,6 +13964,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // Bot visibility: a member reaches a restricted bot, its threads, rooms,
     // routines and files exactly as they reach an id that does not exist.
     // Lists and live frames are narrowed where they are built, below.
+    // First sight of an account seeds its workspace before anything is read.
+    if (auth.kind === "session" && auth.session.userId) {
+      await ensureUserWorkspace(auth.session.userId);
+    }
     const visible = visibleTo(viewerFor(auth));
     if (!visible.everything) {
       const subject = pathSubject(path);
@@ -14820,8 +14826,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
         // Only a Relay agent (a bot with a Tool Layer role) may propose a
         // connector action: the resolve step executes it as that role.
-        const role = (Object.entries(relayAgentBotIds(store.bots)) as Array<[string, string | undefined]>)
-          .find(([, id]) => id === from.id)?.[0];
+        const role = from.relayAgent;
         if (!role) return json(res, 403, { error: "only Mercury may propose connector actions" });
         let action;
         try {
@@ -14872,8 +14877,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
         // Only a Relay agent with the Scout research role may propose deep
         // research: the resolve step executes the brief as that bot.
-        const role = (Object.entries(relayAgentBotIds(store.bots)) as Array<[string, string | undefined]>)
-          .find(([, id]) => id === from.id)?.[0];
+        const role = from.relayAgent;
         if (role !== "scout") return json(res, 403, { error: "only Scout may propose deep research" });
         if (!researchJobs) return json(res, 503, { error: "research proposals are unavailable" });
         let job;
@@ -15048,8 +15052,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // Still own-bot: another bot's threads never enter this list.
         const roomByThread = new Map<string, GroupRecord>();
         for (const group of store.groups) {
-          // A room fewer people can see than this bot stays out of its recall
-          // (bot-visibility.ts roomFeeds): its lines would otherwise reach them.
+          // Only the bot's own account's rooms, and only a room whose audience
+          // it fully shares (bot-visibility.ts roomFeeds).
+          if (group.ownerUserId !== from.ownerUserId) continue;
           if (!group.memberIds.includes(from.id) || !roomFeedsBot(group, from)) continue;
           roomByThread.set(group.threadId, group);
           for (const task of group.tasks ?? []) roomByThread.set(task.threadId, group);
@@ -16231,7 +16236,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             // exactly the Chief's audience: a restricted Chief never makes a bot everyone sees
             ...(chief.visibility ? { visibility: chief.visibility } : {}),
           },
-          { seedMessages: false },
+          { seedMessages: false, ownerUserId: chief.ownerUserId },
         );
         const safeBot = store.patchBot(created.id, {
           composio: false,
@@ -16652,7 +16657,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         : json(res, 404, { error: "no such routine" });
     }
     if (path === "/api/routine-runs/seen-all" && method === "POST") {
-      return json(res, 200, { runs: routines!.markAllSeen() });
+      return json(res, 200, { runs: routines!.markAllSeen((run) => routineVisible(run, visible)) });
     }
     const runMatch = path.match(/^\/api\/routine-runs\/([\w-]+)\/(cancel|seen)$/);
     if (runMatch && method === "POST") {
@@ -16709,12 +16714,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // second, webhook-only loopback listener so Funnel or a future hosted
     // relay never has to expose the rest of Relay's control surface.
     if (path === "/api/webhooks" && method === "GET") {
-      const shownHooks = webhooks.list().filter((webhook) => visible.bot(webhook.botId));
+      const shownHooks = webhooks.list().filter((webhook) => visible.bot(webhook.botId) || visible.ownsRecord(webhooks.ownerOf(webhook.id)));
       const shownIds = new Set(shownHooks.map((webhook) => webhook.id));
       return json(res, 200, { webhooks: shownHooks, attempts: webhooks.listAttempts().filter((attempt) => visible.everything || shownIds.has(attempt.webhookId)), ingress: webhookIngressStatus() });
     }
     if (path === "/api/webhooks" && method === "POST") {
-      const created = webhooks.create(await readBody(req));
+      const created = webhooks.create(await readBody(req), auth.kind === "session" ? auth.session.userId : undefined);
       const ingress = webhookIngressStatus();
       return json(res, 201, {
         webhook: created.webhook,
@@ -16794,7 +16799,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // A member whose cursor predates a bot's audience change gets a fresh
         // snapshot: a replay is judged by today's audience and could neither
         // withdraw what the change hid nor bring back whole what it showed.
-        !(viewer.kind === "member" && audienceChangedAt > 0 && since <= audienceChangedAt);
+        !(viewer.kind === "user" && audienceChangedAt > 0 && since <= audienceChangedAt);
       res.write(
         `data: ${JSON.stringify({
           kind: "hello",
@@ -17526,7 +17531,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const packageId = typeof body?.packageId === "string" && /^[a-f0-9-]{36}$/.test(body.packageId) ? body.packageId : null;
       if (!packageId) return json(res, 400, { error: "Choose a package from your organization's library." });
       if (!orgLibrary) return json(res, 404, { error: "This package is not in your organization's library.", code: "not_listed" });
-      const outcome = orgLibrary.add(packageId, packageImportDeps(await defaultSelection()));
+      const outcome = orgLibrary.add(packageId, packageImportDeps(await defaultSelection()),
+        auth.kind === "session" ? auth.session.userId : undefined);
       if (!outcome.ok) return json(res, outcome.status, { error: outcome.error, code: outcome.code });
       if (outcome.value.alreadyAdded) return json(res, 200, outcome.value);
       const imported = outcome.value.result;
@@ -17607,7 +17613,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (body?.format === "relay.backup") {
         if (importMode !== "add") return json(res, 400, { error: "Import backups alongside your existing bots; project mode is only for templates" });
         try {
-          const imported = importTeamBackup(store, routines!, body, await defaultSelection(), { visibility: importVisibility });
+          const imported = importTeamBackup(store, routines!, body, await defaultSelection(), {
+            visibility: importVisibility,
+            ownerUserId: auth.kind === "session" ? auth.session.userId : undefined,
+          });
           const bots = imported.bots.map((bot) => publicBot(bot));
           const groups = imported.groups.map((group) => ({ ...publicGroupState(group), ...messagePage(group.threadId, undefined) }));
           for (const bot of bots) broadcast({ kind: "bot", bot });
@@ -17636,6 +17645,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         cwd: projectCwd,
         room: url.searchParams.get("room") ?? undefined,
         ...(importVisibility ? { visibility: importVisibility } : {}),
+        ...(auth.kind === "session" && auth.session.userId ? { ownerUserId: auth.session.userId } : {}),
       };
       let imported: PackageImportResult;
       try {
@@ -18385,9 +18395,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (settings.avatarUrl && !storedAvatarExists(settings.avatarUrl)) {
         return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
       }
-      if (settings.mcpServers?.some(name => mcpServerNameError(name) !== null) || (settings.mcpServers?.length ?? 0) > MAX_MCP_SERVERS) {
-        return json(res, 400, { error: "Invalid MCP server selection" });
-      }
       if (settings.managedSections?.length) {
         if (!settings.chiefOfStaff || settings.managedSections.some(name => name !== "" && !store.sections.includes(name))) {
           return json(res, 400, { error: "Only a Chief may manage existing additional teams" });
@@ -18438,7 +18445,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const created = body.visibility === undefined ? null : parseVisibility(body.visibility);
       if (created && !created.ok) return json(res, 400, { error: created.error });
       const bot = store.createBot({ ...profile.patch, soul: settings.soul, section, modelSelection: selection,
-        ...(created?.ok ? { visibility: created.visibility } : {}) });
+        ...(created?.ok ? { visibility: created.visibility } : {}) },
+        { ownerUserId: auth.kind === "session" ? auth.session.userId : undefined });
       const createdRoutines: Array<{ id: string; enabled: boolean }> = [];
       try {
         const { chiefOfStaff: _chief, managedSections: _managed, ...ordinary } = settings;
@@ -18449,7 +18457,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           mascotExpression: ordinary.mascotExpression ?? undefined,
           avatarUrl: ordinary.avatarUrl || undefined,
           computer: ordinary.computer ?? undefined, cwd: checkedCwd.cwd ?? undefined,
-          peers: ordinary.peers ?? undefined, mcpServers: ordinary.mcpServers ?? undefined,
+          peers: ordinary.peers ?? undefined,
           autoApprove: ordinary.approvalMode === "auto",
         });
         // What the preset brings wins over the saved defaults for the same
@@ -18827,25 +18835,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (typeof body.parkDirectMessages !== "boolean") return json(res, 400, { error: "parkDirectMessages must be true or false" });
         patch.parkDirectMessages = body.parkDirectMessages;
       }
-      // Per-bot selection of app-wide MCP servers. Omitted keeps the current
-      // selection; null restores all enabled servers; [] explicitly mounts none.
-      let requestedMcpServers = existingBot?.mcpServers;
-      if (body.mcpServers !== undefined) {
-        if (auth.kind === "session" && !sessions.isLive(auth.session.id)) {
-          return json(res, 401, { error: "unauthorized: this session has expired or was revoked" });
-        }
-        if (body.mcpServers === null) {
-          requestedMcpServers = undefined;
-        } else if (!Array.isArray(body.mcpServers) || body.mcpServers.some((t: unknown) => typeof t !== "string" || mcpServerNameError(t) !== null)) {
-          return json(res, 400, { error: "mcpServers must be a list of server names, or null" });
-        } else {
-          requestedMcpServers = [...new Set(body.mcpServers as string[])];
-          if (requestedMcpServers.length > MAX_MCP_SERVERS) {
-            return json(res, 400, { error: `Select at most ${MAX_MCP_SERVERS} MCP servers.` });
-          }
-        }
-        patch.mcpServers = requestedMcpServers;
-      }
       if (body.memoryUpkeep !== undefined) {
         if (typeof body.memoryUpkeep !== "boolean") return json(res, 400, { error: "memoryUpkeep must be true or false" });
         patch.memoryUpkeep = body.memoryUpkeep;
@@ -19064,10 +19053,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (Array.isArray(patch.alwaysAllow) && patch.alwaysAllow.some((key) => !(existingBot?.alwaysAllow ?? []).includes(key))) {
         loosened.push("alwaysAllow");
       }
-      if (body.mcpServers !== undefined && Array.isArray(existingBot?.mcpServers) &&
-          (requestedMcpServers === undefined || requestedMcpServers.some((name) => !existingBot.mcpServers!.includes(name)))) {
-        loosened.push("mcpServers");
-      }
       const browserOrigin = typeof req.headers.origin === "string" && req.headers.origin.trim() !== "";
       if (loosened.length && auth.kind === "loopback" && !DESKTOP_MANAGED && !browserOrigin) {
         if (store.bots.some((candidate) => candidate.busy)) {
@@ -19096,23 +19081,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         sectionKey(existingBot?.section) !== sectionKey(section);
       let bot: BotRecord | null;
       const freshBrowserBot = store.bot(m[1]);
-      // Custom servers are process configuration: a running turn cannot
-      // unmount them. Recheck after any awaited runtime revocation above.
-      if (body.mcpServers !== undefined) {
-        if (auth.kind === "session" && !sessions.isLive(auth.session.id)) {
-          return json(res, 401, { error: "unauthorized: this session has expired or was revoked" });
-        }
-        if (Array.isArray(freshBrowserBot?.mcpServers) &&
-            (requestedMcpServers === undefined || requestedMcpServers.some((name) => !freshBrowserBot.mcpServers!.includes(name))) &&
-            auth.kind === "loopback" && !DESKTOP_MANAGED && !browserOrigin && store.bots.some((candidate) => candidate.busy)) {
-          return json(res, 409, { error: "A bot is working right now, so this change has to come from the desktop app or a paired device. Try again once every bot is idle." });
-        }
-        if (freshBrowserBot &&
-            JSON.stringify(requestedMcpServers?.toSorted()) !== JSON.stringify(freshBrowserBot.mcpServers?.toSorted()) &&
-            (freshBrowserBot.busy || activeGroupTurnForBot(freshBrowserBot.id))) {
-          return json(res, 409, { error: "Stop this bot's turns before changing its MCP servers." });
-        }
-      }
       if (normalizedSelection && selectedTask) {
         const current = store.projectBotForTask(selectedTask.id, selectedTask.threadId);
         if (!current) return json(res, 404, { error: "no such task" });
@@ -20041,13 +20009,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             return json(res, 200, { ok: true, outcome: "declined" });
           }
           const session = auth.kind === "session" ? auth.session : null;
-          if (!session?.userId || !session.email) {
+          if (!session?.userId) {
             return json(res, 400, { error: "this confirmation has no valid owner" });
           }
-          const role = (Object.entries(relayAgentBotIds(store.bots)) as Array<[string, string | undefined]>)
-            .find(([, id]) => id === action.botId)?.[0];
+          // The action runs as the proposing bot's owner, never as the
+          // triggerer, so Mercury always acts through the owner's own Google
+          // connection.
+          const proposedBy = store.bot(action.botId);
+          const role = proposedBy?.relayAgent;
           const toolUrl = RELAY_TOOL_URL ?? (RELAY_SHARED_WORKSPACE ? "http://127.0.0.1:8787" : undefined);
-          if (!role || !toolUrl) {
+          if (!proposedBy?.ownerUserId || !role || !toolUrl) {
             return json(res, 403, { error: "connector actions are unavailable" });
           }
           const { tool, args } = action.kind === "calendar-invite"
@@ -20079,7 +20050,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           let assertion: string;
           try {
             assertion = signedActorContext(
-              { userId: session.userId, email: session.email },
+              { userId: proposedBy.ownerUserId, botId: proposedBy.id, threadId },
               process.env.RELAY_TOOL_ACTOR_SECRET,
             );
           } catch {
@@ -21395,135 +21366,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       } finally {
         providerInstancesChanging.delete(instanceId);
         providerConfigBusy = false;
-      }
-    }
-
-    // ── custom MCP servers (a local command or a URL; secrets write-only) ──
-    if (method === "GET" && path === "/api/mcp/servers") {
-      return json(res, 200, mcpServerResponse());
-    }
-
-    const mcpTest = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})\/test$/.exec(path);
-    if (method === "POST" && mcpTest) {
-      const raw = cfg.mcpServers?.[mcpTest[1]];
-      if (raw === undefined) return json(res, 404, { error: "MCP server not found." });
-      const parsed = parseStoredMcpServer(mcpTest[1], raw);
-      if (!parsed.ok) return json(res, 400, { error: parsed.error });
-      if (mcpProbesInFlight >= MAX_CONCURRENT_MCP_PROBES) {
-        return json(res, 429, { error: "Two MCP connection tests are already running." });
-      }
-      const controller = new AbortController();
-      const disconnect = () => {
-        if (!res.writableEnded) controller.abort();
-      };
-      res.once("close", disconnect);
-      mcpProbesInFlight += 1;
-      try {
-        return json(res, 200, await probeMcpServer(parsed.server, undefined, controller.signal));
-      } finally {
-        res.off("close", disconnect);
-        mcpProbesInFlight -= 1;
-      }
-    }
-
-    if (method === "POST" && path === "/api/mcp/servers") {
-      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-        return json(res, 415, { error: "content-type must be application/json" });
-      }
-      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
-      mcpConfigBusy = true;
-      try {
-        const body = await readBody(req);
-        const name = typeof body?.name === "string" ? body.name : "";
-        const current = cfg.mcpServers ?? {};
-        if (Object.hasOwn(current, name)) return json(res, 409, { error: "An MCP server with that name already exists." });
-        if (Object.keys(current).length >= MAX_MCP_SERVERS) {
-          return json(res, 400, { error: `You can add at most ${MAX_MCP_SERVERS} MCP servers.` });
-        }
-        const parsed = parseMcpServerMutation(name, mcpServerBody(body));
-        if (!parsed.ok) return json(res, 400, { error: parsed.error });
-        const refusal = mcpPolicyRefusal(name, parsed.server);
-        if (refusal) return json(res, 403, { error: refusal, code: "managed_policy" });
-        persistMcpServers({ ...current, [name]: parsed.server });
-        return json(res, 201, mcpServerResponse());
-      } finally {
-        mcpConfigBusy = false;
-      }
-    }
-
-    // Paste-to-add: the {"mcpServers": {...}} block every other agent tool
-    // writes. Same rules as POST: disabled until explicitly enabled.
-    if (method === "POST" && path === "/api/mcp/servers/import") {
-      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-        return json(res, 415, { error: "content-type must be application/json" });
-      }
-      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
-      mcpConfigBusy = true;
-      try {
-        const body = await readBody(req);
-        const text = typeof body?.json === "string" ? body.json : "";
-        if (auth.kind === "session" && !sessions.isLive(auth.session.id)) {
-          return json(res, 401, { error: "unauthorized: this session has expired or was revoked" });
-        }
-        if (!text.trim()) return json(res, 400, { error: "Paste the JSON block first." });
-        const parsed = parseMcpServersImport(text);
-        if (!parsed.ok) return json(res, 400, { error: parsed.error });
-        const current = cfg.mcpServers ?? {};
-        const names = Object.keys(parsed.servers);
-        const taken = names.filter((name) => Object.hasOwn(current, name));
-        if (taken.length) {
-          return json(res, 409, { error: `Already added: ${taken.join(", ")}. Remove or rename ${taken.length === 1 ? "it" : "them"} first.` });
-        }
-        if (Object.keys(current).length + names.length > MAX_MCP_SERVERS) {
-          return json(res, 400, { error: `You can add at most ${MAX_MCP_SERVERS} MCP servers.` });
-        }
-        const refused = names.filter(name => mcpPolicyRefusal(name, parsed.servers[name] as object));
-        if (refused.length) return json(res, 403, { error: `${mcpPolicyRefusal(refused[0]!, parsed.servers[refused[0]!] as object)} Not approved: ${refused.join(", ")}.`, code: "managed_policy" });
-        persistMcpServers({ ...current, ...parsed.servers });
-        return json(res, 201, { ...mcpServerResponse(), added: names });
-      } finally {
-        mcpConfigBusy = false;
-      }
-    }
-
-    const mcpServerRoute = /^\/api\/mcp\/servers\/([a-z][a-z0-9_-]{0,31})$/.exec(path);
-    if (mcpServerRoute && ["PUT", "PATCH", "DELETE"].includes(method)) {
-      if (method !== "DELETE" && !String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-        return json(res, 415, { error: "content-type must be application/json" });
-      }
-      if (mcpConfigBusy) return json(res, 409, { error: "MCP servers are already being updated." });
-      mcpConfigBusy = true;
-      try {
-        const name = mcpServerRoute[1];
-        const current = cfg.mcpServers ?? {};
-        if (!Object.hasOwn(current, name)) return json(res, 404, { error: "MCP server not found." });
-        if (method === "DELETE") {
-          const next = { ...current };
-          delete next[name];
-          persistMcpServers(next);
-          return json(res, 200, mcpServerResponse());
-        }
-
-        const existing = parseStoredMcpServer(name, current[name]);
-        if (!existing.ok) return json(res, 400, { error: existing.error });
-        const body = await readBody(req);
-        if (method === "PATCH") {
-          if (!body || typeof body !== "object" || Array.isArray(body)
-            || Object.keys(body).length !== 1 || typeof body.enabled !== "boolean") {
-            return json(res, 400, { error: "Only an enabled boolean can be changed here." });
-          }
-          persistMcpServers({ ...current, [name]: { ...existing.server, enabled: body.enabled } });
-          return json(res, 200, mcpServerResponse());
-        }
-
-        const parsed = parseMcpServerMutation(name, body, existing.server);
-        if (!parsed.ok) return json(res, 400, { error: parsed.error });
-        const refusal = mcpPolicyRefusal(name, parsed.server);
-        if (refusal) return json(res, 403, { error: refusal, code: "managed_policy" });
-        persistMcpServers({ ...current, [name]: parsed.server });
-        return json(res, 200, mcpServerResponse());
-      } finally {
-        mcpConfigBusy = false;
       }
     }
 

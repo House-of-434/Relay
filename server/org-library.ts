@@ -971,7 +971,7 @@ export class OrgLibrary {
 
   /** POST /api/org-library/add — one click, no confirmation: the person's
    * click is the decision. Idempotent per install id. */
-  add(packageId: string, importDeps: PackageImportDeps):
+  add(packageId: string, importDeps: PackageImportDeps, ownerUserId?: string):
     OrgLibraryOutcome<{ alreadyAdded: true; installId: string } | { alreadyAdded: false; result: PackageImportResult }> {
     const library = this.library;
     const entry = this.visibleEntry(packageId);
@@ -1031,6 +1031,7 @@ export class OrgLibrary {
       const imported = importPackageDocument(document.value, {
         trust: "org",
         mode: "add",
+        ...(ownerUserId ? { ownerUserId } : {}),
         org: { installId, ref: entry.ref, packageId, sha256: release.sha256, publisher, adminOrigin: library.adminOrigin, organizationId: library.organizationId },
       }, importDeps);
       if (imported.alreadyAdded) {

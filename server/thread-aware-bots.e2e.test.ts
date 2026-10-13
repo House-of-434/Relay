@@ -17,6 +17,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 
@@ -31,6 +32,7 @@ let home = "";
 let gates = "";
 let base = "";
 let stderr = "";
+let ownerToken = "";
 
 const api = async (
   method: string,
@@ -40,7 +42,11 @@ const api = async (
 ): Promise<{ status: number; body: any }> => {
   const response = await fetch(`${base}${path}`, {
     method,
-    headers: { ...(body ? { "content-type": "application/json" } : {}), ...headers },
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+      ...headers,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: response.status, body: response.status === 204 ? null : await response.json() };
@@ -223,6 +229,7 @@ beforeAll(async () => {
       },
     },
   }));
+  ownerToken = prepareOwnerSession(data);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -234,6 +241,7 @@ beforeAll(async () => {
       USERPROFILE: home,
       RELAY_PORT: String(port),
       RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
     },
     stdio: ["ignore", "pipe", "pipe"],

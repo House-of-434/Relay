@@ -101,12 +101,8 @@ describe("importing a whole team", () => {
       expect.objectContaining({ name: "research-brief", enabled: false }),
     ]);
     expect(result.offeredSkills).toEqual(["objection-handling"]);
-    // The slot never binds to the credentialed server already called "crm".
-    expect(result.connections).toEqual([{ key: "crm", name: "crm-2", label: "CRM" }]);
-    expect(app.mcp.servers["crm-2"]).toEqual({ type: "http", url: "https://mcp.example.com/crm", headers: { Authorization: "" }, enabled: false });
-    expect(app.mcp.servers.crm).toMatchObject({ headers: { Authorization: "Bearer mine" } });
-    expect(lead.mcpServers).toEqual(["crm-2"]);
-    expect(byKey.get("writer")!.mcpServers).toBeUndefined();
+    // Employees cannot plug in MCP servers, so a package installs no connection.
+    expect(result.connections).toEqual([]);
     expect(app.workspace.readMemoryFile(lead.id).text).toContain("short summaries");
     expect(app.workspace.readMemoryTopic(lead.id, "pricing.md")).toContain("49 per seat");
     expect(result.notes).toBe(2);
@@ -124,18 +120,16 @@ describe("importing a whole team", () => {
     expect(second.section).toBe("Sales desk 2");
     expect(second.bots[0]!.name).toBe("Morgan 2");
     expect(second.installId).not.toBe(first.installId);
-    expect(second.connections[0]!.name).toBe("crm-2");
+    expect(second.connections).toEqual([]);
   });
 
-  it("records a connection the organization's policy refuses and imports the rest", async () => {
-    const app = await installation({ refuse: (name) => (name === "crm" ? "Not approved by Acme." : undefined) });
+  it("imports the team without installing any connection", async () => {
+    const app = await installation();
     const result = app.importer.importPackageDocument(app.parsePackageDocument(fixture("full-team.v2.json")), { trust: "file", mode: "add" }, app.deps);
     if (result.alreadyAdded) throw new Error("unexpected");
-    expect(result.skipped).toContainEqual({ part: "connections[crm]", reason: "connection_refused_by_policy" });
     expect(result.connections).toEqual([]);
     expect(app.mcp.servers).toEqual({});
     expect(result.bots).toHaveLength(3);
-    expect(app.store.bot(result.bots.find((bot) => bot.installedPackage?.agentKey === "lead")!.id)!.mcpServers).toEqual([]);
   });
 
   it("leaves nothing behind when the last step fails", async () => {

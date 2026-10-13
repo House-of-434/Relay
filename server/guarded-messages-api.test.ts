@@ -101,8 +101,8 @@ describe("guarded external messages through an isolated runtime", () => {
     ]) expect((await guarded(bot, invalid)).status).toBe(400);
     const foreign = await newBot();
     expect((await guarded(bot, { ...input, threadId: foreign.activeTaskId })).status).toBe(409);
-    expect((await api("POST", `/api/bots/${bot.id}/messages/guarded`, input, { origin: "https://untrusted.example.test" })).status).toBe(403);
-    expect((await api("POST", `/api/bots/${bot.id}/messages/guarded`, input, { "x-forwarded-for": "203.0.113.5" })).status).toBe(403);
+    expect((await api("POST", `/api/bots/${bot.id}/messages/guarded`, input, { origin: "https://untrusted.example.test", "x-relay-test-anonymous": "1" })).status).toBe(403);
+    expect((await api("POST", `/api/bots/${bot.id}/messages/guarded`, input, { "x-forwarded-for": "203.0.113.5", "x-relay-test-anonymous": "1" })).status).toBe(403);
     expect((await page(bot.activeTaskId)).messages).toEqual([]);
     expect((await page(foreign.activeTaskId)).messages).toEqual([]);
     await noQueuedWork(bot.activeTaskId);

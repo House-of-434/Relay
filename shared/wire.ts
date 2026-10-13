@@ -311,8 +311,6 @@ export interface WireBot {
    * tidies nightly. On unless explicitly false; every change is journaled
    * and can be undone. */
   memoryUpkeep?: boolean;
-  /** Which of the app-wide MCP servers this bot mounts, by name. */
-  mcpServers?: string[];
   /** Public, package-authored playbooks installed for this bot. */
   playbooks?: InstalledPlaybook[];
   /** Listing provenance for package details and future re-export. */

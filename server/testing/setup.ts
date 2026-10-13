@@ -12,10 +12,6 @@ import { removeTempDir } from "./cleanup.ts";
 const home = mkdtempSync(join(tmpdir(), "relay-test-home-"));
 process.env.HOME = home;
 process.env.USERPROFILE = home;
-// Server integration fixtures opt back into Relay's shared-agent bootstrap
-// explicitly. Most upstream-derived tests continue exercising the generic
-// single-starter workspace.
-process.env.RELAY_SHARED_WORKSPACE ??= "0";
 // RELAY_DATA_DIR is an intentional production override, but tests must never
 // let it escape the throwaway home they are about to delete.
 delete process.env.RELAY_DATA_DIR;

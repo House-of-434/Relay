@@ -12,6 +12,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { openSse } from "./testing/sse.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -23,6 +24,7 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 let child: ChildProcess;
 let home: string;
 let stderr = "";
+let ownerToken = "";
 
 interface BotPatchBody {
   name?: string;
@@ -45,7 +47,10 @@ const api = async (
 ): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: res.status === 204 ? null : await res.json() };
@@ -72,11 +77,13 @@ posixOnly("routine failure notification wiring", () => {
         },
       }),
     );
+    ownerToken = prepareOwnerSession(join(home, ".relay"));
 
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
       RELAY_PORT: String(PORT),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       RELAY_WEBHOOK_PORT: String(WEBHOOK_PORT),
     };
     if (process.env.PATH) env.PATH = process.env.PATH;

@@ -2,7 +2,7 @@
 // Thin, agent-friendly CLI over the same guarded MCP operations exposed to
 // external clients. It deliberately owns no second API client or wait loop.
 import { spawn, type ChildProcess } from "node:child_process";
-import { closeSync, mkdirSync, mkdtempSync, openSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -10,14 +10,12 @@ import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
 import { handleToolCall, request, validateBaseUrl } from "./mcp-server.ts";
 import { launchUi, runControlOmbUi } from "./testing/control-relay-ui.ts";
+import { SessionRegistry } from "../server/sessions.ts";
+import { issueTestOwnerSession, registerOwnerFetch, unregisterOwnerFetch, TEST_OWNER_EMAIL, TEST_OWNER_SCOPES, TEST_TOOL_ACTOR_SECRET } from "../server/testing/owner.ts";
 import { removeTempDir, waitForExit } from "../server/testing/cleanup.ts";
 import { freePortBlock } from "../server/testing/ports.ts";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-/** Deterministic name for the seeded starter bot of a verification fixture,
- * deliberately outside the server/names.ts pool so no suite can plan a bot
- * that collides with the starter (#1257). */
-export const FIXTURE_STARTER_BOT_NAME = "Fixture Starter";
 const FAKE_CLI = join(ROOT, "server", "testing", "fake-claude-cli.ts");
 // `ui` verbs never discover anything: each takes the handle its launch printed.
 const MUTATING = new Set([
@@ -323,9 +321,12 @@ export async function runControlOmb(
 }
 
 export interface VerificationServer {
-  info: { url: string; pid: number; dataDir: string; logPath: string };
+  /** `token` is the fixture owner's real session bearer. */
+  info: { url: string; pid: number; dataDir: string; logPath: string; token: string };
   fixtureDumpPath: string;
   child: ChildProcess;
+  /** A fetch bound to this fixture; the owner bearer is added automatically. */
+  client(path: string, init?: RequestInit): Promise<Response>;
   close(): Promise<void>;
 }
 
@@ -381,11 +382,13 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   if (parentEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE) {
     childEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE = parentEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE;
   }
-  childEnv.RELAY_SHARED_WORKSPACE = parentEnv.RELAY_SHARED_WORKSPACE ?? "0";
   if (parentEnv.RELAY_DISABLE_COMPUTER !== undefined) {
     childEnv.RELAY_DISABLE_COMPUTER = parentEnv.RELAY_DISABLE_COMPUTER;
   }
   if (parentEnv.RELAY_TOOL_URL) childEnv.RELAY_TOOL_URL = parentEnv.RELAY_TOOL_URL;
+  // The fixture signs owner assertions with a fixed test secret, the way a
+  // deployment signs with RELAY_TOOL_ACTOR_SECRET.
+  childEnv.RELAY_TOOL_ACTOR_SECRET = TEST_TOOL_ACTOR_SECRET;
   return childEnv;
 }
 
@@ -428,6 +431,9 @@ export async function launchVerificationServer(
   mkdirSync(evidenceDir, { recursive: true });
   const logPath = join(evidenceDir, `server-${Date.now()}-${process.pid}.log`);
   writeFileSync(join(dataDir, "config.json"), JSON.stringify({
+    // The owner email is on the sign-in list so the server keeps the owner's
+    // session through its boot-time revalidation.
+    signIn: { admins: [TEST_OWNER_EMAIL] },
     ...(boatFixtureApi ? { box: { token: "box_verification_fixture" } } : {}),
     instances: {
       // The synthetic map omits the default computer engine. Register it
@@ -444,6 +450,15 @@ export async function launchVerificationServer(
       },
     },
   }, null, 2));
+
+  // A real owner session, issued the way a hosted user signs in, written to
+  // the fixture's session store before the server boots.
+  const registry = new SessionRegistry({
+    file: join(dataDir, "sessions.json"),
+    emailScopes: () => [...TEST_OWNER_SCOPES],
+  });
+  const owner = issueTestOwnerSession(registry);
+  registry.close();
 
   const log = openSync(logPath, "a", 0o600);
   const childEnv = verificationServerEnvironment(parentEnv, dataDir, port);
@@ -495,42 +510,21 @@ export async function launchVerificationServer(
     throw error;
   }
 
-  // The first-run seed gives the starter a random friendly name from
-  // server/names.ts, and that pool shares names with bots e2e suites plan
-  // ("Quill" among them). A name-based assertion then reports the starter as
-  // a phantom leaked bot and flakes (#1257). Pin the name so fixture state is
-  // deterministic for every suite built on this launcher; identity remains
-  // the honest comparison in tests either way.
+  // Every fetch the tests make to this fixture's URL now carries the owner's
+  // bearer, so they act as the signed-in account, not a loopback owner.
+  registerOwnerFetch(url, owner.token);
+
+  // Boot no longer seeds a global roster: this first authenticated read seeds
+  // the owner's own three Relay agents. Confirm the API answers before launch.
   try {
-    // Seeding is part of launch, not a one-second health probe. First-run
-    // filesystem work can exceed a second on Windows; keep the launch deadline.
     const timeout = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
     const list = await fetch(`${url}/api/bots`, {
       headers: { origin: url },
       signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
     });
-    const body = list.ok ? await list.json() as { bots?: Array<{ id: string }> } : null;
-    const seeded = body?.bots;
-    if (childEnv.RELAY_SHARED_WORKSPACE === "1") {
-      const records = JSON.parse(readFileSync(join(dataDir, "bots.json"), "utf8")) as Array<{ relayAgent?: string }>;
-      const roles = records.map((bot) => bot.relayAgent).filter(Boolean).sort();
-      if (!Array.isArray(seeded) || seeded.length !== 3 || roles.join(",") !== "curator,mercury,scout") {
-        throw new Error(`verification fixture did not seed the three Relay agents; see ${logPath}`);
-      }
-    } else {
-      if (!Array.isArray(seeded) || seeded.length !== 1) {
-        throw new Error(`verification fixture did not seed exactly one starter bot; see ${logPath}`);
-      }
-      const renameTimeout = AbortSignal.timeout(Math.max(1, deadline - Date.now()));
-      const rename = await fetch(`${url}/api/bots/${seeded[0].id}/profile`, {
-        method: "PATCH",
-        headers: { "content-type": "application/json", origin: url },
-        body: JSON.stringify({ name: FIXTURE_STARTER_BOT_NAME }),
-        signal: signal ? AbortSignal.any([signal, renameTimeout]) : renameTimeout,
-      });
-      if (!rename.ok) throw new Error(`verification starter rename failed (${rename.status}); see ${logPath}`);
-    }
+    if (!list.ok) throw new Error(`verification fixture API did not answer; see ${logPath}`);
   } catch (error) {
+    unregisterOwnerFetch(url);
     await waitForExit(child, { signal: "SIGTERM" });
     await removeTempDir(dataDir);
     throw error;
@@ -538,12 +532,16 @@ export async function launchVerificationServer(
 
   let closed = false;
   return {
-    info: { url, pid: child.pid!, dataDir, logPath },
+    info: { url, pid: child.pid!, dataDir, logPath, token: owner.token },
     fixtureDumpPath,
     child,
+    client(path: string, init?: RequestInit) {
+      return fetch(`${url}${path}`, init);
+    },
     async close() {
       if (closed) return;
       closed = true;
+      unregisterOwnerFetch(url);
       await waitForExit(child, { signal: "SIGTERM" });
       await removeTempDir(dataDir);
     },

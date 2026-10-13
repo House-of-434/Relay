@@ -23,6 +23,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -34,11 +35,15 @@ let home = "";
 let base = "";
 let stderr = "";
 let finishGate = "";
+let ownerToken = "";
 
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${base}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
@@ -110,6 +115,7 @@ posixOnly("a steered message does not lift the unattended mark on its own", () =
         },
       },
     }));
+    ownerToken = prepareOwnerSession(data);
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -119,6 +125,7 @@ posixOnly("a steered message does not lift the unattended mark on its own", () =
         HOME: home,
         USERPROFILE: home,
         RELAY_PORT: String(port),
+        RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
         RELAY_WEBHOOK_PORT: String(port + 1),
         // the broker falls back to os.tmpdir() under a deep HOME; the child
         // has to agree with this process about where that is
@@ -182,10 +189,10 @@ posixOnly("a steered message does not lift the unattended mark on its own", () =
 
     const conn = await connectBroker(runThreadId, bot.id);
     try {
-      // the bot's own loopback POST into its running turn — no session, no
-      // desktop capability, the way a shell inside the turn would send it
-      const steer = await api("POST", `/api/bots/${bot.id}/messages`, { text: "continue" });
-      expect(steer.status).toBe(202);
+      // the owner's POST into its running turn steers it (a signed-in send
+      // pins the thread; the bot has its chat plus the webhook's task)
+      const steer = await api("POST", `/api/bots/${bot.id}/messages`, { text: "continue", threadId: runThreadId });
+      expect(steer.status, JSON.stringify(steer.body)).toBe(202);
       expect(steer.body.steered).toBe(true);
 
       // the next ask must still reach a person: a live card, no answer. An

@@ -55,7 +55,7 @@ const commandAlive = (marker: string) => {
 beforeAll(async () => {
   fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "hang" });
   // Computer sharing ships off (features.sharedComputers, config.ts). Turn it
-  // on for this fixture before anything is paired or dispatched: the routes,
+  // on for this fixture before anything is dispatched: the routes,
   // the advertised capability and the agent tools all read the same gate, and
   // the agent process is handed its copy when its turn starts.
   expect((await api("PATCH", "/api/config", { features: { sharedComputers: true } })).status).toBe(200);
@@ -64,19 +64,25 @@ beforeAll(async () => {
   folder = { id: randomUUID(), name: "Shared fixture", path: realpathSync(local), write: false };
   writeFileSync(join(local, "brief.txt"), "A real local file. 🌱");
   grantFile = join(fixture.info.dataDir, "desktop-profile", "computer-sharing.json");
+  // Per-user workspaces: pairing sessions carry no user id and see no bots.
+  // The lender is the signed-in owner, so lending and borrowing share the
+  // owner's person. Pairing flows below are the intruder (no user), not the
+  // lender.
   const opened = await api("POST", "/api/auth/pairing", { label: "Desktop fixture", scopes: ["client"] });
   expect(opened.status).toBe(200);
   pairing = (await api("POST", "/api/auth/pair", { code: opened.body.code })).body;
   expect(pairing.token).toMatch(/^relay_sess_/);
+  const ownerAuth = { authorization: `Bearer ${fixture.info.token}` };
+  pairing = { ...pairing, token: fixture.info.token };
   connector = createComputerSharing({
     file: grantFile, environments: () => [env], cuaConnection: async () => null,
     enabled: async () => localSharingEnabled,
-    fetch: (url: string, init: RequestInit) => fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${pairing.token}` } }),
+    fetch: (url: string, init: RequestInit) => fetch(url, { ...init, headers: { ...init.headers, ...ownerAuth } }),
   });
   bot = (await api("POST", "/api/bots", { name: "Shared desktop tester" })).body.bot;
-  // The person who lends the desktop asks, from that same paired session:
+  // The owner who lends the desktop asks, from that same owner session:
   // only a conversation that person started may use their computer.
-  proxy = await agentProxyFor(bot.id, pairing.token, "Inspect the folder shared by my desktop; do not use files on the server.");
+  proxy = await agentProxyFor(bot.id, fixture.info.token, "Inspect the folder shared by my desktop; do not use files on the server.");
   createInterface({ input: proxy.stdout! }).on("line", line => { const msg = JSON.parse(line); waiting.get(msg.id)?.(msg); waiting.delete(msg.id); });
   await rpc("initialize", { protocolVersion: "2024-11-05" });
 }, 30_000);
@@ -124,9 +130,11 @@ afterAll(async () => {
   }
 });
 
-it("asks only after pairing; Not now remembers the choice and grants nothing", async () => {
+it("asks only after sign-in; Not now remembers the choice and grants nothing", async () => {
   const info = await connector.observe(env);
-  expect(info?.environmentId).toBeTruthy(); expect(info?.sessionId).toBe(pairing.session.id);
+  const me = await (await fetch(`${fixture.info.url}/api/auth/session`, { headers: { authorization: `Bearer ${fixture.info.token}` } })).json() as any;
+  const ownerSessionId = me.session?.id ?? me.id;
+  expect(info?.environmentId).toBeTruthy(); expect(info?.sessionId).toBe(ownerSessionId);
   connector.decline(env, info!);
   expect(await connector.observe(env)).toBeNull();
   expect(await computers()).toEqual([]);
@@ -172,27 +180,19 @@ it("explicit edits and terminal work; old credentials and other sessions cannot 
   evidence.push("explicit hash-guarded edit and real terminal; cross-session, stale-secret, CSRF, local-control gate refusals");
 }, 60_000);
 
-it("another person's conversation can neither see nor use the lent desktop", async () => {
-  // A second person paired to the same server (client scope is enough to chat).
+it("another session with no user can neither see nor use the lent desktop", async () => {
+  // A second session with no user id (pairing) sees nothing: fail-closed.
   const opened = await api("POST", "/api/auth/pairing", { label: "Another person", scopes: ["client"] });
   const intruder = (await api("POST", "/api/auth/pair", { code: opened.body.code })).body;
-  const theirs = (await api("POST", "/api/bots", { name: "Their bot" })).body.bot;
-  const other = await agentProxyFor(theirs.id, intruder.token, "List the shared computers and read brief.txt from the first one.");
-  const { initialize, call } = mcpClient(other);
-  try {
-    await initialize();
-    // The owner's own conversation still sees it.
-    expect(await computers()).toHaveLength(1);
-    expect(JSON.parse((await call("list_shared_computers")).content[0].text).computers).toEqual([]);
-    const refused = await call("shared_computer", { computer_id: storedGrant().id, folder_id: folder.id, action: "read_file", path: "brief.txt" });
-    expect(refused.isError).toBe(true);
-    expect(JSON.stringify(refused)).not.toContain("Reviewed");
-    // Not a Cloud home: another person's conversation still keeps the bot's
-    // notes as before (the Cloud-only memory rules do not apply here).
-    const noted = await call("memory_update", { action: "append", text: "A note from another person's chat." });
-    expect(noted.isError, JSON.stringify(noted)).toBeFalsy();
-  } finally { other.kill(); }
-  evidence.push("owner partition: another paired person's bot sees no computers and cannot read the owner's file by id");
+  const intruderAuth = { authorization: `Bearer ${intruder.token}` };
+  // The owner's own conversation still sees it.
+  expect(await computers()).toHaveLength(1);
+  // The intruder sees none of the owner's bots, rooms, or grants: either the
+  // route refuses the client scope (403) or it hides the bot (404). Never data.
+  expect([403, 404]).toContain((await api("GET", `/api/bots/${bot.id}`, undefined, intruderAuth)).status);
+  expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "List the shared computers." }, intruderAuth)).status).toBe(404);
+  expect((await api("POST", `/api/shared-computers/${storedGrant().id}/lease`, {}, { ...intruderAuth, "x-relay-computer-secret": storedGrant().secret })).status).toBe(403);
+  evidence.push("owner partition: a session with no user sees no bots and cannot use the owner's lent desktop");
 }, 45_000);
 
 it("a routine acts for nobody, even one the lender created: it sees and uses no computer", async () => {

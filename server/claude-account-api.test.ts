@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { SessionRegistry } from "./sessions.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 
@@ -17,13 +18,18 @@ let dataDir: string;
 let cli: string;
 let base: string;
 let clientToken: string;
+let ownerToken = "";
 let child: ChildProcess;
 let stderr = "";
 
 async function api(method: string, path: string, body?: unknown, headers: Record<string, string> = {}) {
   const response = await fetch(`${base}${path}`, {
     method,
-    headers: { ...(body === undefined ? {} : { "content-type": "application/json" }), ...headers },
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      authorization: `Bearer ${ownerToken}`,
+      ...headers,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   return { status: response.status, body: await response.json() as any };
@@ -98,6 +104,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   const paired = sessions.exchange({ code: sessions.openPairing({ scopes: ["client"] }).code, label: "Fixture client", source: "fixture" });
   if (!paired.ok) throw new Error("fixture session failed");
   clientToken = paired.token;
+  ownerToken = prepareOwnerSession(dataDir);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   const offlinePrelude = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
@@ -109,6 +116,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home, USERPROFILE: home, RELAY_DATA_DIR: dataDir,
       RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1), RELAY_SSE_HEARTBEAT_MS: "50",
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -210,7 +218,7 @@ describe("Claude account HTTP API", () => {
     const runningBot = await addBot(active.id);
     mkdirSync(active.dir, { recursive: true });
     writeFileSync(join(active.dir, "hang"), "fixture only");
-    const stream = await openSse(`${base}/api/events`);
+    const stream = await openSse(`${base}/api/events`, { authorization: `Bearer ${ownerToken}` });
     try {
       await stream.until(frame => frame.kind === "hello");
       expect((await api("POST", `/api/bots/${runningBot.id}/messages`, { text: "remain active" })).status).toBe(202);

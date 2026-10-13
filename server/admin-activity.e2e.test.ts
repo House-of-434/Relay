@@ -1,10 +1,11 @@
 // The admin activity log through the real server: an admin session (Boss)
-// and the owner on this machine change settings, people, keys, budgets, MCP
-// servers, webhooks, bots, a bot's audience and sessions; each change lands
+// and the owner on this machine change settings, people, keys, budgets,
+// webhooks, bots, a bot's audience and sessions; each change lands
 // in <data>/admin-activity/YYYY-MM.ndjson naming who acted, what changed
 // and the redacted values before and after. GET /api/admin-activity (and its
 // CSV) shows those rows beside the decision log's answered cards, filtered by
 // who, what and when, to admins only. Nothing is sent anywhere.
+import { randomUUID } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -21,9 +22,13 @@ const BASE = `http://127.0.0.1:${PORT}`;
 const posixOnly = describe.skipIf(process.platform === "win32");
 const BOSS = "boss@example.test";
 const ADA = "ada@example.test";
+// Per-user workspaces: account sessions carry a Supabase UUID owner. Admin
+// operational data (/api/admin-activity) stays cross-user, but bots are
+// owner-scoped, so Boss and Ada need user ids to own their bots.
+const BOSS_USER_ID = randomUUID();
+const ADA_USER_ID = randomUUID();
 const SECRET = "sk-ant-api03-activity-fixture-secret-0123456789abcdef";
-const MCP_SECRET = "mcp-activity-fixture-secret-value";
-const ARG_SECRET = "acme_live_9f8e7d6c5b4a3f2e1d0c";
+const ARG_SECRET = "acme_live_9f8e7d6c5b4a3f2e1d0c"; // deleted MCP route must never leak this
 
 let child: ChildProcess;
 let home: string;
@@ -117,8 +122,9 @@ posixOnly("admin activity log", () => {
       { at: new Date(Date.now() - 50_000).toISOString(), threadId: "t1", requestId: "r2", tool: "Read", decision: "auto-approved", source: "full-access" },
     ].map((row) => JSON.stringify(row)).join("\n") + "\n");
     const role = (email: string) => (email === BOSS ? ["admin", "client"] as const : ["client"] as const);
+    const userId = (email: string) => (email === BOSS ? BOSS_USER_ID : ADA_USER_ID);
     const registry = new SessionRegistry({ file: join(data, "sessions.json"), emailScopes: (email) => [...role(email)] });
-    for (const email of [BOSS, ADA]) tokens[email] = registry.issue({ label: `${email.split("@")[0]}'s laptop`, email, scopes: [...role(email)] }).token;
+    for (const email of [BOSS, ADA]) tokens[email] = registry.issue({ label: `${email.split("@")[0]}'s laptop`, email, userId: userId(email), scopes: [...role(email)] }).token;
     oldPhone = registry.issue({ label: "Old phone", scopes: ["client"] }).session.id;
     registry.close();
     await start();
@@ -162,16 +168,16 @@ posixOnly("admin activity log", () => {
     }
   });
 
-  it("records MCP servers, webhooks, bots, a bot's audience and sessions", async () => {
-    const mcp = await api("POST", "/api/mcp/servers", { name: "fixture", command: process.execPath, args: ["--version", "--api-key", ARG_SECRET], env: { FIXTURE_TOKEN: MCP_SECRET } }, BOSS);
-    expect(mcp.status, JSON.stringify(mcp.body)).toBe(201);
+  it("records webhooks, bots, a bot's audience and sessions", async () => {
+    // Custom MCP servers were removed; no /api/mcp/servers route exists.
     const bot = await api("POST", "/api/bots", { name: "Audit Owl" }, BOSS);
     expect(bot.status).toBe(201);
     const botId = bot.body.bot.id as string;
     expect((await api("PATCH", `/api/bots/${botId}`, { visibility: { people: [ADA] } }, BOSS)).status).toBe(200);
     expect((await api("PATCH", `/api/bots/${botId}`, { approvePeerComms: true }, BOSS)).status).toBe(200);
-    // display-only and refused changes leave no row
-    expect((await api("PATCH", `/api/bots/${botId}`, { pinned: true }, ADA)).status).toBe(200);
+    // display-only and refused changes leave no row; a non-owner sees
+    // nothing (owner check, email audiences retired).
+    expect((await api("PATCH", `/api/bots/${botId}`, { pinned: true }, ADA)).status).toBe(404);
     expect((await api("PATCH", `/api/bots/${botId}`, { visibility: { people: ["nope"] } }, BOSS)).status).toBe(400);
     const signOut = await api("POST", "/api/instances/no-such-engine/auth/sign-out", {}, BOSS);
     expect(signOut.status, JSON.stringify(signOut.body)).toBeGreaterThanOrEqual(400);
@@ -184,7 +190,7 @@ posixOnly("admin activity log", () => {
 
     const rows = (await activity("?what=all")).filter((entry) => entry.type === "admin");
     const actions = rows.map((entry) => entry.action);
-    for (const action of ["mcp.update", "bot.create", "visibility.update", "bot.update", "webhook.create", "webhook.delete", "session.revoke", "pairing.create", "bot.delete"]) {
+    for (const action of ["bot.create", "visibility.update", "bot.update", "webhook.create", "webhook.delete", "session.revoke", "pairing.create", "bot.delete"]) {
       expect(actions, action).toContain(action);
     }
     expect(actions.filter((action) => action === "bot.update")).toHaveLength(1); // not the pin, not the refused audience
@@ -192,11 +198,6 @@ posixOnly("admin activity log", () => {
     expect(actions.filter((action) => action === "visibility.update")).toHaveLength(1);
     const audience = rows.find((entry) => entry.action === "visibility.update");
     expect(audience).toMatchObject({ who: BOSS, target: { kind: "bot", id: botId, name: "Audit Owl" }, before: { visibility: "everyone" }, after: { visibility: { people: [ADA] } } });
-    const mcpRow = rows.find((entry) => entry.action === "mcp.update");
-    expect(JSON.stringify(mcpRow)).not.toContain(MCP_SECRET);
-    expect(JSON.stringify(mcpRow)).not.toContain(ARG_SECRET);
-    expect(JSON.stringify(mcpRow)).toContain("--api-key");
-    expect(JSON.stringify(mcpRow)).toContain("FIXTURE_TOKEN");
     expect(rows.find((entry) => entry.action === "session.revoke")).toMatchObject({ target: { id: oldPhone, name: "Old phone" } });
     expect(rows.find((entry) => entry.action === "pairing.create")).toMatchObject({ after: { label: "Reception iPad", scopes: ["client"] } });
     expect(rows.find((entry) => entry.action === "bot.delete")).toMatchObject({ target: { id: botId }, before: { visibility: { people: [ADA] } } });
@@ -228,11 +229,13 @@ posixOnly("admin activity log", () => {
 
   it("puts each concurrent change down to the admin who made it", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Race Finch" }, BOSS)).body.bot as { id: string };
-    // Boss's request is slow: its body arrives only after the owner on this
-    // machine has made (and finished) a change of their own to the same thing.
+    // Boss's request is slow: its body arrives only after a second change of
+    // their own has finished. Loopback owns no bots (fail closed), so both
+    // bot writes are Boss; the config pair keeps the Boss vs This-computer
+    // attribution (workspace settings, not owner-scoped).
     const slowBot = slowRequest("PATCH", `/api/bots/${bot.id}`, { approvePeerComms: true }, BOSS);
     await new Promise((r) => setTimeout(r, 300));
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: false })).status).toBe(200);
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { hidden: true }, BOSS)).status).toBe(200);
     slowBot.release();
     expect((await slowBot.response).status).toBe(200);
     const slowConfig = slowRequest("PUT", "/api/config", { profile: { name: "Race desk" } }, BOSS);
@@ -245,7 +248,7 @@ posixOnly("admin activity log", () => {
     const botRows = rows.filter((entry) => entry.action === "bot.update" && entry.target?.id === bot.id);
     expect(botRows.map((entry) => [entry.who, entry.changed]).sort()).toEqual([
       [BOSS, ["approvePeerComms"]],
-      ["This computer", ["composio"]],
+      [BOSS, ["hidden"]],
     ].sort());
     const configRows = rows.filter((entry) => entry.action === "config.update" &&
       (JSON.stringify(entry.after).includes("Race desk") || JSON.stringify(entry.after).includes("365")));

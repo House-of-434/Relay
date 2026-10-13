@@ -1,25 +1,27 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
 import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 
 import { createRelayToolServer } from "./index.js";
+import { signActorAssertion } from "./infra/actor-assertion.js";
 import type { RelayDatabase } from "./infra/database.js";
+
+const SECRET = "actor-secret-that-is-at-least-thirty-two-bytes";
+const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
 
 test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bound", async () => {
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
-    .update(JSON.stringify([userId, "person@example.test", issuedAt])).digest("base64url");
-  const assertion = JSON.stringify({ userId, email: "person@example.test", issuedAt, signature });
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
   const calls: Array<{ method: string; args: unknown[] }> = [];
   let failRead = false;
   const database = {
     async verifyRelayProject() {},
-    async authenticateActorAssertion(value: string) {
+    authenticateActorAssertion(value: string) {
       assert.equal(value, assertion);
-      return userId;
+      const actor = JSON.parse(value) as { userId: string; botId: string; threadId: string; issuedAt: number };
+      return actor;
     },
     async read(...args: unknown[]) {
       calls.push({ method: "read", args });
@@ -89,16 +91,13 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
 });
 
 test("only an agent with the capability is offered Gmail or calendar tools", async () => {
-  const issuedAt = Math.floor(Date.now() / 1000);
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
-    .update(JSON.stringify([userId, "person@example.test", issuedAt])).digest("base64url");
-  const assertion = JSON.stringify({ userId, email: "person@example.test", issuedAt, signature });
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
   const database = {
     async verifyRelayProject() {},
-    async authenticateActorAssertion(value: string) {
+    authenticateActorAssertion(value: string) {
       assert.equal(value, assertion);
-      return userId;
+      return JSON.parse(value);
     },
   } as unknown as RelayDatabase;
 

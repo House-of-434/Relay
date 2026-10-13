@@ -1,6 +1,6 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { verifyActorAssertion } from "./actor-assertion.js";
+import { verifyActorAssertion, type RelayActorContext } from "./actor-assertion.js";
 import type { Project } from "../domain/permissions.js";
 import type { Filter } from "../domain/shapes.js";
 
@@ -17,12 +17,6 @@ const INTERNAL_ONLY_TABLES = new Set([
   "app.people",
   "app.events",
 ]);
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-function assertUserId(userId: string): void {
-  if (!UUID.test(userId)) throw new Error("actor user id must be a UUID");
-}
 
 function entityTypeForTable(table: string): string | undefined {
   const entityType = table.startsWith("app.") ? table.slice("app.".length) : "";
@@ -122,36 +116,11 @@ export class RelayDatabase {
     return client;
   }
 
-  async authenticateUser(accessToken: string): Promise<string> {
-    const { data, error } = await this.client("relay").auth.getUser(accessToken);
-    if (error || !data.user?.id || !data.user.email) {
-      throw new Error("user access token is invalid or its verified user is incomplete");
-    }
-    assertUserId(data.user.id);
-    this.validateAllowedEmail(data.user.email);
-    return data.user.id;
-  }
-
-  authenticateActorAssertion(value: string): string {
-    const actor = verifyActorAssertion(value, this.env.RELAY_TOOL_ACTOR_SECRET);
-    this.validateAllowedEmail(actor.email);
-    return actor.userId;
-  }
-
-  validateAllowedEmail(value: string): string {
-    const email = value.trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-      throw new Error("email metadata is invalid");
-    }
-    const allowedDomains = (this.env.RELAY_ALLOWED_EMAIL_DOMAINS ?? "")
-      .split(",")
-      .map((domain) => domain.trim().toLowerCase().replace(/^@/, ""))
-      .filter(Boolean);
-    const domain = email.split("@").at(-1);
-    if (allowedDomains.length === 0 || !domain || !allowedDomains.includes(domain)) {
-      throw new Error("authenticated email domain is not allowed by Relay");
-    }
-    return email;
+  /** The single auth route into the database boundary: a signed harness actor
+   * assertion. The owner key is the Supabase UUID; the sign-in domain
+   * allow-list is enforced where the session was issued, never here. */
+  authenticateActorAssertion(value: string): RelayActorContext {
+    return verifyActorAssertion(value, this.env.RELAY_TOOL_ACTOR_SECRET);
   }
 
   async read(project: Project, table: string, filters: Filter[], limit: number, userId: string | null): Promise<unknown[]> {

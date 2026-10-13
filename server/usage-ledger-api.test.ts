@@ -39,13 +39,13 @@ describe("usage ledger through real turns", () => {
     const botId = created.bot.id as string;
 
     // Turn 1: this computer, through the control surface (loopback = owner).
-    await control(["send", "--bot", botId, "--text", "hello from the owner"]);
+    await control(["send", "--bot", botId, "--text", "owner turn one"]);
     expect(JSON.stringify(await control(["wait", "--bot", botId, "--timeout", "30"]))).toContain("settled");
 
-    // Turn 2: a paired device. Without an email sign-in the ledger names it
-    // by its device label, which is still a person, not the machine.
-    const phone = await pair("Ada's phone");
-    const sent = await api(`/api/bots/${encodeURIComponent(botId)}/messages`, jsonRequest({ text: "hello from a phone" }, phone));
+    // Turn 2: the same account over the API. The ledger names the signed-in
+    // account, so groupBy=user splits the control-surface turn from the API
+    // turn. (A paired device with no user id owns nothing and cannot send.)
+    const sent = await api(`/api/bots/${encodeURIComponent(botId)}/messages`, jsonRequest({ text: "api turn two" }));
     expect([200, 201, 202]).toContain(sent.status);
     expect(JSON.stringify(await control(["wait", "--bot", botId, "--timeout", "30"]))).toContain("settled");
 
@@ -53,18 +53,20 @@ describe("usage ledger through real turns", () => {
     await expect.poll(() => (existsSync(file) ? readFileSync(file, "utf8").trim().split("\n").length : 0), { timeout: 10_000 }).toBe(2);
     const rows = readFileSync(file, "utf8").trim().split("\n").map((line) => JSON.parse(line));
     expect(rows[0]).toMatchObject({
-      botId, botName: "Ledger probe", instanceId: "claude", driverKind: "claudeAgent", costUsd: 0.01, trigger: { kind: "owner" },
+      botId, botName: "Ledger probe", instanceId: "claude", driverKind: "claudeAgent", costUsd: 0.01,
+      trigger: { kind: "user", email: "owner@relay.test" },
     });
     expect(rows[0].input).toBeGreaterThanOrEqual(10);
     expect(rows[0].output).toBeGreaterThanOrEqual(1);
     expect(rows[0].model).toBeTypeOf("string");
-    expect(rows[1]).toMatchObject({ botId, costUsd: 0.01, trigger: { kind: "user", label: "Ada's phone" } });
+    expect(rows[1]).toMatchObject({ botId, costUsd: 0.01, trigger: { kind: "user", email: "owner@relay.test" } });
     // Bookkeeping, never transcript: no message text reaches the ledger.
-    expect(readFileSync(file, "utf8")).not.toContain("hello from");
+    expect(readFileSync(file, "utf8")).not.toContain("owner turn one");
+    expect(readFileSync(file, "utf8")).not.toContain("api turn two");
 
     const byUser = (await (await api("/api/usage?groupBy=user")).json()) as any;
     expect(byUser.groups.map((g: any) => [g.key, g.turns, g.costUsd])).toEqual(
-      expect.arrayContaining([["owner", 1, 0.01], ["user:ada's phone", 1, 0.01]]),
+      [["user:owner@relay.test", 2, 0.02]],
     );
     expect(byUser.total).toMatchObject({ turns: 2, unpriced: 0 });
     expect(byUser.total.costUsd).toBeCloseTo(0.02, 6);

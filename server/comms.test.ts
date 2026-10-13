@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { mentionedBots, normalizeGroupDefaultResponder, roomResponders } from "./store.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -103,6 +104,7 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
   let home: string;
   let gateFile = "";
   let stderr = "";
+  let ownerToken = "";
 
   const waitUntil = async (predicate: () => Promise<boolean>, timeout: number, what: string): Promise<void> => {
     const deadline = Date.now() + timeout;
@@ -115,7 +117,10 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: {
+        ...(body ? { "content-type": "application/json" } : {}),
+        authorization: `Bearer ${ownerToken}`,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
@@ -265,10 +270,12 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
       }),
     );
 
+    ownerToken = prepareOwnerSession(join(home, ".relay"));
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
       RELAY_PORT: String(PORT),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       // Keep the production ask budget: the gated-peer test verifies the
       // caller is released promptly without a test-only timeout override.
     };
@@ -730,6 +737,7 @@ describe("legacy routine comms e2e (fake ACP fleet)", () => {
         expect(helperBot.busy).toBe(true);
         expect((await api("POST", `/api/bots/${chief.id}/messages`, {
           text: "CHIEF_FOLLOW_UP: are you still available while that runs?",
+          threadId: chiefBot.threadId,
         })).status).toBe(202);
         await waitUntil(async () => {
           const state = (await api("GET", "/api/bots")).body.bots;

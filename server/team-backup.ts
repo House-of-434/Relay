@@ -135,7 +135,7 @@ export function createTeamBackup(store: Store, routines: Routine[], name: string
 
 /** Import is always additive, including sections and Chiefs. Rollback owns
  * only the fresh records below and cannot touch any pre-existing bot/chat. */
-export function importTeamBackup(store: Store, routines: RoutineManager, input: unknown, selection: ModelSelection, options: { visibility?: BotVisibility } = {}) {
+export function importTeamBackup(store: Store, routines: RoutineManager, input: unknown, selection: ModelSelection, options: { visibility?: BotVisibility; ownerUserId?: string } = {}) {
   const backup = parseTeamBackup(input);
   const bots: BotRecord[] = [];
   const groups: GroupRecord[] = [];
@@ -181,7 +181,7 @@ export function importTeamBackup(store: Store, routines: RoutineManager, input: 
         modelSelection: selection, section: sectionFor(source.section),
         // who may see the imported team is the importing admin's choice
         ...(options.visibility ? { visibility: options.visibility } : {}),
-      }, { seedMessages: false });
+      }, { seedMessages: false, ownerUserId: options.ownerUserId });
       bots.push(bot);
       botIds.set(source.key, bot.id);
       store.patchBot(bot.id, { composio: false, computer: "off", approvalMode: "ask", autoApprove: false,
@@ -217,7 +217,8 @@ export function importTeamBackup(store: Store, routines: RoutineManager, input: 
       source.tasks.forEach((task, i) => restore(task, tasks[i].threadId));
     }
     for (const source of backup.groups) {
-      const group = store.createGroup(takeImportName(source.name, takenGroups), source.memberIds.map((id) => botIds.get(id)!), source.dm, sectionFor(source.section));
+      const group = store.createGroup(takeImportName(source.name, takenGroups), source.memberIds.map((id) => botIds.get(id)!), source.dm, sectionFor(source.section),
+        options.ownerUserId ? { ownerUserId: options.ownerUserId } : undefined);
       groups.push(group);
       groupIds.set(source.key, group.id);
       const responder = source.defaultResponder;

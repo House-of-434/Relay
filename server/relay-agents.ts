@@ -20,7 +20,7 @@ export interface RelayAgentSeed {
  * `relayAgent` (not `section`) is what marks them, and it stays server-owned —
  * it binds each role to its Tool Layer route. Model selection is intentionally
  * omitted so the workspace default applies unchanged. The seed starts them at
- * Auto (store.seedRelayAgentsIfMissing): sandboxed tool use runs unattended,
+ * Auto (store.seedRelayAgentsForOwner): sandboxed tool use runs unattended,
  * while outward actions keep their own propose_* confirmations. */
 export const RELAY_AGENT_SEEDS: readonly RelayAgentSeed[] = [
   {
@@ -55,11 +55,9 @@ export const RELAY_AGENT_SEEDS: readonly RelayAgentSeed[] = [
   },
 ];
 
-/** Relay is a shared, centrally configured workspace by default. Set this to
- *  0 only when deliberately running the unmodified local starter experience. */
-export function relaySharedWorkspaceEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
-  const value = env.RELAY_SHARED_WORKSPACE;
-  if (value === undefined || value === "1") return true;
-  if (value === "0") return false;
-  throw new Error("RELAY_SHARED_WORKSPACE must be 0 or 1");
+/** Relay is a per-user workspace: the centrally configured roster is the only
+ * code path. The RELAY_SHARED_WORKSPACE env flag is gone; removing the now
+ * unreachable Composio and audience branches is a separate cleanup. */
+export function relaySharedWorkspaceEnabled(): boolean {
+  return true;
 }

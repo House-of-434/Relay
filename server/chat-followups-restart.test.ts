@@ -1,12 +1,13 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, openSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 
-import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
+import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch, TEST_OWNER_EMAIL } from "./testing/owner.ts";
 
 it("survives a real server crash: queued sends keep receipts, cancellation and uncertain dispatch never replay", async () => {
   const fixture = await launchVerificationServer();
@@ -23,12 +24,13 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     expect(response.status, JSON.stringify(result)).toBe(status);
     return result;
   };
-  // A second person on a paired device. What they queue must still be theirs
-  // after the wait, the crash and the restart: the name rides the durable row.
-  // `id` is the opaque person key the server derives from the session; a row
-  // written straight to the database below keeps the older name-only shape.
-  const PAIRED = { name: "Safari on Mac", id: expect.stringMatching(/^p_[\w-]{22}$/) };
-  const PAIRED_ROW = { name: "Safari on Mac" };
+  // The owner queues from a second request. What they queue must still be
+  // theirs after the wait, the crash and the restart: the name rides the
+  // durable row. `id` is the opaque person key the server derives from the
+  // session; a row written straight to the database below keeps the older
+  // name-only shape.
+  const PAIRED = { name: TEST_OWNER_EMAIL, id: expect.stringMatching(/^p_[\w-]{22}$/) };
+  const PAIRED_ROW = { name: TEST_OWNER_EMAIL };
   let pairedToken = "";
   const asPairedPerson = async (path: string, body: unknown) => {
     const response = await fetch(`${url}${path}`, {
@@ -54,18 +56,12 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     finally { db.close(); }
   };
   const restart = async () => {
-    const env: NodeJS.ProcessEnv = {};
-    for (const [key, value] of Object.entries(process.env)) {
-      if (["SYSTEMROOT", "WINDIR", "COMSPEC", "PATHEXT", "LANG", "LC_ALL", "TZ"].includes(key.toUpperCase()) && value) env[key.toUpperCase()] = value;
-    }
-    Object.assign(env, {
-      HOME: dataDir, USERPROFILE: dataDir, RELAY_DATA_DIR: dataDir,
-      APPDATA: join(dataDir, "AppData", "Roaming"), LOCALAPPDATA: join(dataDir, "AppData", "Local"),
-      XDG_CONFIG_HOME: join(dataDir, ".config"), XDG_CACHE_HOME: join(dataDir, ".cache"),
-      XDG_DATA_HOME: join(dataDir, ".local", "share"), HERMES_HOME: join(dataDir, ".hermes"),
-      TEMP: join(dataDir, "tmp"), TMP: join(dataDir, "tmp"), TMPDIR: join(dataDir, "tmp"),
-      RELAY_PORT: new URL(url).port, RELAY_WEBHOOK_PORT: String(Number(new URL(url).port) + 1), PATH: dirname(process.execPath),
-    });
+    // A restart drops in-memory sessions; re-issue the owner first and point
+    // this fixture's fetches at the fresh bearer, with the fixture secret.
+    const fresh = prepareOwnerSession(dataDir);
+    registerOwnerFetch(url, fresh);
+    pairedToken = fresh;
+    const env = verificationServerEnvironment(process.env, dataDir, Number(new URL(url).port));
     const log = openSync(logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)), env, stdio: ["ignore", log, log],
@@ -95,15 +91,8 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     ].join("\n"), { mode: 0o700 });
     await api("PATCH", "/api/instances/claude", { cli: wrapper });
     await api("PATCH", "/api/config", { threads: { maxConcurrentPerBot: 1 } });
-    const pairing = await fetch(`${url}/api/auth/pair`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "user-agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1" },
-      body: JSON.stringify({ code: (await api("POST", "/api/auth/pairing", {})).code }),
-    });
-    const paired = await pairing.json() as any;
-    expect(pairing.status, JSON.stringify(paired)).toBe(200);
-    expect(paired.session.label).toBe(PAIRED.name);
-    pairedToken = paired.token;
+    // Pairing sessions carry no user id and see nothing; queue as the owner.
+    pairedToken = fixture.info.token;
     const bot = (await api("POST", "/api/bots", { name: "Durable follow-ups" }, 201)).bot;
     const uncertain = (await api("POST", "/api/bots", { name: "Uncertain follow-up" }, 201)).bot;
     const later = (await api("POST", `/api/bots/${uncertain.id}/tasks`, { title: "In-flight receipt" }, 201)).task;
@@ -206,7 +195,7 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
     ]);
     await expect.poll(async () => (await messages(lost.threadId)).some((message) => message.tool?.name?.includes("queued channel message could not start")), { timeout: 15_000 }).toBe(true);
     expect((await messages(lost.threadId)).filter((message) => message.queueId === lostQueued.queueId)).toEqual([
-      expect.objectContaining({ role: "user", text: "Reply to a message that disappears", sender: PAIRED }),
+      expect.objectContaining({ role: "user", text: "Reply to a message that disappears", sender: expect.objectContaining({ name: TEST_OWNER_EMAIL }) }),
     ]);
     expect((await api("POST", `/api/bots/${bot.id}/messages`, cancelledBody, 409)).error).toContain("cancelled");
     expect(prompts(bot.threadId)).toHaveLength(2);
@@ -214,7 +203,7 @@ it("survives a real server crash: queued sends keep receipts, cancellation and u
 
     await expect.poll(async () => (await messages(channel.threadId)).filter((message) => message.sendId === channelBody.sendId).length, { timeout: 15_000 }).toBe(1);
     expect((await api("POST", `/api/groups/${channel.id}/messages`, channelBody, 202)).message).toMatchObject({
-      text: channelBody.text, queueId: channelQueued.queueId, replyToId: initial.message.id, channelMode: "chat", via: "api",
+      text: channelBody.text, queueId: channelQueued.queueId, replyToId: initial.message.id, channelMode: "chat",
     });
     expect((await api("POST", `/api/groups/${channel.id}/messages`, channelCancelledBody, 409)).error).toContain("cancelled");
     const channelSettled = await runControlOmb(["wait", "--channel", channel.id, "--url", url]);

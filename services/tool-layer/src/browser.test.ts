@@ -48,20 +48,23 @@ after(() => {
 const ALICE = "223e4567-e89b-42d3-a456-426614174000";
 const BOB = "223e4567-e89b-42d3-a456-426614174001";
 
+const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
+
 function assertionFor(userId: string): string {
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
-    .update(JSON.stringify([userId, "person@example.test", issuedAt]))
+    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID]))
     .digest("base64url");
-  return JSON.stringify({ userId, email: "person@example.test", issuedAt, signature });
+  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, signature });
 }
 
 const database = {
   async verifyRelayProject() {},
   // NOTE: the real method is synchronous; an async mock would hand every
-  // request a Promise userId, which strict workspace validation rejects.
+  // request a Promise actor, which strict workspace validation rejects.
   authenticateActorAssertion(value: string) {
-    return (JSON.parse(value) as { userId: string }).userId;
+    return JSON.parse(value);
   },
 } as unknown as RelayDatabase;
 
