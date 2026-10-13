@@ -439,9 +439,6 @@ export interface Bot {
   /** Memory upkeep (Bot settings → Memory): background capture and the
    * nightly tidy-up. On unless explicitly false. */
   memoryUpkeep?: boolean;
-  /** Which app-wide MCP servers (Plugins → MCP servers) this bot mounts, by
-   * name. Absent = every enabled server; [] = none (null clears over PATCH). */
-  mcpServers?: string[] | null;
   /** Who may see this bot on a shared workspace; only admins receive it. */
   visibility?: BotVisibility;
   /** Where a shared or organization package put this bot (its provenance line). */

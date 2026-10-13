@@ -16,6 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -51,13 +52,17 @@ let home: string;
 let data: string;
 let engineDump: string;
 let base: string;
+let ownerToken = "";
 let child: ChildProcess;
 let log = "";
 
 async function api(method: string, path: string, body?: unknown) {
   const response = await fetch(`${base}${path}`, {
     method,
-    headers: body === undefined ? {} : { "content-type": "application/json" },
+    headers: {
+      ...(body === undefined ? {} : { "content-type": "application/json" }),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
@@ -108,6 +113,7 @@ beforeAll(async () => {
     // Where an own key goes: never where the included token goes.
     decider: { baseUrl: `${stubBase}/jev` },
   }));
+  ownerToken = prepareOwnerSession(data);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -117,6 +123,7 @@ beforeAll(async () => {
       ...(process.env.PATHEXT ? { PATHEXT: process.env.PATHEXT } : {}),
       ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
       HOME: home, USERPROFILE: home, RELAY_DATA_DIR: data, RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       RELAY_CLOUD_DECIDER_URL: relayUrl,
       RELAY_CLOUD_DECIDER_TOKEN: INCLUDED,
     },

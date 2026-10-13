@@ -7,9 +7,8 @@ HMAC actor assertion below is the real boundary) and exposes `relay_read` and
 `/mcp/curator`); agents with research capability additionally expose browser
 and search tools to authenticated callers. Agent identity
 comes from the configured MCP route, never from tool arguments. Every MCP
-request requires an authenticated actor (verified Bearer user or signed
-`x-relay-actor-user` assertion) and is rejected with 401 without one, because
-the service-role credential bypasses Postgres RLS.
+request requires a signed `x-relay-actor-user` assertion and is rejected with
+401 without one, because the service-role credential bypasses Postgres RLS.
 
 ## Configuration
 
@@ -19,9 +18,6 @@ the service-role key stays only here. See `../../.env.secrets.example`.
 
 - `RELAY_DB_URL`, `RELAY_DB_PROJECT_REF`, `RELAY_DB_SERVICE_ROLE_KEY` for
   Supabase project `434vc`.
-- `RELAY_ALLOWED_EMAIL_DOMAINS` as a comma-separated allowlist for verified
-  email metadata used by direct bearer-user authentication and signed harness
-  actor assertions.
 - `RELAY_TOOL_ACTOR_SECRET` and `RELAY_BFF_CAPABILITY`, each at least 32 bytes,
   shared with the chat harness and the BFF through `../../.env.secrets`. The actor
   secret verifies harness assertions; the capability authorises this service to

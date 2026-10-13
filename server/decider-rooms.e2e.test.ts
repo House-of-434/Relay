@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 // Auto rooms end to end: a real server and fake engine CLIs, with the
@@ -30,6 +31,7 @@ let home = "";
 let data = "";
 let base = "";
 let output = "";
+let ownerToken = "";
 let engineDump = "";
 let titleDump = "";
 let fallbackTitleDump = "";
@@ -42,7 +44,10 @@ const keyChecks = () => jevRequests.filter((request) => request.body?.questions?
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any; text: string }> => {
   const response = await fetch(`${base}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : {},
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const text = await response.text();
@@ -110,6 +115,7 @@ beforeAll(async () => {
     },
     decider: { enabled: true, baseUrl: jevUrl, jobs: { roomRouting: true } },
   }));
+  ownerToken = prepareOwnerSession(data);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -121,6 +127,7 @@ beforeAll(async () => {
       USERPROFILE: home,
       RELAY_PORT: String(port),
       RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       RELAY_STATIC_DIR: staticDir,
       RELAY_JEV_API_KEY: KEY,
     },

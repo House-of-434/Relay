@@ -33,7 +33,7 @@ export type RequestAuth =
 export interface RequestAuthResult {
   auth: RequestAuth | null;
   /** HTTP status and the reason to send when auth is null. */
-  status: 401 | 403;
+  status: 401 | 403 | 404;
   error: string;
 }
 
@@ -42,42 +42,20 @@ const SERVICE_SCOPES: readonly Scope[] = ["client"];
 
 /** What a `service`-trust loopback caller may reach, and nothing else:
  *
- * - liveness and identity: health, who-am-I, edition and brand;
- * - the cloud Slack worker (openmaus-cloud server/slack-worker.ts), which
- *   shares the workspace's network namespace and reads the bot list, a
- *   thread's messages and a bot's PNG picture, creates a thread, sends
- *   through the guarded route, watches and stops its exact request,
- *   withdraws a queued line, and declines a card (the handler refuses any
- *   other answer from this caller);
+ * - liveness and identity: health, who-am-I, edition and brand (no data);
  * - the turn-scoped bot capability routes, whose own bearer token is the
  *   authorization (checked in the handler), and the test-only capability
  *   mint that exists only when its private key is set.
  *
- * Residual risk, not closed here: a bot's shell is a loopback caller too, so
- * it can do everything the worker does. It can post into any bot's thread
- * through the guarded route, including an existing Full-access thread
- * (`expectedApprovalMode: "full"`), and while the operator's shared Full
- * access is on it can open new Full-access threads; either way work runs with
- * Full access and no card, whoever asked the bot. It can also stop a request
- * and decline a card. It can no longer change settings, keys, instances, MCP
- * servers, webhooks, sessions, people, budgets or fleet, loosen a bot's
- * permissions, or approve anything. The planned fix is a relay token that only
- * the Slack worker holds, so these routes stop answering session-less
- * loopback at all. */
+ * No data route is reachable without a session. A loopback caller that is not
+ * the owner (a bot's shell, any other local process) gets 404 on every bot,
+ * room, thread, message or attachment route rather than a filtered answer,
+ * so a route cannot start leaking data after an unrelated change. */
 export const SERVICE_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: RegExp }> = [
   { methods: ["GET"], path: /^\/api\/health$/ },
   { methods: ["GET"], path: /^\/api\/auth\/session$/ },
   { methods: ["GET"], path: /^\/api\/edition$/ },
   { methods: ["GET"], path: /^\/api\/brand$/ },
-  { methods: ["GET"], path: /^\/api\/bots$/ },
-  { methods: ["GET"], path: /^\/api\/threads\/[\w-]+\/messages$/ },
-  { methods: ["GET"], path: /^\/api\/attachments\/[\w.-]+$/ },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/tasks$/ },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/messages\/guarded$/ },
-  { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/requests\/[\w-]+$/ },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/requests\/[\w-]+\/interrupt$/ },
-  { methods: ["DELETE"], path: /^\/api\/bots\/[\w-]+\/queue\/[\w-]+$/ },
-  { methods: ["POST"], path: /^\/api\/threads\/[\w-]+\/respond$/ }, // decline only: see the handler
   { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/internal\// }, // capability bearer checked in the handler
   { methods: ["POST"], path: /^\/api\/testing\/internal-capability$/ }, // exists only with its private key
 ];
@@ -455,7 +433,7 @@ function secureTokenMatch(actual: string | undefined, expected: string): boolean
 export function resolveRequestAuth(req: IncomingMessage, options: ResolveOptions): RequestAuthResult {
   const method = req.method ?? "GET";
   const path = options.url.pathname;
-  const deny = (status: 401 | 403, error: string): RequestAuthResult => ({ auth: null, status, error });
+  const deny = (status: 401 | 403 | 404, error: string): RequestAuthResult => ({ auth: null, status, error });
 
   // A presented session credential wins over the loopback rule so the served
   // web UI behaves the same on 127.0.0.1 and on a public domain.
@@ -530,9 +508,11 @@ export function resolveRequestAuth(req: IncomingMessage, options: ResolveOptions
         return { auth: { kind: "loopback", scopes: LOOPBACK_SCOPES }, status: 401, error: "" };
       }
       // On a shared server "local" includes every bot's shell. Default deny:
-      // only the service routes, never an admin change, without a session.
+      // only the service routes, never a data route or an admin change,
+      // without a session. 404 so a local caller cannot even learn a bot,
+      // room or thread route exists.
       if (!serviceAllowed(method, path)) {
-        return deny(403, "forbidden: on this shared server a local request without a session may only use the service routes; sign in to change settings, people or access");
+        return deny(404, "forbidden: on this shared server a local request without a session may only use the service routes; sign in to change settings, people or access");
       }
       return { auth: { kind: "loopback", scopes: SERVICE_SCOPES, trust: "service" }, status: 401, error: "" };
     }

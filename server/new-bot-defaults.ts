@@ -36,7 +36,6 @@ export const botDefaultsProfileSchema = profilePatchSchema.extend({
   approvePeerComms: z.boolean().optional(),
   peers: strings(1000, 100).nullable().optional(),
   composio: z.boolean().optional(),
-  mcpServers: strings(100, 100).nullable().optional(),
   parkDirectMessages: z.boolean().optional(),
 }).strict();
 

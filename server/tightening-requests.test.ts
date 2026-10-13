@@ -74,7 +74,7 @@ function harness(options: {
   const disabledSkills: Array<[string, string]> = [];
   const service = new TighteningRequestService({
     store,
-    mountedMcpServers: (bot) => [...(bot.mcpServers ?? [])],
+    mountedMcpServers: () => [],
     enabledSkills: (botId) => (store.bot(botId)?.id === bot.id ? [...(options.skills ?? [])] : []),
     disableSkill: (botId, name) => {
       disabledSkills.push([botId, name]);
@@ -153,12 +153,9 @@ describe("tightening direction (state-level)", () => {
   });
 
   it("rejects list removals that would add or touch unknown entries", () => {
-    const { propose } = harness({ alwaysAllow: ["Bash", "Read"], mcpServers: ["notes"], skills: ["pdf"] });
+    const { propose } = harness({ alwaysAllow: ["Bash", "Read"], skills: ["pdf"] });
     expect(() => propose({ alwaysAllow: ["WebSearch"] })).toThrow(
       /alwaysAllow entries may only be removed, never added; not currently granted: WebSearch/,
-    );
-    expect(() => propose({ mcpServers: ["linear"] })).toThrow(
-      /mcpServers may only unmount servers this bot currently mounts; not mounted: linear/,
     );
     expect(() => propose({ skills: ["imagegen"] })).toThrow(
       /skills may only be disabled, never enabled; not currently enabled: imagegen/,
@@ -193,7 +190,6 @@ describe("allowed transitions", () => {
     const { service, bot, propose, disabledSkills } = harness({
       mode: "full",
       alwaysAllow: ["Bash", "Read", "Edit"],
-      mcpServers: ["notes", "linear"],
       skills: ["pdf", "imagegen"],
       approvePeerComms: false,
     });
@@ -201,18 +197,16 @@ describe("allowed transitions", () => {
       composio: false,
       approvePeerComms: true,
       alwaysAllow: ["Bash", "Edit"],
-      mcpServers: ["linear"],
       skills: ["pdf"],
     });
     const applied = service.resolve({ botId: bot.id, threadId: bot.threadId, requestId: card.requestId, behavior: "allow" });
     expect(applied).toMatchObject({
       claimed: true, state: "applied",
-      fields: ["composio", "approvePeerComms", "alwaysAllow", "mcpServers", "skills"],
+      fields: ["composio", "approvePeerComms", "alwaysAllow", "skills"],
     });
     expect(bot.composio).toBe(false);
     expect(bot.approvePeerComms).toBe(true);
     expect(bot.alwaysAllow).toEqual(["Read"]);
-    expect(bot.mcpServers).toEqual(["notes"]);
     expect(disabledSkills).toEqual([[bot.id, "pdf"]]);
     expect(bot.lastTighteningRequestId).toBe(card.requestId);
   });
@@ -319,10 +313,10 @@ describe("card plumbing", () => {
     expect(peer.approvalMode).toBe("full");
   });
 
-  it("holds approval-mode and MCP changes while the target is busy, except an emergency downgrade", () => {
-    const { store, service, bot } = harness({ mode: "full", mcpServers: ["notes"] });
+  it("holds approval-mode changes while the target is busy, except an emergency downgrade", () => {
+    const { store, service, bot } = harness({ mode: "full" });
     const targetBusy = (botId: string) => botId === bot.id;
-    const busy = new TighteningRequestService({ store, targetBusy, mountedMcpServers: (b) => [...(b.mcpServers ?? [])] });
+    const busy = new TighteningRequestService({ store, targetBusy });
     const mode = busy.propose({ botId: bot.id, threadId: bot.threadId, intents: { approvalMode: "ask" }, reason: "r" });
     expect(busy.resolve({ botId: bot.id, threadId: bot.threadId, requestId: mode.requestId, behavior: "allow" }))
       .toMatchObject({ state: "applied", emergencyStop: true });
@@ -332,9 +326,6 @@ describe("card plumbing", () => {
     const held = service.propose({ botId: bot.id, threadId: bot.threadId, intents: { approvalMode: "ask" }, reason: "r" });
     expect(busy.resolve({ botId: bot.id, threadId: bot.threadId, requestId: held.requestId, behavior: "allow" }))
       .toMatchObject({ state: "invalid", status: 409, error: "Stop this bot's turn before changing its approval level" });
-    const mcp = service.propose({ botId: bot.id, threadId: bot.threadId, intents: { mcpServers: ["notes"] }, reason: "r" });
-    expect(busy.resolve({ botId: bot.id, threadId: bot.threadId, requestId: mcp.requestId, behavior: "allow" }))
-      .toMatchObject({ state: "invalid", status: 409, error: "Stop this bot's turns before changing its MCP servers" });
     // A busy bot still accepts reductions its owner's routes allow mid-turn.
     const flags = service.propose({ botId: bot.id, threadId: bot.threadId, intents: { composio: false }, reason: "r" });
     expect(busy.resolve({ botId: bot.id, threadId: bot.threadId, requestId: flags.requestId, behavior: "allow" }))
@@ -412,7 +403,7 @@ describe("card plumbing", () => {
     brittleStore.bots.set(bot.id, bot);
     const brittle = new TighteningRequestService({
       store: brittleStore,
-      mountedMcpServers: (record) => [...(record.mcpServers ?? [])],
+      mountedMcpServers: () => [],
     });
     const card = brittle.propose({ botId: bot.id, threadId: bot.threadId, intents: { approvalMode: "ask" }, reason: "r" });
     // patchBot commits the downgrade; recording the decision on the card
@@ -483,12 +474,12 @@ describe("tightening card copy", () => {
 
 describe("tightening history", () => {
   it("records the proposing bot as actor and the card id as via, beside manual profile rows", async () => {
-    const { store, service, bot, propose } = harness({ mode: "full", alwaysAllow: ["Bash", "Read"], mcpServers: ["fs"], skills: ["pdf"] });
+    const { store, service, bot, propose } = harness({ mode: "full", alwaysAllow: ["Bash", "Read"], skills: ["pdf"] });
     // A real bot gets its folder at creation; a synthetic one needs it so
     // the history write has somewhere to land (profile-requests does the same).
     mkdirSync(botFolder(bot.id), { recursive: true, mode: 0o700 });
     recordProfileChange(bot.id, "user", "ui", { name: "Scout" }, { name: "Ranger" });
-    const card = propose({ approvalMode: "ask", alwaysAllow: ["Bash"], mcpServers: ["fs"], skills: ["pdf"] });
+    const card = propose({ approvalMode: "ask", alwaysAllow: ["Bash"], skills: ["pdf"] });
     const result = service.resolve({ botId: bot.id, threadId: bot.threadId, requestId: card.requestId, behavior: "allow" });
     expect(result).toMatchObject({ state: "applied" });
     await flushProfileHistory(bot.id);
@@ -496,7 +487,6 @@ describe("tightening history", () => {
     const messageId = store.messagesFor(bot.threadId).find((message) => message.card?.requestId === card.requestId)!.id;
     expect(rows.map((row) => [row.field, row.actor, row.via, row.before, row.after])).toEqual([
       ["skills", "bot", `card:${messageId}`, "pdf", ""],
-      ["mcpServers", "bot", `card:${messageId}`, "fs", ""],
       ["alwaysAllow", "bot", `card:${messageId}`, "Bash, Read", "Read"],
       ["approvalMode", "bot", `card:${messageId}`, "full", "ask"],
       ["name", "user", "ui", "Scout", "Ranger"],
@@ -523,7 +513,7 @@ describe("tightening history", () => {
       brittleStore.bots.set(bot.id, bot);
       const brittle = new TighteningRequestService({
         store: brittleStore,
-        mountedMcpServers: (record) => [...(record.mcpServers ?? [])],
+        mountedMcpServers: () => [],
       });
       const card = brittle.propose({ botId: bot.id, threadId: bot.threadId, intents: { approvalMode: "ask" }, reason: "r" });
 

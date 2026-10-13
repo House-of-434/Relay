@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,7 @@ let home: string;
 let fakeClaudeDump = "";
 let mentionerDump = "";
 let stderr = "";
+let ownerToken = "";
 /** The section peer a room turn's scripted reply will @mention without
  * them being in the room. Named here so the fixture and the test agree. */
 const OUTSIDE_BOT = "Outside Bot";
@@ -45,7 +47,10 @@ interface ApiResult {
 const api = async (method: string, path: string, body?: unknown): Promise<ApiResult> => {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   const parsed: unknown = await res.json().catch(() => ({}));
@@ -93,13 +98,12 @@ const field = (body: Record<string, unknown>, ...path: string[]): unknown => {
 const str = (value: unknown): string => (typeof value === "string" ? value : "");
 
 /** The person typing in the room. The served UI is a browser, so its sends
- * carry an origin; a bare loopback POST is what a script (or a bot's shell)
- * looks like, and the server stamps that as API ingress rather than a
- * person — which the posting budget, rightly, does not re-arm on. */
+ * carry an origin — and the account's bearer, since bare loopback posts see
+ * nothing under per-user isolation. */
 const personSays = async (roomId: string, text: string): Promise<number> => {
   const res = await fetch(`${BASE}/api/groups/${roomId}/messages`, {
     method: "POST",
-    headers: { "content-type": "application/json", origin: BASE },
+    headers: { "content-type": "application/json", origin: BASE, authorization: `Bearer ${ownerToken}` },
     body: JSON.stringify({ text }),
   });
   await res.json().catch(() => ({}));
@@ -226,6 +230,7 @@ beforeAll(async () => {
       },
     }),
   );
+  ownerToken = prepareOwnerSession(join(home, ".relay"));
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
     env: {
@@ -235,6 +240,7 @@ beforeAll(async () => {
       USERPROFILE: home,
       RELAY_PORT: String(PORT),
       RELAY_WEBHOOK_PORT: String(WEBHOOK_PORT),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       FAKE_CLAUDE_DUMP: fakeClaudeDump,
       RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
     },
@@ -259,33 +265,6 @@ afterAll(async () => {
   await removeTempDir(home);
 });
 
-describe("room messages through the local API", () => {
-  // On a headless server loopback is the owner by design, and a bot's shell
-  // is a loopback caller too. A message that arrives with no session and no
-  // browser origin cannot be told from a script, so it is stamped — and a
-  // room's readers, its posting budget and its transcript read the stamp.
-  it("stamps a user message that arrives with no session and no browser origin", async () => {
-    const member = await makeBot("Ledger", "API ingress");
-    const room = await makeRoom("Finance", [member.id], "API ingress");
-
-    const sent = await api("POST", `/api/groups/${room.id}/messages`, { text: "export the customer list" });
-    expect(sent.status).toBe(202);
-    const stamped = (await messagesOf(room.threadId)).find((m) => m.role === "user" && m.text === "export the customer list");
-    expect(stamped, "the message was not recorded").toBeTruthy();
-    expect((stamped as { via?: string }).via).toBe("api");
-
-    // the served web UI is a browser: it sends its origin, and is not stamped
-    const fromBrowser = await fetch(`${BASE}/api/groups/${room.id}/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json", origin: BASE },
-      body: JSON.stringify({ text: "typed in the room" }),
-    });
-    expect(fromBrowser.status).toBe(202);
-    const typed = (await messagesOf(room.threadId)).find((m) => m.role === "user" && m.text === "typed in the room");
-    expect(typed).toBeTruthy();
-    expect((typed as { via?: string }).via).toBeUndefined();
-  }, 40_000);
-});
 
 describe("peer comms from a room turn", () => {
   it("lets a bot ask a peer while its source conversation is a room", async () => {

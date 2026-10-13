@@ -11,6 +11,7 @@ import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
 import { request } from "../scripts/mcp-server.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 
 const count = (text: string, needle: string) => text.split(needle).length - 1;
 const jsonl = (path: string) => existsSync(path)
@@ -122,6 +123,9 @@ async function fixture(test: (f: any) => Promise<void>, options: { env?: NodeJS.
       const bots = JSON.parse(readFileSync(join(dataDir, "bots.json"), "utf8"));
       edit(bots);
       writeFileSync(join(dataDir, "bots.json"), JSON.stringify(bots, null, 2));
+      // An unclean restart drops account sessions; re-issue the owner first and
+      // point this fixture's fetches at the fresh bearer.
+      registerOwnerFetch(session.info.url, prepareOwnerSession(dataDir));
       const env = { ...verificationServerEnvironment(parentEnv, dataDir, Number(new URL(session.info.url).port)), ...extraEnv };
       const log = openSync(session.info.logPath, "a", 0o600);
       restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))],

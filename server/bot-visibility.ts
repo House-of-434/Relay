@@ -30,12 +30,18 @@ import type { BotVisibility } from "../shared/wire.ts";
 
 export type { BotVisibility };
 
-/** The person looking, reduced to what visibility needs. `all` is the owner,
- * a local service or an admin session; `member` is any other session, with
- * the email it signed in with when it has one. */
-export type Viewer = { kind: "all" } | { kind: "member"; email?: string };
+/** The person looking. `all` is reserved for tests and the harness's own
+ * in-process turns; the request gate only ever produces `user`, keyed on the
+ * signed-in account's Supabase UUID. There is no email viewer: an account sees
+ * only the bots and rooms it owns. */
+export type Viewer = { kind: "all" } | { kind: "user"; userId: string };
 
 export const SEES_EVERYTHING: Viewer = { kind: "all" };
+
+/** A viewer that owns nothing: every check is false. The gate returns this for
+ * any request without a verified account session (loopback, service-trust,
+ * pairing, admin scope), so an ownerless or system:relay record stays hidden. */
+export const NO_VIEWER: Viewer = { kind: "user", userId: "" };
 
 export const MAX_VISIBILITY_PEOPLE = 500;
 const ENTRY = /^(?:[^\s@,;<>"]+@[^\s@,;<>"]+\.[^\s@,;<>"]+|@[^\s@,;<>"]+\.[^\s@,;<>"]+)$/;
@@ -80,15 +86,6 @@ export function isRestricted(value: unknown): boolean {
 
 function entryMatches(entry: string, email: string): boolean {
   return entry.startsWith("@") ? email.endsWith(entry) && email.length > entry.length : entry === email;
-}
-
-export function viewerSees(viewer: Viewer, visibility: unknown): boolean {
-  if (viewer.kind === "all") return true;
-  const stored = storedVisibility(visibility);
-  if (stored === "everyone") return true;
-  if (stored === "admins") return false;
-  const email = viewer.email?.trim().toLowerCase();
-  return Boolean(email && email.includes("@") && stored.people.some((entry) => entryMatches(entry, email)));
 }
 
 /** True when exactly the same people can see both bots. */
@@ -150,6 +147,8 @@ export function roomFeeds(memberVisibilities: readonly unknown[], botVisibility:
 export interface VisibilityBot {
   id: string;
   threadId: string;
+  /** The owning account's UUID. Absent means visible to no one. */
+  ownerUserId?: string;
   visibility?: unknown;
   section?: string;
   avatarUrl?: string | null;
@@ -160,6 +159,8 @@ export interface VisibilityGroup {
   id: string;
   threadId: string;
   memberIds: readonly string[];
+  /** The owning account's UUID. Absent means visible to no one. */
+  ownerUserId?: string;
   section?: string;
   tasks?: ReadonlyArray<{ threadId: string }>;
   /** The narrowest audience the room has ever had. A bot leaving never
@@ -191,12 +192,21 @@ export class VisibleSet {
     ownerOf?: (threadId: string) => ThreadOwner | undefined,
   ) {
     this.viewer = viewer;
-    this.everything = viewer.kind === "all" ||
-      (!bots.some((bot) => isRestricted(bot.visibility)) && !groups.some((group) => isRestricted(group.audienceFloor)));
+    this.everything = viewer.kind === "all";
     this.ownerOf = ownerOf ?? ((threadId) => this.indexedOwner(threadId));
     if (this.everything) return;
     for (const bot of bots) this.bots.set(bot.id, bot);
     for (const group of groups) this.groups.set(group.id, group);
+  }
+
+  /** The viewer owns this record. An ownerless record, or the reserved
+   * system:relay principal, matches no user viewer. */
+  ownsRecord(ownerUserId: string | undefined): boolean {
+    return this.viewer.kind === "user" && Boolean(this.viewer.userId) && ownerUserId === this.viewer.userId;
+  }
+
+  private owns(ownerUserId: string | undefined): boolean {
+    return this.ownsRecord(ownerUserId);
   }
 
   bot(id: string): boolean {
@@ -204,20 +214,20 @@ export class VisibleSet {
     let seen = this.botMemo.get(id);
     if (seen === undefined) {
       const bot = this.bots.get(id);
-      seen = Boolean(bot && viewerSees(this.viewer, bot.visibility));
+      seen = Boolean(bot && this.owns(bot.ownerUserId));
       this.botMemo.set(id, seen);
     }
     return seen;
   }
 
-  /** At least one bot, every bot in it visible, and the room's floor — the
-   * narrowest audience it has had — admits the viewer. */
+  /** The room is owned by the viewer, has at least one member bot, and every
+   * member is one the viewer can see. */
   group(id: string): boolean {
     if (this.everything) return true;
     const group = this.groups.get(id);
     if (!group) return false;
     const members = group.memberIds.filter((member) => this.bots.has(member));
-    return members.length > 0 && members.every((member) => this.bot(member)) && viewerSees(this.viewer, group.audienceFloor);
+    return this.owns(group.ownerUserId) && members.length > 0 && members.every((member) => this.bot(member));
   }
 
   /** The bot or room that owns the thread is visible. An unknown thread is not. */
@@ -244,14 +254,10 @@ export class VisibleSet {
     return this.threads.get(threadId);
   }
 
-  /** Sections holding at least one visible bot or room. */
+  /** Every section is the viewer's own sidebar grouping, and section names are
+   * already readable via /api/sidebar-sections, so nothing is filtered here. */
   sections(all: readonly string[]): string[] {
-    if (this.everything) return [...all];
-    const key = (value?: string) => value?.trim() || "";
-    const shown = new Set<string>();
-    for (const bot of this.bots.values()) if (this.bot(bot.id)) shown.add(key(bot.section));
-    for (const group of this.groups.values()) if (this.group(group.id)) shown.add(key(group.section));
-    return all.filter((section) => shown.has(key(section)));
+    return [...all];
   }
 
   /** An attachment is refused only when everything that references it is
@@ -337,13 +343,15 @@ export interface FrameContext {
   freshGroup: (groupId: string) => Record<string, unknown> | undefined;
 }
 
-/** The bot as a member receives it: no audience list (who else may see a bot
- * is an admin's business), and no teammate ids the member cannot see. */
+/** The bot as the viewer receives it: no teammate ids the viewer cannot see.
+ * Under per-user isolation the viewer owns every bot it is shown, so the
+ * record is otherwise passed through whole (visibility included — it is the
+ * viewer's own setting, and email audiences are retired). */
 export function memberBot<T extends object>(bot: T, visible: VisibleSet): T {
   if (visible.everything) return bot;
-  const { visibility: _visibility, ...rest } = bot as T & { visibility?: unknown; peers?: unknown };
-  const peers = Array.isArray(rest.peers) ? (rest.peers as unknown[]).filter((id): id is string => typeof id === "string" && visible.bot(id)) : undefined;
-  return { ...rest, ...(peers ? { peers } : {}) } as T;
+  const { peers, ...rest } = bot as T & { peers?: unknown };
+  const shown = Array.isArray(peers) ? peers.filter((id): id is string => typeof id === "string" && visible.bot(id)) : undefined;
+  return { ...rest, ...(shown ? { peers: shown } : {}) } as T;
 }
 
 /** A room as a member receives it: without its audience floor. */
@@ -479,9 +487,15 @@ export function noteSeen(payload: Record<string, unknown>, seen: StreamSeen): vo
   }
 }
 
-/** A routine or run targets a bot, and may run in a room. */
-export function routineVisible(value: { botId?: unknown; groupId?: unknown }, visible: VisibleSet): boolean {
+/** A routine or run targets a bot, and may run in a room. A record the viewer
+ * owns stays visible even when its bot is gone (a deleted bot must not take
+ * its owner's scheduled work out of the list). */
+export function routineVisible(
+  value: { botId?: unknown; groupId?: unknown; ownerUserId?: unknown },
+  visible: VisibleSet,
+): boolean {
   if (visible.everything) return true;
+  if (typeof value.ownerUserId === "string" && value.ownerUserId && visible.ownsRecord(value.ownerUserId)) return true;
   if (typeof value.groupId === "string" && value.groupId) return visible.group(value.groupId);
   return typeof value.botId === "string" && visible.bot(value.botId);
 }

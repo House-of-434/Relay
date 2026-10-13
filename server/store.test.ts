@@ -54,7 +54,7 @@ describe("Store", () => {
 
   it("creates Relay agents at Auto", () => {
     const store = new Store(selection);
-    const created = store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS);
+    const created = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS);
     expect(created.length).toBe(RELAY_AGENT_SEEDS.length);
     for (const bot of created) expect(bot.approvalMode).toBe("auto");
   });
@@ -63,10 +63,10 @@ describe("Store", () => {
     const store = new Store(selection);
     const seeded = store.createBot({ name: "Scout" }, { relayAgent: "scout" });
     expect(seeded.approvalMode).toBeUndefined();
-    store.seedRelayAgentsIfMissing([{ role: "scout", profile: { name: "Scout" } }]);
+    store.seedRelayAgentsForOwner(undefined, [{ role: "scout", profile: { name: "Scout" } }]);
     expect(store.bot(seeded.id)!.approvalMode).toBe("auto");
     store.patchBot(seeded.id, { approvalMode: "ask" });
-    store.seedRelayAgentsIfMissing([{ role: "scout", profile: { name: "Scout" } }]);
+    store.seedRelayAgentsForOwner(undefined, [{ role: "scout", profile: { name: "Scout" } }]);
     expect(store.bot(seeded.id)!.approvalMode).toBe("ask");
   });
 
@@ -1261,7 +1261,7 @@ describe("Store", () => {
   it("seeds the three Relay roles once without replacing existing bots or model defaults", () => {
     const store = new Store(selection);
     const kept = store.createBot({ name: "Existing teammate" });
-    const created = store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS);
+    const created = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS);
     expect(created.map((bot) => bot.relayAgent).sort()).toEqual(["curator", "mercury", "scout"]);
     expect(store.bot(kept.id)?.name).toBe("Existing teammate");
     expect(created.map((bot) => bot.name)).toEqual(["Scout", "Mercury", "Curator"]);
@@ -1271,17 +1271,34 @@ describe("Store", () => {
     expect(created.every((bot) => bot.modelSelection.instanceId === selection().instanceId && bot.modelSelection.model === selection().model)).toBe(true);
     expect(created.every((bot) => bot.computer === "off" && bot.composio === false)).toBe(true);
 
-    expect(store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS)).toEqual([]);
+    expect(store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS)).toEqual([]);
     const reloaded = new Store(selection);
-    expect(reloaded.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS)).toEqual([]);
+    expect(reloaded.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS)).toEqual([]);
     expect(reloaded.bots.filter((bot) => bot.relayAgent)).toHaveLength(3);
     expect(reloaded.bots.filter((bot) => bot.relayAgent).map((bot) => bot.relayAgent).sort())
       .toEqual(["curator", "mercury", "scout"]);
   });
 
+  it("seeds per owner, idempotently, and a retry creates only the missing role", () => {
+    const store = new Store(selection);
+    const first = store.seedRelayAgentsForOwner("owner-a", RELAY_AGENT_SEEDS);
+    expect(first.map((bot) => bot.relayAgent).sort()).toEqual(["curator", "mercury", "scout"]);
+    expect(first.every((bot) => bot.ownerUserId === "owner-a")).toBe(true);
+    // A second account gets its own three, independent of the first.
+    expect(store.seedRelayAgentsForOwner("owner-b", RELAY_AGENT_SEEDS)).toHaveLength(3);
+    expect(store.bots.filter((bot) => bot.ownerUserId === "owner-a" && bot.relayAgent)).toHaveLength(3);
+    // Idempotent once an owner has all three.
+    expect(store.seedRelayAgentsForOwner("owner-a", RELAY_AGENT_SEEDS)).toEqual([]);
+    // A partial failure (one role missing) creates only the missing role.
+    const curator = store.bots.find((bot) => bot.ownerUserId === "owner-a" && bot.relayAgent === "curator")!;
+    store.deleteBot(curator.id);
+    expect(store.seedRelayAgentsForOwner("owner-a", RELAY_AGENT_SEEDS).map((bot) => bot.relayAgent)).toEqual(["curator"]);
+    expect(store.bots.filter((bot) => bot.ownerUserId === "owner-a" && bot.relayAgent)).toHaveLength(3);
+  });
+
   it("keeps a seeded Relay role private from client bot records", () => {
     const store = new Store(selection);
-    const [scout] = store.seedRelayAgentsIfMissing(RELAY_AGENT_SEEDS);
+    const [scout] = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS);
     expect(scout?.relayAgent).toBe("scout");
     expect(store.patchBot(scout!.id, { description: "Updated description" })?.relayAgent).toBe("scout");
   });

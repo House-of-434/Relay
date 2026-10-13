@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 // An ordinary room round never skips a member who is busy in another
@@ -30,6 +31,7 @@ let base = "";
 let stderr = "";
 let penDump = "";
 let patientFinishGate = "";
+let ownerToken = "";
 
 type StateMessage = {
   id: string;
@@ -48,7 +50,11 @@ const api = async (
 ): Promise<{ status: number; body: any }> => {
   const response = await fetch(`${base}${path}`, {
     method,
-    headers: { ...(body ? { "content-type": "application/json" } : {}), ...headers },
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+      ...headers,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: response.status, body: await response.json() };
@@ -90,6 +96,7 @@ beforeAll(async () => {
       pen: fixture("Dumping fixture", { FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: penDump }),
     },
   }));
+  ownerToken = prepareOwnerSession(data);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -101,6 +108,7 @@ beforeAll(async () => {
       USERPROFILE: home,
       RELAY_PORT: String(port),
       RELAY_WEBHOOK_PORT: String(port + 1),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       RELAY_STATIC_DIR: staticDir,
       RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
     },

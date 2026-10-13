@@ -41,7 +41,6 @@ Required for the deployment (see `.env.example` for the full list):
 | `RELAY_PORTAL_SESSIONS` | `1` — the BFF owns sign-in here; without it the harness refuses the session bridge and login fails |
 | `RELAY_DB_URL` / `RELAY_DB_PROJECT_REF` / `RELAY_DB_SERVICE_ROLE_KEY` | Tool Layer database access |
 | `RELAY_TOOL_ACTOR_SECRET` | In `.env.secrets`; must match between harness and Tool Layer |
-| `RELAY_ALLOWED_EMAIL_DOMAINS` | Allowed sign-in domains |
 | `RELAY_ENGINES` | Space-separated npm packages for the engine CLIs baked into the image (e.g. `@anthropic-ai/claude-code`) |
 | `RELAY_DEFAULT_MODEL` | Centralized default model every new bot inherits (e.g. `claude-haiku-5-5`); `RELAY_DEFAULT_INSTANCE` overrides the instance id (default `claude`) |
 
@@ -55,6 +54,16 @@ Required for the deployment (see `.env.example` for the full list):
 Supabase dashboard side: Site URL + Additional Redirect URLs must allow-list
 the public hostname, and the Google OAuth client must register
 `https://<public-hostname>/api/google/oauth/callback`.
+
+### Lock down sign-ups
+
+Public sign-up must be closed to non-company addresses before the host is
+reachable. Run `supabase/migrations/0005_restrict_signup_domain.sql` in the
+SQL Editor, then wire the hook: **Authentication → Hooks → Before User
+Created → Postgres function → `hook_restrict_signup_domain`**. Confirm with
+`select proname from pg_proc where proname = 'hook_restrict_signup_domain';`
+(one row), then call the sign-up endpoint with the anon key and a
+non-`@houseof434.com` address and confirm it returns the 400 message.
 
 ## Build and run
 

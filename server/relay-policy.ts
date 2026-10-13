@@ -52,5 +52,6 @@ export function relayComputerConfigRefusal(value: unknown): string | null {
   return null;
 }
 
-const RELAY_SHARED_WORKSPACE = process.env.RELAY_SHARED_WORKSPACE === undefined || process.env.RELAY_SHARED_WORKSPACE === "1";
-export const RELAY_COMPUTER_DISABLED = relayComputerDisabled() || RELAY_SHARED_WORKSPACE;
+/** The RELAY_SHARED_WORKSPACE lockout is gone with the flag: the computer is
+ * available unless the operator sets RELAY_DISABLE_COMPUTER=1. */
+export const RELAY_COMPUTER_DISABLED = relayComputerDisabled();

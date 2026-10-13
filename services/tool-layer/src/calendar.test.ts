@@ -159,7 +159,7 @@ test("Mercury's calendar surface states intent, not the provider's parameters", 
   };
   const mcp = createAgentMcpServer(
     "mercury",
-    null,
+    { userId: null },
     {} as never,
     undefined,
     { client: client as never, actorAssertion: ACTOR },

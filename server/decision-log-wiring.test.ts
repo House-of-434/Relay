@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import type { DecisionRow } from "./decision-log.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const FAKE_CLI = join(SERVER_DIR, "testing", "fake-acp-cli.ts");
@@ -29,11 +30,15 @@ const posixOnly = describe.skipIf(process.platform === "win32");
 let child: ChildProcess;
 let home: string;
 let stderr = "";
+let ownerToken = "";
 
 const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
   const res = await fetch(`${BASE}${path}`, {
     method,
-    headers: body ? { "content-type": "application/json" } : undefined,
+    headers: {
+      ...(body ? { "content-type": "application/json" } : {}),
+      authorization: `Bearer ${ownerToken}`,
+    },
     body: body ? JSON.stringify(body) : undefined,
   });
   return { status: res.status, body: await res.json() };
@@ -133,6 +138,7 @@ posixOnly("authorization decisions are logged", () => {
         },
       }),
     );
+    ownerToken = prepareOwnerSession(join(home, ".relay"));
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: join(SERVER_DIR, ".."),
       env: {
@@ -141,6 +147,7 @@ posixOnly("authorization decisions are logged", () => {
         HOME: home,
         USERPROFILE: home,
         RELAY_PORT: String(PORT),
+        RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -330,8 +337,8 @@ posixOnly("authorization decisions are logged", () => {
     const lines = (await res.text()).trim().split("\n");
     expect(lines[0]).toBe("time,decision,source,bot,tool,summary,rule,unattended,answered_by,thread,request");
     expect(lines).toHaveLength(all.length + 1);
-    // the owner answered the cards above from loopback
-    expect(lines.some((line) => line.includes(",user-approved,user,") && line.includes(",This computer,"))).toBe(true);
+    // the owner answered the cards above as a signed-in session
+    expect(lines.some((line) => line.includes(",user-approved,user,") && line.includes(",owner@relay.test,"))).toBe(true);
     expect((await fetch(`${BASE}/api/decisions.csv?from=2026-13-01`)).status).toBe(400);
     expect((await fetch(`${BASE}/api/decisions.csv?from=2025-01-01&to=2026-09-01`)).status).toBe(400);
   });

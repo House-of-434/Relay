@@ -1522,13 +1522,14 @@ export class RoutineManager {
    * failed/missed run in one committed save, then emit the updated runs so
    * connected clients drop their dots immediately. A failed save rolls the
    * stamps back so a retry still finds the unseen runs. */
-  markAllSeen(): RoutineRun[] {
-    if (!this.runs.some((run) => !run.seenAt && isRoutineProblemRun(run))) return [];
+  markAllSeen(visible?: (run: RoutineRun) => boolean): RoutineRun[] {
+    const included = (run: RoutineRun) => isRoutineProblemRun(run) && (!visible || visible(run));
+    if (!this.runs.some((run) => !run.seenAt && included(run))) return [];
     const stampAt = this.now();
     const updated: RoutineRun[] = [];
     this.commitMutation(() => {
       for (const run of this.runs) {
-        if (run.seenAt || !isRoutineProblemRun(run)) continue;
+        if (run.seenAt || !included(run)) continue;
         run.seenAt = stampAt;
         updated.push(run);
       }

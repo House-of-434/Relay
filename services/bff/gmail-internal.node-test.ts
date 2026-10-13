@@ -32,12 +32,15 @@ afterEach(async () => {
   while (cleanups.length) await cleanups.pop()!();
 });
 
+const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
+const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
+
 /** Signed exactly as the harness signs it, so the BFF verifies a realistic artifact. */
-function actorAssertion(userId: string, email: string, issuedAt = Math.floor(Date.now() / 1000)): string {
+function actorAssertion(userId: string, _email?: string, issuedAt = Math.floor(Date.now() / 1000)): string {
   const signature = createHmac("sha256", ACTOR_SECRET)
-    .update(JSON.stringify([userId, email, issuedAt]))
+    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID]))
     .digest("base64url");
-  return JSON.stringify({ userId, email, issuedAt, signature });
+  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, signature });
 }
 
 interface GmailCall {

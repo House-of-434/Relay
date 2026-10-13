@@ -13,32 +13,34 @@ import {
   roomFeeds,
   routineVisible,
   sameAudience,
+  NO_VIEWER,
   SEES_EVERYTHING,
   storedVisibility,
-  viewerSees,
   VisibleSet,
   type FrameContext,
   type StreamSeen,
   type Viewer,
 } from "./bot-visibility.ts";
 
-const ADA: Viewer = { kind: "member", email: "ada@example.test" };
-const BOB: Viewer = { kind: "member", email: "bob@example.test" };
-const NOBODY: Viewer = { kind: "member" };
+const ADA: Viewer = { kind: "user", userId: "ada-uuid" };
+const BOB: Viewer = { kind: "user", userId: "bob-uuid" };
 
 const bots = [
-  { id: "pub", threadId: "t-pub", section: "Ops", tasks: [{ threadId: "t-pub" }, { threadId: "t-pub-2" }] },
-  { id: "hr", threadId: "t-hr", section: "People", visibility: { people: ["ada@example.test"] }, avatarUrl: "/api/attachments/hr.png", tasks: [{ threadId: "t-hr" }] },
-  { id: "adm", threadId: "t-adm", section: "People", visibility: "admins" },
-  { id: "corp", threadId: "t-corp", visibility: { people: ["@example.test"] } },
+  { id: "pub", threadId: "t-pub", section: "Ops", ownerUserId: "bob-uuid", tasks: [{ threadId: "t-pub" }, { threadId: "t-pub-2" }] },
+  { id: "hr", threadId: "t-hr", section: "People", ownerUserId: "ada-uuid", avatarUrl: "/api/attachments/hr.png", tasks: [{ threadId: "t-hr" }] },
+  { id: "adm", threadId: "t-adm", section: "People", ownerUserId: "bob-uuid" },
+  { id: "corp", threadId: "t-corp", ownerUserId: "ada-uuid" },
+  { id: "orphan", threadId: "t-orphan", section: "Orphan" },
+  { id: "sys", threadId: "t-sys", ownerUserId: "system:relay" },
 ];
 const groups = [
-  { id: "room-pub", threadId: "t-room-pub", memberIds: ["pub"], section: "Ops" },
-  { id: "room-mixed", threadId: "t-room-mixed", memberIds: ["pub", "hr"], tasks: [{ threadId: "t-room-mixed-2" }] },
-  { id: "room-empty", threadId: "t-room-empty", memberIds: ["gone"] },
+  { id: "room-pub", threadId: "t-room-pub", memberIds: ["pub"], section: "Ops", ownerUserId: "bob-uuid" },
+  { id: "room-mixed", threadId: "t-room-mixed", memberIds: ["pub", "hr"], tasks: [{ threadId: "t-room-mixed-2" }], ownerUserId: "bob-uuid" },
+  { id: "room-empty", threadId: "t-room-empty", memberIds: ["gone"], ownerUserId: "bob-uuid" },
+  { id: "room-orphan", threadId: "t-room-orphan", memberIds: ["orphan"] },
 ];
 
-describe("visibility values", () => {
+describe("visibility values (retained audience plumbing)", () => {
   it("reads an admin's input and fails closed on anything it cannot read", () => {
     expect(parseVisibility("everyone")).toEqual({ ok: true, visibility: "everyone" });
     expect(parseVisibility(null)).toEqual({ ok: true, visibility: "everyone" });
@@ -56,20 +58,6 @@ describe("visibility values", () => {
     expect(storedVisibility(undefined)).toBe("everyone");
     expect(storedVisibility("garbage")).toBe("admins");
     expect(storedVisibility({ people: "ada@example.test" })).toBe("admins");
-  });
-
-  it("lets admins and the owner see everything, and members only what names them", () => {
-    expect(viewerSees(SEES_EVERYTHING, "admins")).toBe(true);
-    expect(viewerSees(ADA, undefined)).toBe(true);
-    expect(viewerSees(ADA, "admins")).toBe(false);
-    expect(viewerSees(ADA, { people: ["ada@example.test"] })).toBe(true);
-    expect(viewerSees({ kind: "member", email: "ADA@example.test" }, { people: ["ada@example.test"] })).toBe(true);
-    expect(viewerSees(BOB, { people: ["ada@example.test"] })).toBe(false);
-    expect(viewerSees(BOB, { people: ["@example.test"] })).toBe(true);
-    expect(viewerSees({ kind: "member", email: "eve@evilexample.test" }, { people: ["@example.test"] })).toBe(false);
-    // a paired device with no email is only ever shown bots everyone sees
-    expect(viewerSees(NOBODY, { people: ["@example.test"] })).toBe(false);
-    expect(viewerSees(NOBODY, undefined)).toBe(true);
   });
 
   it("knows when one audience sits inside another", () => {
@@ -97,16 +85,6 @@ describe("visibility values", () => {
     expect(narrowestAudience([undefined, { people: ["ada@example.test", "bob@example.test"] }, { people: ["ada@example.test"] }])).toEqual({ people: ["ada@example.test"] });
   });
 
-  it("keeps a room at its floor after the bot that set it is gone", () => {
-    const open = bots.map(({ visibility: _v, ...bot }) => bot);
-    const floored = [{ id: "room-old", threadId: "t-room-old", memberIds: ["pub"], audienceFloor: { people: ["ada@example.test"] } }];
-    const bob = new VisibleSet(open, floored, BOB);
-    expect(bob.everything).toBe(false);
-    expect([bob.group("room-old"), bob.thread("t-room-old"), bob.bot("pub")]).toEqual([false, false, true]);
-    expect(new VisibleSet(open, floored, ADA).group("room-old")).toBe(true);
-    expect(roomFeeds([undefined, floored[0]!.audienceFloor], undefined)).toBe(false);
-  });
-
   it("compares audiences exactly", () => {
     expect(sameAudience(undefined, "everyone")).toBe(true);
     expect(sameAudience(undefined, "admins")).toBe(false);
@@ -116,35 +94,44 @@ describe("visibility values", () => {
   });
 });
 
-describe("VisibleSet", () => {
-  it("filters nothing when no bot is restricted, or for someone who sees everything", () => {
-    const open = new VisibleSet(bots.map(({ visibility: _v, ...bot }) => bot), groups, BOB);
-    expect(open.everything).toBe(true);
-    expect(open.bot("anything")).toBe(true);
-    const admin = new VisibleSet(bots, groups, SEES_EVERYTHING);
-    expect(admin.everything).toBe(true);
-    expect(admin.thread("t-hr")).toBe(true);
+describe("VisibleSet (owner isolation)", () => {
+  it("sees everything only for the reserved all-viewer", () => {
+    const all = new VisibleSet(bots, groups, SEES_EVERYTHING);
+    expect(all.everything).toBe(true);
+    expect(all.bot("anything")).toBe(true);
+    expect(all.thread("t-hr")).toBe(true);
   });
 
-  it("answers bots, rooms, threads and sections for a member", () => {
+  it("answers bots, rooms, threads and sections by owner", () => {
     const bob = new VisibleSet(bots, groups, BOB);
     expect(bob.everything).toBe(false);
-    expect([bob.bot("pub"), bob.bot("hr"), bob.bot("adm"), bob.bot("corp"), bob.bot("unknown")]).toEqual([true, false, false, true, false]);
-    // a room needs every one of its bots visible
-    expect([bob.group("room-pub"), bob.group("room-mixed"), bob.group("room-empty")]).toEqual([true, false, false]);
-    expect([bob.thread("t-pub-2"), bob.thread("t-hr"), bob.thread("t-room-mixed-2"), bob.thread("t-unknown")]).toEqual([true, false, false, false]);
-    expect(bob.sections(["Ops", "People", "Empty"])).toEqual(["Ops"]);
+    expect([bob.bot("pub"), bob.bot("adm"), bob.bot("hr"), bob.bot("corp"), bob.bot("orphan"), bob.bot("sys"), bob.bot("unknown")])
+      .toEqual([true, true, false, false, false, false, false]);
+    // a room is visible only when the viewer owns it and every member is visible
+    expect([bob.group("room-pub"), bob.group("room-mixed"), bob.group("room-empty"), bob.group("room-orphan")])
+      .toEqual([true, false, false, false]);
+    expect([bob.thread("t-pub-2"), bob.thread("t-hr"), bob.thread("t-room-mixed-2"), bob.thread("t-orphan"), bob.thread("t-unknown")])
+      .toEqual([true, false, false, false, false]);
+    expect(bob.sections(["Ops", "People", "Orphan", "Empty"])).toEqual(["Ops", "People", "Orphan", "Empty"]);
 
     const ada = new VisibleSet(bots, groups, ADA);
-    expect([ada.bot("hr"), ada.bot("adm"), ada.group("room-mixed"), ada.thread("t-room-mixed-2")]).toEqual([true, false, true, true]);
+    expect([ada.bot("hr"), ada.bot("corp"), ada.bot("pub"), ada.group("room-mixed")]).toEqual([true, true, false, false]);
     expect(ada.sections(["Ops", "People"])).toEqual(["Ops", "People"]);
+  });
+
+  it("hides every ownerless and system:relay record from every user", () => {
+    for (const viewer of [ADA, BOB, NO_VIEWER]) {
+      const set = new VisibleSet(bots, groups, viewer);
+      expect([set.bot("orphan"), set.bot("sys"), set.group("room-orphan"), set.thread("t-orphan"), set.thread("t-sys")])
+        .toEqual([false, false, false, false, false]);
+    }
   });
 
   it("refuses an attachment only when everything that uses it is hidden", () => {
     const bob = new VisibleSet(bots, groups, BOB);
     const refs: Record<string, string[]> = { "in-hr.png": ["t-hr"], "shared.png": ["t-hr", "t-pub"], "fresh.png": [] };
     const lookup = (name: string) => refs[name] ?? [];
-    expect(bob.attachment("hr.png", lookup)).toBe(false); // the restricted bot's avatar
+    expect(bob.attachment("hr.png", lookup)).toBe(false); // another account's bot avatar
     expect(bob.attachment("in-hr.png", lookup)).toBe(false);
     expect(bob.attachment("shared.png", lookup)).toBe(true);
     expect(bob.attachment("fresh.png", lookup)).toBe(true);
@@ -196,8 +183,8 @@ describe("live frames for a member", () => {
       { kind: "group.deleted", groupId: "room-mixed" },
       { kind: "notify", notification: { botId: "hr", threadId: "t-hr" } },
       { kind: "runtime", event: { type: "content.delta", threadId: "t-hr" } },
-      { kind: "computer", botId: "adm", state: "waking" },
-      { kind: "computer-control", botId: "adm", held: true },
+      { kind: "computer", botId: "corp", state: "waking" },
+      { kind: "computer-control", botId: "corp", held: true },
       { kind: "routine", routine: { id: "r", botId: "hr" } },
       { kind: "routine.run", run: { id: "r", botId: "pub", groupId: "room-mixed" } },
       { kind: "webhook", webhook: { id: "hook-hr", botId: "hr" } },
@@ -214,20 +201,20 @@ describe("live frames for a member", () => {
     expect(frameForMember(message, ctx, seen())).toBe(message);
     const hook = { kind: "webhook.attempt", attempt: { webhookId: "hook-pub" } };
     expect(frameForMember(hook, ctx, seen())).toBe(hook);
-    expect(frameForMember({ kind: "sections", sections: ["Ops", "People"] }, ctx, seen())).toEqual({ kind: "sections", sections: ["Ops"] });
+    expect(frameForMember({ kind: "sections", sections: ["Ops", "People"] }, ctx, seen())).toEqual({ kind: "sections", sections: ["Ops", "People"] });
     expect(frameForMember({ kind: "bot.queued", queues: { "t-pub": [1], "t-hr": [2] } }, ctx, seen())).toEqual({ kind: "bot.queued", queues: { "t-pub": [1] } });
     const config = { kind: "config", membership: {} };
     expect(frameForMember(config, ctx, seen())).toBe(config);
-    // a member's copy of a bot never lists who else may see it, nor a teammate they cannot
-    expect(frameForMember({ kind: "bot", bot: { id: "corp", visibility: { people: ["@example.test"] }, peers: ["pub", "hr"] } }, ctx, seen()))
-      .toEqual({ kind: "bot", bot: { id: "corp", peers: ["pub"] } });
+    // the owner's copy keeps its own visibility, and drops a teammate it cannot see
+    expect(frameForMember({ kind: "bot", bot: { id: "pub", visibility: { people: ["@example.test"] }, peers: ["adm", "hr"] } }, ctx, seen()))
+      .toEqual({ kind: "bot", bot: { id: "pub", visibility: { people: ["@example.test"] }, peers: ["adm"] } });
   });
 
   it("withdraws a bot once when it becomes hidden, and sends it whole when it appears", () => {
     const state = seen();
     const before = new VisibleSet(bots, groups, BOB);
-    // Bob was shown "pub"; now an admin restricts it to Ada.
-    const restricted = bots.map((bot) => (bot.id === "pub" ? { ...bot, visibility: { people: ["ada@example.test"] } } : bot));
+    // Bob was shown "pub"; the bot is reassigned to Ada.
+    const restricted = bots.map((bot) => (bot.id === "pub" ? { ...bot, ownerUserId: "ada-uuid" } : bot));
     const after = new VisibleSet(restricted, groups, BOB);
     expect(frameForMember({ kind: "bot", bot: { id: "pub" } }, context(after), state)).toEqual({ kind: "bot.deleted", botId: "pub" });
     expect(frameForMember({ kind: "bot", bot: { id: "pub" } }, context(after), state)).toBeUndefined();
@@ -253,21 +240,21 @@ describe("live frames for a member", () => {
   it("narrows every bot in a JSON answer for a member", () => {
     const bob = new VisibleSet(bots, groups, BOB);
     const body = {
-      bot: { id: "corp", visibility: { people: ["@example.test"] }, peers: ["pub", "hr"] },
+      bot: { id: "pub", visibility: { people: ["@example.test"] }, peers: ["adm", "hr"] },
       bots: [{ id: "pub", visibility: "everyone" }],
       result: { bot: { id: "corp", visibility: "admins" } },
       messages: [{ bot: { visibility: "untouched" } }],
       ok: true,
     };
     expect(memberBody(body, bob)).toEqual({
-      bot: { id: "corp", peers: ["pub"] },
-      bots: [{ id: "pub" }],
-      result: { bot: { id: "corp" } },
+      bot: { id: "pub", visibility: { people: ["@example.test"] }, peers: ["adm"] },
+      bots: [{ id: "pub", visibility: "everyone" }],
+      result: { bot: { id: "corp", visibility: "admins" } },
       messages: [{ bot: { visibility: "untouched" } }],
       ok: true,
     });
-    const admin = new VisibleSet(bots, groups, SEES_EVERYTHING);
-    expect(memberBody(body, admin)).toBe(body);
+    const all = new VisibleSet(bots, groups, SEES_EVERYTHING);
+    expect(memberBody(body, all)).toBe(body);
   });
 
   it("strips nothing for someone who sees everything", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { createBotPackageExport, createTeamPackageExport, shareableAddress, TEAM_TOO_LARGE_MESSAGE, TeamExportError } from "./package-export.ts";
+import { createBotPackageExport, createTeamPackageExport, TEAM_TOO_LARGE_MESSAGE, TeamExportError } from "./package-export.ts";
 import { parseBotPackage, renderBotPackageMarkdown } from "./bot-package.ts";
 import type { Routine } from "./routines.ts";
 import type { BotRecord, GroupRecord } from "./store.ts";
@@ -259,8 +259,8 @@ describe("whole-team export (package v2)", () => {
   const fixture = () => {
     const bots = [
       bot("lead", "Morgan", { chiefOfStaff: true, soul: "Coordinate the desk.\n", avatarUrl: "/api/attachments/a.png", avatarCrop: "rounded",
-        mcpServers: ["crm", "local-tool", "plain-http"], playbooks: [{ key: "qualify", name: "Qualify", summary: "Check fit", triggers: ["qualify"], instructions: "Ask four questions." }] }),
-      bot("scout", "Scout", { mcpServers: ["crm"] }),
+        playbooks: [{ key: "qualify", name: "Qualify", summary: "Check fit", triggers: ["qualify"], instructions: "Ask four questions." }] }),
+      bot("scout", "Scout"),
       bot("hidden", "Archived", { hidden: true }),
       bot("other", "Elsewhere", { section: "Support" }),
     ];
@@ -295,7 +295,7 @@ describe("whole-team export (package v2)", () => {
     expect(pkg.agents.map((agent) => agent.key)).toEqual(["morgan", "scout"]);
     expect(pkg.team).toEqual({ name: "Sales desk", brief: "Quote list prices only.", leader: "morgan" });
     expect(pkg.agents[0]).toMatchObject({
-      name: "Morgan", soul: "Coordinate the desk.\n", playbooks: ["qualify"], skills: ["pricing"], connections: ["crm"],
+      name: "Morgan", soul: "Coordinate the desk.\n", playbooks: ["qualify"], skills: ["pricing"],
       appearance: { color: "green", avatar: { mime: "image/png", data: PNG, crop: "rounded" } },
     });
     expect(pkg.rooms).toEqual([{ key: "deal-desk", name: "Deal desk", members: ["morgan", "scout"], bulletin: "Cite sources.",
@@ -304,14 +304,11 @@ describe("whole-team export (package v2)", () => {
       expect.objectContaining({ key: "daily-digest", agent: "scout", continuity: true, enabledAfterInstall: true }),
       expect.objectContaining({ key: "weekly-review", agent: "morgan", room: "deal-desk", runOn: "maus", enabledAfterInstall: false }),
     ]);
-    expect(pkg.connections).toEqual([{ key: "crm", label: "crm", reason: "Used by Morgan, Scout",
-      mcp: { transport: "http", url: "https://mcp.example.com/crm", valueNames: ["Authorization"] } }]);
+    expect(pkg.connections ?? []).toEqual([]);
     expect(pkg.skills?.entries.map((entry) => entry.name)).toEqual(["pricing", "research"]);
     const text = JSON.stringify(result.document);
     expect(text).not.toMatch(/Archived|Elsewhere|Support|Only outsiders|"DM"|real-value-never-shared|secret-model|secret-session|thread-|private\/x\.txt|"seed"/);
     expect(result.skipped).toEqual([
-      { part: "connections[local-tool]", reason: "stdio_server" },
-      { part: "connections[plain-http]", reason: "insecure_address" },
       { part: "routines[daily-digest].attachments", reason: "files_not_shared" },
     ]);
     expect(result.filename).toBe("sales-desk-1.0.0.relay.json");
@@ -491,55 +488,4 @@ describe("whole-team export (package v2)", () => {
     });
   });
 
-  describe("connection addresses", () => {
-    it.each([
-      ["a Zapier token segment", "https://mcp.zapier.com/api/mcp/s/NjQ5YjM0ZDgtN2E4Mi00ZDM0LWI1ZjYtOTU2ZGUxYjM3ZTQ5OjE2YjQ3M2Q4==/mcp",
-        "https://mcp.zapier.com/api/mcp/s/redacted/mcp"],
-      ["query values and the fragment", "https://host.example/sse?key=abcd1234efgh5678&profile=default#frag", "https://host.example/sse?key=&profile="],
-      ["a server UUID", "https://mcp.composio.dev/composio/server/3fa85f64-5717-4562-b3fc-2c963f66afa6/mcp",
-        "https://mcp.composio.dev/composio/server/redacted/mcp"],
-      ["a sign-in part", "https://user:pass1234@host.example/mcp", "https://host.example/mcp"],
-      ["a key in the subdomain", "https://a1b2c3d4e5f6g7h8i9j0k1l2.mcp.example.com/mcp", "https://redacted.mcp.example.com/mcp"],
-      ["a short hex key", "https://host.example/s/a1b2c3d4e5f6a7b8/", "https://host.example/s/redacted/"],
-      ["a short key after key=", "https://host.example/key=abcdef12345678/", "https://host.example/key=/"],
-      ["24 letters in a row", "https://host.example/s/abcdefghijklmnopqrstuvwxyz/mcp", "https://host.example/s/redacted/mcp"],
-      ["24 digits in a row", "https://host.example/s/123456789012345678901234/mcp", "https://host.example/s/redacted/mcp"],
-      ...[":", "@", "!", "$", "'", "(", ")", "*", ","].map((mark) => [`a key after "${mark}" in a segment`,
-        `https://host.example/s/abc${mark}def1234567890123456789/`, "https://host.example/s/redacted/"]),
-      ["a matrix parameter value", "https://host.example/mcp;key=abcdef1234567890abcdef", "https://host.example/mcp;key="],
-      ["a key-shaped matrix parameter name", "https://host.example/mcp;sk_live_abcdef1234567890abcdef", "https://host.example/redacted"],
-      ["a key used as a query name", "https://host.example/mcp?sk_live_abcdef1234567890abcdef", "https://host.example/mcp?redacted="],
-      ["a key escaped character by character", `https://host.example/s/${[..."abcdef1234567890"].map((c) => `%${c.charCodeAt(0).toString(16)}`).join("")}/mcp`,
-        "https://host.example/s/redacted/mcp"],
-    ])("never carries %s", (_case, address, shared) => {
-      expect(shareableAddress(address)).toEqual({ url: shared, changed: true });
-    });
-
-    it.each([
-      "https://mcp.example.com/crm",
-      "https://mcp.example.com",
-      "https://api.example.com/v1/github-mcp-server/sse?",
-      "https://api.example.com/github-mcp-server-2024/sse",
-      "https://api.example.com/acme-corp-2025-sales/mcp",
-      "https://api.example.com/docs/path%20with%20spaces/mcp",
-      "https://api.example.com/reports/quarterly%20sales%20by%20region%202025/mcp",
-      "https://acme-corp-2025-sales.mcp.example.com/sse",
-      "https://mcp.a1b2c3d4e5f6g7h8i9j0.com/mcp",
-      "https://server.smithery.ai/@smithery-ai/github/mcp?profile",
-      "https://api.example.com/v2/oauth2/mcp_server_v2/sse",
-      "http://127.0.0.1:3000/sse",
-      "http://localhost:8080/mcp",
-    ])("keeps a plain address exactly: %s", (plain) => {
-      expect(shareableAddress(plain)).toEqual({ url: plain, changed: false });
-    });
-
-    it("reports a changed address as redacted and exports it without the key", () => {
-      const input = fixture();
-      input.mcpServers.crm = { ...input.mcpServers.crm, url: "https://mcp.zapier.com/api/mcp/s/ZTJmNDk1YjMtNjQ0Yi00ZjU2/mcp?token=abcdef" };
-      const result = createTeamPackageExport(input);
-      expect(result.document.package.connections?.[0]?.mcp.url).toBe("https://mcp.zapier.com/api/mcp/s/redacted/mcp?token=");
-      expect(result.redacted).toEqual(["connections[crm].mcp.url"]);
-      expect(JSON.stringify(result.document)).not.toMatch(/ZTJmNDk1YjMtNjQ0Yi00ZjU2|abcdef/);
-    });
-  });
 });

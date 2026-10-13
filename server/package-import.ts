@@ -19,9 +19,8 @@
 // A failure anywhere rolls back every record this import created.
 import { createHash, randomUUID } from "node:crypto";
 
-import { mcpServerNameError, MAX_MCP_SERVERS, parseStoredMcpServer } from "./mcp-registry.ts";
 import {
-  AGENT_PARTS, agentReleaseValues, connectionLocalValue, connectionReleaseValue, pair, pairs, playbookValues,
+  AGENT_PARTS, agentReleaseValues, pair, pairs, playbookValues,
   ROOM_PARTS, roomReleaseValues, ROUTINE_PARTS, routineReleaseValues, scheduleValue, sha256Hex, TEAM_PARTS,
   type AgentPart, type PartPair, type TeamPart,
 } from "./package-parts.ts";
@@ -77,12 +76,6 @@ export interface PackageImportDeps {
     writeIndex(botId: string, text: string): void;
     writeTopic(botId: string, name: string, text: string): void;
   };
-  mcp: {
-    servers(): Readonly<Record<string, unknown>>;
-    /** The organization's MCP policy (managed desktops); undefined = allowed. */
-    refusal(name: string, server: object): string | undefined;
-    persist(next: Record<string, unknown>): void;
-  };
   sections: { writeBrief(section: string, text: string): void };
   /** Store picture bytes as a normal local avatar; returns its avatar URL. */
   images: { save(bytes: Uint8Array, mime: string): string };
@@ -115,6 +108,8 @@ export interface PackageImportOptions {
   room?: string;
   /** Who may see the new bots: the admin's choice, never the file's. */
   visibility?: BotVisibility;
+  /** The account that initiated the import; imported bots and rooms inherit it. */
+  ownerUserId?: string;
   org?: OrgImportContext;
 }
 
@@ -175,18 +170,6 @@ function memberFromAgent(agent: PackageAgent): TeamManifestMember {
       ...(agent.appearance.mascotBody ? { mascotBody: agent.appearance.mascotBody } : {}),
     },
   };
-}
-
-/** The first free server name for a slot: key, key-2, … (never an existing
- * or reserved name, so a slot can never bind to credentials already here). */
-function freeServerName(key: string, taken: Readonly<Record<string, unknown>>): string | null {
-  for (let n = 1; n < 100; n += 1) {
-    const name = n === 1 ? key : `${key}-${n}`;
-    if (name.length > 32) return null;
-    if (mcpServerNameError(name) || Object.hasOwn(taken, name)) continue;
-    return name;
-  }
-  return null;
 }
 
 type ImportSource =
@@ -284,7 +267,6 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
   const importedBots: BotRecord[] = [];
   const createdGroups: GroupRecord[] = [];
   const createdRoutines: Routine[] = [];
-  const createdServers: string[] = [];
   const createdPresets: string[] = [];
   const skipped: ImportSkip[] = [];
   const orgIndex: OrgInstallIndex = { kind: "team", section: "", team: { parts: {} }, bots: {}, rooms: {}, routines: {}, connections: {} };
@@ -306,43 +288,8 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
     // merge into an existing section (or replace its Chief).
     section = takeImportName(teamName, existingSections, 60);
 
-    // Connection slots first, so bots can be bound to exactly these servers.
-    const serverForKey = new Map<string, string>();
+    // Employees cannot plug in MCP servers: a package installs no connections.
     const connections: PackageImportResult["connections"] = [];
-    if (pkg?.connections?.length) {
-      const next: Record<string, unknown> = { ...deps.mcp.servers() };
-      for (const connection of pkg.connections) {
-        const part = `connections[${connection.key}]`;
-        if (Object.keys(next).length >= MAX_MCP_SERVERS) {
-          skipped.push({ part, reason: "too_many_connections" });
-          continue;
-        }
-        const serverName = freeServerName(connection.key, next);
-        const server = {
-          type: connection.mcp.transport,
-          url: connection.mcp.url,
-          ...(connection.mcp.valueNames.length ? { headers: Object.fromEntries(connection.mcp.valueNames.map((header) => [header, ""])) } : {}),
-          // Off until the person fills in the values and switches it on.
-          enabled: false,
-        };
-        if (!serverName || !parseStoredMcpServer(serverName, server).ok) {
-          skipped.push({ part, reason: "connection_invalid" });
-          continue;
-        }
-        if (deps.mcp.refusal(serverName, server)) {
-          skipped.push({ part, reason: "connection_refused_by_policy" });
-          continue;
-        }
-        next[serverName] = server;
-        createdServers.push(serverName);
-        serverForKey.set(connection.key, serverName);
-        connections.push({ key: connection.key, name: serverName, label: connection.label });
-        if (org) {
-          orgIndex.connections[connection.key] = { name: serverName, ...pair(connectionReleaseValue(connection), connectionLocalValue(server)) };
-        }
-      }
-      if (createdServers.length) deps.mcp.persist(next);
-    }
 
     const playbookByKey = new Map((pkg?.playbooks ?? []).map((playbook) => [playbook.key, playbook]));
     const skillByName = new Map((pkg?.skills?.entries ?? []).map((skill) => [skill.name, skill]));
@@ -357,7 +304,7 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
           section,
           ...(options.visibility ? { visibility: options.visibility } : {}),
         },
-        { seedMessages: false },
+        { seedMessages: false, ownerUserId: options.ownerUserId },
       );
       importedBots.push(created);
       botIds.set(member.key, created.id);
@@ -394,7 +341,6 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
         connectorTools: {},
         ...(playbooks.length ? { playbooks } : {}),
         ...(installed ? { installedPackage: installed } : {}),
-        ...(agent?.connections ? { mcpServers: agent.connections.flatMap((key) => serverForKey.has(key) ? [serverForKey.get(key)!] : []) } : {}),
         ...avatar,
       });
       for (const skillName of agent?.skills ?? []) {
@@ -433,7 +379,7 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
           },
           playbooks: playbookValues(written.playbooks ?? []),
           skills: [...(agent.skills ?? [])].sort(),
-          connections: [...(written.mcpServers ?? [])].sort(),
+          connections: [],
           approval: "ask",
         };
         store.patchBot(created.id, { packageBase: pairs(AGENT_PARTS, agentReleaseValues(agent, playbookByKey), local) });
@@ -452,7 +398,8 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
     const groupIds = new Map<string, string>();
     for (const room of pkg?.rooms ?? []) {
       const ids = room.members.map((key) => botIds.get(key)!);
-      let created = store.createGroup(room.name, ids, false, section);
+      let created = store.createGroup(room.name, ids, false, section,
+        options.ownerUserId ? { ownerUserId: options.ownerUserId } : undefined);
       createdGroups.push(created);
       const responder = room.defaultResponder;
       const defaultResponder = responder.kind === "agent"
@@ -539,7 +486,8 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
     // leaves no half-built project behind.
     if (!pkg && options.mode === "project" && importedBots.length > 0) {
       const roomName = options.room?.trim() || name;
-      group = store.createGroup(roomName, importedBots.map((bot) => bot.id), false, section);
+      group = store.createGroup(roomName, importedBots.map((bot) => bot.id), false, section,
+        options.ownerUserId ? { ownerUserId: options.ownerUserId } : undefined);
       createdGroups.push(group);
       if (options.cwd) {
         // `cwd` is the folder the room WANTS; the store pins it on the
@@ -576,11 +524,6 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
     for (const created of createdGroups) store.deleteGroup(created.id);
     for (const bot of importedBots) store.deleteBot(bot.id);
     deps.presets?.remove(createdPresets);
-    if (createdServers.length) {
-      const next: Record<string, unknown> = { ...deps.mcp.servers() };
-      for (const serverName of createdServers) delete next[serverName];
-      deps.mcp.persist(next);
-    }
     // This import allocated a fresh section (and maybe its brief); a failed
     // installation retires that identity again.
     if (section && store.sections.includes(section)) store.changeEmptySection(section, null);

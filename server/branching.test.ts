@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -49,11 +50,15 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
   let child: ChildProcess;
   let home: string;
   let stderr = "";
+  let ownerToken = "";
 
   const api = async (method: string, path: string, body?: unknown): Promise<{ status: number; body: any }> => {
     const res = await fetch(`${BASE}${path}`, {
       method,
-      headers: body ? { "content-type": "application/json" } : undefined,
+      headers: {
+        ...(body ? { "content-type": "application/json" } : {}),
+        authorization: `Bearer ${ownerToken}`,
+      },
       body: body ? JSON.stringify(body) : undefined,
     });
     return { status: res.status, body: await res.json() };
@@ -91,10 +96,12 @@ posixOnly("conversation branching e2e (fake ACP fleet)", () => {
       }),
     );
 
+    ownerToken = prepareOwnerSession(join(home, ".relay"));
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
       RELAY_PORT: String(PORT),
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {

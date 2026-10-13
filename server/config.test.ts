@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "./schema.ts";
 
-import { customMcpServers,
+import {
   DATA_DIR,
   ensureDirs,
   instanceConfigs,
@@ -1143,103 +1143,11 @@ describe("workspace credential env strip", () => {
   });
 });
 
-describe("customMcpServers", () => {
-  const cfg = (mcpServers: Record<string, unknown>) =>
-    ({ mcpServers }) as Parameters<typeof customMcpServers>[0];
-
-  it("normalizes a valid stdio entry and defaults args/env", () => {
-    expect(
-      customMcpServers(
-        cfg({
-          notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "t" } },
-          bare: { command: "/usr/local/bin/server" },
-        }),
-      ),
-    ).toEqual({
-      notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "t" } },
-      bare: { command: "/usr/local/bin/server", args: [], env: {} },
-    });
-  });
-
-  it("returns {} when the section is absent", () => {
-    expect(customMcpServers({} as Parameters<typeof customMcpServers>[0])).toEqual({});
-  });
-
-  it("narrows to a bot's own list when one is given, and to nothing for an empty list", () => {
-    const all = cfg({ notes: { command: "a" }, linear: { command: "b" }, off: { command: "c", enabled: false } });
-    expect(Object.keys(customMcpServers(all))).toEqual(["notes", "linear"]);
-    expect(Object.keys(customMcpServers(all, ["linear", "gone"]))).toEqual(["linear"]);
-    expect(customMcpServers(all, [])).toEqual({});
-    // a bot's list never re-enables a server the workspace switched off
-    expect(customMcpServers(all, ["off"])).toEqual({});
-  });
-
-  it("skips disabled entries silently", () => {
-    expect(customMcpServers(cfg({ off: { command: "x", enabled: false } }))).toEqual({});
-  });
-
-  it("skips reserved names — a custom entry can never shadow a built-in", () => {
-    const out = customMcpServers(
-      cfg({
-        ogb: { command: "evil" },
-        computer: { command: "evil" },
-        agents: { command: "evil" },
-        fine: { command: "ok" },
-      }),
-    );
-    expect(Object.keys(out)).toEqual(["fine"]);
-  });
-
-  it("skips names that could not survive every driver's namespace", () => {
-    const out = customMcpServers(
-      cfg({
-        "Bad.Name": { command: "x" },
-        "1leading-digit": { command: "x" },
-        "way-too-long-name-way-too-long-name-x": { command: "x" },
-        good_name: { command: "x" },
-      }),
-    );
-    expect(Object.keys(out)).toEqual(["good_name"]);
-  });
-
-  it("passes a url transport through as streamable HTTP", () => {
-    expect(customMcpServers(cfg({ api: { url: "https://x/mcp" } }))).toEqual({ api: { type: "http", url: "https://x/mcp", headers: {} } });
-  });
-
-  it("skips malformed entries without dropping the valid ones", () => {
-    const out = customMcpServers(
-      cfg({
-        broken: { args: ["no-command"] },
-        alsoBad: "not-an-object",
-        keeper: { command: "ok" },
-      }),
-    );
-    expect(Object.keys(out)).toEqual(["keeper"]);
-  });
-});
-
 describe("providerReloadKeys", () => {
   it("rebuilds the fleet only for sections a driver reads", () => {
     expect(providerReloadKeys({ claude: { model: "x" }, profile: { name: "me" } })).toEqual(["claude"]);
     expect(providerReloadKeys({ onboarding: { hintsSeen: ["tour.composer"] } })).toEqual([]);
     expect(providerReloadKeys({ profile: {}, language: "de", features: {} })).toEqual([]);
-  });
-});
-
-describe("customMcpServers with url entries", () => {
-  it("passes remote servers through in the engines' shape, next to commands", () => {
-    const cfg = {
-      mcpServers: {
-        docs: { type: "sse", url: "https://docs.example/sse", headers: { Authorization: "Bearer t" } },
-        notes: { command: "npx" },
-        // one bad address never takes the rest down
-        broken: { url: "not-an-address" },
-      },
-    } as Parameters<typeof customMcpServers>[0];
-    expect(customMcpServers(cfg)).toEqual({
-      docs: { type: "sse", url: "https://docs.example/sse", headers: { Authorization: "Bearer t" } },
-      notes: { command: "npx", args: [], env: {} },
-    });
   });
 });
 

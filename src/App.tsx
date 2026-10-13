@@ -168,6 +168,10 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   // turn the aside into a containing block for its fixed descendants (see
   // Sidebar.tsx's className comment).
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // Desktop sidebar visibility (md+). Mobile uses the drawer instead; the
+  // chat headers carry the desktop toggle button.
+  const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true);
+  const toggleDesktopSidebar = useCallback(() => setDesktopSidebarOpen((value) => !value), []);
   // Apply this device's language, else the server's default, the moment
   // either changes; "" follows the system. The epoch bump re-renders
   // extracted strings — t() reads a module variable, so React needs this nudge.
@@ -352,6 +356,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
           setDrawerOpen(false);
           menuButtonRef.current?.focus();
         }}
+        desktopOpen={desktopSidebarOpen}
       />}
       {state.activeView === "routines" ? (
         <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
@@ -367,9 +372,9 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
-        <GroupView key={group.id} group={group} />
+        <GroupView key={group.id} group={group} sidebarOpen={desktopSidebarOpen} onToggleSidebar={toggleDesktopSidebar} />
       ) : bot ? (
-        <ChatView bot={bot} />
+        <ChatView bot={bot} sidebarOpen={desktopSidebarOpen} onToggleSidebar={toggleDesktopSidebar} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
           <Loader2 size={20} className="animate-spin" />

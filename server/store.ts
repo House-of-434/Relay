@@ -58,9 +58,13 @@ export interface GroupPackageStamp {
 
 /** A room record excludes working state and ledger usage, both computed by
  * publicGroupState at projection time. */
-export type GroupRecord = Omit<WireGroup, "working" | "usage"> & { installedPackage?: GroupPackageStamp };
-/** The one private field is stripped; projection adds computed display fields. */
-export type GroupWirePrivateKeys = "installedPackage";
+export type GroupRecord = Omit<WireGroup, "working" | "usage"> & {
+  installedPackage?: GroupPackageStamp;
+  /** The owning account's Supabase UUID; a room with none is visible to no one. */
+  ownerUserId?: string;
+};
+/** The private fields are stripped; projection adds computed display fields. */
+export type GroupWirePrivateKeys = "installedPackage" | "ownerUserId";
 export type GroupWireProjection = Omit<GroupRecord, GroupWirePrivateKeys> & Pick<WireGroup, "usage"> & { working: boolean };
 export type GroupWireProjectionIsExact = AssertExact<WireGroup, GroupWireProjection> & AssertSameKeys<WireGroup, GroupWireProjection>;
 export const groupWireProjectionIsExact: GroupWireProjectionIsExact = true;
@@ -394,6 +398,9 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
   /** Organization library only: each part's release and written hashes
    * (server/package-parts.ts), for the later automatic update. */
   packageBase?: Partial<Record<AgentPart, PartPair>>;
+  /** The owning account's Supabase UUID, stamped at creation. A bot with none
+   * is visible to no one; email is contact metadata, never an owner key. */
+  ownerUserId?: string;
 }
 
 /** BotRecord fields no client may see, plus the two the projection
@@ -401,7 +408,7 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
  * WireTask[], avatarUrl is coerced to always-present). The exactness
  * assertion fails to compile when either side drifts, so a new server
  * field forces a decision — wire-visible or private here. */
-export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase";
+export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase" | "ownerUserId";
 export type BotWireProjection = Pick<BotRecord, Exclude<keyof BotRecord, BotWirePrivateKeys>>;
 export type BotWireProjectionIsExact = AssertExact<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection> & AssertSameKeys<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection>;
 export const botWireProjectionIsExact: BotWireProjectionIsExact = true;
@@ -633,15 +640,18 @@ export class Store {
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
     const chiefSectionsSeen = new Set<string>();
-    const relayAgentRolesSeen = new Set<RelayAgentRole>();
+    // Role uniqueness is per owner: every account gets its own Scout, Mercury
+    // and Curator, so a repeated role is only dropped within one owner.
+    const relayAgentRolesSeen = new Set<string>();
     let groupsMigrated = false;
     for (const b of this.bots) {
       if (b.relayAgent !== undefined) {
-        if (!isRelayAgentRole(b.relayAgent) || relayAgentRolesSeen.has(b.relayAgent)) {
+        const roleKey = `${b.ownerUserId ?? ""}:${b.relayAgent}`;
+        if (!isRelayAgentRole(b.relayAgent) || relayAgentRolesSeen.has(roleKey)) {
           delete b.relayAgent;
           botsMigrated = true;
         } else {
-          relayAgentRolesSeen.add(b.relayAgent);
+          relayAgentRolesSeen.add(roleKey);
         }
       }
       // transient state never survives a restart — and if a previous
@@ -1163,6 +1173,7 @@ export class Store {
       bulletin?: string;
       defaultResponder?: GroupDefaultResponder;
       completed?: boolean;
+      ownerUserId?: string;
     },
   ): GroupRecord {
     this.rememberSections([section]);
@@ -1182,6 +1193,7 @@ export class Store {
       dm: dm || undefined,
       busyBotId: null,
       section,
+      ...(setup?.ownerUserId ? { ownerUserId: setup.ownerUserId } : {}),
     };
     if (!dm) {
       group.tasks = [{ threadId, title: UNTITLED_TASK, createdAt, updatedAt: createdAt }];
@@ -1659,6 +1671,8 @@ export class Store {
       seedMessages?: boolean;
       /** Server-only Relay role, assigned only by the first-run roster seed. */
       relayAgent?: RelayAgentRole;
+      /** The owning account's Supabase UUID, from the verified session. */
+      ownerUserId?: string;
     } = {},
   ): BotRecord {
     this.rememberSections([profile.section]);
@@ -1683,6 +1697,7 @@ export class Store {
       resumeCursors: {},
       createdAt: Date.now(),
       ...(opts.relayAgent ? { relayAgent: opts.relayAgent } : {}),
+      ...(opts.ownerUserId ? { ownerUserId: opts.ownerUserId } : {}),
     };
     if (section) bot.section = section;
     if (profile.cwd) bot.cwd = profile.cwd;
@@ -1743,6 +1758,8 @@ export class Store {
           title: "", description: "", soul: "", notifications: true, color: COLORS[nextBots.length % COLORS.length], unread: false,
           resumeCursors: {}, createdAt, ...operation.fields, modelSelection,
           approvalMode: "ask", autoApprove: false, composio: false, approvePeerComms: false,
+          // A Chief's new teammate belongs to the Chief's account.
+          ...(chief.ownerUserId ? { ownerUserId: chief.ownerUserId } : {}),
           // A Chief's new teammate is seen by exactly the Chief's audience:
           // a restricted Chief never creates a bot everyone sees.
           ...(chief.visibility && chief.visibility !== "everyone" ? { visibility: structuredClone(chief.visibility) } : {}),
@@ -1884,7 +1901,7 @@ export class Store {
     return true;
   }
 
-  patchBot(id: string, patch: Partial<Omit<BotRecord, "relayAgent">>): BotRecord | null {
+  patchBot(id: string, patch: Partial<Omit<BotRecord, "relayAgent" | "ownerUserId">>): BotRecord | null {
     const bot = this.bot(id);
     if (!bot) return null;
     // Grants are the one field whose shape every writer must share, so the
@@ -2693,13 +2710,16 @@ export class Store {
     return bot;
   }
 
-  /** First-run seed: one bot so the app never opens empty — it gets a
-   * random friendly name like every other bot. */
-  seedRelayAgentsIfMissing(seeds: readonly {
+  /** Seed the three Relay agents for one account. Idempotent per role per
+   * owner: a role already present is left alone, so a retry after a partial
+   * failure creates only the missing roles and never duplicates. An omitted
+   * ownerUserId seeds ownerless records (tests and legacy callers). */
+  seedRelayAgentsForOwner(ownerUserId: string | undefined, seeds: readonly {
     role: RelayAgentRole;
     profile: NonNullable<Parameters<Store["createBot"]>[0]>;
   }[]) {
-    const present = new Map(this.bots.flatMap((bot) => bot.relayAgent ? [[bot.relayAgent, bot] as const] : []));
+    const owned = (bot: BotRecord) => ownerUserId === undefined || bot.ownerUserId === ownerUserId;
+    const present = new Map(this.bots.filter(owned).flatMap((bot) => bot.relayAgent ? [[bot.relayAgent, bot] as const] : []));
     const created: BotRecord[] = [];
     for (const seed of seeds) {
       const existing = present.get(seed.role);
@@ -2713,13 +2733,13 @@ export class Store {
         continue;
       }
       const baseName = seed.profile.name?.trim() || seed.role;
-      const taken = new Set(this.bots.map((bot) => bot.name.trim().toLocaleLowerCase()));
+      const taken = new Set(this.bots.filter(owned).map((bot) => bot.name.trim().toLocaleLowerCase()));
       let name = baseName;
       if (taken.has(name.toLocaleLowerCase())) {
         name = `${baseName} (Relay)`;
         for (let suffix = 2; taken.has(name.toLocaleLowerCase()); suffix++) name = `${baseName} (Relay ${suffix})`;
       }
-      const bot = this.createBot({ ...seed.profile, name }, { relayAgent: seed.role });
+      const bot = this.createBot({ ...seed.profile, name }, { relayAgent: seed.role, ownerUserId });
       this.patchBot(bot.id, {
         computer: "off",
         autoStartVps: false,

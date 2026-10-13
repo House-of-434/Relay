@@ -340,7 +340,6 @@ export interface TeamExportResult {
 }
 
 const KEY_PATTERN = /^[a-z0-9][a-z0-9_-]*$/;
-const CONNECTION_KEY = /^[a-z][a-z0-9_-]{0,27}$/;
 const SEMVER = /^(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})\.(0|[1-9]\d{0,5})$/;
 const DATA_URL = /^data:(image\/(?:png|jpeg|webp));base64,([A-Za-z0-9+/]+={0,2})$/;
 
@@ -384,110 +383,6 @@ export function picture(value: unknown): { mime: "image/png" | "image/jpeg" | "i
   return { mime: match[1] as "image/png" | "image/jpeg" | "image/webp", data: match[2]! };
 }
 
-function remoteServer(raw: unknown): { transport: "http" | "sse"; url: string; valueNames: string[] } | "stdio" | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const server = raw as { url?: unknown; type?: unknown; headers?: unknown; command?: unknown };
-  if (typeof server.url !== "string") return typeof server.command === "string" ? "stdio" : null;
-  const headers = server.headers && typeof server.headers === "object" && !Array.isArray(server.headers) ? Object.keys(server.headers) : [];
-  return { transport: server.type === "sse" ? "sse" : "http", url: server.url, valueNames: headers };
-}
-
-function sharableAddress(value: string): boolean {
-  try {
-    const url = new URL(value);
-    return url.protocol === "https:" || (url.protocol === "http:" && (url.hostname === "localhost" || url.hostname === "[::1]" || /^127(?:\.\d{1,3}){3}$/.test(url.hostname)));
-  } catch {
-    return false;
-  }
-}
-
-/** A run of token characters long enough to be a key. */
-const TOKEN_RUN = /[A-Za-z0-9_-]{16,}/g;
-/** One word of a readable name: letters with at most a short number after
- * them ("server", "v2", "oauth2"), or a short number alone ("2024"). */
-const NAME_WORD = /^[A-Za-z]*\d{0,4}$/;
-
-/** Whether one piece of an address (a path segment, a host label, a query or
- * matrix parameter name) holds a key: somewhere in it, a run of 16 or more
- * token characters that mixes letters and digits, or that has 24 or more
- * letters or 24 or more digits in a row. A run that reads as words joined by
- * hyphens or underscores ("github-mcp-server-2024") is a name, not a key.
- * Percent-escapes are decoded first: "path%20with%20spaces" is words, and an
- * escaped key is still a key. Deliberately broad; the sharer sees the
- * address before saving. */
-function keyShaped(piece: string): boolean {
-  let text = piece;
-  try {
-    text = decodeURIComponent(piece);
-  } catch {
-    // A stray "%" is not an escape; test the text as it is.
-  }
-  return (text.match(TOKEN_RUN) ?? []).some((run) => {
-    if (/[A-Za-z]{24,}|\d{24,}/.test(run)) return true;
-    if (!/[A-Za-z]/.test(run) || !/\d/.test(run)) return false;
-    const words = run.split(/[-_]+/).filter(Boolean);
-    return !(words.length > 1 && words.every((word) => NAME_WORD.test(word)));
-  });
-}
-
-/** What replaces a key-shaped part of an address. */
-export const ADDRESS_KEY_PLACEHOLDER = "redacted";
-
-/** One path segment as it may travel. A segment with a key-shaped part is
- * replaced whole, so no piece of a key split by ":" or ";" is left behind;
- * otherwise its `;name=value` matrix parameters and `name=value` pieces keep
- * their names and lose their values, like query parameters. */
-function shareableSegment(segment: string): string {
-  const parts = segment.split(";");
-  if (parts.some((part) => keyShaped(part.split("=")[0]!))) return ADDRESS_KEY_PLACEHOLDER;
-  return parts.map((part) => (part.includes("=") ? `${part.slice(0, part.indexOf("="))}=` : part)).join(";");
-}
-
-/** A connection address as it may travel. Hosted MCP servers often carry
- * their credential in the address itself, where text redaction does not
- * look, so an address loses its sign-in part and fragment; keeps its query
- * and matrix parameter names with the values emptied (like header names: the
- * recipient fills them in); and has every key-shaped path segment, parameter
- * name and host label left of the registrable domain (taken as the last two
- * labels) replaced. An address with none of these is returned exactly as it
- * was. */
-export function shareableAddress(value: string): { url: string; changed: boolean } {
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    return { url: value, changed: false };
-  }
-  let changed = false;
-  if (url.username || url.password) {
-    url.username = "";
-    url.password = "";
-    changed = true;
-  }
-  if (url.hash) {
-    url.hash = "";
-    changed = true;
-  }
-  const labels = url.hostname.split(".");
-  const hostLabels = labels.map((label, index) => (index < labels.length - 2 && keyShaped(label) ? ADDRESS_KEY_PLACEHOLDER : label));
-  if (hostLabels.some((label, index) => label !== labels[index])) {
-    url.hostname = hostLabels.join(".");
-    changed = true;
-  }
-  const params = [...url.searchParams];
-  const names = params.map(([name]) => (keyShaped(name) ? ADDRESS_KEY_PLACEHOLDER : name));
-  if (params.some(([name, value], index) => value || names[index] !== name)) {
-    url.search = new URLSearchParams(names.map((name) => [name, ""])).toString();
-    changed = true;
-  }
-  const segments = url.pathname.split("/");
-  const shareable = segments.map(shareableSegment);
-  if (shareable.some((segment, index) => segment !== segments[index])) {
-    url.pathname = shareable.join("/");
-    changed = true;
-  }
-  return changed ? { url: url.toString(), changed } : { url: value, changed };
-}
 
 /** The skills that fit one file, for skillSelection "all": a name two bots
  * hold with different content stays out whole; each bot keeps at most
@@ -588,49 +483,14 @@ export function createTeamPackageExport(input: TeamExportInput): TeamExportResul
   if (crowded) throw new TeamExportError(`${crowded.name} has more than ${AGENT_MAX_SKILLS} skills. Choose fewer skills and try again.`);
   const requirements = requiredApps(bots);
 
-  // Connection slots: each remote MCP server a bot names, described by its
-  // address and the header names it needs. Values stay on this computer.
   const connections: PackageConnection[] = [];
-  const connectionKeyByServer = new Map<string, string>();
   const connectionUsers = new Map<string, string[]>();
-  const connectionKeys = new Set<string>();
   const agentConnections = new Map<string, string[]>();
   const addressRedactions: string[] = [];
+  // Employees cannot plug in MCP servers, so a bot has no connection bindings
+  // to export; the connection plumbing below stays empty.
   for (const bot of bots) {
-    const assigned: string[] = [];
-    for (const name of bot.mcpServers ?? []) {
-      if (!connectionKeyByServer.has(name)) {
-        const server = remoteServer(input.mcpServers?.[name]);
-        if (!server) continue;
-        const part = `connections[${name}]`;
-        if (server === "stdio") {
-          if (!skipped.some((skip) => skip.part === part)) skipped.push({ part, reason: "stdio_server" });
-          continue;
-        }
-        if (!sharableAddress(server.url)) {
-          if (!skipped.some((skip) => skip.part === part)) skipped.push({ part, reason: "insecure_address" });
-          continue;
-        }
-        let key = CONNECTION_KEY.test(name) ? name : portableKey(name, "connection", new Set()).replace(/^[^a-z]+/, "").slice(0, 28) || "connection";
-        const stem = key.slice(0, 25);
-        for (let suffix = 2; connectionKeys.has(key); suffix++) key = `${stem}-${suffix}`;
-        connectionKeys.add(key);
-        connectionKeyByServer.set(name, key);
-        const address = shareableAddress(server.url);
-        if (address.changed) addressRedactions.push(`connections[${key}].mcp.url`);
-        connections.push({
-          key,
-          label: name.slice(0, 100),
-          reason: "",
-          mcp: { transport: server.transport, url: address.url, valueNames: server.valueNames },
-        });
-      }
-      const key = connectionKeyByServer.get(name);
-      if (!key) continue;
-      if (!assigned.includes(key)) assigned.push(key);
-      connectionUsers.set(key, [...(connectionUsers.get(key) ?? []), bot.name]);
-    }
-    agentConnections.set(bot.id, assigned);
+    agentConnections.set(bot.id, []);
   }
   for (const connection of connections) {
     connection.reason = `Used by ${[...new Set(connectionUsers.get(connection.key) ?? [])].join(", ")}`.slice(0, 240);

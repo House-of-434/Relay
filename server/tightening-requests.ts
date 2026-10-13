@@ -72,7 +72,6 @@ export interface TighteningRequestStore {
       | "autoApprove"
       | "approvalGrant"
       | "alwaysAllow"
-      | "mcpServers"
       | "approvePeerComms"
       | "composio"
       | "lastTighteningRequestId">>,
@@ -184,7 +183,7 @@ export function tighteningSnapshot(
     composio: bot.composio !== false,
     approvePeerComms: bot.approvePeerComms === true,
     alwaysAllow: bot.alwaysAllow ?? [],
-    mcpServers: extras.mcpServers ?? [...(bot.mcpServers ?? [])],
+    mcpServers: extras.mcpServers ?? [],
     skills: extras.skills ?? [],
   };
 }
@@ -438,9 +437,6 @@ export class TighteningRequestService {
         if (payload.intents.approvalMode !== undefined) {
           throw new TighteningRequestError("Stop this bot's turn before changing its approval level", 409);
         }
-        if (payload.intents.mcpServers !== undefined) {
-          throw new TighteningRequestError("Stop this bot's turns before changing its MCP servers", 409);
-        }
       }
 
       // The capability check runs before any mutation: a workspace that
@@ -458,7 +454,6 @@ export class TighteningRequestService {
       if (payload.intents.composio !== undefined) patch.composio = false;
       if (payload.intents.approvePeerComms !== undefined) patch.approvePeerComms = true;
       if (payload.intents.alwaysAllow !== undefined) patch.alwaysAllow = [...checked.after.alwaysAllow];
-      if (payload.intents.mcpServers !== undefined) patch.mcpServers = [...checked.after.mcpServers];
       if (!this.store.patchBot(target.id, patch)) throw new TighteningRequestError(NO_SUCH_BOT, 404);
 
       // Skills disable AFTER the receipt write. Each disable persists on

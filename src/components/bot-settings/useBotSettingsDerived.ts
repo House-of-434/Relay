@@ -36,7 +36,6 @@ export type BotPatch = Partial<
     | "managedSections"
     | "approvePeerComms"
     | "composio"
-    | "mcpServers"
     | "modelSelection"
   >
 > & {

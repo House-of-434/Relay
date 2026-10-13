@@ -474,28 +474,19 @@ describe("loopback trust: owner on one person's machine, service on a shared wor
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  // Every call the deployed cloud Slack worker makes to the runtime
-  // (openmaus-cloud server/slack-worker.ts, every released version), plus
-  // the bot capability routes and liveness. None of these may break.
+  // The only loopback-without-session calls a service-trust server admits:
+  // liveness/identity (no data), the turn-scoped bot capability routes, and
+  // the test-only capability mint.
   const SERVICE_CALLS: Array<[string, string]> = [
     ["GET", "/api/health"],
-    ["GET", "/api/bots?messages=0"],
-    ["GET", "/api/threads/thread-1/messages?limit=0"],
-    ["GET", "/api/threads/thread-1/messages?limit=200&before=m-1"],
-    ["GET", "/api/attachments/0b3c9f2e-1a2b-4c5d-8e9f-0a1b2c3d4e5f.png"],
-    ["POST", "/api/bots/bot-1/tasks"],
-    ["POST", "/api/bots/bot-1/messages/guarded"],
-    ["GET", "/api/bots/bot-1/requests/job_0123456789abcdef?threadId=thread-1"],
-    ["POST", "/api/bots/bot-1/requests/job_0123456789abcdef/interrupt"],
-    ["DELETE", "/api/bots/bot-1/queue/queue-1"],
-    ["POST", "/api/threads/thread-1/respond"],
     ["GET", "/api/auth/session"],
     ["POST", "/api/internal/ask-bot"],
     ["GET", "/api/internal/agents"],
     ["POST", "/api/internal/hook"],
     ["POST", "/api/testing/internal-capability"],
   ];
-  // Admin changes a bot's shell must not make as the owner.
+  // Admin changes and every data route a bot's shell must not reach as the
+  // owner. A local caller without a session gets 404, not a filtered answer.
   const ADMIN_CALLS: Array<[string, string]> = [
     ["PUT", "/api/config"], ["PATCH", "/api/config"], ["GET", "/api/config"],
     ["POST", "/api/webhooks"], ["GET", "/api/webhooks"],
@@ -504,7 +495,15 @@ describe("loopback trust: owner on one person's machine, service on a shared wor
     ["POST", "/api/instances"], ["GET", "/api/instances"], ["POST", "/api/mcp-servers"],
     ["POST", "/api/keys/test"], ["GET", "/api/usage"], ["GET", "/api/decisions"], ["GET", "/api/decisions.csv"],
     ["POST", "/api/fleet/workspaces"], ["POST", "/api/settings/custom-domain"], ["POST", "/api/workspace-backup/export"],
-    // ordinary sends and answers go through a person's session, not loopback
+    // data reads and ordinary sends and answers go through a person's session
+    ["GET", "/api/bots?messages=0"],
+    ["GET", "/api/threads/thread-1/messages?limit=0"],
+    ["GET", "/api/threads/thread-1/messages?limit=200&before=m-1"],
+    ["GET", "/api/attachments/0b3c9f2e-1a2b-4c5d-8e9f-0a1b2c3d4e5f.png"],
+    ["POST", "/api/bots/bot-1/tasks"], ["POST", "/api/bots/bot-1/messages/guarded"],
+    ["GET", "/api/bots/bot-1/requests/job_0123456789abcdef?threadId=thread-1"],
+    ["POST", "/api/bots/bot-1/requests/job_0123456789abcdef/interrupt"],
+    ["DELETE", "/api/bots/bot-1/queue/queue-1"], ["POST", "/api/threads/thread-1/respond"],
     ["POST", "/api/bots/bot-1/messages"], ["POST", "/api/bots/bot-1/respond"], ["POST", "/api/bots/bot-1/always-allow"],
     ["POST", "/api/groups/room-1/messages"], ["POST", "/api/routines"], ["GET", "/api/events"],
   ];
@@ -524,7 +523,8 @@ describe("loopback trust: owner on one person's machine, service on a shared wor
     for (const [method, path] of ADMIN_CALLS) {
       const denied = check(method, path, { trust: "service" });
       expect(denied.auth, `${method} ${path}`).toBeNull();
-      expect(denied.status).toBe(403);
+      // 404 hides even the route's existence from a session-less local caller.
+      expect(denied.status, `${method} ${path}`).toBe(404);
       expect(denied.error).toMatch(/shared server.*sign in/);
     }
   });

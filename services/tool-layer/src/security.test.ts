@@ -55,6 +55,8 @@ test("entity inserts force actor identity and classification", () => {
     actor_user: ACTOR_USER_ID,
     actor_agent: "scout",
     classification: "internal",
+    owner_user_id: ACTOR_USER_ID,
+    scope: "private",
     embedding: null,
     created_at: "2026-09-29T12:00:00.000Z",
     updated_at: "2026-09-29T12:00:00.000Z",

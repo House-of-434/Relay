@@ -13,7 +13,7 @@ export type WebhookVerificationSample = z.output<typeof verificationSampleSchema
 export type WebhookAttempt = z.output<typeof webhookAttemptSchema>;
 export type WebhookAttemptOutcome = WebhookAttempt["outcome"];
 type StoredWebhookTrigger = z.output<typeof storedWebhookSchema>;
-export type WebhookTrigger = Omit<StoredWebhookTrigger, "secretHash">;
+export type WebhookTrigger = Omit<StoredWebhookTrigger, "secretHash" | "ownerUserId">;
 type DeliveryReceipt = z.output<typeof deliveryReceiptSchema>;
 type WebhookFile = z.output<typeof webhookFileSchema>;
 
@@ -133,6 +133,8 @@ const storedWebhookSchema = z.object({
   // A hand-edited value out of range falls back to the default instead of
   // making the whole webhooks file unreadable.
   maxPendingRuns: maxPendingRunsSchema.optional().catch(undefined),
+  /** The owning account's UUID. A webhook outlives its bot in the list. */
+  ownerUserId: z.string().optional(),
   secretHash: z.string().regex(/^[a-f0-9]{64}$/),
 });
 const deliveryReceiptSchema = z.object({
@@ -229,7 +231,7 @@ function parseTriggerPatch(value: JsonValue): Partial<WebhookTriggerInput> {
 }
 
 function publicTrigger(trigger: StoredWebhookTrigger): WebhookTrigger {
-  const { secretHash: _secretHash, ...safe } = trigger;
+  const { secretHash: _secretHash, ownerUserId: _ownerUserId, ...safe } = trigger;
   return { ...safe };
 }
 
@@ -319,11 +321,16 @@ export class WebhookManager {
     return this.webhooks.map(publicTrigger);
   }
 
+  /** The owning account, for visibility after the bot is gone. */
+  ownerOf(id: string): string | undefined {
+    return this.webhooks.find((webhook) => webhook.id === id)?.ownerUserId;
+  }
+
   listAttempts(): WebhookAttempt[] {
     return this.attempts.map((attempt) => ({ ...attempt }));
   }
 
-  create(input: JsonValue): CreatedWebhook {
+  create(input: JsonValue, ownerUserId?: string): CreatedWebhook {
     const clean = cleanInput(parseTriggerInput(input));
     if (this.options.botState(clean.botId) === "missing") fail(400, "That MAUS no longer exists");
     const now = this.now();
@@ -332,6 +339,7 @@ export class WebhookManager {
       id: randomUUID(),
       endpointId: newEndpointId(),
       ...clean,
+      ...(ownerUserId ? { ownerUserId } : {}),
       secretHash: hashSecret(secret),
       createdAt: now,
       updatedAt: now,

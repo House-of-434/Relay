@@ -2,17 +2,20 @@ import { describe, expect, it } from "vitest";
 
 import { chiefOfStaffSystemPrompt } from "./chief-of-staff.ts";
 
+const OWNER = "owner-uuid";
+
 describe("chiefOfStaffSystemPrompt roster caps", () => {
   it("clips oversized persona fields instead of interpolating them whole", () => {
     const prompt = chiefOfStaffSystemPrompt(
       "chief",
       [
-        { id: "chief", name: "Atlas" },
+        { id: "chief", name: "Atlas", ownerUserId: OWNER },
         {
           id: "big",
           name: "N".repeat(500),
           title: "T".repeat(500),
           description: "D".repeat(10_000),
+          ownerUserId: OWNER,
         },
       ],
       true,
@@ -25,8 +28,8 @@ describe("chiefOfStaffSystemPrompt roster caps", () => {
   });
 
   it("caps the roster length and says how many were left out", () => {
-    const team = Array.from({ length: 60 }, (_, i) => ({ id: `bot${i}`, name: `Bot ${i}` }));
-    const prompt = chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Atlas" }, ...team], true);
+    const team = Array.from({ length: 60 }, (_, i) => ({ id: `bot${i}`, name: `Bot ${i}`, ownerUserId: OWNER }));
+    const prompt = chiefOfStaffSystemPrompt("chief", [{ id: "chief", name: "Atlas", ownerUserId: OWNER }, ...team], true);
     expect(prompt).toContain("Bot 39");
     expect(prompt).not.toContain("Bot 40 —");
     expect(prompt).toContain("…and 20 more");
@@ -35,11 +38,11 @@ describe("chiefOfStaffSystemPrompt roster caps", () => {
 
 describe("chiefOfStaffSystemPrompt", () => {
   const bots = [
-    { id: "chief", name: "Atlas", title: "Operations", section: "Work" },
-    { id: "writer", name: "Quill", title: "Writer", description: "Drafts concise copy", section: "Work" },
-    { id: "coder", name: "Patch", title: "Engineer", busy: true, section: "Work" },
-    { id: "hidden", name: "Secret", hidden: true, section: "Work" },
-    { id: "personal", name: "Scout", title: "Travel planner", section: "Personal" },
+    { id: "chief", name: "Atlas", title: "Operations", section: "Work", ownerUserId: OWNER },
+    { id: "writer", name: "Quill", title: "Writer", description: "Drafts concise copy", section: "Work", ownerUserId: OWNER },
+    { id: "coder", name: "Patch", title: "Engineer", busy: true, section: "Work", ownerUserId: OWNER },
+    { id: "hidden", name: "Secret", hidden: true, section: "Work", ownerUserId: OWNER },
+    { id: "personal", name: "Scout", title: "Travel planner", section: "Personal", ownerUserId: OWNER },
   ];
 
   it("describes visible teammates, roles, and availability", () => {
