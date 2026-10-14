@@ -51,7 +51,7 @@ import { configuredAccountDirectory, assertSeparateClaudeAccount, claudeAccountI
 import { providerIconPatchSchema, withInstanceIcon } from "./provider-icon.ts";
 import { providerIconError } from "../shared/provider-icon.ts";
 import * as checkpoints from "./checkpoints.ts";
-import { commandReceipt } from "./commands.ts";
+import { commandReceipt, runCommand } from "./commands.ts";
 import { buildTurnDigest, coverageForDriver, digestPromptLine, renderDigest, toolEvidence } from "./digest.ts";
 import { appendDecision, bindDecisionRetention, boundRetentionDays, decisionRetentionDays, decisionsCsv, flushDecisionLog, pruneDecisions, readDecisionRange, readDecisions, withDecisionActor, type DecisionActor } from "./decision-log.ts";
 import { validateBotCwd } from "./bot-cwd.ts";
@@ -229,10 +229,15 @@ const RELAY_PORTAL_SESSIONS = process.env.RELAY_PORTAL_SESSIONS === "1";
 const RELAY_TOOL_URL = process.env.RELAY_TOOL_URL?.trim() ||
   (RELAY_SHARED_WORKSPACE ? "http://127.0.0.1:8787" : undefined);
 if (RELAY_TOOL_URL) relayToolMcpServer("scout", RELAY_TOOL_URL);
-// Hold the BFF capability in the harness only, never in environments passed
-// to provider or tool subprocesses.
-let relayBffCapability = process.env.RELAY_BFF_CAPABILITY;
-delete process.env.RELAY_BFF_CAPABILITY;
+// Capabilities the harness holds in memory only: read out of the environment
+// and deleted HERE, at module top, before any monitor or engine can spawn — so
+// a child that inherits the environment (or a driver that spreads
+// `{ ...process.env }`) cannot receive them. Not a boundary; see
+// boot-capabilities.ts.
+const heldCapabilities = holdHarnessCapabilities();
+const relayBffCapability = heldCapabilities.bffCapability;
+const scribeWorkerCapability = heldCapabilities.scribeWorkerCapability;
+const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "http://127.0.0.1:8791";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
@@ -318,7 +323,7 @@ import {
   type TaskRecord,
   toWireTask,
 } from "./store.ts";
-import { inheritThreadOwner, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
+import { inheritThreadOwner, ownerByEmail, recordThreadOwner, threadOwner as recordedThreadOwner } from "./thread-owners.ts";
 import { createDecider, deciderIncludedHere, deciderReady, deciderSavePatch, describeDecider } from "./decider/index.ts";
 import { decideRoomResponder, type RoomRoutingInput } from "./decider/room-routing.ts";
 import { buildRecoveryText, buildTurnContext, engineIsFresh, NATIVELY_REPLAYING_DRIVER_KINDS, peerMessageText } from "./turn-context.ts";
@@ -392,6 +397,7 @@ import {
   computerPrompt,
   composioSystemPrompt,
   customMcpPrompt,
+  mailboxSystemPrompt,
   CREDENTIAL_PROMPT,
   mentionPrompt,
   THREADS_PROMPT,
@@ -466,6 +472,22 @@ import {
   isTurnAdmissionBlocked,
   isTurnEventQuarantined,
 } from "./turn-dispatch-guard.ts";
+import {
+  deliverRoutedMail,
+  MAILBOX_LIST_LIMIT,
+  MAILBOX_POLL_QUERY,
+  MailboxMonitor,
+  routedMailPrompt,
+  routedMailTitle,
+  type MailboxMessage,
+} from "./mailbox-monitor.ts";
+import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
+import { holdHarnessCapabilities } from "./boot-capabilities.ts";
+import { ScribeMonitor, scribeMonitorConfig } from "./scribe-monitor.ts";
+import { createCalendarEventLister } from "./scribe-calendar.ts";
+import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
+import { commandReceipts } from "./scribe-receipts.ts";
+import { parseAdminEmails, scribeAdminEmail, scribeOrganizerEmail, sendScribeEmail } from "./scribe-notice.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
 import { acquireDataDirLeaseForProcess } from "./data-dir-lease.ts";
 import { createWorkspaceAccess, describeEdition, editionStatus, hostedWorkspaceConfiguration, hostedWorkspaceConfigured, editionForMembers, LICENSE_WARN_DAYS, licenseWarning, sharedWorkspaceFullAccessConfigured, loadEnterpriseLayer, workspaceMembership, type EditionStatus, type WorkspaceAccess } from "./enterprise.ts";
@@ -476,6 +498,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
+import { mailboxReplyNeedsNoEmail, sendMailboxCompletionEmail } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -492,7 +515,7 @@ import {
   serializeSessionCookie,
   sessionCookieName,
 } from "./request-auth.ts";
-import { cookieMaxAgeSeconds, formatPairingCode, isUuidUserId, personKey, SessionRegistry, type Scope } from "./sessions.ts";
+import { cookieMaxAgeSeconds, formatPairingCode, isUuidUserId, personKey, personKeyForIdentity, SessionRegistry, type Scope } from "./sessions.ts";
 import { ThreadStarters } from "./thread-starters.ts";
 import {
   activityCsv,
@@ -618,6 +641,12 @@ const sharedComputers = new SharedComputers(id => sessions.isLive(id));
 // OMB Cloud Pro home machine (server/cloud-home.ts, docs/cloud-pro.md). A
 // partial or invalid boot contract stops the server here, before it serves.
 const CLOUD_HOME = cloudHomeConfiguration();
+/** Relay's own shared Gmail account (the mailbox monitor and the prompt
+ * paragraph). Feature is dark when unset. */
+const RELAY_MAILBOX_ADDRESS = process.env.RELAY_MAILBOX_ADDRESS?.trim() || undefined;
+/** Scribe (meeting transcription) has not shipped: until it does, no prompt
+ * may promise that adding the shared address gets a meeting transcribed. */
+const RELAY_SCRIBE_ENABLED = process.env.RELAY_SCRIBE_ENABLED === "1";
 /** Lending a computer to this server (the shared-computer routes, the two
  * agent tools, the advertised capability): the maintainer flag anywhere, and
  * always on an OMB Cloud home, where it is the person's own Mac lent to their
@@ -3300,6 +3329,7 @@ function previewSystemPrompt(bot: BotRecord) {
     }, { note: previewPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
     { id: "composio", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? composioSystemPrompt(bot.connectorTools) : "" },
+    { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(engineMcpServers(bot))) : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
@@ -5744,6 +5774,23 @@ function clearInternalTurn(threadId: string) {
 function isInternalTurn(threadId: string): boolean {
   return internalTurnThreads.has(threadId);
 }
+// A turn whose completion must not raise the workspace-wide "done" banner
+// (mail routed from the shared mailbox, Scribe meeting runs). Unlike an
+// internal turn, the thread still goes unread so the person sees it in the
+// app; only the notification is withheld. Rewritten at every dispatch like
+// the internal flag, so a dead turn cannot silence the next one.
+const silentCompletionThreads = new Set<string>();
+
+function markSilentCompletion(threadId: string) {
+  silentCompletionThreads.add(threadId);
+}
+function clearSilentCompletion(threadId: string) {
+  silentCompletionThreads.delete(threadId);
+}
+/** Consume the flag: a settle releases it, so the next turn is heard. */
+function takeSilentCompletion(threadId: string): boolean {
+  return silentCompletionThreads.delete(threadId);
+}
 // When the person last wrote into each thread with a turn in flight — but
 // only for turns THEY started. post_to_room's ceiling counts the bot posts
 // nobody has answered, and "answered" used to mean a person writing in the
@@ -5756,6 +5803,10 @@ function isInternalTurn(threadId: string): boolean {
 // such a turn finds in its thread may be hours old and its author gone.
 const personAskAt = new Map<string, number>();
 let routines: RoutineManager | null = null;
+/** Native poller for Relay's own shared Gmail account (server/mailbox-monitor.ts). */
+let mailboxMonitor: MailboxMonitor | null = null;
+/** Arms Scribe captures from relay@'s calendar (server/scribe-monitor.ts). */
+let scribeMonitor: ScribeMonitor | null = null;
 let calendarCalls: CalendarCallManager | null = null;
 /** One-shot deep-research jobs. Server-side only; the card carries display
  * text, never the brief's executable payload. Assigned beside
@@ -6936,6 +6987,9 @@ bus.subscribe((event: RuntimeEvent) => {
       // thread nobody types in again (a deleted bot's) is not held forever.
       const internal = isInternalTurn(event.threadId);
       clearInternalTurn(event.threadId);
+      // Routed mail and meeting runs settle quietly: the thread still goes
+      // unread, but no workspace-wide banner fires for every message.
+      const silentCompletion = takeSilentCompletion(event.threadId);
       const generatedKey = turnAttachmentKey(event.threadId, event.turnId);
       const generated = turnAttachmentsByTurn.get(generatedKey) ?? [];
       turnAttachmentsByTurn.delete(generatedKey);
@@ -7123,7 +7177,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // A failed peer turn stays a chip too. The bot that delegated is woken
         // with the failure and answers the person in its own thread — buzzing
         // here as well would ring twice for one piece of news.
-        if ((!routineRun || routineRun.status === "completed") && !internal && !computerSelectionTurns.get(event.threadId)?.selected) {
+        if ((!routineRun || routineRun.status === "completed") && !internal && !silentCompletion && !computerSelectionTurns.get(event.threadId)?.selected) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun
@@ -7131,6 +7185,30 @@ bus.subscribe((event: RuntimeEvent) => {
             : reply;
           const notificationBot = (routineRun && routineSourceOwner(routineRun)?.bot) || bot;
           notify(buildNotification("done", notificationBot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: notificationBot.avatarUrl }));
+        }
+        // Routed mail that finished quietly still reaches its person: the
+        // shared account emails a short result. Invitations and no-op replies
+        // (NO_ACTION) are not worth an email, and failures keep the normal
+        // turn-failed alert instead.
+        if (silentCompletion && event.ok !== false) {
+          const routed = settledTask?.mailRouted;
+          const detail = routineRun ? reply || routineRun.output || "" : reply;
+          if (routed && detail.trim() && !mailboxReplyNeedsNoEmail(detail)) {
+            const mailboxActor = relayMailboxActor();
+            if (!mailboxActor) {
+              console.warn("[mailbox] completion email skipped: no Mercury bot is registered for Relay's account");
+            } else {
+              void sendMailboxCompletionEmail({
+                capability: relayBffCapability,
+                actor: mailboxActor,
+                email: routed.email,
+                title: settledTask?.title ?? "Your request",
+                detail,
+              }).catch((error) => {
+                console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+              });
+            }
+          }
         }
         void digestSettled.finally(() => settleDirectTurn(true));
       } else if (group && speaker) {
@@ -7855,6 +7933,7 @@ function drainQueuedSends() {
       // The drained turn is booked to whoever sent the first waiting line.
       void startTurn(botId, prompt, {
         threadId, userMessage, excludeMessageIds: excludeIds, unattended, onTurnSettled: resolve,
+        silentCompletion: head.silentCompletion === true,
         trigger: queuedTurnTrigger(head),
       }).catch((err) => {
         store.appendMessage(threadId, {
@@ -8073,6 +8152,11 @@ async function startTurn(
     automationSource?: RoutineRunTrigger;
     /** the caller was already running unattended, so this turn is too */
     unattended?: boolean;
+    /** Withhold only the workspace-wide completion banner for this turn's
+     * thread (routed mail, Scribe meeting runs). The thread still goes
+     * unread; the person finds it in the app. Harness-only, never a client
+     * option. */
+    silentCompletion?: boolean;
     /** Bot delivery (including self-opened jobs): whose words this line carries,
      * recorded on the message itself (Message.peerAsk). */
     peerAsk?: Message["peerAsk"];
@@ -8198,6 +8282,10 @@ async function startTurn(
   // time it settles, the fold has only a thread id to go on.
   if (commsDepth > 0) markInternalTurn(threadId);
   else clearInternalTurn(threadId);
+  // Same rewrite discipline for the quiet-completion flag: every dispatch
+  // decides for itself, so a settled or dead turn cannot silence the next.
+  if (opts?.silentCompletion) markSilentCompletion(threadId);
+  else clearSilentCompletion(threadId);
   // a task takes its name from the first thing you asked it to do
   if (resolvedImages.text.trim() && !opts?.cardContinuation) {
     const titled = store.titleTaskFromFirstMessage(bot.id, resolvedImages.text, threadId);
@@ -9069,6 +9157,7 @@ async function startTurn(
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
         { id: "composio", label: "Connected apps", text: integrations.composio ? composioSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) : "" },
+        { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
         { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
@@ -9646,6 +9735,204 @@ routines = new RoutineManager({
     notify(buildNotification("routine-deferred", notificationBot, routineSourceThread(run) ?? bot.threadId, detail));
   },
 });
+
+// ── shared mailbox monitor ──────────────────────────────────────────────
+// Native poll of Relay's own Gmail account (server/mailbox-monitor.ts). Dark
+// unless the address, the owning Supabase user id, and the BFF capability
+// are all present. The monitor talks to the BFF's internal Gmail routes
+// directly, signing a fresh actor assertion per call; the capability lives
+// only in this module and is never written back into process.env.
+const RELAY_MAILBOX_USER_ID = process.env.RELAY_MAILBOX_USER_ID?.trim() || undefined;
+
+/** The per-user actor for relay@-account BFF calls (shared mailbox poll,
+// routed-mail completion emails, Scribe calendar listing and notices): Relay's
+// own user id with its Mercury bot and that bot's standing thread. Mercury
+// roles are scoped per owner since per-user workspaces, so the lookup is by
+// Relay's account, not a global singleton. Undefined when the mailbox is not
+// configured or Relay's account has no Mercury bot yet. */
+function relayMailboxActor(): MailboxActor | undefined {
+  if (!RELAY_MAILBOX_ADDRESS || !RELAY_MAILBOX_USER_ID) return undefined;
+  const mercury = store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === RELAY_MAILBOX_USER_ID);
+  if (!mercury) return undefined;
+  return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId };
+}
+
+const mailboxPollMs = (() => {
+  const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
+  const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
+  return minutes * 60_000;
+})();
+
+if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
+  const mailboxActor = relayMailboxActor();
+  if (!mailboxActor) {
+    console.warn("[mailbox] shared mailbox disabled: no Mercury bot is registered for Relay's account");
+  } else {
+    const mercuryId = mailboxActor.botId;
+    mailboxMonitor = new MailboxMonitor({
+      address: RELAY_MAILBOX_ADDRESS,
+      pollMs: mailboxPollMs,
+      list: async () => {
+        const result = await mailboxBffCall<{ messages: Array<{ id: string }> }>(
+          relayBffCapability,
+          "/api/internal/gmail/messages/list",
+          { query: MAILBOX_POLL_QUERY, maxResults: MAILBOX_LIST_LIMIT, mailbox: "relay" },
+          mailboxActor,
+        );
+        return result.messages ?? [];
+      },
+      read: async (messageId) => {
+        const result = await mailboxBffCall<{ message: MailboxMessage }>(
+          relayBffCapability,
+          "/api/internal/gmail/messages/get",
+          { messageId, mailbox: "relay" },
+          mailboxActor,
+        );
+        return result.message;
+      },
+      // Live sessions first, then the durable thread-owner directory: an
+      // expired session must not turn a known teammate into a stranger.
+      lookupPerson: (email) => {
+        const known = sessions.personByEmail(email) ?? ownerByEmail(DATA_DIR, email);
+        return known ? { userId: known.userId, email: known.email, name: known.email.split("@")[0] } : undefined;
+      },
+      hasReceipt: (kind, key) => commandReceipt(kind, key) !== null,
+      recordReceipt: async (kind, key, detail) => {
+        runCommand({ kind, key }, () => detail ?? null);
+      },
+      deliver: async (message, person) => {
+        const personKey = personKeyForIdentity(person.userId, person.email);
+        const title = routedMailTitle(message, person);
+        const prompt = routedMailPrompt(message, person, { scribeEnabled: RELAY_SCRIBE_ENABLED });
+        const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s); contents not available yet]` : ""}`;
+        await deliverRoutedMail({
+          botId: mercuryId,
+          // Reservation by message id: a retry lands in the same conversation.
+          threadFor: async (messageId) => {
+            const reserved = commandReceipt<{ threadId?: string }>("gmail.thread", messageId);
+            if (reserved?.result?.threadId) return reserved.result.threadId;
+            const task = store.createTask(mercuryId, title, false);
+            if (!task) throw new Error("could not open the routed conversation");
+            if (personKey) threadStarters.set(task.threadId, personKey);
+            store.patchTask(mercuryId, task.threadId, {
+              mailRouted: { userId: person.userId, email: person.email, messageId },
+            });
+            runCommand({ kind: "gmail.thread", key: messageId }, () => ({ threadId: task.threadId }));
+            return task.threadId;
+          },
+          isBlocked: () => botAtThreadCapacity(mercuryId) || Boolean(activeGroupTurnForBot(mercuryId)),
+          queue: (delivery) => {
+            // The queue is keyed by the routed thread and carries the
+            // teammate's sender stamp, so the wait can never move their mail
+            // onto another person's running conversation.
+            queueSteeredMessage(mercuryId, delivery.threadId, delivery.text, {
+              prompt: delivery.prompt,
+              reason: activeGroupTurnForBot(mercuryId) ? "group-turn" : "capacity",
+              sender: delivery.sender,
+              unattended: true,
+              silentCompletion: true,
+            });
+          },
+          run: async (delivery) => {
+            // Idempotent across retries: reuse an appended copy rather than
+            // posting the same mail twice into the reserved thread.
+            const existing = store.messagesFor(delivery.threadId)
+              .findLast((entry) => entry.role === "user" && entry.text === delivery.text);
+            const message = existing ?? store.appendMessage(delivery.threadId, {
+              role: "user",
+              kind: "text",
+              text: delivery.text,
+              sender: delivery.sender,
+            });
+            await startTurn(mercuryId, delivery.prompt, {
+              threadId: delivery.threadId,
+              userMessage: message,
+              sender: delivery.sender,
+              unattended: true,
+              silentCompletion: true,
+            });
+          },
+          isAdmissionBlocked: (error) => isTurnAdmissionBlocked(error),
+        }, { message, person, personKey, text, prompt });
+      },
+      log: (event) => {
+        const line = `[mailbox] ${JSON.stringify(event)}`;
+        if (event.event === "mailbox.tick") console.log(line);
+        else console.warn(line);
+      },
+    });
+  }
+}
+
+// ── Scribe capture monitor ──────────────────────────────────────────────
+// Dark until the operator enables it AND the worker capability + relay@'s
+// mailbox identity are configured. Every tick lists relay@'s calendar over the
+// BFF internal route and arms captures on the worker; the worker capability
+// lives only in this module and is never written back into process.env.
+if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELAY_MAILBOX_ADDRESS) {
+  // The calendar list and notice emails sign as relay@'s own per-user actor,
+  // so the monitor stays dark until Relay's account owns a Mercury bot.
+  const scribeMailboxActor = relayMailboxActor();
+  if (!scribeMailboxActor) {
+    console.warn("[scribe] monitor disabled: no Mercury bot is registered for Relay's account");
+  } else {
+    const scribeConfig = scribeMonitorConfig();
+    // Organizer-first, only if the address belongs to a known member.
+    const knownScribeRecipient = (email: string | undefined): string | undefined => {
+      const e = email?.trim().toLowerCase();
+      if (!e) return undefined;
+      return sessions.personByEmail(e) ?? ownerByEmail(DATA_DIR, e) ? e : undefined;
+    };
+    // Admins for the signed-out case: RELAY_SCRIBE_ADMIN_EMAILS, kept only if a
+    // configured address belongs to a known member. Never an invented list.
+    const configuredAdmins = parseAdminEmails(process.env.RELAY_SCRIBE_ADMIN_EMAILS);
+    const scribeAdminEmails = configuredAdmins.filter((email) => knownScribeRecipient(email) !== undefined);
+    if (configuredAdmins.length > 0 && scribeAdminEmails.length === 0) {
+      console.warn(
+        "[scribe] RELAY_SCRIBE_ADMIN_EMAILS is set but none of its addresses belong to a known member; signed-out alerts have no admin recipient",
+      );
+    }
+    scribeMonitor = new ScribeMonitor(
+      {
+        listEvents: createCalendarEventLister({ capability: relayBffCapability, actor: scribeMailboxActor, maxResults: scribeConfig.maxResults }),
+        joinWorker: createWorkerJoinClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+        status: createWorkerStatusClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+        receipts: commandReceipts(),
+        selfAddress: RELAY_MAILBOX_ADDRESS,
+        notify: async (notice) => {
+          const recipient = knownScribeRecipient(notice.organizer_email) ?? knownScribeRecipient(notice.creator_email);
+          if (recipient) {
+            await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice), scribeMailboxActor);
+          } else {
+            console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
+          }
+          if (notice.signedOut) {
+            if (scribeAdminEmails.length === 0) {
+              console.error(
+                `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
+              );
+            } else {
+              for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail(), scribeMailboxActor);
+            }
+          }
+        },
+        log: (message) => console.log(message),
+      },
+      scribeConfig,
+    );
+    console.log(`[scribe] monitor enabled -> ${RELAY_SCRIBE_WORKER_URL}`);
+  }
+} else if (RELAY_SCRIBE_ENABLED) {
+  const missing = [
+    relayBffCapability ? null : "RELAY_BFF_CAPABILITY",
+    scribeWorkerCapability ? null : "RELAY_SCRIBE_WORKER_CAPABILITY",
+    RELAY_MAILBOX_ADDRESS ? null : "RELAY_MAILBOX_ADDRESS",
+  ].filter((name): name is string => name !== null);
+  console.warn(`[scribe] RELAY_SCRIBE_ENABLED=1 but monitor disabled: missing ${missing.join(", ")}`);
+} else {
+  console.log("[scribe] monitor disabled (RELAY_SCRIBE_ENABLED != 1)");
+}
+
 orgLibrary = new OrgLibrary({
   dataDir: DATA_DIR,
   store,
@@ -11137,6 +11424,7 @@ async function runGroupMemberTurn(
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer ?? undefined) },
     { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
+    { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
     { id: "recent", label: "Recent work", text: recentWorkPrompt(recentLines) },
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
@@ -13636,8 +13924,8 @@ const workspaceBackupAccess = {
       teamComputers.list().every(computer => !teamComputerInUse(computer)) &&
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
-    pause: () => { routines?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    pause: () => { routines?.stop(); mailboxMonitor?.stop(); scribeMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
+    resume: () => { routines?.start(); mailboxMonitor?.start(); scribeMonitor?.start(); if (!RELAY_COMPUTER_DISABLED) calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // With writers gated and work idle, release our WAL connection for the
@@ -13683,7 +13971,10 @@ ROUTES.push(createPortalSessionRoutes({
     sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
   }),
 }));
-relayBffCapability = undefined;
+// The BFF capability is captured at the top of this module and kept there
+// for the process lifetime: the shared-mailbox monitor and Scribe call the
+// BFF's internal routes directly. It is never written back into
+// process.env, which engine driver child processes inherit.
 // Install statuses come from the organization library's own state, never
 // its file, so New bot cannot disagree with it. No organization: none.
 const orgInstallStatuses = () => orgLibrary?.installStatuses() ?? new Map();
@@ -22284,6 +22575,8 @@ server.listen(PORT, "127.0.0.1", () => {
   // ordinary chat. Start only once every registry is initialized and the
   // endpoint is listening; earlier dispatch can hit uninitialized bindings.
   routines!.start();
+  mailboxMonitor?.start();
+  scribeMonitor?.start();
   memoryUpkeep.start();
   const leftover = pendingThreads();
   if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
@@ -22332,6 +22625,8 @@ const gracefulShutdown = createGracefulShutdown({
       for (const idle of localVmIdles.values()) idle.cancel();
       vps.closeAllVpsDesktopTunnels();
       watchdog.stop();
+      mailboxMonitor?.stop();
+      scribeMonitor?.stop();
       routines?.stop();
       calendarCalls?.stop();
       memoryUpkeep.stop();

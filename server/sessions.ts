@@ -156,13 +156,23 @@ export function isUuidUserId(value: string | undefined): value is string {
   return typeof value === "string" && USER_ID_UUID.test(value);
 }
 
+/** The person key for a verified identity with no session behind it: same
+ * basis as personKey, so a sessionless caller (the shared-mailbox monitor,
+ * Scribe) stamps exactly the key the person's own session would. Returns
+ * undefined when neither half of the identity is verified. */
+export function personKeyForIdentity(userId: string | undefined, email: string | undefined): string | undefined {
+  const basis = isUuidUserId(userId) ? `user:${userId.toLowerCase()}` : email
+    ? `email:${email.trim().toLowerCase()}`
+    : undefined;
+  if (!basis) return undefined;
+  return `p_${createHash("sha256").update(basis).digest("base64url").slice(0, 22)}`;
+}
+
 /** Stable attribution key: prefer the verified account UUID, then legacy
  * email metadata, then the paired/local session id. */
 export function personKey(session: Pick<SessionRecord, "id" | "userId" | "email">): string {
-  const basis = isUuidUserId(session.userId) ? `user:${session.userId.toLowerCase()}` : session.email
-    ? `email:${session.email.trim().toLowerCase()}`
-    : `session:${session.id}`;
-  return `p_${createHash("sha256").update(basis).digest("base64url").slice(0, 22)}`;
+  return personKeyForIdentity(session.userId, session.email)
+    ?? `p_${createHash("sha256").update(`session:${session.id}`).digest("base64url").slice(0, 22)}`;
 }
 
 /** A device's name as the sessions list shows it: what a client sent, less
@@ -621,6 +631,23 @@ export class SessionRegistry {
   isLive(sessionId: string): boolean {
     this.prune();
     return this.sessions.some((s) => s.id === sessionId);
+  }
+
+  /** A live session's verified identity by email. Expired sessions are
+   * pruned and persisted away, so callers that need a durable directory
+   * (the shared-mailbox monitor) must also consult server-owned records
+   * such as thread owners. */
+  personByEmail(email: string): { userId: string; email: string } | undefined {
+    this.prune();
+    const target = email.trim().toLowerCase();
+    if (!target) return undefined;
+    for (const record of this.sessions) {
+      const address = record.email?.trim();
+      if (isUuidUserId(record.userId) && address && address.toLowerCase() === target) {
+        return { userId: record.userId, email: address };
+      }
+    }
+    return undefined;
   }
 
   list(): PublicSession[] {

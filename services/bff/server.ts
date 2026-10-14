@@ -61,6 +61,10 @@ export interface RelayBffConfig {
   googleRedirectUri?: string;
   googleTokenEncryptionKey?: string;
   relayToolActorSecret?: string;
+  /** Relay's own shared Gmail account: the address and the Supabase user id
+   * that owns its connection. Both are required for `mailbox: "relay"`. */
+  relayMailboxAddress?: string;
+  relayMailboxUserId?: string;
   dataDir?: string;
 }
 
@@ -117,6 +121,8 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     supabaseAnonKey: env.SUPABASE_ANON_KEY!,
     relayBffCapability: env.RELAY_BFF_CAPABILITY!,
     relayToolActorSecret: env.RELAY_TOOL_ACTOR_SECRET,
+    relayMailboxAddress: env.RELAY_MAILBOX_ADDRESS?.trim(),
+    relayMailboxUserId: env.RELAY_MAILBOX_USER_ID?.trim(),
     relayBffPublicUrl: env.RELAY_BFF_PUBLIC_URL?.trim() || `http://localhost:${bffPort}`,
     bffPort,
     ombPort: parsePort(env.RELAY_PORT, DEFAULT_RELAY_PORT, "RELAY_PORT"),
@@ -1404,6 +1410,8 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
+        mailboxAddress: config.relayMailboxAddress,
+        mailboxUserId: config.relayMailboxUserId,
         now,
       });
       return;

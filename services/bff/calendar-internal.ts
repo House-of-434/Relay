@@ -7,12 +7,18 @@ import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway, MissingGoogleApiScopesError
 import type { GoogleConnectionMetadata } from "./google-connections.ts";
 
 export const INTERNAL_CALENDAR_EVENTS_LIST = "/api/internal/calendar/events/list";
+/** Monitor-only projection: same route auth, but it carries the join surface
+ *  (hangoutLink/conferenceData/recurringEventId/originalStartTime) the capture
+ *  pipeline needs and tolerates the skeletal rows a sync stream returns for
+ *  cancelled events. The agent route never returns these fields. */
+export const INTERNAL_CALENDAR_EVENTS_LIST_JOIN = "/api/internal/calendar/events/list-join";
 export const INTERNAL_CALENDAR_EVENTS_CREATE = "/api/internal/calendar/events/create";
 export const INTERNAL_CALENDAR_EVENTS_UPDATE = "/api/internal/calendar/events/update";
 export const INTERNAL_CALENDAR_EVENTS_DELETE = "/api/internal/calendar/events/delete";
 
 const INTERNAL_CALENDAR_PATHS = [
   INTERNAL_CALENDAR_EVENTS_LIST,
+  INTERNAL_CALENDAR_EVENTS_LIST_JOIN,
   INTERNAL_CALENDAR_EVENTS_CREATE,
   INTERNAL_CALENDAR_EVENTS_UPDATE,
   INTERNAL_CALENDAR_EVENTS_DELETE,
@@ -68,11 +74,22 @@ const eventTime = z.union([
   z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }).strict(),
 ]);
 
-const listSchema = z.object({
+const listRangeSchema = z.object({
   timeMin: rfc3339,
   timeMax: rfc3339,
   maxResults: z.number().int().min(1).max(MAX_LIST_RESULTS).optional(),
+  pageToken: z.string().min(1).max(2048).optional(),
 }).strict();
+
+/** A sync listing returns only changes since the token and cannot be combined
+ *  with timeMin/timeMax/orderBy. It is accepted on the monitor route only. */
+const listSyncSchema = z.object({
+  syncToken: z.string().min(1).max(4096),
+  maxResults: z.number().int().min(1).max(MAX_LIST_RESULTS).optional(),
+  pageToken: z.string().min(1).max(2048).optional(),
+}).strict();
+
+const listSchema = z.union([listRangeSchema, listSyncSchema]);
 
 const createSchema = z.object({
   summary: z.string().min(1).max(MAX_TITLE),
@@ -189,12 +206,56 @@ function safePrincipal(raw: unknown): { email?: string; self?: boolean } | undef
   return shaped.email || shaped.self !== undefined ? shaped : undefined;
 }
 
-function safeEvent(raw: unknown, accountEmail: string): Record<string, unknown> | undefined {
+const MAX_URI = 2048;
+const MAX_LABEL = 256;
+
+/**
+ * The join surface the capture pipeline needs: dial-in entry points with
+ * their URIs and passcodes, bounded like every other field. The passcode
+ * travels only as far as the join descriptor the monitor builds — it is
+ * never logged and never persisted (see plans/scribe-stt.md §6.4).
+ */
+function safeConferenceData(raw: unknown): Record<string, unknown> | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const data = raw as Record<string, unknown>;
+  if (!Array.isArray(data.entryPoints)) return undefined;
+  const entryPoints = data.entryPoints.flatMap((entry) => {
+    if (!entry || typeof entry !== "object") return [];
+    const point = entry as Record<string, unknown>;
+    if (typeof point.uri !== "string") return [];
+    return [{
+      ...(typeof point.entryPointType === "string" ? { entryPointType: point.entryPointType.slice(0, MAX_LABEL) } : {}),
+      uri: point.uri.slice(0, MAX_URI),
+      ...(typeof point.label === "string" ? { label: point.label.slice(0, MAX_LABEL) } : {}),
+      ...(typeof point.passcode === "string" ? { passcode: point.passcode.slice(0, MAX_LABEL) } : {}),
+    }];
+  });
+  return entryPoints.length > 0 ? { entryPoints } : undefined;
+}
+
+interface SafeEventOptions {
+  /** Emit the join surface (hangoutLink/conferenceData/recurringEventId/
+   *  originalStartTime). Monitor route only; the agent route omits all four. */
+  includeJoin?: boolean;
+  /** Keep events that lack start/end. A sync stream returns skeletal rows for
+   *  cancelled events, and cancellation -> /stop depends on seeing them. */
+  allowSkeletal?: boolean;
+}
+
+function safeEvent(raw: unknown, accountEmail: string, options: SafeEventOptions = {}): Record<string, unknown> | undefined {
+  const { includeJoin = false, allowSkeletal = false } = options;
   if (!raw || typeof raw !== "object") return undefined;
   const event = raw as Record<string, unknown>;
   const start = safeEventTime(event.start);
   const end = safeEventTime(event.end);
-  if (typeof event.id !== "string" || !start || !end) return undefined;
+  if (typeof event.id !== "string") return undefined;
+  if (!allowSkeletal && (!start || !end)) return undefined;
+  const conferenceData = safeConferenceData(event.conferenceData);
+  const originalStart = event.originalStartTime;
+  const originalStartTime = originalStart && typeof originalStart === "object" &&
+    typeof (originalStart as Record<string, unknown>).dateTime === "string"
+    ? (originalStart as Record<string, unknown>).dateTime as string
+    : undefined;
   return {
     id: event.id,
     accountEmail,
@@ -202,14 +263,26 @@ function safeEvent(raw: unknown, accountEmail: string): Record<string, unknown> 
     description: typeof event.description === "string" ? event.description.slice(0, MAX_DESCRIPTION) : undefined,
     location: typeof event.location === "string" ? event.location.slice(0, MAX_LOCATION) : undefined,
     status: event.status === "cancelled" ? "cancelled" : event.status === "tentative" ? "tentative" : "confirmed",
-    start,
-    end,
+    ...(start ? { start } : {}),
+    ...(end ? { end } : {}),
     htmlLink: typeof event.htmlLink === "string" ? event.htmlLink.slice(0, 1024) : undefined,
     updated: typeof event.updated === "string" ? event.updated : undefined,
+    ...(includeJoin && typeof event.hangoutLink === "string" ? { hangoutLink: event.hangoutLink.slice(0, MAX_URI) } : {}),
+    ...(includeJoin && conferenceData ? { conferenceData } : {}),
+    ...(includeJoin && typeof event.recurringEventId === "string" ? { recurringEventId: event.recurringEventId.slice(0, 512) } : {}),
+    ...(includeJoin && originalStartTime ? { originalStartTime } : {}),
     ...(safePrincipal(event.organizer) ? { organizer: safePrincipal(event.organizer) } : {}),
     ...(safePrincipal(event.creator) ? { creator: safePrincipal(event.creator) } : {}),
     attendees: safeAttendees(event.attendees),
   };
+}
+
+/** Google answers an invalid/expired syncToken with 410 Gone; the monitor drops
+ *  the token and re-lists from scratch. */
+function isInvalidSyncToken(error: unknown): boolean {
+  const candidate = error as { response?: { status?: number }; code?: number | string } | undefined;
+  const code = candidate?.code;
+  return candidate?.response?.status === 410 || code === 410 || code === "410";
 }
 
 async function resolveCalendar(options: InternalCalendarOptions, actor: RelayActor): Promise<GoogleConnectionMetadata | undefined> {
@@ -283,45 +356,72 @@ export async function handleInternalCalendar(
     return;
   }
 
-  const writing = pathname !== INTERNAL_CALENDAR_EVENTS_LIST;
+  // Both listing routes are reads; only create/update/delete need the write scope.
+  const writing = pathname !== INTERNAL_CALENDAR_EVENTS_LIST && pathname !== INTERNAL_CALENDAR_EVENTS_LIST_JOIN;
   const requiredScope = writing
     ? GOOGLE_API_SCOPE_CATALOG["google-calendar"].eventsWrite
     : GOOGLE_API_SCOPE_CATALOG["google-calendar"].read;
 
   try {
-    if (pathname === INTERNAL_CALENDAR_EVENTS_LIST) {
+    if (pathname === INTERNAL_CALENDAR_EVENTS_LIST || pathname === INTERNAL_CALENDAR_EVENTS_LIST_JOIN) {
+      const join = pathname === INTERNAL_CALENDAR_EVENTS_LIST_JOIN;
       const parsed = listSchema.safeParse(raw);
       if (!parsed.success) {
         json(res, 400, { error: "invalid calendar range" });
         return;
       }
-      const start = Date.parse(parsed.data.timeMin);
-      const finish = Date.parse(parsed.data.timeMax);
-      if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start ||
-          finish - start > MAX_RANGE_DAYS * 24 * 60 * 60 * 1000) {
-        json(res, 400, { error: "invalid calendar range" });
+      const data = parsed.data;
+      if ("syncToken" in data && !join) {
+        json(res, 400, { error: "syncToken is not accepted on this route" });
         return;
       }
-      const events = await options.googleApi.withClient(
-        actor.userId,
-        "google-calendar",
-        calendar.id,
-        [requiredScope],
-        async (client) => {
-          const response = await client.events.list({
-            calendarId: PRIMARY,
-            timeMin: parsed.data.timeMin,
-            timeMax: parsed.data.timeMax,
-            singleEvents: true,
-            orderBy: "startTime",
-            maxResults: parsed.data.maxResults ?? MAX_LIST_RESULTS,
-          });
-          return (response.data.items ?? [])
-            .map((item) => safeEvent(item, calendar!.email))
-            .filter((item): item is Record<string, unknown> => Boolean(item));
-        },
-      );
-      json(res, 200, { calendar: { email: calendar.email }, events });
+      if ("timeMin" in data) {
+        const start = Date.parse(data.timeMin);
+        const finish = Date.parse(data.timeMax);
+        if (!Number.isFinite(start) || !Number.isFinite(finish) || finish <= start ||
+            finish - start > MAX_RANGE_DAYS * 24 * 60 * 60 * 1000) {
+          json(res, 400, { error: "invalid calendar range" });
+          return;
+        }
+      }
+      let listed: { events: Record<string, unknown>[]; nextPageToken?: string; nextSyncToken?: string };
+      try {
+        listed = await options.googleApi.withClient(
+          actor.userId,
+          "google-calendar",
+          calendar.id,
+          [requiredScope],
+          async (client) => {
+            const response = await client.events.list({
+              calendarId: PRIMARY,
+              singleEvents: true,
+              maxResults: data.maxResults ?? MAX_LIST_RESULTS,
+              ...(data.pageToken ? { pageToken: data.pageToken } : {}),
+              ...("syncToken" in data
+                ? { syncToken: data.syncToken }
+                : { timeMin: data.timeMin, timeMax: data.timeMax, orderBy: "startTime" }),
+            });
+            const events = (response.data.items ?? [])
+              .map((item) => safeEvent(item, calendar!.email, { includeJoin: join, allowSkeletal: join }))
+              .filter((item): item is Record<string, unknown> => Boolean(item));
+            return { events, nextPageToken: response.data.nextPageToken ?? undefined, nextSyncToken: response.data.nextSyncToken ?? undefined };
+          },
+        );
+      } catch (error) {
+        // An invalid/expired syncToken is not a transient provider failure: the
+        // monitor must drop it and re-list. Surface it distinctly.
+        if ("syncToken" in data && isInvalidSyncToken(error)) {
+          json(res, 410, { error: "sync token is invalid or expired" });
+          return;
+        }
+        throw error;
+      }
+      json(res, 200, {
+        calendar: { email: calendar.email },
+        events: listed.events,
+        ...(listed.nextPageToken ? { nextPageToken: listed.nextPageToken } : {}),
+        ...(join && listed.nextSyncToken ? { nextSyncToken: listed.nextSyncToken } : {}),
+      });
       return;
     }
 

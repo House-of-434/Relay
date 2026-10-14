@@ -496,9 +496,11 @@ test("requires BFF capability and Supabase configuration instead of starting a d
     SUPABASE_ANON_KEY,
     RELAY_BFF_CAPABILITY: BFF_CAPABILITY,
   });
-  const { googleOAuthClients, googleRedirectUri, googleTokenEncryptionKey, relayToolActorSecret, dataDir, ...baseConfig } = defaultConfig;
+  const { googleOAuthClients, googleRedirectUri, googleTokenEncryptionKey, relayToolActorSecret, relayMailboxAddress, relayMailboxUserId, dataDir, ...baseConfig } = defaultConfig;
   assert.deepEqual(baseConfig, CONFIG);
   assert.equal(relayToolActorSecret, undefined);
+  assert.equal(relayMailboxAddress, undefined);
+  assert.equal(relayMailboxUserId, undefined);
   assert.equal(configFromEnvironment({
     SUPABASE_PROJECT_URL: PROJECT_URL,
     SUPABASE_ANON_KEY,

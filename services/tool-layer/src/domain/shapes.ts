@@ -80,6 +80,29 @@ export const SHAPES: Record<string, Shape> = {
     },
     require: [],
   },
+  // Meeting transcripts are read-only for agents: the capture pipeline writes
+  // them through the ingest route, never through relay_write. Segments stay
+  // unregistered — relay_read can't order/page transcript text, so they are
+  // served only by the bespoke get_meeting_transcript/search_meetings tools.
+  "transcripts.meetings": {
+    writable: [],
+    serverSet: [
+      "platform", "instance_id", "calendar_event_id", "native_id", "title",
+      "scheduled_start", "scheduled_end", "actual_start", "actual_end",
+      "status", "error", "organizer_email", "invited_by", "invitees",
+      "audio_path", "segment_count", "duration_seconds", "ingested_at",
+      "created_at", "updated_at",
+    ],
+    filterable: [
+      "id", "platform", "status", "scheduled_start", "organizer_email",
+      "calendar_event_id",
+    ],
+    valueEnums: {
+      platform: ["google_meet", "zoom", "teams"],
+      status: ["joining", "awaiting_admission", "active", "completed", "partial", "failed", "skipped"],
+    },
+    require: [],
+  },
 };
 
 const FILTER_OPERATORS = ["_gte", "_lte", "_in", "_like"] as const;

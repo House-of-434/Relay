@@ -118,3 +118,72 @@ is never published, so only compose-network peers can dial it).
 The Tool Layer listens on `0.0.0.0` here (`RELAY_TOOL_HOST`) because the
 harness reaches it over the compose network. Bare processes keep the
 `127.0.0.1` default. The HMAC actor assertion is the real boundary either way.
+
+## Scribe (meeting capture)
+
+Two more services, both compose-network only (no published ports):
+
+| Service | Runs | Reachable as | Data |
+|---|---|---|---|
+| `scribe` | Per-channel capture worker (`:8791`): joins relay@'s meetings, taps per-participant audio, writes rows via the Tool Layer | `http://scribe:8791` from `app`/`tools` only | `scribe_data` volume at `/data` (signed-in profile, spool, failures, probes) — mounted ONLY here |
+| `stt` | Shared Parakeet int8 STT server (`:8090`), 16 kHz WAV → text | `http://stt:8090` from `scribe` only | model baked into the image |
+
+Capabilities live in their own gitignored files (see
+`.env.ingest.example` / `.env.scribe.example`):
+
+```sh
+cp .env.ingest.example .env.ingest   # RELAY_INGEST_CAPABILITY (tools + scribe)
+cp .env.scribe.example .env.scribe   # RELAY_SCRIBE_WORKER_CAPABILITY (app + scribe)
+```
+
+The `scribe` container holds **only** those two; `app` holds the worker
+capability; `tools` holds the ingest capability. The harness monitor arms
+captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
+`RELAY_SCRIBE_ENABLED` gates the whole feature.
+
+`RELAY_SCRIBE_DISCLOSURE` is the one-line notice the bot posts to the **Meet**
+chat once after admission (empty disables it; default "This meeting is
+transcribed by Relay AI."). It is best-effort: Meet selector drift is logged as
+a non-fatal `disclosure_posted=false`, never a capture failure.
+
+### One-time browser logins (on the host that runs `scribe`)
+
+Providers bind sessions to egress IP, so logins must happen **in this compose
+host/container**, never copied from a laptop, and **headful** under Xvfb (the
+image ships Xvfb; `start-scribe.sh` runs the display). Two independent sessions
+live in the `scribe_data` volume's profile:
+
+- **relay@ (Google) — required for Meet.** Run a headful Chromium on the worker
+  display, expose VNC on loopback (`x11vnc -display :99 -localhost -rfbport
+  5901`), tunnel to it, sign in as relay@ (Workspace + 2FA), open Meet once,
+  then **close the browser gracefully** (a `kill -9` does not flush the profile
+  and the session is lost).
+- **Zoom — required for Zoom.** Same profile, sign in at `zoom.us/signin`,
+  preferably **Sign in with Google** with the same account. Zoom's web client
+  walls anonymous/automated joins ("automated bots aren't allowed … must use
+  Zoom RTMS") and it **detects a headless browser**, so it needs both a
+  signed-in session AND a headful browser. With both, the bot joins as the
+  account identity.
+
+Full steps: `plans/scribe-stt.md` §7.
+
+### Deploy order (feature is off by default)
+
+1. Bring up the Tool Layer with the ingest route first (`tools` gains
+   `.env.ingest`): `docker compose up -d tools app`.
+2. Build and start the worker + STT with the feature OFF so nothing arms:
+   `RELAY_SCRIBE_ENABLED=0 docker compose up -d --build scribe stt`.
+3. Verify: `docker compose exec scribe curl -sf http://127.0.0.1:8791/healthz`,
+   `docker compose exec stt curl -sf http://127.0.0.1:8090/health`, the one-time
+   login, then a manual `POST /join` (bearer from `.env.scribe`) against a test
+   meeting and read the rows back.
+4. Rehearse (reschedule/cancel/kill-mid-meeting), then set
+   `RELAY_SCRIBE_ENABLED=1` and flip the prompt line.
+
+### Image notes
+
+- `scribe` bakes Playwright Chromium (`PLAYWRIGHT_BROWSERS_PATH=/ms-playwright`);
+  `RELAY_SCRIBE_MEM_LIMIT` (default `4g`) bounds a runaway Chrome. CPU is the
+  tighter limit on a 2 vCPU host — measure before raising `RELAY_SCRIBE_MAX_CONCURRENT`.
+- `stt` downloads the Parakeet TDT 0.6B v2 int8 model (~480 MB) at build; override
+  the `MODEL_URL` build arg to change/pin it. Attribution: `deploy/local/STT-NOTICE.md`.

@@ -34,6 +34,16 @@ export function bffConfig(env: NodeJS.ProcessEnv = process.env): BffConfig {
   };
 }
 
+/**
+ * Capture-ingest capability. Lives in .env.ingest, loaded only by the tools
+ * and scribe services — never root .env.secrets, never the harness. Absent
+ * in dev until the operator provisions it; the route fails closed.
+ */
+export function ingestCapability(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const value = env.RELAY_INGEST_CAPABILITY?.trim();
+  return value ? value : undefined;
+}
+
 export interface BladeConfig {
   /** Parent of per-user workspaces (`<root>/<userId>`). Stable XDG path by
    * default so saved logins survive restarts; override per deployment. */

@@ -1,0 +1,10 @@
+{
+  "name": "@vexa/transcribe-whisper",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Vendored @vexa/transcribe-whisper: the stt.v1 egress client + low-confidence filter. ADAPTED for Relay: exports resolve to the flattened .ts sources (no build step).",
+  "type": "module",
+  "exports": {
+    ".": { "types": "./index.ts", "default": "./index.ts" }
+  }
+}

@@ -15,6 +15,7 @@ import {
   INTERNAL_CALENDAR_EVENTS_CREATE,
   INTERNAL_CALENDAR_EVENTS_DELETE,
   INTERNAL_CALENDAR_EVENTS_LIST,
+  INTERNAL_CALENDAR_EVENTS_LIST_JOIN,
   INTERNAL_CALENDAR_EVENTS_UPDATE,
   isInternalCalendarPath,
 } from "./calendar-internal.ts";
@@ -167,8 +168,10 @@ async function createFixture(options: { gateway?: GoogleApiGateway; accounts?: S
       body: JSON.stringify(body),
     });
   const list = (assertion = actorAssertion(USER_ID, USER_EMAIL)) => post(INTERNAL_CALENDAR_EVENTS_LIST, RANGE, assertion);
+  const listJoin = (body: unknown = RANGE, assertion = actorAssertion(USER_ID, USER_EMAIL)) =>
+    post(INTERNAL_CALENDAR_EVENTS_LIST_JOIN, body, assertion);
 
-  return { call, post, list, calls };
+  return { call, post, list, listJoin, calls };
 }
 
 test("the BFF derives the calendar from the verified actor and refuses one named in the request", async () => {
@@ -192,8 +195,160 @@ test("the BFF derives the calendar from the verified actor and refuses one named
   assert.equal(calls.every((call) => call.userId === "" || call.userId === USER_ID), true);
 });
 
-test("every calendar route is addressed to the owner's primary calendar only", async () => {
-  const { post, calls } = await createFixture({
+const RICH_ITEM = {
+  id: "instance-abc123",
+  summary: "QBR",
+  start: { dateTime: "2026-01-05T09:00:00Z" },
+  end: { dateTime: "2026-01-05T09:30:00Z" },
+  hangoutLink: "https://meet.google.com/abc-defg-hij",
+  conferenceData: {
+    entryPoints: [
+      { entryPointType: "video", uri: "https://meet.google.com/abc-defg-hij", label: "Meet" },
+      { entryPointType: "phone", uri: "tel:+1-555-0100", label: "Phone", passcode: "123 456 789" },
+      { uri: "x".repeat(5000) },
+      "not-an-entry",
+    ],
+  },
+  recurringEventId: "series-1",
+  originalStartTime: { dateTime: "2026-01-05T09:00:00Z" },
+};
+
+/** A gateway whose events.list returns the given item and optional extra data. */
+function itemGateway(item: Record<string, unknown>, extra: Record<string, unknown> = {}): GoogleApiGateway {
+  return {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation({ events: { list: async () => ({ data: { items: [item], ...extra } }) } }),
+  } as unknown as GoogleApiGateway;
+}
+
+test("the monitor join route carries the join surface the capture pipeline needs, bounded", async () => {
+  const { listJoin } = await createFixture({
+    gateway: itemGateway(RICH_ITEM),
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+  const response = await listJoin();
+  assert.equal(response.status, 200);
+  const [event] = (await response.json() as { events: Array<Record<string, unknown>> }).events;
+  assert.equal(event!.hangoutLink, "https://meet.google.com/abc-defg-hij");
+  assert.equal(event!.recurringEventId, "series-1");
+  assert.equal(event!.originalStartTime, "2026-01-05T09:00:00Z");
+  const entryPoints = (event!.conferenceData as { entryPoints: Array<Record<string, unknown>> }).entryPoints;
+  assert.equal(entryPoints.length, 3);
+  assert.equal(entryPoints[1]!.passcode, "123 456 789");
+  assert.equal((entryPoints[2]!.uri as string).length, 2048);
+});
+
+test("the agent calendar route never leaks the join surface (deploy-blocking)", async () => {
+  const { list } = await createFixture({
+    gateway: itemGateway(RICH_ITEM),
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+  const response = await list();
+  assert.equal(response.status, 200);
+  const body = await response.json() as { events: Array<Record<string, unknown>> };
+  const [event] = body.events;
+  for (const field of ["hangoutLink", "conferenceData", "recurringEventId", "originalStartTime"]) {
+    assert.equal(field in event!, false, `${field} must not reach an agent tool result`);
+  }
+  // Stronger than a projection pin: the serialized tool result must not carry a
+  // provider URL anywhere, or a hostile invite could steer an agent into a join.
+  const serialized = JSON.stringify(body);
+  for (const host of ["meet.google.com", "zoom.us", "teams.microsoft.com", "teams.live.com"]) {
+    assert.equal(serialized.includes(host), false, `${host} must not appear in the agent result`);
+  }
+});
+
+test("the monitor join route passes skeletal cancelled events through; the agent route drops them", async () => {
+  const cancelled = { id: "instance-abc123", status: "cancelled" };
+  const join = await createFixture({
+    gateway: itemGateway(cancelled),
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+  const joinResponse = await join.listJoin();
+  assert.equal(joinResponse.status, 200);
+  const [event] = (await joinResponse.json() as { events: Array<Record<string, unknown>> }).events;
+  assert.equal(event!.id, "instance-abc123");
+  assert.equal(event!.status, "cancelled");
+
+  const agent = await createFixture({
+    gateway: itemGateway(cancelled),
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+  const agentEvents = (await (await agent.list()).json() as { events: unknown[] }).events;
+  assert.equal(agentEvents.length, 0);
+});
+
+test("sync and page tokens pass through on the join route and are refused on the agent route", async () => {
+  const calls: Array<Record<string, unknown>> = [];
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation({
+      events: {
+        list: async (params: Record<string, unknown>) => {
+          calls.push(params);
+          return { data: { items: [], nextPageToken: "page-2", nextSyncToken: "sync-2" } };
+        },
+      },
+    }),
+  } as unknown as GoogleApiGateway;
+  const { listJoin, post } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+
+  const page = await listJoin({ ...RANGE, pageToken: "page-1" });
+  assert.equal(page.status, 200);
+  const pageBody = await page.json() as { nextPageToken?: string; nextSyncToken?: string };
+  assert.equal(pageBody.nextPageToken, "page-2");
+  assert.equal(pageBody.nextSyncToken, "sync-2");
+  assert.equal(calls[0]!.pageToken, "page-1");
+
+  const sync = await listJoin({ syncToken: "sync-1" });
+  assert.equal(sync.status, 200);
+  assert.equal(calls[1]!.syncToken, "sync-1");
+  assert.equal("timeMin" in calls[1]!, false);
+
+  // A sync token is never accepted on the agent route.
+  const refused = await post(INTERNAL_CALENDAR_EVENTS_LIST, { syncToken: "sync-1" }, actorAssertion(USER_ID, USER_EMAIL));
+  assert.equal(refused.status, 400);
+});
+
+test("an expired sync token is answered 410 so the monitor re-lists; a range error stays 502", async () => {
+  const gone = () => {
+    const error = new Error("Sync token is no longer valid") as Error & { code?: number };
+    error.code = 410;
+    throw error;
+  };
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation({ events: { list: async () => gone() } }),
+  } as unknown as GoogleApiGateway;
+  const { listJoin, list } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+
+  assert.equal((await listJoin({ syncToken: "stale" })).status, 410);
+  // A 410 on a range listing is a provider failure, not a token to drop.
+  assert.equal((await list()).status, 502);
+});
+
+test("every calendar route is addressed to the owner's primary calendar only", async () => {  const { post, calls } = await createFixture({
     accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
   });
   const assertion = actorAssertion(USER_ID, USER_EMAIL);
@@ -322,9 +477,10 @@ test("no token or raw provider error escapes the BFF", async () => {
   }
 });
 
-test("only the four calendar routes are reachable", () => {
+test("only the five calendar routes are reachable", () => {
   for (const path of [
     INTERNAL_CALENDAR_EVENTS_LIST,
+    INTERNAL_CALENDAR_EVENTS_LIST_JOIN,
     INTERNAL_CALENDAR_EVENTS_CREATE,
     INTERNAL_CALENDAR_EVENTS_UPDATE,
     INTERNAL_CALENDAR_EVENTS_DELETE,
