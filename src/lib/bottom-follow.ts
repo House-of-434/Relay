@@ -23,6 +23,17 @@ export function shouldResumeBottomFollow({
   return !following && scrollTop > previousScrollTop && distanceFromBottom < BOTTOM_FOLLOW_THRESHOLD;
 }
 
+/**
+ * An upward gesture breaks bottom-follow only when the pane can actually
+ * scroll away from the end. With a short transcript (a single message that
+ * fits the viewport) scrollTop is pinned at zero, so a wheel, touch, or key
+ * gesture must not detach follow and summon the jump pill. Overflow within
+ * the threshold is subpixel slack, not scrollback.
+ */
+export function canScrollAway(scroller: { scrollHeight: number; clientHeight: number } | null): boolean {
+  return !!scroller && scroller.scrollHeight - scroller.clientHeight > BOTTOM_FOLLOW_THRESHOLD;
+}
+
 interface BottomFollowScroller {
   scrollHeight: number;
   scrollTo(options?: ScrollToOptions): void;

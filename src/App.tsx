@@ -357,6 +357,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
           menuButtonRef.current?.focus();
         }}
         desktopOpen={desktopSidebarOpen}
+        onToggleDesktop={toggleDesktopSidebar}
       />}
       {state.activeView === "routines" ? (
         <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
@@ -372,9 +373,9 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       ) : noEngines ? (
         <NoEngines />
       ) : group ? (
-        <GroupView key={group.id} group={group} sidebarOpen={desktopSidebarOpen} onToggleSidebar={toggleDesktopSidebar} />
+        <GroupView key={group.id} group={group} />
       ) : bot ? (
-        <ChatView bot={bot} sidebarOpen={desktopSidebarOpen} onToggleSidebar={toggleDesktopSidebar} />
+        <ChatView bot={bot} />
       ) : (
         <main className="flex h-full min-w-0 flex-1 flex-col items-center justify-center gap-3 bg-app text-ink-secondary">
           <Loader2 size={20} className="animate-spin" />

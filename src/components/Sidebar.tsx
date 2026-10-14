@@ -1,6 +1,6 @@
 import { OrganizationIdentity } from "./OrganizationIdentity";
 import { approvalCardOutcome } from "./ApprovalCard";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, Fragment } from "react";
 import { createPortal } from "react-dom";
 import {
   Archive,
@@ -16,6 +16,8 @@ import {
   Library,
   Loader2,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
   Pencil,
   Pin,
   PinOff,
@@ -154,14 +156,17 @@ function groupPreview(group: Group, bots: Bot[]): string {
 }
 
 /** A small member stack identifies a group without turning it into a card. */
-function StackedMauses({ members, density }: { members: Bot[]; density: SidebarDensity }) {
+function StackedMauses({ members, density, iconSize }: { members: Bot[]; density: SidebarDensity; /** Avatar pixel size in icons density; defaults to 44. */ iconSize?: number }) {
   const iconOnly = density === "icons";
   const slotSize = iconOnly ? "size-12" : density === "compact" ? "size-7" : "size-8";
-  const singleSize = iconOnly ? 44 : density === "compact" ? 26 : 32;
+  // A sized rail shrinks the slot with the avatar so rows stay tight.
+  const slotStyle = iconOnly && iconSize ? { width: iconSize + 8, height: iconSize + 8 } : undefined;
+  const singleSize = iconOnly ? (iconSize ?? 44) : density === "compact" ? 26 : 32;
+  const pairSize = iconOnly ? (iconSize ? Math.max(16, iconSize - 6) : 30) : 20;
   if (members.length <= 1) {
     const b = members[0];
     return (
-      <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
+      <div className={cn("flex shrink-0 items-center justify-center", !slotStyle && slotSize)} style={slotStyle}>
         {b ? <BotAvatar bot={b} state="happy" size={singleSize} animated={false} /> : <Users size={24} className="text-ink-secondary" />}
       </div>
     );
@@ -169,10 +174,10 @@ function StackedMauses({ members, density }: { members: Bot[]; density: SidebarD
   const shown = members.slice(0, 2);
   const extra = members.length - shown.length;
   return (
-    <div className={cn("flex shrink-0 items-center justify-center", slotSize)}>
+    <div className={cn("flex shrink-0 items-center justify-center", !slotStyle && slotSize)} style={slotStyle}>
       <div className="flex items-center -space-x-2.5">
         {shown.map((b) => (
-          <BotAvatar key={b.id} bot={b} state="happy" size={iconOnly ? 30 : 20} animated={false} />
+          <BotAvatar key={b.id} bot={b} state="happy" size={pairSize} animated={false} />
         ))}
         {extra > 0 && (
           <span className="z-10 flex size-4 items-center justify-center rounded-full border border-hairline/40 bg-raised text-[9px] font-medium text-ink-secondary">
@@ -188,12 +193,15 @@ export function GroupListItem({
   group,
   density,
   quiet = false,
+  iconSize,
   onMenu,
 }: {
   group: Group;
   density: SidebarDensity;
   /** Quiet rows: name and status only (see sidebar-preferences). */
   quiet?: boolean;
+  /** Avatar pixel size in icons density; defaults to 44. */
+  iconSize?: number;
   onMenu: (menu: { groupId: string; x: number; y: number }) => void;
 }) {
   const { state, dispatch } = useStore();
@@ -232,7 +240,12 @@ export function GroupListItem({
       title={density === "icons" ? group.name : undefined}
       aria-label={density === "icons" ? group.name : undefined}
     >
-      <StackedMauses members={members} density={density} />
+      <span className="relative flex shrink-0">
+        <StackedMauses members={members} density={density} iconSize={iconSize} />
+        {density === "icons" && groupStatus && (
+          <span data-testid="working-dot" className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-panel bg-success" />
+        )}
+      </span>
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-[14px] font-semibold text-ink">{group.name}</span>
@@ -844,12 +857,15 @@ export function BotListItem({
   bot,
   density,
   quiet = false,
+  iconSize,
   onMenu,
 }: {
   bot: Bot;
   density: SidebarDensity;
   /** Quiet rows: name and status only (see sidebar-preferences). */
   quiet?: boolean;
+  /** Avatar pixel size in icons density; defaults to 44. */
+  iconSize?: number;
   onMenu: (menu: MenuState) => void;
 }) {
   const { state, dispatch } = useStore();
@@ -862,7 +878,7 @@ export function BotListItem({
   useEffect(() => {
     if (iconOnly) setRenaming(false);
   }, [iconOnly]);
-  const avatarSize = iconOnly ? 44 : density === "compact" ? 40 : 56;
+  const avatarSize = iconOnly ? (iconSize ?? 44) : density === "compact" ? 40 : 56;
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
   const last = visible.at(-1);
@@ -1300,11 +1316,13 @@ export function TeamMenuItems({ onAddBots, onRename, onShare, onDelete }: {
   );
 }
 
-export function Sidebar({ open, onClose, desktopOpen = true }: {
+export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: {
   open: boolean;
   onClose: () => void;
   /** Desktop (md+) visibility; the mobile drawer follows `open` regardless. */
   desktopOpen?: boolean;
+  /** Desktop collapse/expand; renders the brand-row toggle and the collapsed rail. */
+  onToggleDesktop?: () => void;
 }) {
   const { state, dispatch } = useStore();
   const cloudOwner = useCloudOwner(state.config?.cloudHome === true);
@@ -1570,6 +1588,33 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
   // disagree with it.
   const pendingBotUndo = teamFeedback?.restoreBot;
 
+  // One section's rows in sidebar order — chiefs, then rooms, then bots.
+  // Shared by the full list and the collapsed rail so both always agree.
+  const sectionContent = (id: string) => {
+    const sectionName = userSectionName(id);
+    return {
+      sectionChiefItems: sectionName
+        ? sectionChiefs.filter((bot) => bot.section === sectionName)
+        : [],
+      sectionGroupItems:
+        id === CHANNELS_SECTION_ID
+          ? unsectionedRooms
+          : id === BOT_CHATS_SECTION_ID
+            ? botChats
+            : sectionName
+              ? sectionedRooms.filter((group) => group.section === sectionName)
+              : [],
+      sectionBotItems:
+        id === PINNED_SECTION_ID
+          ? pinnedBots
+          : id === BOTS_SECTION_ID
+            ? unsectionedBots
+            : sectionName
+              ? sectionedBots.filter((bot) => bot.section === sectionName)
+              : [],
+    };
+  };
+
   return (
     <aside
       ref={sidebarRef}
@@ -1579,10 +1624,7 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
       data-sidebar
       className={cn(
         "flex h-full shrink-0 flex-col border-r border-hairline/40 bg-panel transition-[width] duration-200",
-        "w-[320px]",
-        // Desktop toggle (chat-header button): hidden on md+ only, so the
-        // mobile drawer keeps working off `open` below md.
-        !desktopOpen && "md:hidden",
+        desktopOpen ? "w-[264px]" : "w-[264px] md:w-[60px]",
         // Below md only: the sidebar leaves the flow and slides in over the chat.
         // Scoped with max-md: rather than cancelled with md: on purpose — Tailwind
         // v4 emits the native `translate` property, and any value other than
@@ -1595,10 +1637,92 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
         open ? "max-md:translate-x-0" : "max-md:-translate-x-full",
       )}
     >
-      {/* Website header: no traffic lights, no density picker — the drawer
-          button owns show/hide. The new-item action is admin-only (see
-          canManage) and right-aligned. */}
-      <div className="flex items-center justify-end px-4 pb-1 pt-3.5">
+      {/* Collapsed desktop rail: the app mark up top at full strength,
+          swapping to the expand icon on hover or keyboard focus, then clear
+          space before every bot and room as an icon-only row with the same
+          working/waiting/unread dots as the expanded list. Below md
+          the full sidebar below still serves as the drawer. */}
+      {!desktopOpen && (
+        <div className="hidden min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-3 pt-1 md:flex">
+          <div className="flex justify-center pb-3 pt-2">
+            {onToggleDesktop && (
+              <button
+                type="button"
+                onClick={onToggleDesktop}
+                aria-label={t("sidebar.toggle.open")}
+                title={t("sidebar.toggle.open")}
+                className="group flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+              >
+                <img
+                  src="/app-mark.png"
+                  alt=""
+                  aria-hidden="true"
+                  className="size-9 group-hover:hidden group-focus-visible:hidden"
+                />
+                <span className="hidden group-hover:block group-focus-visible:block">
+                  <PanelLeftOpen size={20} />
+                </span>
+              </button>
+            )}
+          </div>
+          {unsectionedChief && (
+            <BotListItem
+              bot={unsectionedChief}
+              density="icons"
+              iconSize={32}
+              onMenu={setMenu}
+            />
+          )}
+          {sectionIds.map((id) => {
+            const { sectionChiefItems, sectionGroupItems, sectionBotItems } = sectionContent(id);
+            return (
+              <Fragment key={id}>
+                {sectionChiefItems.map((bot) => (
+                  <BotListItem
+                    key={`rail-${bot.id}`}
+                    bot={bot}
+                    density="icons"
+                    iconSize={32}
+                    onMenu={setMenu}
+                  />
+                ))}
+                {sectionGroupItems.map((group) => (
+                  <GroupListItem
+                    key={`rail-${group.id}`}
+                    group={group}
+                    density="icons"
+                    iconSize={32}
+                    onMenu={setRoomMenu}
+                  />
+                ))}
+                {sectionBotItems.map((bot) => (
+                  <BotListItem
+                    key={`rail-${bot.id}`}
+                    bot={bot}
+                    density="icons"
+                    iconSize={32}
+                    onMenu={setMenu}
+                  />
+                ))}
+              </Fragment>
+            );
+          })}
+        </div>
+      )}
+      {/* Full sidebar. Hidden on md+ while collapsed so the rail stands
+          alone; below md it is still the slide-in drawer. Dialogs and menus
+          stay outside this wrapper — portals and fixed overlays must not be
+          display:none'd with it. */}
+      <div className={cn("flex min-h-0 flex-1 flex-col", !desktopOpen && "md:hidden")}>
+      {/* Brand row: app icon + name on the left; the new-item action is
+          admin-only (see canManage) and right-aligned beside the desktop
+          collapse toggle. The toggle lives here, not in the chat header. */}
+      <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <img src="/app-mark.png" alt="" aria-hidden="true" className="size-8 shrink-0" />
+          <span className="truncate text-[15px] font-semibold text-ink">Relay</span>
+        </div>
+        <div className="flex shrink-0 items-center gap-1">
         {canManage && (
         <div className="relative flex items-center gap-1">
           <button
@@ -1675,12 +1799,24 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
           )}
         </div>
         )}
+        {onToggleDesktop && (
+          <button
+            type="button"
+            onClick={onToggleDesktop}
+            aria-label={t("sidebar.toggle.close")}
+            title={t("sidebar.toggle.close")}
+            className="hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
+          >
+            <PanelLeftClose size={20} />
+          </button>
+        )}
+        </div>
       </div>
 
       <DesktopWorkspaceSwitcher compact={false} cloudHome={state.config?.cloudHome === true} owner={cloudOwner} />
       <OrganizationIdentity compact={false} />
       {/* Search */}
-      <div className="px-3 pb-3 pt-1">
+      <div className="px-3 pb-2 pt-1">
         <div className="flex items-center gap-2 rounded-md border border-hairline/40 bg-inset/40 px-2.5 py-1.5 focus-within:border-focus">
           <Search size={14} className="text-ink-secondary" />
           <input
@@ -1711,25 +1847,7 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
           )}
           {sectionIds.map((id, index) => {
             const sectionName = userSectionName(id);
-            const sectionChiefItems = sectionName
-              ? sectionChiefs.filter((bot) => bot.section === sectionName)
-              : [];
-            const sectionGroupItems =
-              id === CHANNELS_SECTION_ID
-                ? unsectionedRooms
-                : id === BOT_CHATS_SECTION_ID
-                  ? botChats
-                  : sectionName
-                    ? sectionedRooms.filter((group) => group.section === sectionName)
-                    : [];
-            const sectionBotItems =
-              id === PINNED_SECTION_ID
-                ? pinnedBots
-                : id === BOTS_SECTION_ID
-                  ? unsectionedBots
-                  : sectionName
-                    ? sectionedBots.filter((bot) => bot.section === sectionName)
-                    : [];
+            const { sectionChiefItems, sectionGroupItems, sectionBotItems } = sectionContent(id);
             const collapsed = sectionCollapsed(id);
             const attention = collapsed
               ? sidebarSectionAttention(
@@ -1822,7 +1940,7 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
       </p>
 
       {/* Footer */}
-      <div className="px-3 pb-3 pt-2">
+      <div className="px-3 pb-2 pt-2">
         <SidebarMoreMenu
           items={[
             {
@@ -1855,6 +1973,7 @@ export function Sidebar({ open, onClose, desktopOpen = true }: {
         <div className="mt-3">
           <SidebarProfileMenu />
         </div>
+      </div>
       </div>
 
       <BotContextMenu

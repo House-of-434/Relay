@@ -8,8 +8,6 @@ import {
   Copy,
   Crown,
   MessageSquareReply,
-  PanelLeftClose,
-  PanelLeftOpen,
   Pencil,
   Pin,
   PinOff,
@@ -51,7 +49,6 @@ import { peerLine, type PeerLine } from "@/lib/peer-message";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
-import { RawMarkdownView, RawToggleAction } from "./RawMarkdownToggle";
 import { ThreadChip } from "./ThreadChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
 import { useMenuMotion } from "./MenuMotion";
@@ -83,7 +80,7 @@ import { ActivityRun } from "./ActivityRun";
 import { TurnNarrationRun } from "./TurnNarrationRun";
 import { webhookMessageView } from "@/lib/webhook-message";
 import { splitTranscriptAttachments } from "@/lib/composer-attachments";
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
+import { BOTTOM_FOLLOW_THRESHOLD, canScrollAway, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
 import {
   TRANSCRIPT_WINDOW_SIZE,
@@ -135,10 +132,7 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
       }}
       aria-label={t("chat.copyMessage")}
       title={t("chat.copyMessage")}
-      className={cn(
-        "rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-100",
-        className,
-      )}
+      className={cn(messageActionClass, className)}
     >
       {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
     </button>
@@ -333,7 +327,6 @@ function Bubble({
   const user = message.role === "user" && !peer;
   const mentionPeers = useMemo(() => state.bots.filter((peer) => peer.id !== bot.id), [state.bots, bot.id]);
   const [expanded, setExpanded] = useState(false);
-  const [viewRaw, setViewRaw] = useState(false);
   const text = peer ? peer.body : (message.text ?? "");
   const attached = useMemo(() => splitMessageAttachments(message.attachments), [message.attachments]);
   const generatedPaths = attached.images;
@@ -385,7 +378,7 @@ function Bubble({
                 <Pencil size={14} />
               </button>
             )}
-            {Boolean(visibleText.trim()) && <CopyButton text={visibleText} className="opacity-100" />}
+            {Boolean(visibleText.trim()) && <CopyButton text={visibleText} />}
             <button
               type="button"
               onClick={onReply}
@@ -424,7 +417,6 @@ function Bubble({
                   ? "bg-bubble-user px-4 py-2.5 whitespace-pre-wrap text-ink"
                   : "bg-card px-4 py-2.5 text-ink",
           )}
-          title={new Date(message.at).toLocaleString()}
         >
           {replyTarget && (
             <div className="mb-2">
@@ -479,10 +471,8 @@ function Bubble({
               )}
             </>
           ) : (
-            <MessageBoundary key={viewRaw ? "raw" : "rendered"} fallbackText={text || t("chat.generatedImage")}>
-              {viewRaw && text ? (
-                <RawMarkdownView text={text} />
-              ) : text ? (
+            <MessageBoundary fallbackText={text || t("chat.generatedImage")}>
+              {text ? (
                 <ChatMarkdown text={text} mentionPeers={mentionPeers} message={{ threadId: bot.threadId, messageId: message.id }} />
               ) : null}
               <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : "mb-0"} eager={eagerAttachments} />
@@ -490,9 +480,8 @@ function Bubble({
           )}
         </div>
         {!user && (
-          <MessageActions side="bot" forceOpen={viewRaw}>
-            {text && <CopyButton text={text} className="opacity-100" />}
-            {text && <RawToggleAction active={viewRaw} onToggle={() => setViewRaw((r) => !r)} className="opacity-100" />}
+          <MessageActions side="bot">
+            {text && <CopyButton text={text} />}
             {isLastBotText && !bot.busy && onRegenerate && (
               <button
                 onClick={onRegenerate}
@@ -529,14 +518,6 @@ function Bubble({
             </button>
           </MessageActions>
         )}
-        <span
-          className={cn(
-            "self-end pb-1 text-[11px] tabular-nums text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100",
-            user ? "order-first mr-2" : "ml-2",
-          )}
-        >
-          {formatTime(message.at)}
-        </span>
       </div>
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
@@ -910,11 +891,8 @@ function PinnedBanner({
   );
 }
 
-export function ChatView({ bot: profile, sidebarOpen = true, onToggleSidebar }: {
+export function ChatView({ bot: profile }: {
   bot: Bot;
-  /** Desktop sidebar state; the toggle renders only when a handler is given. */
-  sidebarOpen?: boolean;
-  onToggleSidebar?: () => void;
 }) {
   const bot = useMemo(() => currentTaskBot(profile), [profile]);
   const { state, dispatch } = useStore();
@@ -1183,11 +1161,13 @@ export function ChatView({ bot: profile, sidebarOpen = true, onToggleSidebar }: 
   // keyboard is a scroll gesture too (upstream lesson): PageUp/Home/ArrowUp
   // break follow like an upward wheel; the at-end onScroll check re-arms it.
   // ArrowUp only counts outside inputs — in the composer it edits, not scrolls.
+  // None of them detach when the transcript fits the viewport: with nowhere
+  // to scroll, a single-message thread must not summon the jump pill.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const typing = e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement;
       if (e.key === "PageUp" || ((e.key === "Home" || e.key === "ArrowUp") && !typing)) {
-        setBottomFollow(false);
+        if (canScrollAway(scrollRef.current)) setBottomFollow(false);
       }
     };
     window.addEventListener("keydown", onKey);
@@ -1236,17 +1216,6 @@ export function ChatView({ bot: profile, sidebarOpen = true, onToggleSidebar }: 
             header wraps: name line on top, chips underneath on the right. */}
         <div data-chathead-row className="flex items-center justify-between @max-[30rem]/chathead:flex-wrap @max-[30rem]/chathead:gap-y-1">
         <div data-chathead-identity className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
-          {onToggleSidebar && (
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              aria-label={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
-              title={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
-              className="hidden size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
-            >
-              {sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
-            </button>
-          )}
           <span className="flex size-10 shrink-0 items-center justify-center rounded-lg">
             <BotAvatar
               bot={bot}
@@ -1379,14 +1348,19 @@ export function ChatView({ bot: profile, sidebarOpen = true, onToggleSidebar }: 
           if (el && e.target === el && e.nativeEvent.offsetX >= el.clientWidth) setBottomFollow(false);
         }}
         onWheel={(e) => {
-          if (e.deltaY < 0) setBottomFollow(false);
-          else if (atEnd()) setBottomFollow(true);
+          // An upward wheel only detaches when the transcript overflows the
+          // pane — a short thread that fits has no scrollback to read, so the
+          // jump pill must stay away.
+          if (e.deltaY < 0) {
+            if (canScrollAway(scrollRef.current)) setBottomFollow(false);
+          } else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setBottomFollow(false);
-          else if (atEnd()) setBottomFollow(true);
+          if (y > touchY.current + 4) {
+            if (canScrollAway(scrollRef.current)) setBottomFollow(false);
+          } else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
           const el = scrollRef.current;

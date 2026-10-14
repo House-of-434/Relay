@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { BOTTOM_FOLLOW_THRESHOLD, followBottomGrowth, shouldResumeBottomFollow } from "./bottom-follow";
+import { BOTTOM_FOLLOW_THRESHOLD, canScrollAway, followBottomGrowth, shouldResumeBottomFollow } from "./bottom-follow";
 
 describe("followBottomGrowth", () => {
   it("scrolls resized content to its new bottom while following", () => {
@@ -23,6 +23,28 @@ describe("followBottomGrowth", () => {
 
     expect(followBottomGrowth(scroller, false)).toBe(false);
     expect(calls).toEqual([]);
+  });
+});
+
+describe("canScrollAway", () => {
+  it("stays attached when the transcript fits the viewport exactly", () => {
+    expect(canScrollAway({ scrollHeight: 600, clientHeight: 600 })).toBe(false);
+  });
+
+  it("stays attached when content is shorter than the viewport", () => {
+    expect(canScrollAway({ scrollHeight: 120, clientHeight: 600 })).toBe(false);
+  });
+
+  it("treats subpixel overflow as no scrollback", () => {
+    expect(canScrollAway({ scrollHeight: 600 + BOTTOM_FOLLOW_THRESHOLD, clientHeight: 600 })).toBe(false);
+  });
+
+  it("detaches when there is real scrollback above", () => {
+    expect(canScrollAway({ scrollHeight: 601 + BOTTOM_FOLLOW_THRESHOLD, clientHeight: 600 })).toBe(true);
+  });
+
+  it("detaches nothing without a scroller", () => {
+    expect(canScrollAway(null)).toBe(false);
   });
 });
 

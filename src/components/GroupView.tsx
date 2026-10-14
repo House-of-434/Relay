@@ -4,7 +4,7 @@
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activeLocale, t } from "@/lib/i18n";
-import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, PanelLeftClose, PanelLeftOpen, Pin, PinOff, Plus, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, X } from "lucide-react";
 import {
   api,
   useStore,
@@ -49,7 +49,7 @@ import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
 import { useFocusMessage } from "@/lib/focus-message";
 import { shortPath } from "@/lib/short-path";
-import { BOTTOM_FOLLOW_THRESHOLD, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
+import { BOTTOM_FOLLOW_THRESHOLD, canScrollAway, shouldResumeBottomFollow, useBottomFollowResize } from "@/lib/bottom-follow";
 import { useComposerDockPad } from "@/lib/composer-dock";
 import { awaitedMemberId, showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
@@ -310,7 +310,6 @@ export const Transcript = memo(function Transcript({
                       ? "text-ink"
                       : user ? "chat-text whitespace-pre-wrap bg-bubble-user px-4 py-2.5 text-ink" : "bg-card px-4 py-2.5 text-ink",
                   )}
-                  title={new Date(m.at).toLocaleString()}
                 >
                   {m.replyToId && (() => {
                     const target = transcript.find((candidate) => candidate.id === m.replyToId);
@@ -356,9 +355,6 @@ export const Transcript = memo(function Transcript({
                     <PinToggle group={group} message={m} />
                   </>
                 )}
-                <span className="self-end pb-1 text-[11px] tabular-nums text-ink-tertiary opacity-0 transition-opacity group-hover:opacity-100">
-                  {formatTime(m.at)}
-                </span>
               </div>
               {!user && m.routedBy && <RoutedByLine routedBy={m.routedBy} />}
             </div>
@@ -952,11 +948,8 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
     </section>
   );
 }
-export function GroupView({ group, sidebarOpen = true, onToggleSidebar }: {
+export function GroupView({ group }: {
   group: Group;
-  /** Desktop sidebar state; the toggle renders only when a handler is given. */
-  sidebarOpen?: boolean;
-  onToggleSidebar?: () => void;
 }) {
   const { state, dispatch } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
@@ -1229,17 +1222,6 @@ export function GroupView({ group, sidebarOpen = true, onToggleSidebar }: {
             do not fold to icons, so it wraps below 48rem rather than 30rem. */}
         <div data-roomhead-row className="flex items-center justify-between @max-3xl/roomhead:flex-wrap @max-3xl/roomhead:gap-y-1">
         <div data-roomhead-identity className="flex min-w-0 items-center gap-2 @max-3xl/roomhead:basis-full" style={headerNoDragStyle}>
-          {onToggleSidebar && (
-            <button
-              type="button"
-              onClick={onToggleSidebar}
-              aria-label={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
-              title={sidebarOpen ? t("sidebar.toggle.close") : t("sidebar.toggle.open")}
-              className="hidden size-10 shrink-0 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
-            >
-              {sidebarOpen ? <PanelLeftClose size={20} /> : <PanelLeftOpen size={20} />}
-            </button>
-          )}
           <span className="truncate text-[15px] font-semibold text-ink">{group.name}</span>
           {!group.dm && (
             <>
@@ -1410,14 +1392,19 @@ export function GroupView({ group, sidebarOpen = true, onToggleSidebar }: {
         ref={scrollRef}
         className="h-full overflow-x-hidden overflow-y-auto px-5 [overflow-anchor:none]"
         onWheel={(e) => {
-          if (e.deltaY < 0) setBottomFollow(false);
-          else if (atEnd()) setBottomFollow(true);
+          // An upward wheel only detaches when the transcript overflows the
+          // pane — a short thread that fits has no scrollback to read, so the
+          // jump pill must stay away.
+          if (e.deltaY < 0) {
+            if (canScrollAway(scrollRef.current)) setBottomFollow(false);
+          } else if (atEnd()) setBottomFollow(true);
         }}
         onTouchStart={(e) => (touchY.current = e.touches[0]?.clientY ?? 0)}
         onTouchMove={(e) => {
           const y = e.touches[0]?.clientY ?? 0;
-          if (y > touchY.current + 4) setBottomFollow(false);
-          else if (atEnd()) setBottomFollow(true);
+          if (y > touchY.current + 4) {
+            if (canScrollAway(scrollRef.current)) setBottomFollow(false);
+          } else if (atEnd()) setBottomFollow(true);
         }}
         onScroll={() => {
           const el = scrollRef.current;
