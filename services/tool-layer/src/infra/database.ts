@@ -226,14 +226,34 @@ export class RelayDatabase {
       throw new Error("ingest meeting requires instance_id");
     }
     const client = this.client("relay");
+    const row: Record<string, unknown> = { ...values };
+    delete row.owner_user_id;
+    if (row.actor_agent == null && row.actor_user == null) {
+      const { data, error } = await client.schema("app").rpc("scribe_service_actor_id");
+      supabaseError(error);
+      if (typeof data === "string" && data.length > 0) {
+        row.actor_agent = "scribe";
+        row.actor_user = data;
+      }
+    }
+    if (row.organizer_user_id == null && typeof row.organizer_email === "string" && row.organizer_email.length > 0) {
+      const { data, error } = await client.schema("app").rpc("member_by_email", { candidate: row.organizer_email });
+      supabaseError(error);
+      if (typeof data === "string") row.organizer_user_id = data;
+    }
+    if (row.creator_user_id == null && typeof row.invited_by === "string" && row.invited_by.length > 0) {
+      const { data, error } = await client.schema("app").rpc("member_by_email", { candidate: row.invited_by });
+      supabaseError(error);
+      if (typeof data === "string") row.creator_user_id = data;
+    }
     const { data, error } = await client.schema("transcripts").from("meetings")
-      .upsert({ ...values, updated_at: new Date().toISOString() }, { onConflict: "instance_id" })
+      .upsert({ ...row, updated_at: new Date().toISOString() }, { onConflict: "instance_id" })
       .select("*");
     if (error?.code === "23505") throw new IngestConflictError(values.instance_id);
     supabaseError(error);
-    const row = Array.isArray(data) ? data[0] : null;
-    if (!row || typeof row.id !== "string") throw new Error("ingest meeting did not return the meeting row");
-    return row as Record<string, unknown>;
+    const saved = Array.isArray(data) ? data[0] : null;
+    if (!saved || typeof saved.id !== "string") throw new Error("ingest meeting did not return the meeting row");
+    return saved as Record<string, unknown>;
   }
 
   /**
