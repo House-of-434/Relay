@@ -15,7 +15,9 @@
  * captured), 400/401/403 rejected, 503 unavailable.
  */
 import { z } from "zod";
+import type { IncomingMessage } from "node:http";
 
+import { isLoopbackHost, isProxied } from "../request-auth.ts";
 import { verifyActorAssertion } from "../relay-mcp.ts";
 import { acceptManualJoin, authorizeScribeJoiner } from "../scribe-intents.ts";
 import { platformForUrl } from "../scribe-monitor.ts";
@@ -38,6 +40,13 @@ const bodySchema = z.object({
 
 function header(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
+}
+
+function loopbackPeer(req: IncomingMessage): boolean {
+  const address = req.socket?.remoteAddress;
+  if (!address) return false;
+  const normalized = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
+  return isLoopbackHost(normalized);
 }
 
 /** Answer a rejection. Rejections never consume the request body, so the
@@ -64,6 +73,16 @@ export function createScribeJoinRoutes(options: {
   return async (ctx) => {
     if (ctx.path !== SCRIBE_JOIN_PATH) return PASS;
     ctx.res.setHeader("cache-control", "no-store");
+
+    // Loopback-only, like the portal bridge: the sole legitimate caller is
+    // the BFF in this container, reaching the harness at 127.0.0.1. Compose
+    // callers (tool layer) address the harness by container name and must go
+    // through the BFF route instead — the harness edge gate already rejects
+    // those with a loopback-host error before this handler ever runs.
+    if (
+      isProxied(ctx.req) ||
+      !isLoopbackHost(header(ctx.req.headers.host)) || !loopbackPeer(ctx.req)
+    ) return reject(ctx, 403, { error: "forbidden" });
 
     if (ctx.method !== "POST") {
       ctx.res.setHeader("allow", "POST");

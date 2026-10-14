@@ -40,10 +40,6 @@ services:
       # bind its container interface so the separate tools container can reach
       # them over the compose network. The port is never published.
       RELAY_BFF_HOST: "0.0.0.0"
-      # The harness's /api/internal routes (scribe join) are likewise
-      # capability-gated; bind its container interface for the same reason.
-      # The port is never published.
-      RELAY_HARNESS_HOST: "0.0.0.0"
       # Relay's own shared Gmail account. Set both in .env to enable the
       # shared mailbox (BFF resolution + the harness monitor); explicit here
       # because the session store is not a durable user directory.
@@ -84,9 +80,6 @@ services:
       # Gmail/Calendar tools call the BFF's capability-gated internal routes.
       # Default is loopback, which is this container — point at `app`.
       RELAY_BFF_INTERNAL_URL: http://app:8798
-      # The scribe-join tool calls the harness's capability-gated join route.
-      # Same pattern: default loopback points at this container, point at `app`.
-      RELAY_HARNESS_INTERNAL_URL: http://app:8799
     expose:
       - "8787"
     healthcheck:

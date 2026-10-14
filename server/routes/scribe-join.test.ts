@@ -62,13 +62,15 @@ function serve(req: IncomingMessage, res: ServerResponse): void {
   });
 }
 
-function call(body?: unknown, options: { capability?: string; actor?: string; rawBody?: string; method?: string; contentType?: string; path?: string } = {}): Promise<Reply> {
+function call(body?: unknown, options: { capability?: string; actor?: string; rawBody?: string; method?: string; contentType?: string; path?: string; host?: string; forwardedFor?: string } = {}): Promise<Reply> {
   return new Promise((resolve, reject) => {
     const headers: Record<string, string> = {};
     if (options.capability !== undefined) headers.authorization = `Bearer ${options.capability}`;
     if (options.actor !== undefined) headers["x-relay-actor-user"] = options.actor;
     if (options.contentType !== undefined) headers["content-type"] = options.contentType;
     else headers["content-type"] = "application/json";
+    if (options.host !== undefined) headers.host = options.host;
+    if (options.forwardedFor !== undefined) headers["x-forwarded-for"] = options.forwardedFor;
     const outgoing = httpRequest(
       new URL(options.path ?? "/api/internal/scribe/join", baseUrl),
       { method: options.method ?? "POST", headers },
@@ -149,6 +151,14 @@ describe("scribe join route plumbing", () => {
 });
 
 describe("scribe join authorization", () => {
+  it("admits only loopback callers: the BFF in this container", async () => {
+    // Compose callers address the harness by container name and must use the
+    // BFF route instead; the harness edge gate rejects those before this
+    // handler, but the route defends itself too.
+    expect((await call(joinBody(), { ...good(), host: "app:8799" })).status).toBe(403);
+    expect((await call(joinBody(), { ...good(), forwardedFor: "10.0.0.9" })).status).toBe(403);
+  });
+
   it("denies non-Mercury, unknown, and cross-workspace actors", async () => {
     bots.set(SCOUT, { relayAgent: "scout", ownerUserId: USER });
     const scout = await call(joinBody(), { ...good(), actor: assertion({ botId: SCOUT }) });

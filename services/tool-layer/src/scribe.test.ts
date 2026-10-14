@@ -24,7 +24,7 @@ test("the join client posts exactly one harness path", () => {
 test("the client sends capability, actor, and idempotency key", async () => {
   const seen: Array<{ url: string; init: RequestInit }> = [];
   const client = new RelayScribeJoinClient({
-    harnessInternalUrl: "http://127.0.0.1:8799/",
+    bffInternalUrl: "http://127.0.0.1:8798/",
     capability: CAPABILITY,
     fetcher: (async (input: string | URL, init: RequestInit = {}) => {
       seen.push({ url: String(input), init });
@@ -39,7 +39,7 @@ test("the client sends capability, actor, and idempotency key", async () => {
   });
   assert.deepEqual(result, { status: "accepted", instance_id: "inst-1" });
   assert.equal(seen.length, 1);
-  assert.equal(seen[0]!.url, "http://127.0.0.1:8799/api/internal/scribe/join");
+  assert.equal(seen[0]!.url, "http://127.0.0.1:8798/api/internal/scribe/join");
   const headers = seen[0]!.init.headers as Record<string, string>;
   assert.equal(headers.authorization, `Bearer ${CAPABILITY}`);
   assert.equal(headers["x-relay-actor-user"], ACTOR);
@@ -52,7 +52,7 @@ test("the client sends capability, actor, and idempotency key", async () => {
 
 test("the client maps refusal, misconfiguration, and transport failures", async () => {
   const refusing = new RelayScribeJoinClient({
-    harnessInternalUrl: "http://127.0.0.1:8799",
+    bffInternalUrl: "http://127.0.0.1:8798",
     capability: CAPABILITY,
     fetcher: (async () => Response.json({ error: "meeting host is not a supported provider" }, { status: 400 })) as typeof fetch,
   });
@@ -62,21 +62,21 @@ test("the client maps refusal, misconfiguration, and transport failures", async 
       /not a supported provider/.test(error.message),
   );
 
-  const unconfigured = new RelayScribeJoinClient({ harnessInternalUrl: "http://127.0.0.1:8799", capability: undefined });
+  const unconfigured = new RelayScribeJoinClient({ bffInternalUrl: "http://127.0.0.1:8798", capability: undefined });
   await assert.rejects(
     unconfigured.joinMeeting(ACTOR, { requestKey: "k", meetingUrl: MEET }),
     /not configured/,
   );
 
   const unreachable = new RelayScribeJoinClient({
-    harnessInternalUrl: "http://127.0.0.1:8799",
+    bffInternalUrl: "http://127.0.0.1:8798",
     capability: CAPABILITY,
     fetcher: (async () => { throw new Error("down"); }) as typeof fetch,
   });
   await assert.rejects(unreachable.joinMeeting(ACTOR, { requestKey: "k", meetingUrl: MEET }), /unreachable/);
 
   const weird = new RelayScribeJoinClient({
-    harnessInternalUrl: "http://127.0.0.1:8799",
+    bffInternalUrl: "http://127.0.0.1:8798",
     capability: CAPABILITY,
     fetcher: (async () => Response.json({ unexpected: true })) as typeof fetch,
   });

@@ -18,25 +18,28 @@ export class ScribeRequestError extends Error {
 }
 
 export interface RelayScribeJoinClientOptions {
-  harnessInternalUrl: string;
+  bffInternalUrl: string;
   capability: string | undefined;
   fetcher?: typeof fetch;
 }
 
 /**
- * Ask the harness to capture a meeting now. The Tool Layer never touches the
- * capture worker: it authorizes the operation, then asks the harness (which
- * alone holds the worker capability) using the signed actor assertion it
- * already verified. The harness derives organizer identity from that verified
- * identity; the request body carries no identity fields.
+ * Ask Scribe to capture a meeting now, via the BFF. The Tool Layer cannot
+ * call the harness directly (the harness edge gate requires a loopback
+ * Host, and compose callers address it by container name), so this client
+ * targets the BFF's join route with the same dual auth as the Gmail and
+ * Calendar clients. The BFF verifies both and proxies to the harness over
+ * loopback, where both are verified again. The Tool Layer never touches the
+ * capture worker: it authorizes the operation, and the harness (which alone
+ * holds the worker capability) executes it.
  */
 export class RelayScribeJoinClient {
-  private readonly harnessInternalUrl: string;
+  private readonly bffInternalUrl: string;
   private readonly capability: string | undefined;
   private readonly fetcher: typeof fetch;
 
   constructor(options: RelayScribeJoinClientOptions) {
-    this.harnessInternalUrl = options.harnessInternalUrl.replace(/\/+$/, "");
+    this.bffInternalUrl = options.bffInternalUrl.replace(/\/+$/, "");
     this.capability = options.capability;
     this.fetcher = options.fetcher ?? fetch;
   }
@@ -50,7 +53,7 @@ export class RelayScribeJoinClient {
     }
     let response: Response;
     try {
-      response = await this.fetcher(new URL(SCRIBE_INTERNAL_PATHS.join, this.harnessInternalUrl), {
+      response = await this.fetcher(new URL(SCRIBE_INTERNAL_PATHS.join, this.bffInternalUrl), {
         method: "POST",
         redirect: "error",
         headers: {
