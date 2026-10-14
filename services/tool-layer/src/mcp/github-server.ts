@@ -128,8 +128,9 @@ export function registerGithubTools(server: McpServer, agent: Agent, context: Gi
     async ({ repo: name, limit }) => {
       try {
         authorizeGithub(agent, "read");
-        const { releases } = await client.listReleases(actorAssertion, { repo: assertRepo(name), limit });
-        return { content: [{ type: "text" as const, text: JSON.stringify({ results: releases.map(releaseResult) }) }] };
+        const normalized = assertRepo(name);
+        const { releases } = await client.listReleases(actorAssertion, { repo: normalized, limit });
+        return { content: [{ type: "text" as const, text: JSON.stringify({ results: releases.map((release) => releaseResult({ ...release, repo: release.repo ?? normalized })) }) }] };
       } catch (error) {
         return toolError(error);
       }

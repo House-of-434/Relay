@@ -74,3 +74,26 @@ test("fact tags with no units are skipped instead of returning empty results", a
   const provider = providerWith(GOOD_TICKERS, GOOD_SUBMISSIONS, facts);
   assert.deepEqual(await provider.companyFacts({ company: "TST" }), []);
 });
+
+test("identical taxonomy/tag pairs from different companies produce distinct source IDs", async () => {
+  const tickers = {
+    "0": { cik_str: 320193, ticker: "AAA", title: "Alpha Inc" },
+    "1": { cik_str: 789019, ticker: "BBB", title: "Beta Inc" },
+  };
+  const facts = { facts: { "us-gaap": { Revenues: { units: { USD: [{ end: "2024-12-31", val: 100 }] } } } } };
+  const provider = providerWith(tickers, GOOD_SUBMISSIONS, facts);
+  const [first] = await provider.companyFacts({ company: "AAA" });
+  const [second] = await provider.companyFacts({ company: "BBB" });
+  assert.ok(first && second);
+  assert.equal(first.sourceId, "0000320193:us-gaap:Revenues");
+  assert.equal(second.sourceId, "0000789019:us-gaap:Revenues");
+  assert.notEqual(first.sourceId, second.sourceId);
+  assert.equal(first.canonicalUrl, second.canonicalUrl.replace("0000789019", "0000320193"));
+});
+
+test("filing citations are unchanged by fact source ID qualification", async () => {
+  const provider = providerWith(GOOD_TICKERS, GOOD_SUBMISSIONS, { facts: {} });
+  const [filing] = await provider.searchFilings({ company: "TST" });
+  assert.ok(filing);
+  assert.equal(filing.sourceId, "0000000000-24-000001");
+});

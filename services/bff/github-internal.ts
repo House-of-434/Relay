@@ -88,8 +88,8 @@ function hasUsableIssue(item: { number: unknown; url: unknown; repo: unknown }):
   return typeof item.number === "number" && Number.isInteger(item.number) && item.number > 0 && isHttpLike(item.url) && typeof item.repo === "string" && REPO_PATTERN.test(item.repo);
 }
 
-function hasUsableRelease(item: { tagName: unknown; url: unknown }): boolean {
-  return typeof item.tagName === "string" && item.tagName.length > 0 && isHttpLike(item.url);
+function hasUsableRelease(item: { tagName: unknown; url: unknown; repo: unknown }): boolean {
+  return typeof item.tagName === "string" && item.tagName.length > 0 && isHttpLike(item.url) && typeof item.repo === "string" && REPO_PATTERN.test(item.repo);
 }
 
 function repoFromApiUrl(value: unknown): string | undefined {
@@ -259,6 +259,7 @@ async function dispatch(
   );
   jsonResponse(res, 200, {
     releases: (Array.isArray(raw) ? raw : []).map((release) => ({
+      repo: parsed.data.repo,
       tagName: typeof release.tag_name === "string" ? release.tag_name : "",
       name: typeof release.name === "string" ? release.name : undefined,
       url: typeof release.html_url === "string" ? release.html_url : "",

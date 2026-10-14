@@ -129,6 +129,7 @@ export interface GitHubIssueResponse {
 }
 
 export interface GitHubReleaseSummary {
+  repo?: string;
   tagName: string;
   name?: string;
   url: string;
@@ -170,14 +171,16 @@ export function releaseResult(release: GitHubReleaseSummary): ConnectorResult {
   const tag = release.tagName.trim();
   if (tag.length === 0) throw new Error("GitHub release payload is missing a usable tag");
   if (!isHttpUrl(release.url)) throw new Error("GitHub release payload is missing a usable URL");
+  const repo = (release.repo ?? "").trim();
+  if (!REPO_PATTERN.test(repo)) throw new Error("GitHub release payload is missing a usable repository");
   return {
     source: "github",
-    sourceId: tag,
+    sourceId: `${repo}#${tag}`,
     canonicalUrl: release.url,
     title: release.name ?? tag,
     publishedAt: release.publishedAt,
     content: boundedText(release.body, 4_000),
-    metadata: { tag },
+    metadata: { tag, repo },
   };
 }
 

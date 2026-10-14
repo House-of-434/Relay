@@ -11,7 +11,7 @@ import { afterEach, test } from "node:test";
 import { ConnectorStateStore } from "./connector-state.ts";
 import { GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
 import type { GitHubAppGateway } from "./github-api.ts";
-import { handleInternalGitHub, INTERNAL_GITHUB_ISSUES_SEARCH } from "./github-internal.ts";
+import { handleInternalGitHub, INTERNAL_GITHUB_ISSUES_SEARCH, INTERNAL_GITHUB_RELEASES } from "./github-internal.ts";
 
 const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
 const ACTOR_SECRET = "internal-actor-secret-fixture-value-0000000000000000";
@@ -106,4 +106,56 @@ test("issues without a usable repository are dropped instead of becoming ambiguo
   assert.equal(body.items[0]!.number, 7);
   assert.equal(body.items[0]!.repo, "octo/repo");
   assert.ok(body.items.every((item) => typeof item.repo === "string" && item.repo.includes("/")));
+});
+
+test("releases carry the requested repository so citations cannot collide across repos", async () => {
+  const dataDir = mkdtempSync(join(tmpdir(), "relay-github-releases-"));
+  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
+  const connectorState = new ConnectorStateStore({ dataDir });
+  await connectorState.set(USER_ID, "github", true);
+  const connections = new GitHubConnectionStore({ dataDir });
+  await connections.save({
+    id: githubConnectionId(INSTALLATION_ID),
+    userId: USER_ID,
+    installationId: INSTALLATION_ID,
+    account: "octo",
+    permissions: ["contents:read"],
+    createdAt: new Date().toISOString(),
+  });
+  const app = {
+    rest: async (path: string) => {
+      assert.match(path, /^\/repos\/octo\/repo\/releases/);
+      return [{ tag_name: "v1.0.0", name: "First", html_url: "https://github.com/octo/repo/releases/tag/v1.0.0" }];
+    },
+  } as unknown as GitHubAppGateway;
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
+    void handleInternalGitHub(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
+      capability: CAPABILITY,
+      actorSecret: ACTOR_SECRET,
+      connectorState,
+      connections,
+      app,
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const { port } = server.address() as AddressInfo;
+  cleanups.push(() => new Promise<void>((resolve) => {
+    server.closeAllConnections();
+    server.close(() => resolve());
+  }));
+
+  const response = await fetch(new URL(INTERNAL_GITHUB_RELEASES, `http://127.0.0.1:${port}`), {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ repo: "octo/repo" }),
+  });
+  assert.equal(response.status, 200);
+  const body = await response.json() as { releases: Array<{ tagName: string; repo?: string; url: string }> };
+  assert.equal(body.releases.length, 1);
+  assert.equal(body.releases[0]!.tagName, "v1.0.0");
+  assert.equal(body.releases[0]!.repo, "octo/repo");
 });
