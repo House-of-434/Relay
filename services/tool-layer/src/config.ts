@@ -34,6 +34,20 @@ export function bffConfig(env: NodeJS.ProcessEnv = process.env): BffConfig {
   };
 }
 
+export interface HarnessConfig {
+  harnessInternalUrl: string;
+}
+
+/** Where the harness serves its internal routes. Same pattern as the BFF:
+ * loopback default for bare processes, compose override to reach `app`. The
+ * same BFF capability authenticates (the harness accepts that bearer); no
+ * additional secret is introduced. */
+export function harnessConfig(env: NodeJS.ProcessEnv = process.env): HarnessConfig {
+  return {
+    harnessInternalUrl: env.RELAY_HARNESS_INTERNAL_URL ?? "http://127.0.0.1:8799",
+  };
+}
+
 /**
  * Capture-ingest capability. Lives in .env.ingest, loaded only by the tools
  * and scribe services — never root .env.secrets, never the harness. Absent

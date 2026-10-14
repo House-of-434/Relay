@@ -1,10 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SCRIBE_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
+import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
@@ -19,6 +21,11 @@ export interface RelayGmailContext {
 
 export interface RelayCalendarContext {
   client: RelayCalendarClient;
+  actorAssertion: string;
+}
+
+export interface RelayScribeContext {
+  client: RelayScribeJoinClient;
   actorAssertion: string;
 }
 
@@ -44,6 +51,7 @@ export function createAgentMcpServer(
   browser?: BladeBrowserContext | undefined,
   search?: SearchToolContext | undefined,
   log?: ToolCallLogger | undefined,
+  scribe?: RelayScribeContext | undefined,
 ): McpServer {
   const userId = actor.userId;
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
@@ -190,8 +198,7 @@ export function createAgentMcpServer(
     );
   }
 
-  if (calendar && CALENDAR_PERMISSIONS[agent].length > 0) {
-    const calendarContext: RelayCalendarContext = calendar;
+  if (calendar && CALENDAR_PERMISSIONS[agent].length > 0) {    const calendarContext: RelayCalendarContext = calendar;
 
     server.registerTool(
       "calendar_list_events",
@@ -269,6 +276,42 @@ export function createAgentMcpServer(
         try {
           authorizeCalendar(agent, "delete");
           const result = await calendarContext.client.deleteEvent(calendarContext.actorAssertion, { eventId, notify });
+          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    );
+  }
+
+  // Meeting capture is Mercury-only, like Gmail and calendar: joining is a
+  // visible external action (announced in the meeting), so agents without
+  // external comms must not even see the tool offered.
+  if (scribe && SCRIBE_PERMISSIONS[agent].length > 0) {
+    const scribeContext: RelayScribeContext = scribe;
+
+    server.registerTool(
+      "scribe_join_meeting",
+      {
+        description: "Ask Relay Scribe to join a live meeting right now and transcribe it. Pass the meeting URL the user gave you (Google Meet, Zoom, or Teams). The join is announced in the meeting chat. Returns accepted with a capture id, or already_accepted when that room is already being captured. Use this when the user asks you to join, record, or transcribe a meeting happening now — scheduled meetings are picked up automatically and must not be submitted here.",
+        inputSchema: {
+          meeting_url: z.string().min(1).max(2048),
+          title: z.string().trim().min(1).max(200).optional(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      async ({ meeting_url, title }) => {
+        try {
+          authorizeScribe(agent, "join");
+          // Fresh idempotency key per tool call: a model-level retry of the
+          // same user intent carries a new key, and the harness collapses it
+          // onto the live capture through the active-session rule instead of
+          // starting a duplicate.
+          const result = await scribeContext.client.joinMeeting(scribeContext.actorAssertion, {
+            requestKey: randomUUID(),
+            meetingUrl: meeting_url,
+            ...(title ? { title } : {}),
+          });
           return { content: [{ type: "text", text: JSON.stringify(result) }] };
         } catch (error) {
           return toolError(error);

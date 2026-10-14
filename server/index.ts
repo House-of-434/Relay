@@ -579,6 +579,13 @@ import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
 
 const PORT = Number(process.env.RELAY_PORT || process.env.OGB_PORT || 8799);
+/** Bind host for the harness HTTP server. Loopback by default, so a bare
+ * process stays single-host. A compose deployment overrides it to listen on
+ * the container's interface so sibling services (tool layer) can reach the
+ * internal routes over the compose network — the HMAC actor assertion and
+ * shared capabilities remain the real boundaries, and the port is never
+ * published to the host. Mirrors RELAY_BFF_HOST. */
+const HARNESS_HOST = process.env.RELAY_HARNESS_HOST?.trim() || "127.0.0.1";
 const WEBHOOK_PORT = Number(process.env.RELAY_WEBHOOK_PORT || PORT + 1);
 // Behind a proxy or tunnel, the base URL senders should use (docs/self-hosting.md).
 const WEBHOOK_PUBLIC_URL = process.env.RELAY_WEBHOOK_PUBLIC_URL || undefined;
@@ -22597,9 +22604,9 @@ restoreChannelMessages();
   if (movedAutoPins) console.log(`Works on: moved ${movedAutoPins} auto-pinned thread(s) to their bot's current Works on`);
 }
 
-server.listen(PORT, "127.0.0.1", () => {
+server.listen(PORT, HARNESS_HOST, () => {
   companyRuntimeReady();
-  console.log(`relay server on http://127.0.0.1:${PORT}`);
+  console.log(`relay server on http://${HARNESS_HOST}:${PORT}`);
   followupsReady = true;
   drainQueuedSends();
   drainQueuedChannelSends();

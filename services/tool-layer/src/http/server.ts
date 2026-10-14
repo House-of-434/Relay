@@ -7,11 +7,12 @@ import type { RelayActorContext } from "../infra/actor-assertion.js";
 import { authorizeIngest, isAgent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
+import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
 import { databaseToolCallLogger } from "../mcp/tool-log.js";
-import { assertValidPort, bffConfig, bladeConfig, ingestCapability, searchConfig, toolHost, toolPort } from "../config.js";
+import { assertValidPort, bffConfig, bladeConfig, harnessConfig, ingestCapability, searchConfig, toolHost, toolPort } from "../config.js";
 
 function mcpActor(request: IncomingMessage, database: RelayDatabase): {
   actor: RelayActorContext | undefined;
@@ -211,6 +212,14 @@ export async function createRelayToolServer(
         ? { client: new RelayCalendarClient({ bffInternalUrl, capability }), actorAssertion: actor.actorAssertion }
         : undefined;
 
+      // Meeting capture rides the same BFF capability the Gmail and Calendar
+      // tools already send: the harness accepts that bearer on the join
+      // route. Only the base URL differs (harness port, not BFF port).
+      const { harnessInternalUrl } = harnessConfig();
+      const scribe = actor.actorAssertion
+        ? { client: new RelayScribeJoinClient({ harnessInternalUrl, capability }), actorAssertion: actor.actorAssertion }
+        : undefined;
+
       // The research browser needs an authenticated user to scope the daemon
       // workspace. The pool is process-shared so daemon tracking survives
       // across requests. Search carries no per-user state, so the provider
@@ -240,6 +249,7 @@ export async function createRelayToolServer(
         { userId, botId: actor.actor.botId, threadId: actor.actor.threadId },
         database, gmail, calendar, browser, search,
         databaseToolCallLogger(database, agentName, userId),
+        scribe,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {

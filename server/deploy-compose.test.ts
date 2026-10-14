@@ -48,4 +48,18 @@ describe("deploy compose — capability separation", () => {
     // then routes to the terminal-notice path).
     expect(compose.services.app.environment?.RELAY_SCRIBE_WORKER_URL).toBe("http://scribe:8791");
   });
+
+  it("the tools reach the harness over the compose network, not loopback", () => {
+    // Same failure mode as the worker URL above, for the scribe-join tool:
+    // a loopback harness URL inside the tools container points at tools
+    // itself, and every join request fails as "unreachable".
+    expect(compose.services.tools.environment?.RELAY_HARNESS_INTERNAL_URL).toBe("http://app:8799");
+  });
+
+  it("the harness binds its container interface for compose callers", () => {
+    // The harness listens on loopback by default (bare processes stay
+    // single-host); compose must override the bind or the tools container
+    // cannot reach the internal routes at all. The port stays unpublished.
+    expect(compose.services.app.environment?.RELAY_HARNESS_HOST).toBe("0.0.0.0");
+  });
 });
