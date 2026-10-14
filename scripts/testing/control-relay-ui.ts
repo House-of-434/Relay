@@ -364,7 +364,10 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     await requireLiveSession(handle);
     const { target, name } = await resolveTarget(handle, values, verb);
     const data = await driverCall(handle.driverUrl, verb, verb === "type" ? { ref: target, text: text as string } : { ref: target });
-    return { ok: true, target, ...(name ? { name } : {}), ...data };
+    // Echo the input back the way the verbs report their target: tests
+    // assert what was typed/pressed, not just that the driver answered.
+    const echo = verb === "type" ? { typed: text as string } : {};
+    return { ok: true, target, ...(name ? { name } : {}), ...echo, ...data };
   }
 
   if (verb === "press") {
@@ -372,7 +375,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     const handle = loadHandle(values.ui, verb);
     if (typeof values.keys !== "string" || !values.keys.trim()) throw new ControlOmbError("ui press requires --keys KEYS", "example: --keys Enter or --keys Meta+k");
     await requireLiveSession(handle);
-    return { ok: true, ...(await driverCall(handle.driverUrl, "press", { keys: values.keys.trim() })) };
+    return { ok: true, pressed: values.keys.trim(), ...(await driverCall(handle.driverUrl, "press", { keys: values.keys.trim() })) };
   }
 
   if (verb === "screenshot") {

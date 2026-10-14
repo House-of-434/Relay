@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { writeFileAtomic } from "./atomic.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { freePortBlock } from "./testing/ports.ts";
@@ -141,26 +141,80 @@ afterAll(async () => {
   if (fixtureHome) await removeTempDir(fixtureHome);
 });
 const rooms: string[] = [];
+// Full-file runs share one server: reset contended fixture state before each
+// test too (not only after), so a test never inherits a previous test's VM
+// lease, boat row, dump, or computer config when its finally is skipped.
+beforeEach(async () => {
+  vmState();
+  writeFileSync(finishFile, "finish");
+  rmSync(dumpFile, { force: true });
+  rmSync(stateFile + ".entered", { force: true });
+  rmSync(stateFile + ".exec", { force: true });
+  boatRow = null; boatPrompts.length = 0; boatCalls.length = 0;
+  holdBoatPrompt = false; allowBoatCreation = false; boatReply = "Cloud fixture completed";
+  await fetch(base + "/api/config", { method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ box: { token: "" } }) }).catch(() => undefined);
+});
 afterEach(async () => {
   vmState();
   writeFileSync(finishFile, "finish");
-  for (const id of rooms.splice(0)) await stop(id);
+  rmSync(dumpFile, { force: true });
+  rmSync(stateFile + ".entered", { force: true });
+  rmSync(stateFile + ".exec", { force: true });
+  boatRow = null; boatPrompts.length = 0; boatCalls.length = 0;
+  holdBoatPrompt = false; allowBoatCreation = false; boatReply = "Cloud fixture completed";
+  for (const id of rooms.splice(0)) await stop(id).catch(() => undefined);
+  // Delete every test-created bot (relayAgent seeds stay) so VM leases,
+  // sessions, and tasks never leak into the next test's contention window.
+  try {
+    const state = await api("GET", "/api/bots?messages=0");
+    for (const bot of (state.bots ?? []).filter((b: any) => !b.relayAgent)) {
+      await stopBot(bot.id);
+    }
+    const after = await api("GET", "/api/bots?messages=0");
+    for (const group of after?.groups ?? []) {
+      await stop(group.id).catch(() => undefined);
+      await fetch(base + `/api/groups/${group.id}`, { method: "DELETE" }).catch(() => undefined);
+    }
+  } catch { /* server may be restarting between tests */ }
+  await fetch(base + "/api/config", { method: "PUT", headers: { "content-type": "application/json" },
+    body: JSON.stringify({ box: { token: "" } }) }).catch(() => undefined);
 });
 async function room() {
   vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
+  const suffix = randomUUID().slice(0, 8);
   const bots = [];
-  for (const name of ["VM lead", "VM worker"]) {
+  for (const name of [`VM lead ${suffix}`, `VM worker ${suffix}`]) {
     const { bot } = await api("POST", "/api/bots", { name });
     await api("PATCH", `/api/bots/${bot.id}`, { computer: "vm" });
     bots.push(bot);
   }
-  const { group } = await api("POST", "/api/groups", { name: "Fixture VM room", memberIds: bots.map(b => b.id),
+  const { group } = await api("POST", "/api/groups", { name: `Fixture VM room ${suffix}`, memberIds: bots.map(b => b.id),
     setup: { bulletin: "", defaultResponder: { kind: "member", botId: bots[0].id } } });
   rooms.push(group.id);
   return { bots, group };
 }
 const send = (id: string) => api("POST", `/api/groups/${id}/messages`, { text: "Reply once." });
 const stop = (id: string) => api("POST", `/api/groups/${id}/interrupt`, {});
+// Shared-server isolation: bots accumulate across tests in one file run, and
+// a bot with more than one thread refuses a thread-less interrupt (409),
+// so a bare interrupt in cleanup throws (api asserts ok) and the DELETE never
+// runs — leaking VM leases/sessions into later tests. Stop every thread
+// explicitly before deleting.
+const stopBot = async (id: string) => {
+  try {
+    const state = await api("GET", "/api/bots?messages=0");
+    const bot = state.bots.find((b: any) => b.id === id);
+    for (const task of bot?.tasks ?? []) {
+      await fetch(base + `/api/bots/${id}/interrupt`, { method: "POST",
+        headers: { "content-type": "application/json" }, body: JSON.stringify({ threadId: task.threadId }) }).catch(() => undefined);
+    }
+  } catch { /* best effort: the delete below still runs */ }
+  await fetch(base + `/api/bots/${id}/interrupt`, { method: "POST",
+    headers: { "content-type": "application/json" }, body: "{}" }).catch(() => undefined);
+  try { await idle(id); } catch { /* still delete */ }
+  await fetch(base + `/api/bots/${id}`, { method: "DELETE" }).catch(() => undefined);
+};
 
 describe("Group Local VM ownership on the real isolated server", () => {
   it.each([false, true])("provisions concurrent cold pool seats (existing per-bot desktops: %s)", async (existingPerBot) => {
@@ -501,7 +555,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
 
   it("lets a chat tool select Auto, replaces tools after completion, and continues the same user message once", async () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
-    const { bot } = await api("POST", "/api/bots", { name: "Chat selects computer" });
+    const { bot } = await api("POST", "/api/bots", { name: `Chat selects computer ${randomUUID().slice(0, 8)}` });
     try {
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on an available VM and inspect its page title" });
@@ -541,16 +595,25 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect((await call("GET")).status).toBe(401);
     } finally {
       writeFileSync(finishFile, "finish");
-      await api("POST", `/api/bots/${bot.id}/interrupt`, {}); await idle(bot.id);
-      await api("DELETE", `/api/bots/${bot.id}`);
+      await stopBot(bot.id);
       await api("PUT", "/api/config", { box: { token: "" } });
     }
   });
 
   it.each(["stop", "failure", "off", "manual-selection", "new-request"])("does not continue a computer selection after %s", async failure => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
-    const { bot } = await api("POST", "/api/bots", { name: `Computer selection ${failure}` });
+    const { bot } = await api("POST", "/api/bots", { name: `Computer selection ${failure} ${randomUUID().slice(0, 8)}` });
     try {
+      // Cloud selection needs a configured provider to dispatch the turn that
+      // carries the selection token (neighboring computer tests set the same
+      // fixture box token and an archived boat).
+      await api("PUT", "/api/config", { box: { token: "box_fixture" } });
+      const environmentId = readFileSync(join(fixtureHome, "data", "environment-id"), "utf8").trim();
+      const scope = createHash("sha256").update(environmentId).digest("hex").slice(0, 12);
+      const prefix = bot.id.slice(0, 8).replace(/[^a-z0-9]/g, "");
+      const suffix = createHash("sha256").update(bot.id).digest("hex").slice(0, 6);
+      boatRow = { id: "bx_23456789", name: `ogb-${scope}-${prefix}-${suffix}`, state: "archived" };
+      allowBoatCreation = true;
       await api("PATCH", `/api/bots/${bot.id}`, { computer: failure === "off" ? "off" : "cloud" });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on the VM" });
       const sent: any = await dump();
@@ -589,14 +652,14 @@ describe("Group Local VM ownership on the real isolated server", () => {
       }
     } finally {
       writeFileSync(finishFile, "finish");
-      await api("POST", `/api/bots/${bot.id}/interrupt`, {}); await idle(bot.id);
-      await api("DELETE", `/api/bots/${bot.id}`);
+      await stopBot(bot.id);
+      boatRow = null; allowBoatCreation = false;
     }
   });
 
   it("runs successive direct tasks on their pinned Local VM despite a Cloud profile default", async () => {
     vmState();
-    const { bot } = await api("POST", "/api/bots", { name: "Pinned Local VM" });
+    const { bot } = await api("POST", "/api/bots", { name: `Pinned Local VM ${randomUUID().slice(0, 8)}` });
     try {
       await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud", browser: false });
       for (const text of ["Open Chrome on the Local VM", "Inspect the page title on the same Local VM"]) {
@@ -618,9 +681,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       }
     } finally {
       writeFileSync(finishFile, "finish");
-      await api("POST", `/api/bots/${bot.id}/interrupt`, {});
-      await idle(bot.id);
-      await api("DELETE", `/api/bots/${bot.id}`);
+      await stopBot(bot.id);
     }
   });
 
@@ -881,9 +942,10 @@ describe("Group Local VM ownership on the real isolated server", () => {
 
   it("ends the turn with a terminal error after a rejected lazy claim (issues #1361 F1, #1369)", async () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
-    const { bot: chief } = await api("POST", "/api/bots", { name: "Rejected claim chief" });
+    const suffix = randomUUID().slice(0, 8);
+    const { bot: chief } = await api("POST", "/api/bots", { name: `Rejected claim chief ${suffix}` });
     await api("PATCH", `/api/bots/${chief.id}`, { chiefOfStaff: true });
-    const { bot: auto } = await api("POST", "/api/bots", { name: "Rejected claim Auto" });
+    const { bot: auto } = await api("POST", "/api/bots", { name: `Rejected claim Auto ${suffix}` });
     try {
       await api("PATCH", `/api/bots/${auto.id}`, { browser: false });
       await api("POST", `/api/bots/${auto.id}/messages`, { text: "Use the VM when it is ready" });
@@ -929,16 +991,14 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect((await gate(autoComputer)).status).toBe(401);
     } finally {
       writeFileSync(finishFile, "finish");
-      await api("POST", `/api/bots/${auto.id}/interrupt`, {}); await idle(auto.id);
-      await api("DELETE", `/api/bots/${auto.id}`);
-      await api("POST", `/api/bots/${chief.id}/interrupt`, {}); await idle(chief.id);
-      await api("DELETE", `/api/bots/${chief.id}`);
+      await stopBot(auto.id);
+      await stopBot(chief.id);
     }
   });
 
   it("lets an uncontended first screen call through with an honest answer (issue #1361 AC3)", async () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
-    const { bot: auto } = await api("POST", "/api/bots", { name: "Free VM Auto" });
+    const { bot: auto } = await api("POST", "/api/bots", { name: `Free VM Auto ${randomUUID().slice(0, 8)}` });
     try {
       await api("PATCH", `/api/bots/${auto.id}`, { browser: false });
       await api("POST", `/api/bots/${auto.id}/messages`, { text: "Take a screenshot" });
@@ -955,15 +1015,16 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect(activities.join("|")).not.toContain("Waiting for its turn");
     } finally {
       writeFileSync(finishFile, "finish");
-      await api("POST", `/api/bots/${auto.id}/interrupt`, {}); await idle(auto.id);
-      await api("DELETE", `/api/bots/${auto.id}`);
+      await stopBot(bot.id);
+      await api("PUT", "/api/config", { box: { token: "" } }).catch(() => undefined);
     }
   });
 
   it("releases everything a rejected lazy claim took, so the next turn gets the VM (issue #1361 F2)", async () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
-    const { bot: auto } = await api("POST", "/api/bots", { name: "Rejected then idle" });
-    const { bot: next } = await api("POST", "/api/bots", { name: "Next VM user" });
+    const suffix = randomUUID().slice(0, 8);
+    const { bot: auto } = await api("POST", "/api/bots", { name: `Rejected then idle ${suffix}` });
+    const { bot: next } = await api("POST", "/api/bots", { name: `Next VM user ${suffix}` });
     try {
       await api("PATCH", `/api/bots/${auto.id}`, { browser: false });
       await api("PATCH", `/api/bots/${next.id}`, { computer: "vm" });
@@ -987,9 +1048,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect(activities.join("|")).not.toContain("Waiting for its turn");
     } finally {
       writeFileSync(finishFile, "finish");
-      await api("POST", `/api/bots/${auto.id}/interrupt`, {}); await api("POST", `/api/bots/${next.id}/interrupt`, {});
-      await idle(auto.id); await idle(next.id);
-      await api("DELETE", `/api/bots/${auto.id}`); await api("DELETE", `/api/bots/${next.id}`);
+      await stopBot(auto.id); await stopBot(next.id);
     }
   });
   it.each(["timeout", "stall"])("releases %s bookkeeping after the interrupt grace period", async (failure) => {
