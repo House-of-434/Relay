@@ -183,13 +183,15 @@ export function releaseResult(release: GitHubReleaseSummary): ConnectorResult {
 
 export function fileResult(repo: string, input: { path: string; url?: string; content?: string; truncated: boolean }): ConnectorResult {
   const canonicalUrl = isHttpUrl(input.url) ? input.url : `https://github.com/${repo}/blob/HEAD/${input.path}`;
+  const collapsed = typeof input.content === "string" ? input.content.replace(/\s+/g, " ").trim() : "";
+  const truncated = input.truncated || collapsed.length > BODY_MAX;
   return {
     source: "github",
     sourceId: `${repo}:${input.path}`,
     canonicalUrl,
     title: input.path,
     content: boundedText(input.content, BODY_MAX),
-    metadata: { repo, path: input.path, truncated: input.truncated },
+    metadata: { repo, path: input.path, truncated },
   };
 }
 

@@ -187,6 +187,8 @@ async function handleSweep(
 }
 
 let sharedBladePool: BladeBrowserPool | null = null;
+let sharedArxiv: { userAgent: string; provider: ArxivProvider } | null = null;
+let sharedSec: { userAgent: string; provider: SecProvider } | null = null;
 
 /** Read the actor's per-user connector enablement and build the tool contexts.
  * A connector disabled for this user is omitted, so its tools are not offered.
@@ -199,11 +201,20 @@ async function buildConnectors(
   const state = await new ConnectorStateClient({ bffInternalUrl, capability }).state(actorAssertion);
   const connectors: ConnectorToolContext = {};
   if (state.arxiv.enabled) {
-    connectors.arxiv = { enabled: true, provider: new ArxivProvider({ userAgent: arxivConfig().userAgent }) };
+    const { userAgent } = arxivConfig();
+    if (!sharedArxiv || sharedArxiv.userAgent !== userAgent) {
+      sharedArxiv = { userAgent, provider: new ArxivProvider({ userAgent }) };
+    }
+    connectors.arxiv = { enabled: true, provider: sharedArxiv.provider };
   }
   if (state.sec.enabled) {
     const { userAgent } = secConfig();
-    if (userAgent) connectors.sec = { enabled: true, provider: new SecProvider({ userAgent }) };
+    if (userAgent) {
+      if (!sharedSec || sharedSec.userAgent !== userAgent) {
+        sharedSec = { userAgent, provider: new SecProvider({ userAgent }) };
+      }
+      connectors.sec = { enabled: true, provider: sharedSec.provider };
+    }
     else console.error("[relay-tools] SEC is enabled but RELAY_SEC_USER_AGENT is unset; not offering SEC tools");
   }
   if (state.github.enabled) {

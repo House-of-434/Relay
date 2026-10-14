@@ -203,7 +203,7 @@ export class SecProvider {
     if (!facts) return [];
     const taxonomy = input.taxonomy?.trim();
     const tagNeedle = input.tag?.trim().toLowerCase();
-    const unit = input.unit?.trim();
+    const unitNeedle = input.unit?.trim().toLowerCase();
     const results: ConnectorResult[] = [];
     for (const [taxonomyName, tags] of Object.entries(facts)) {
       if (taxonomy && taxonomyName.toLowerCase() !== taxonomy.toLowerCase()) continue;
@@ -211,8 +211,13 @@ export class SecProvider {
         if (tagNeedle && !tagName.toLowerCase().includes(tagNeedle)) continue;
         const units = (definition as { units?: Record<string, unknown[]> }).units ?? {};
         const unitNames = Object.keys(units);
-        if (unit && !unitNames.includes(unit)) continue;
-        const selectedUnit = unit ?? unitNames[0];
+        let selectedUnit: string | undefined;
+        if (unitNeedle) {
+          selectedUnit = unitNames.find((name) => name.toLowerCase() === unitNeedle);
+          if (!selectedUnit) continue;
+        } else {
+          selectedUnit = unitNames[0];
+        }
         const values = selectedUnit ? (units[selectedUnit] ?? []) : [];
         results.push(factResult(cik, taxonomyName, tagName, selectedUnit, values));
         if (results.length >= 50) return results;

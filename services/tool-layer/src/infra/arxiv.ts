@@ -177,12 +177,15 @@ export class ArxivProvider {
   }
 
   async get(id: string): Promise<ConnectorResult | undefined> {
-    const normalized = canonicalId(id.trim());
-    if (normalized.length === 0) throw new Error("arxiv_get requires a paper id");
-    const params = new URLSearchParams({ id_list: normalized, max_results: "1" });
+    const requested = id.trim().replace(/^https?:\/\/arxiv\.org\/abs\//, "");
+    if (requested.length === 0) throw new Error("arxiv_get requires a paper id");
+    const params = new URLSearchParams({ id_list: requested, max_results: "1" });
     const xml = await this.request(`${this.baseUrl}?${params.toString()}`);
     const [entry] = parseArxivFeed(xml);
-    return entry ? toResult(entry) : undefined;
+    if (!entry) return undefined;
+    const version = /v\d+$/.exec(requested)?.[0];
+    if (version) entry.id = `${canonicalId(entry.id)}${version}`;
+    return toResult(entry);
   }
 
   private async request(url: string): Promise<string> {
