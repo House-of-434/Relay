@@ -5,7 +5,11 @@ by default (compose overrides the bind for the container network, where the
 HMAC actor assertion below is the real boundary) and exposes `relay_read` and
 `relay_write` on every MCP route (`/mcp/scout`, `/mcp/mercury`, or
 `/mcp/curator`); agents with research capability additionally expose browser
-and search tools to authenticated callers. Agent identity
+and search tools to authenticated callers. Scout additionally exposes the
+arXiv, SEC EDGAR, and GitHub research connectors, but only when the caller
+enabled that connector for their own account (GitHub also requires a connected
+installation, and SEC requires its fair-access User-Agent below); a disabled
+connector has no reachable tool. Agent identity
 comes from the configured MCP route, never from tool arguments. Every MCP
 request requires a signed `x-relay-actor-user` assertion and is rejected with
 401 without one, because the service-role credential bypasses Postgres RLS.
@@ -26,6 +30,9 @@ the service-role key stays only here. See `../../.env.secrets.example`.
 - Optionally, `NEWSLETTER_READONLY_URL`, `NEWSLETTER_READONLY_PROJECT_REF`, and
   `NEWSLETTER_READONLY_KEY` for the separate read-only newsletter project.
 - `RELAY_TOOL_PORT` defaults to `8787`.
+- `RELAY_SEC_USER_AGENT` declares the SEC EDGAR fair-access identity (with
+  contact information). SEC tools are unavailable until it is set.
+- Optionally, `RELAY_ARXIV_USER_AGENT`, defaulting to a descriptive Relay value.
 
 Each Supabase URL is checked against its configured project ref. Startup fails
 if the Relay database cannot access `app.companies`. Newsletter tables remain
@@ -41,9 +48,10 @@ server-controlled provenance (`actor_user`, `actor_agent`).
 The BFF verifies Supabase identity and issues a Relay session through the
 internal portal-session route. That session's UUID `userId` is the account
 identity; its email remains sender/contact metadata. For the matching Relay MCP
-route, the harness signs `userId`, email metadata, and issued-at into the
-`x-relay-actor-user` assertion. The Tool Layer verifies its HMAC and five-minute
-clock window, validates the UUID and allowed email domain, then uses only the
+route, the harness signs `userId`, the calling `agent`, email metadata, and
+issued-at into the `x-relay-actor-user` assertion. The Tool Layer verifies its HMAC and five-minute
+clock window, validates the UUID and allowed email domain, rejects the request
+with 401 when the assertion's agent does not match the MCP route, then uses only the
 UUID for ownership. Supabase JWTs are not forwarded into the harness or agents,
 and agent tool arguments cannot select actor identity. Direct bearer-user calls
 are verified with Supabase Auth and likewise resolve to the verified user's
