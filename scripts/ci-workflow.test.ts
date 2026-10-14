@@ -80,6 +80,31 @@ describe("CI concurrency", () => {
     expect(Object.keys(ui.on).sort()).toEqual(["workflow_dispatch"]);
   });
 
+  it("runs the BFF node-test suite in the static preflight", () => {
+    const runs = (workflow.jobs.static.steps as { run?: string }[]).map((step) => step.run);
+    expect(runs).toContain("pnpm test:bff");
+  });
+
+  it("scopes Tool Layer database settings to the tools service", () => {
+    // RELAY_DB_* rides in via env_file only: the harness (app) and the edge
+    // (caddy) must never name those settings, or a credential-shaped value
+    // gets wired where it is never read.
+    const compose = parse(readFileSync(new URL("../compose.yaml", import.meta.url), "utf8"));
+    for (const name of ["app", "caddy"]) {
+      expect(JSON.stringify(compose.services[name] ?? {})).not.toContain("RELAY_DB_");
+    }
+  });
+
+  it("keeps the tools fail-closed smoke pointed at the real message", () => {
+    // The docker smoke greps the tools log for the exact missing-setting
+    // error: if either side is reworded alone, the pin fails here instead of
+    // as a confusing red smoke on the PR.
+    const docker = readFileSync(new URL("../.github/workflows/docker.yml", import.meta.url), "utf8");
+    const database = readFileSync(new URL("../services/tool-layer/src/infra/database.ts", import.meta.url), "utf8");
+    expect(docker).toContain("Required Tool Layer setting RELAY_DB_URL is missing");
+    expect(database).toContain("Required Tool Layer setting ${key} is missing");
+  });
+
   it("makes a release wait for its commit's CI gate before any draft", () => {
     const release = parse(readFileSync(new URL("../.github/workflows/release.yml", import.meta.url), "utf8"));
     expect(release.jobs.assemble.needs).toContain("ci");
@@ -119,7 +144,7 @@ describe("CI concurrency", () => {
     expect(workflow.jobs.static.steps[0].with["fetch-depth"]).toBe(0);
     expect(workflow.jobs.static.steps.find((step: { id?: string }) => step.id === "scope").run).toBe("node scripts/ci-scope.mjs");
     expect(workflow.jobs.static.outputs).toEqual({
-      runtime: "${{ steps.scope.outputs.runtime }}", mobile: "${{ steps.scope.outputs.mobile }}",
+      runtime: "${{ steps.scope.outputs.runtime }}",
       vitest_os: "${{ steps.scope.outputs.vitest_os }}",
     });
     expect(workflow.jobs.static.steps.some((step: { run?: string }) =>

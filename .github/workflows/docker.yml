@@ -9,6 +9,7 @@ on:
       - deploy/local/**
       - .dockerignore
       - compose.yaml
+      - .env.example
       - server/**
       - services/**
       - shared/**
@@ -23,6 +24,7 @@ on:
       - deploy/local/**
       - .dockerignore
       - compose.yaml
+      - .env.example
       - server/**
       - services/**
       - shared/**

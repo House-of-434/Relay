@@ -42,7 +42,6 @@ jobs:
     timeout-minutes: 15
     outputs:
       runtime: ${{ steps.scope.outputs.runtime }}
-      mobile: ${{ steps.scope.outputs.mobile }}
       vitest_os: ${{ steps.scope.outputs.vitest_os }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -67,6 +66,8 @@ jobs:
       - run: pnpm typecheck
       - name: Tool Layer typecheck + tests (workspace identity, lifecycle policy)
         run: pnpm --filter @relay/tool-layer typecheck && pnpm --filter @relay/tool-layer test
+      - name: BFF tests (Gmail/Calendar internal routes, actor assertion)
+        run: pnpm test:bff
       - run: pnpm lint
       - name: production UI build
         run: pnpm exec vite build
