@@ -66,7 +66,7 @@ export interface RoutineContextAttachment {
 
 const persistedSourceThreadId = z.string().trim().min(1).optional().catch(undefined);
 
-export type RoutineRunTrigger = "schedule" | "manual" | "webhook" | "research";
+export type RoutineRunTrigger = "schedule" | "manual" | "webhook";
 
 export type RoutineRunStatus =
   | "queued"
@@ -76,23 +76,6 @@ export type RoutineRunStatus =
   | "failed"
   | "cancelled"
   | "missed";
-
-/** Leading context for a confirmed one-shot research execution. The run
- * dispatches as its agent, whose standing instruction is to propose first —
- * without this override the execution proposes a nested run from its own
- * thread instead of investigating. */
-export const RESEARCH_EXECUTION_PREAMBLE = [
-  "This is the confirmed one-shot deep-research execution: the user already approved this investigation.",
-  "Do the investigation now with web_search for discovery and browser_open/browser_read/browser_extract for real reading, then deliver the cited report in this conversation.",
-  "Do not ask for confirmation and do not call propose_deep_research from this run.",
-].join(" ");
-
-/** Whether a run is a live research execution (queued, running, or waiting).
- * Terminal research runs and every other trigger source return false, so a
- * follow-up proposal after completion is never mistaken for nesting. */
-export function isLiveResearchExecution(run: Pick<RoutineRun, "triggerSource" | "status"> | undefined): boolean {
-  return run?.triggerSource === "research" && ["queued", "running", "waiting"].includes(run.status);
-}
 
 export interface Routine {
   id: string;
@@ -1398,63 +1381,6 @@ export class RoutineManager {
     this.emitRun(run);
     queueMicrotask(() => void this.tick());
     return cloneRun(run);
-  }
-
-  /** Queue research work through the same dispatcher as scheduled routines.
-   * A research job owns no Routine record and no schedule: `routineId`
-   * carries the researchId so the run ledger, timeout handling, and report
-   * delivery all work unchanged, while the calendar (which lists routines,
-   * never runs) stays clean. Idempotent per researchId: confirming twice or
-   * retrying the resolve returns the existing run instead of queueing another.
-   * The prompt snapshot travels on the run itself, so there is no definition
-   * to be edited or deleted mid-flight.
-   *
-   * The stored prompt leads with the execution preamble: without it the
-   * agent's standing propose-first instruction fires again inside its own
-   * execution thread, nesting a second confirmation whose run then defers
-   * behind the busy bot, so nothing ever starts. */
-  enqueueResearch(input: {
-    researchId: string;
-    title: string;
-    brief: string;
-    botId: string;
-    runOn: RoutineRunOn;
-    sourceThreadId: string;
-    timeoutMinutes?: number;
-    requestedAt: number;
-  }): { id: string } {
-    const active = this.runs.find((run) => run.routineId === input.researchId && isLiveResearchExecution(run));
-    if (active) return { id: active.id };
-    if (this.options.botState(input.botId) === "missing") {
-      throw Object.assign(new Error("The assigned MAUS no longer exists"), { status: 410 });
-    }
-    const run: RoutineRun = {
-      id: randomUUID(),
-      routineId: input.researchId,
-      routineName: input.title,
-      prompt: `${RESEARCH_EXECUTION_PREAMBLE}\n\n${input.brief}`,
-      target: "bot",
-      botId: input.botId,
-      runOn: input.runOn,
-      scheduledFor: input.requestedAt,
-      status: "queued",
-      manual: true,
-      triggerSource: "research",
-      sourceThreadId: input.sourceThreadId,
-      attachments: [],
-      createdAt: this.now(),
-      ...(input.timeoutMinutes !== undefined ? { timeoutMinutes: input.timeoutMinutes } : {}),
-    };
-    const previousRuns = this.runs.slice();
-    this.runs.push(run);
-    try { this.save(); }
-    catch (error) {
-      this.runs = previousRuns;
-      throw error;
-    }
-    this.emitRun(run);
-    queueMicrotask(() => void this.tick());
-    return { id: run.id };
   }
 
   /** The most recent completed report for a continuity routine, or `null` when

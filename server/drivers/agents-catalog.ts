@@ -655,7 +655,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "propose_deep_research",
     description:
-      "Propose a bounded one-shot investigation: a thorough research task the person asked for, or a question complex enough that quick inline search cannot answer it. Pass a short title plus the full brief and plan preview (which sources to check and what to compare — not a rigid query list). The confirmation card shows the plan; Confirm runs it exactly once and delivers a cited report, Cancel runs nothing. This creates no routine, no schedule, and no calendar entry — never use propose_routine for one-shot research." + PROPOSAL_OUTCOME,
+      "Propose a bounded one-shot investigation: a thorough research task the person asked for, or a question complex enough that quick inline search cannot answer it. Pass a short title plus the full brief and plan preview (which sources to check and what to compare — not a rigid query list). The confirmation card shows the plan; on Confirm Relay opens a dedicated research thread and runs the investigation there exactly once, delivering a cited report; Cancel runs nothing. This creates no routine, no schedule, and no calendar entry — never use propose_routine for one-shot research." + PROPOSAL_OUTCOME,
     inputSchema: {
       type: "object",
       additionalProperties: false,

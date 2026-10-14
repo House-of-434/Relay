@@ -8,9 +8,7 @@ import { ensureDirs } from "./config.ts";
 import { BoatAgentDriver } from "./drivers/boatagent.ts";
 import {
   cleanRoutineOwner,
-  isLiveResearchExecution,
   nextOccurrence,
-  RESEARCH_EXECUTION_PREAMBLE,
   resolveRoutineOwner,
   RoutineManager,
   RoutineScheduleError,
@@ -1662,65 +1660,6 @@ describe("RoutineManager", () => {
       scheduledFor: start,
       status: "running",
     });
-  });
-
-  it("queues research without a routine record and never duplicates a live job", async () => {
-    const start = new Date(2026, 7, 17, 8, 0).getTime();
-    const h = harness(start);
-    h.setBot("busy");
-    const first = h.manager.enqueueResearch({
-      researchId: "research-1",
-      title: "Verify Electron claims",
-      brief: "Investigate the four headline claims with cited sources.",
-      botId: "maus-scout",
-      runOn: "maus",
-      sourceThreadId: "thread-source",
-      requestedAt: start,
-    });
-    // Confirming twice returns the live run instead of queueing another.
-    const second = h.manager.enqueueResearch({
-      researchId: "research-1",
-      title: "Verify Electron claims",
-      brief: "Investigate the four headline claims with cited sources.",
-      botId: "maus-scout",
-      runOn: "maus",
-      sourceThreadId: "thread-source",
-      requestedAt: start,
-    });
-    expect(second.id).toBe(first.id);
-    expect(h.manager.listRoutines()).toHaveLength(0);
-    expect(h.manager.listRuns()).toHaveLength(1);
-    h.setNow(start + 60_000);
-    h.setBot("ready");
-    await h.manager.tick();
-    expect(h.manager.listRuns().find((run) => run.id === first.id)).toMatchObject({
-      triggerSource: "research",
-      routineId: "research-1",
-      status: "running",
-    });
-    expect(h.triggerSources).toEqual(["research"]);
-    // Research runs get their own task thread, never the live chat.
-    expect(h.taskActivations).toEqual([false]);
-    // The execution carries the confirmed-run preamble ahead of the brief,
-    // so the agent investigates instead of proposing a nested run.
-    const dispatched = h.started.find((turn) => turn.threadId === h.manager.listRuns().find((run) => run.id === first.id)?.threadId);
-    expect(dispatched?.prompt).toContain(RESEARCH_EXECUTION_PREAMBLE);
-    expect(dispatched?.prompt).toContain("Investigate the four headline claims with cited sources.");
-  });
-
-  it("treats only live research executions as nesting", () => {
-    const research = (status: RoutineRun["status"]) => ({ triggerSource: "research" as const, status });
-    expect(isLiveResearchExecution(research("queued"))).toBe(true);
-    expect(isLiveResearchExecution(research("running"))).toBe(true);
-    expect(isLiveResearchExecution(research("waiting"))).toBe(true);
-    for (const status of ["completed", "failed", "cancelled", "missed"] as const) {
-      expect(isLiveResearchExecution(research(status))).toBe(false);
-    }
-    // Other trigger sources are never research executions, even while live.
-    for (const triggerSource of ["schedule", "manual", "webhook"] as const) {
-      expect(isLiveResearchExecution({ triggerSource, status: "running" })).toBe(false);
-    }
-    expect(isLiveResearchExecution(undefined)).toBe(false);
   });
 
   it("retains an old waiting run when trimming terminal receipt history", async () => {
