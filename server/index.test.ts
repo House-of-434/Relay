@@ -23,7 +23,6 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
 import {
@@ -46,7 +45,6 @@ import {
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
-const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WEBHOOK_PORT = 39000 + Math.floor(Math.random() * 10_000);
@@ -9380,18 +9378,6 @@ describe("harness HTTP API", () => {
       await api("DELETE", `/api/bots/${bot.id}`);
     }
   });
-
-  /** Wait until the decision log carries a connector-scope row matching
-   * the predicate (rows are appended fire-and-forget). */
-  const waitForConnectorRows = async (pred: (row: any) => boolean, ms = 15_000) => {
-    const deadline = Date.now() + ms;
-    for (;;) {
-      const rows: any[] = (await api("GET", "/api/decisions?limit=500")).body.decisions ?? [];
-      if (rows.some(pred)) return rows;
-      if (Date.now() > deadline) return rows;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-  };
 
   it("enforces per-bot connector tool grants on relayed tool calls", async () => {
     // Retired with Connected Apps: per-bot grants are refused at the patch

@@ -1015,7 +1015,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect(activities.join("|")).not.toContain("Waiting for its turn");
     } finally {
       writeFileSync(finishFile, "finish");
-      await stopBot(bot.id);
+      await stopBot(auto.id);
       await api("PUT", "/api/config", { box: { token: "" } }).catch(() => undefined);
     }
   });
