@@ -137,11 +137,15 @@ export interface GitHubReleaseSummary {
 }
 
 export function repositoryResult(repo: GitHubRepositorySummary): ConnectorResult {
+  const fullName = repo.fullName.trim();
+  if (!REPO_PATTERN.test(fullName)) throw new Error("GitHub repository payload is missing owner/name");
+  const canonicalUrl = isHttpUrl(repo.url) ? repo.url : `https://github.com/${fullName}`;
+  if (!isHttpUrl(canonicalUrl)) throw new Error("GitHub repository payload is missing a usable URL");
   return {
     source: "github",
-    sourceId: repo.fullName,
-    canonicalUrl: isHttpUrl(repo.url) ? repo.url : `https://github.com/${repo.fullName}`,
-    title: repo.fullName,
+    sourceId: fullName,
+    canonicalUrl,
+    title: fullName,
     updatedAt: repo.updatedAt,
     content: boundedText(repo.description, 1_000),
     metadata: { private: repo.private, stars: repo.stars },
@@ -149,10 +153,12 @@ export function repositoryResult(repo: GitHubRepositorySummary): ConnectorResult
 }
 
 export function issueResult(issue: GitHubIssueSummary): ConnectorResult {
+  if (!Number.isInteger(issue.number) || issue.number <= 0) throw new Error("GitHub issue payload is missing a usable number");
+  if (!isHttpUrl(issue.url)) throw new Error("GitHub issue payload is missing a usable URL");
   return {
     source: "github",
     sourceId: `${issue.repo ?? ""}#${issue.number}`,
-    canonicalUrl: isHttpUrl(issue.url) ? issue.url : "",
+    canonicalUrl: issue.url,
     title: issue.title,
     updatedAt: issue.updatedAt,
     content: boundedText(issue.body, 2_000),
@@ -161,14 +167,17 @@ export function issueResult(issue: GitHubIssueSummary): ConnectorResult {
 }
 
 export function releaseResult(release: GitHubReleaseSummary): ConnectorResult {
+  const tag = release.tagName.trim();
+  if (tag.length === 0) throw new Error("GitHub release payload is missing a usable tag");
+  if (!isHttpUrl(release.url)) throw new Error("GitHub release payload is missing a usable URL");
   return {
     source: "github",
-    sourceId: release.tagName,
-    canonicalUrl: isHttpUrl(release.url) ? release.url : "",
-    title: release.name ?? release.tagName,
+    sourceId: tag,
+    canonicalUrl: release.url,
+    title: release.name ?? tag,
     publishedAt: release.publishedAt,
     content: boundedText(release.body, 4_000),
-    metadata: { tag: release.tagName },
+    metadata: { tag },
   };
 }
 

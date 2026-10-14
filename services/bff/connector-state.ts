@@ -59,6 +59,7 @@ export class ConnectorStateStore {
   async set(userId: string, source: ConnectorSource, enabled: boolean): Promise<ConnectorEnablement> {
     return this.queue.run(async () => {
       const file = (await readJsonFile<StateFile>(this.filePath)) ?? { version: 1, users: {} };
+      file.users ??= {};
       const current = normalize(file.users[userId]);
       const next: ConnectorEnablement = { ...current, [sourceKey(source)]: enabled };
       file.users[userId] = next;

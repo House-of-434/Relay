@@ -76,6 +76,22 @@ function repositorySummary(raw: RawRepository): Record<string, unknown> {
   };
 }
 
+function isHttpLike(value: unknown): value is string {
+  return typeof value === "string" && (value.startsWith("http://") || value.startsWith("https://"));
+}
+
+function hasUsableRepo(item: Record<string, unknown>): boolean {
+  return typeof item.fullName === "string" && item.fullName.length > 0 && isHttpLike(item.url);
+}
+
+function hasUsableIssue(item: { number: unknown; url: unknown }): boolean {
+  return typeof item.number === "number" && Number.isInteger(item.number) && item.number > 0 && isHttpLike(item.url);
+}
+
+function hasUsableRelease(item: { tagName: unknown; url: unknown }): boolean {
+  return typeof item.tagName === "string" && item.tagName.length > 0 && isHttpLike(item.url);
+}
+
 function repoFromApiUrl(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
   const match = /repos\/([^/]+)\/([^/]+)$/.exec(value);
@@ -154,7 +170,7 @@ async function dispatch(
       `/search/repositories?${params.toString()}`,
       { installationId },
     );
-    jsonResponse(res, 200, { items: (raw.items ?? []).map(repositorySummary) });
+    jsonResponse(res, 200, { items: (raw.items ?? []).map(repositorySummary).filter(hasUsableRepo) });
     return;
   }
 
@@ -165,7 +181,12 @@ async function dispatch(
       return;
     }
     const raw = await options.app.rest<RawRepository>(`/repos/${parsed.data.repo}`, { installationId });
-    jsonResponse(res, 200, { repository: repositorySummary(raw) });
+    const repository = repositorySummary(raw);
+    if (!hasUsableRepo(repository)) {
+      jsonResponse(res, 502, { error: "GitHub request failed" });
+      return;
+    }
+    jsonResponse(res, 200, { repository });
     return;
   }
 
@@ -221,7 +242,7 @@ async function dispatch(
       isPullRequest: item.pull_request !== undefined,
       repo: repoFromApiUrl(item.repository_url),
       body: typeof item.body === "string" ? item.body : undefined,
-    }));
+    })).filter(hasUsableIssue);
     jsonResponse(res, 200, { items });
     return;
   }
@@ -243,6 +264,6 @@ async function dispatch(
       url: typeof release.html_url === "string" ? release.html_url : "",
       publishedAt: typeof release.published_at === "string" ? release.published_at : undefined,
       body: typeof release.body === "string" ? release.body : undefined,
-    })),
+    })).filter(hasUsableRelease),
   });
 }

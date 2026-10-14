@@ -85,6 +85,18 @@ export function normalizeCik(input: string): number | undefined {
   return Number(digits);
 }
 
+function assertCalendarDate(value: string, field: string): void {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) throw new Error(`sec_search_filings ${field} must use YYYY-MM-DD`);
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
+    throw new Error(`sec_search_filings ${field} must use YYYY-MM-DD`);
+  }
+}
+
 export class SecProvider {
   private readonly userAgent: string;
   private readonly timeoutMs: number | undefined;
@@ -164,6 +176,8 @@ export class SecProvider {
     const formFilter = input.formType?.trim().toUpperCase();
     const from = input.from?.trim();
     const to = input.to?.trim();
+    if (from) assertCalendarDate(from, "from");
+    if (to) assertCalendarDate(to, "to");
     const limit = Math.min(Math.max(input.limit ?? 20, 1), 100);
     const results: ConnectorResult[] = [];
     for (let index = 0; index < count && results.length < limit; index += 1) {

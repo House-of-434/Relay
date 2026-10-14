@@ -105,16 +105,36 @@ function daysToArxivDate(value: string | undefined, endOfDay: boolean): string |
   if (!value) return undefined;
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value.trim());
   if (!match) throw new Error("arxiv date filters must use YYYY-MM-DD");
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const check = new Date(Date.UTC(year, month - 1, day));
+  if (check.getUTCFullYear() !== year || check.getUTCMonth() !== month - 1 || check.getUTCDate() !== day) {
+    throw new Error("arxiv date filters must use YYYY-MM-DD");
+  }
   return `${match[1]}${match[2]}${match[3]}${endOfDay ? "2359" : "0000"}`;
+}
+
+function escapeQuoted(value: string): string {
+  return value.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function phraseTerm(value: string): string {
+  return `"${escapeQuoted(value)}"`;
+}
+
+function fieldTerm(value: string): string {
+  const escaped = escapeQuoted(value);
+  return /[\s":]/.test(value) ? `"${escaped}"` : escaped;
 }
 
 function buildSearchQuery(input: ArxivSearchInput): string {
   const terms: string[] = [];
   const query = input.query.trim();
-  if (query.length > 0) terms.push(`all:${query}`);
-  if (input.title?.trim()) terms.push(`ti:"${input.title.trim()}"`);
-  if (input.author?.trim()) terms.push(`au:"${input.author.trim()}"`);
-  if (input.category?.trim()) terms.push(`cat:${input.category.trim()}`);
+  if (query.length > 0) terms.push(`all:${phraseTerm(query)}`);
+  if (input.title?.trim()) terms.push(`ti:${phraseTerm(input.title.trim())}`);
+  if (input.author?.trim()) terms.push(`au:${phraseTerm(input.author.trim())}`);
+  if (input.category?.trim()) terms.push(`cat:${fieldTerm(input.category.trim())}`);
   const from = daysToArxivDate(input.from, false);
   const to = daysToArxivDate(input.to, true);
   if (from || to) terms.push(`submittedDate:[${from ?? "000000000000"} TO ${to ?? "999912312359"}]`);
