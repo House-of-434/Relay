@@ -7,8 +7,6 @@
  * BFF cannot be reached, every connector is treated as disabled: fail closed,
  * never expose a tool whose policy could not be checked. */
 
-import type { ConnectorSource } from "../domain/connector-result.js";
-
 export interface ConnectorState {
   arxiv: { enabled: boolean };
   sec: { enabled: boolean };
@@ -20,14 +18,6 @@ export const NO_CONNECTORS: ConnectorState = {
   sec: { enabled: false },
   github: { enabled: false, connected: false },
 };
-
-export function connectorEnabled(state: ConnectorState, source: ConnectorSource): boolean {
-  switch (source) {
-    case "arxiv": return state.arxiv.enabled;
-    case "sec-edgar": return state.sec.enabled;
-    case "github": return state.github.enabled && state.github.connected;
-  }
-}
 
 export interface ConnectorStateClientOptions {
   bffInternalUrl: string;

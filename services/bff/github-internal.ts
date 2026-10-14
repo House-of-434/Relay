@@ -84,8 +84,8 @@ function hasUsableRepo(item: Record<string, unknown>): boolean {
   return typeof item.fullName === "string" && item.fullName.length > 0 && isHttpLike(item.url);
 }
 
-function hasUsableIssue(item: { number: unknown; url: unknown }): boolean {
-  return typeof item.number === "number" && Number.isInteger(item.number) && item.number > 0 && isHttpLike(item.url);
+function hasUsableIssue(item: { number: unknown; url: unknown; repo: unknown }): boolean {
+  return typeof item.number === "number" && Number.isInteger(item.number) && item.number > 0 && isHttpLike(item.url) && typeof item.repo === "string" && REPO_PATTERN.test(item.repo);
 }
 
 function hasUsableRelease(item: { tagName: unknown; url: unknown }): boolean {

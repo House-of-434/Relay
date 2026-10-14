@@ -127,7 +127,7 @@ export class SecProvider {
   private async tickerRows(): Promise<TickerRow[]> {
     return this.tickers.getOrSet("all", async () => {
       const raw = await this.getJson<Record<string, TickerRow>>(SEC_TICKERS_URL);
-      return Object.values(raw).filter((row) => row && typeof row.cik_str === "number");
+      return Object.values(raw).filter((row) => row && typeof row.cik_str === "number" && typeof row.ticker === "string" && typeof row.title === "string");
     });
   }
 
@@ -218,7 +218,8 @@ export class SecProvider {
         } else {
           selectedUnit = unitNames[0];
         }
-        const values = selectedUnit ? (units[selectedUnit] ?? []) : [];
+        if (!selectedUnit) continue;
+        const values = units[selectedUnit] ?? [];
         results.push(factResult(cik, taxonomyName, tagName, selectedUnit, values));
         if (results.length >= 50) return results;
       }
