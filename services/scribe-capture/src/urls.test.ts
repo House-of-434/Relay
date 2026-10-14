@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { hostAllowed, meetCode, nativeIdFor } from "./urls.js";
+import { hostAllowed, meetCode, meetingUrlKey, nativeIdFor } from "./urls.js";
 
 test("meetCode extracts the Meet code", () => {
   assert.equal(meetCode("https://meet.google.com/abc-defg-hij?authuser=0"), "abc-defg-hij");
@@ -23,4 +23,22 @@ test("hostAllowed is per-platform and fail-closed", () => {
   assert.equal(hostAllowed("google_meet", "https://zoom.us/j/1"), false);
   assert.equal(hostAllowed("teams", "https://evil.example.com/meet"), false);
   assert.equal(hostAllowed("zoom", "not a url"), false);
+});
+
+test("meetingUrlKey normalizes room identity for cross-instance dedup", () => {
+  assert.equal(
+    meetingUrlKey("google_meet", "https://meet.google.com/abc-defg-hij?pli=1#frag"),
+    "google_meet|meet.google.com/abc-defg-hij",
+  );
+  assert.equal(
+    meetingUrlKey("zoom", "HTTPS://HOUSEOF434.ZOOM.US/j/123?pwd=x"),
+    "zoom|houseof434.zoom.us/j/123",
+  );
+});
+
+test("meetingUrlKey rejects unusable URLs", () => {
+  assert.equal(meetingUrlKey("google_meet", "http://meet.google.com/abc"), null);
+  assert.equal(meetingUrlKey("google_meet", "https://meet.google.com@127.0.0.1/"), null);
+  assert.equal(meetingUrlKey("google_meet", "not a url"), null);
+  assert.equal(meetingUrlKey("google_meet", "https://meet.google.com./abc"), "google_meet|meet.google.com/abc");
 });

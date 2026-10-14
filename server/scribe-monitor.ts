@@ -56,11 +56,15 @@ export interface ReceiptStore {
   record(kind: string, key: string, result: string, at: number): void;
 }
 
-/** The worker's /status answer for one instance. */
+/** The worker's /status answer for one instance. worker_boot_id identifies the
+ * worker generation (capture worker boot.ts): a change observed mid-run
+ * proves a worker restart, which wipes its in-memory sessions. Absent from
+ * older workers and test fakes — then only the grace path applies. */
 export interface ScribeWorkerStatus {
   status: string;
   segment_count?: number;
   error?: string;
+  worker_boot_id?: string;
 }
 
 /** A terminal notice handed to the harness to email. The monitor decides the
@@ -312,6 +316,10 @@ export class ScribeMonitor {
   /** Last time a signed-out admin alert was emitted (rate limit). In-memory: a
    *  restart resets it, which is acceptable for an operator alert. */
   private lastSignedOutAlertMs = Number.NEGATIVE_INFINITY;
+  /** Last worker generation seen on /status. In-memory: a harness restart
+   * resets the baseline, and armed intents then reconcile through the normal
+   * grace path (no worse than before boot tracking existed). */
+  private lastWorkerBootId: string | null = null;
   private readonly deps: ScribeMonitorDeps;
   private readonly config: ScribeMonitorConfig;
 
@@ -420,6 +428,16 @@ export class ScribeMonitor {
     // A worker refusal (e.g. "at capacity" -> status failed) is terminal:
     // record the receipt so it is not retried, and let reconciliation send the
     // failure notice.
+    if (result.status === "duplicate") {
+      // The room is already live under another instance (calendar/manual
+      // collision or same-room race): retire silently. The live capture's
+      // own notice covers the user — a failure email here would be wrong,
+      // nothing failed.
+      this.deps.receipts.record("scribe.arm", request.receiptKey, "duplicate", now);
+      await this.finish(request, "duplicate-room", null, now);
+      this.log(`scribe: ${descriptor.instance_id} already captured; retiring duplicate request`);
+      return;
+    }
     this.deps.receipts.record("scribe.arm", request.receiptKey, result.status ?? "armed", now);
     if (request.source === "manual") this.deps.noteManualArmed?.(descriptor.instance_id);
     this.log(`scribe: armed ${descriptor.instance_id} (${descriptor.platform}) -> ${result.status ?? "armed"}`);
@@ -438,6 +456,25 @@ export class ScribeMonitor {
       // Transient: no receipt, retried next tick.
       this.log(`scribe: worker status failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
       return;
+    }
+    // Worker restart detection: a changed boot id proves the worker's
+    // in-memory sessions were wiped (an unknown session after a restart is
+    // NOT the same as a never-existing one). Fail fast with a clear reason
+    // instead of waiting out the grace window — and never blindly re-arm: a
+    // second browser rejoining a live meeting is a visible duplicate the
+    // user did not ask for. To resume capture the user re-requests, which
+    // mints a fresh intent. First sighting only sets the baseline.
+    if (typeof status.worker_boot_id === "string" && status.worker_boot_id !== "") {
+      if (this.lastWorkerBootId !== null && status.worker_boot_id !== this.lastWorkerBootId) {
+        this.lastWorkerBootId = status.worker_boot_id;
+        await this.finish(request, "worker_restarted", {
+          kind: "failed",
+          reason: "capture worker restarted; the recording session did not survive",
+          signedOut: false,
+        }, now);
+        return;
+      }
+      this.lastWorkerBootId = status.worker_boot_id;
     }
     if (!(TERMINAL_SCRIBE_STATES as readonly string[]).includes(status.status)) {
       const endMs = eventEndMs(event);
@@ -467,8 +504,10 @@ export class ScribeMonitor {
   }
 
   /** Terminal close-out, exactly once per request (the notify receipt above
-   * short-circuits repeats): optionally email, then record the notice, then
-   * retire manual intents so the same room may be captured again. */
+   *  short-circuits repeats): optionally email, then record the notice, then
+   *  retire manual intents so the same room may be captured again. A failed
+   *  email send throws BEFORE the receipt is recorded, so the next tick
+   *  retries: notices are at-least-once, never silently dropped. */
   private async finish(
     request: JoinRequest,
     result: string,
@@ -499,7 +538,10 @@ export class ScribeMonitor {
     try {
       await this.deps.notify?.(full);
     } catch (error) {
+      // Propagate: finish() must not record the notify receipt for an
+      // undelivered notice, or the retry below could never happen.
       this.log(`scribe: notify failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
+      throw error;
     }
   }
 }

@@ -29,8 +29,7 @@ export function nativeIdFor(platform: string, url: string): string | null {
 }
 
 /** Allowed join hosts per platform — a descriptor URL is validated before use. */
-export function hostAllowed(platform: string, url: string): boolean {
-  let host: string;
+export function hostAllowed(platform: string, url: string): boolean {  let host: string;
   try {
     host = new URL(url).hostname.toLowerCase();
   } catch {
@@ -40,4 +39,25 @@ export function hostAllowed(platform: string, url: string): boolean {
   if (platform === "teams") return host === "teams.microsoft.com" || host === "teams.live.com";
   if (platform === "zoom") return host === "zoom.us" || host.endsWith(".zoom.us");
   return false;
+}
+
+/** Normalized room identity for cross-instance dedup: platform plus lowercase
+ * host (trailing dot stripped) plus path, query and fragment dropped. Purely
+ * syntactic — destination safety is the navigation guard's job, never inferred
+ * from this key. Null when the URL is unusable. */
+export function meetingUrlKey(platform: string, url: string): string | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== "https:") return null;
+  if (parsed.username || parsed.password) return null;
+  let host = parsed.hostname.toLowerCase();
+  if (host.endsWith(".")) host = host.slice(0, -1);
+  if (!host || host.includes(" ") || host.includes("..")) return null;
+  let path = parsed.pathname.replace(/\/+$/, "");
+  if (!path) path = "/";
+  return `${platform}|${host}${path}`;
 }

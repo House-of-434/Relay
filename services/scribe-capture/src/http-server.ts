@@ -3,6 +3,7 @@ import { createHash, timingSafeEqual } from "node:crypto";
 
 import type { WorkerConfig } from "./config.js";
 import type { JoinController, JoinDescriptor } from "./types.js";
+import { WORKER_BOOT_ID } from "./boot.js";
 
 const MAX_BODY_BYTES = 256 * 1024;
 
@@ -54,14 +55,13 @@ export function createScribeWorkerServer(controller: JoinController, config: Wor
     void (async () => {
       const url = new URL(req.url ?? "/", "http://127.0.0.1");
       if (req.method === "GET" && url.pathname === "/healthz") {
-        sendJson(res, 200, { app: "relay-scribe", status: "ok", enabled: config.enabled });
+        sendJson(res, 200, { app: "relay-scribe", status: "ok", enabled: config.enabled, worker_boot_id: WORKER_BOOT_ID });
         return;
       }
       if (req.method !== "POST" || !["/join", "/status", "/stop"].includes(url.pathname)) {
         sendJson(res, 404, { error: "not found" });
         return;
-      }
-      if (!capabilityMatches(bearer(req), config.workerCapability)) {
+      }      if (!capabilityMatches(bearer(req), config.workerCapability)) {
         sendJson(res, 401, { error: "unauthorized" });
         return;
       }

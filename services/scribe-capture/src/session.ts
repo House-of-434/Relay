@@ -10,9 +10,10 @@ import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
 import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
 import { toSegment } from "./gmeet-segment.js";
-import { hostAllowed, nativeIdFor } from "./urls.js";
+import { hostAllowed, meetingUrlKey, nativeIdFor } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
+import { WORKER_BOOT_ID } from "./boot.js";
 import { postMeetDisclosure } from "./chat.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
@@ -518,8 +519,31 @@ class MeetSession {
       segment_count: this.spool.added,
       capture_started_at: this.captureStartedAt ?? undefined,
       error: this.error ?? undefined,
+      worker_boot_id: WORKER_BOOT_ID,
     };
   }
+
+  /** Normalized room identity for cross-instance dedup (see meetingUrlKey). */
+  roomKey(): string | null {
+    return meetingUrlKey(this.descriptor.platform, this.descriptor.meeting_url);
+  }
+
+  /** Live for dedup purposes: states where a browser participant exists or
+   * is imminent. Terminal states never block a room. */
+  get roomLive(): boolean {
+    return this.status === "joining" || this.status === "awaiting_admission" || this.status === "active";
+  }
+}
+
+/** Cross-instance room dedup, extracted pure for tests: the live instance for
+ * a room key, or null. Terminal instances never block. The caller guarantees
+ * check-then-insert runs without an intervening await. */
+export function selectRoomDuplicate(
+  sessions: Array<{ instanceId: string; live: boolean; urlKey: string | null }>,
+  urlKey: string | null,
+): string | null {
+  if (!urlKey) return null;
+  return sessions.find((s) => s.live && s.urlKey === urlKey)?.instanceId ?? null;
 }
 
 /** Owns one session per instance_id. join is idempotent by instance_id. */
@@ -560,6 +584,22 @@ export class SessionController implements JoinController {
       return { instance_id: descriptor.instance_id, status: "failed", error: reject };
     }
 
+    // Cross-instance dedup: at most one LIVE capture per room. A second join
+    // for a room that is already joining/admitted/active — same calendar
+    // event re-armed, a manual request colliding with a calendar arm, or two
+    // manual requests racing — returns duplicate instead of seating a second
+    // bot. Terminal sessions never block their room. Check-then-insert runs
+    // with no await between, so same-process concurrent joins serialize on
+    // the event loop; cross-restart duplicates are the harness's reconcile
+    // job (armed intents re-post the same instance_id, which dedupes above).
+    const roomOwner = selectRoomDuplicate(
+      [...this.sessions.entries()].map(([id, s]) => ({ instanceId: id, live: s.roomLive, urlKey: s.roomKey() })),
+      meetingUrlKey(descriptor.platform, descriptor.meeting_url),
+    );
+    if (roomOwner) {
+      return { instance_id: descriptor.instance_id, status: "duplicate", error: `room already captured as ${roomOwner}` };
+    }
+
     const session = new MeetSession(descriptor, this.config);
     this.sessions.set(descriptor.instance_id, session);
     void session.run();
@@ -568,7 +608,7 @@ export class SessionController implements JoinController {
 
   async status(instanceId: string): Promise<StatusOutcome> {
     const session = this.sessions.get(instanceId);
-    if (!session) return { instance_id: instanceId, status: "unknown", segment_count: 0 };
+    if (!session) return { instance_id: instanceId, status: "unknown", segment_count: 0, worker_boot_id: WORKER_BOOT_ID };
     return session.outcome();
   }
 

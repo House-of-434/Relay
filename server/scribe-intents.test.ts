@@ -93,6 +93,46 @@ describe("acceptManualJoin idempotency", () => {
     expect(second.outcome).toBe("active");
   });
 
+  it("serializes concurrent submissions of the same request key", async () => {
+    const input = {
+      requestKey: "req-race",
+      meetingUrl: MEET,
+      platform: "google_meet" as const,
+      actor: { userId: USER, botId: MERCURY, threadId: THREAD },
+      now: 1_000,
+    };
+    const [a, b] = await Promise.all([
+      Promise.resolve().then(() => intents.acceptManualJoin(input)),
+      Promise.resolve().then(() => intents.acceptManualJoin(input)),
+    ]);
+    // Exactly one winner creates; the loser reads the winner's row. The
+    // single SQLite transaction makes the interleaving irrelevant.
+    const outcomes = [a.outcome, b.outcome].sort();
+    expect(outcomes).toEqual(["created", "duplicate"]);
+    expect(a.intent.instanceId).toBe(b.intent.instanceId);
+    expect(dbmod.listPendingScribeJoinIntents()).toHaveLength(1);
+  });
+
+  it("survives a restart: pending intents and idempotency persist", async () => {
+    const first = accept();
+    expect(first.outcome).toBe("created");
+    // Simulate a process restart: fresh module state, same data directory.
+    vi.resetModules();
+    const db2 = await import("./message-db.ts");
+    const intents2 = await import("./scribe-intents.ts");
+    expect(db2.listPendingScribeJoinIntents()).toHaveLength(1);
+    expect(db2.listPendingScribeJoinIntents()[0]!.instanceId).toBe(first.intent.instanceId);
+    const retry = intents2.acceptManualJoin({
+      requestKey: "req-1",
+      meetingUrl: MEET,
+      platform: "google_meet",
+      actor: { userId: USER, botId: MERCURY, threadId: THREAD },
+      now: 9_999,
+    });
+    expect(retry.outcome).toBe("duplicate");
+    expect(retry.intent.instanceId).toBe(first.intent.instanceId);
+  });
+
   it("creates independent instances for different rooms", () => {
     const first = accept();
     const second = accept({ requestKey: "req-2", meetingUrl: MEET_OTHER });

@@ -69,7 +69,10 @@ export interface MeetingRow {
 
 export interface JoinOutcome {
   instance_id: string;
-  status: CaptureStatus | "unknown";
+  /** "duplicate" is not a capture state: the room is already live under a
+   * different instance, so no session was created. The harness retires the
+   * request silently (the live capture's own notice covers the user). */
+  status: CaptureStatus | "unknown" | "duplicate";
   /** Present once capture begins; this is time zero. */
   capture_started_at?: string;
   error?: string;
@@ -81,6 +84,9 @@ export interface StatusOutcome {
   segment_count: number;
   capture_started_at?: string;
   error?: string;
+  /** Worker process identity (see boot.ts). Present on every answer,
+   * including unknown: it proves which generation was asked. */
+  worker_boot_id: string;
 }
 
 /** The orchestration surface the HTTP layer calls. Implemented by the real

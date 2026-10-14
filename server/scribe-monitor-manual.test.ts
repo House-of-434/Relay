@@ -68,11 +68,12 @@ interface Harness {
   joinBehavior?: (d: ScribeDescriptor) => Promise<{ status: string }>;
 }
 
-function build(h: Partial<Harness> & { manual?: JoinRequest[] } = {}) {
+function build(h: Partial<Harness> & { manual?: JoinRequest[]; failNotifyTimes?: number } = {}) {
   const full: Harness = {
     joined: [], statuses: new Map(), notices: [], armed: [], terminal: [],
     receipts: fakeReceipts(), ...h,
   };
+  let notifyFailures = h.failNotifyTimes ?? 0;
   const monitor = new ScribeMonitor(
     {
       listEvents: async () => [],
@@ -82,7 +83,13 @@ function build(h: Partial<Harness> & { manual?: JoinRequest[] } = {}) {
       listManualRequests: async () => h.manual ?? [],
       noteManualArmed: (id) => { full.armed.push(id); },
       noteManualTerminal: (id) => { full.terminal.push(id); },
-      notify: (n) => { full.notices.push(n); },
+      notify: (n) => {
+        if (notifyFailures > 0) {
+          notifyFailures -= 1;
+          throw new Error("mailbox unavailable");
+        }
+        full.notices.push(n);
+      },
     },
     cfg,
   );
@@ -154,6 +161,67 @@ describe("manual intent drain", () => {
     expect(receipts.keys.size).toBe(0);
   });
 
+describe("worker restart recovery", () => {
+  const BOOT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const BOOT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+
+  it("fails fast with a clear reason when the worker generation changes", async () => {
+    const { monitor, full } = build({ manual: [manualRequest()] });
+    await monitor.tick(NOW + 5_000);
+    expect(full.armed).toEqual(["inst-manual-1"]);
+    // Worker alive at generation A, session present.
+    full.statuses.set("inst-manual-1", { status: "active", segment_count: 1, worker_boot_id: BOOT_A });
+    await monitor.tick(NOW + 65_000);
+    expect(full.notices).toHaveLength(0);
+    // Worker restarted: generation B, session gone. No grace wait.
+    full.statuses.set("inst-manual-1", { status: "unknown", segment_count: 0, worker_boot_id: BOOT_B });
+    await monitor.tick(NOW + 125_000);
+    expect(full.notices).toHaveLength(1);
+    expect(full.notices[0]).toMatchObject({ instance_id: "inst-manual-1", kind: "failed" });
+    expect(full.notices[0].reason).toMatch(/worker restarted/);
+    expect(full.terminal).toEqual(["inst-manual-1"]);
+    // One notice only: the notify receipt short-circuits further ticks.
+    await monitor.tick(NOW + 185_000);
+    expect(full.notices).toHaveLength(1);
+  });
+
+  it("keeps the grace path when the boot is stable or absent", async () => {
+    const { monitor, full } = build({ manual: [manualRequest()] });
+    await monitor.tick(NOW + 5_000);
+    full.statuses.set("inst-manual-1", { status: "unknown", segment_count: 0, worker_boot_id: BOOT_A });
+    await monitor.tick(NOW + 65_000);
+    full.statuses.set("inst-manual-1", { status: "unknown", segment_count: 0, worker_boot_id: BOOT_A });
+    await monitor.tick(NOW + 125_000);
+    expect(full.notices).toHaveLength(0);
+    expect(full.terminal).toHaveLength(0);
+  });
+
+  it("never mistakes the first sighting for a restart", async () => {
+    const { monitor, full } = build({ manual: [manualRequest()] });
+    await monitor.tick(NOW + 5_000);
+    // First status ever seen carries a boot id: baseline, not a restart.
+    full.statuses.set("inst-manual-1", { status: "unknown", segment_count: 0, worker_boot_id: BOOT_B });
+    await monitor.tick(NOW + 65_000);
+    expect(full.notices).toHaveLength(0);
+  });
+});
+
+describe("notice delivery", () => {
+  it("retries a failed email instead of recording it as sent", async () => {
+    const req = manualRequest();
+    const { monitor, full } = build({ manual: [req], failNotifyTimes: 1 });
+    await monitor.tick(NOW + 5_000);
+    full.statuses.set(req.descriptor.instance_id, { status: "completed", segment_count: 3 });
+    await monitor.tick(NOW + 65_000);
+    expect(full.notices).toHaveLength(0);
+    expect(full.terminal).toHaveLength(0);
+    expect(full.receipts.keys.has("scribe.notify:inst-manual-1")).toBe(false);
+    await monitor.tick(NOW + 125_000);
+    expect(full.notices).toHaveLength(1);
+    expect(full.notices[0].kind).toBe("completed");
+    expect(full.terminal).toEqual(["inst-manual-1"]);
+  });
+});
   it("treats a worker refusal as terminal for manual joins too", async () => {
     const { monitor, full } = build({
       manual: [manualRequest()],
@@ -166,6 +234,22 @@ describe("manual intent drain", () => {
     await monitor.tick(NOW + 65_000);
     expect(full.notices).toHaveLength(1);
     expect(full.notices[0].kind).toBe("failed");
+  });
+
+  it("retires a worker-duplicate silently: receipts recorded, no email", async () => {
+    const { monitor, full } = build({
+      manual: [manualRequest()],
+      joinBehavior: async () => ({ status: "duplicate" }),
+    });
+    await monitor.tick(NOW + 5_000);
+    expect(full.armed).toHaveLength(0);
+    expect(full.receipts.keys.has("scribe.arm:manual|inst-manual-1")).toBe(true);
+    expect(full.receipts.keys.has("scribe.notify:inst-manual-1")).toBe(true);
+    expect(full.notices).toHaveLength(0);
+    expect(full.terminal).toEqual(["inst-manual-1"]);
+    // Later ticks stay quiet: both receipts short-circuit.
+    await monitor.tick(NOW + 65_000);
+    expect(full.notices).toHaveLength(0);
   });
 });
 
