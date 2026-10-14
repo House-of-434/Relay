@@ -58,8 +58,9 @@ export class ConnectorStateStore {
   /** Turn one connector on or off for one user. Returns the new state. */
   async set(userId: string, source: ConnectorSource, enabled: boolean): Promise<ConnectorEnablement> {
     return this.queue.run(async () => {
-      const file = (await readJsonFile<StateFile>(this.filePath)) ?? { version: 1, users: {} };
-      file.users ??= {};
+      let file = await readJsonFile<StateFile>(this.filePath);
+      if (!file || typeof file !== "object" || Array.isArray(file)) file = { version: 1, users: {} };
+      if (!file.users || typeof file.users !== "object" || Array.isArray(file.users)) file.users = {};
       const current = normalize(file.users[userId]);
       const next: ConnectorEnablement = { ...current, [sourceKey(source)]: enabled };
       file.users[userId] = next;
