@@ -240,7 +240,12 @@ export function GroupListItem({
       title={density === "icons" ? group.name : undefined}
       aria-label={density === "icons" ? group.name : undefined}
     >
-      <StackedMauses members={members} density={density} iconSize={iconSize} />
+      <span className="relative flex shrink-0">
+        <StackedMauses members={members} density={density} iconSize={iconSize} />
+        {density === "icons" && groupStatus && (
+          <span data-testid="working-dot" className="absolute -bottom-0.5 -right-0.5 size-3 rounded-full border-2 border-panel bg-success" />
+        )}
+      </span>
       <div className={cn("min-w-0 flex-1", density === "icons" && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="truncate text-[14px] font-semibold text-ink">{group.name}</span>

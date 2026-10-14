@@ -24,8 +24,8 @@ export function MessageActions({
   return (
     <div
       className={cn(
-        "flex items-center gap-0.5 self-end pb-0.5 opacity-0 transition-opacity",
-        "group-hover:opacity-100 group-focus-within:opacity-100 focus-within:opacity-100 touch:opacity-100",
+        "pointer-events-none flex items-center gap-0.5 self-end pb-0.5 opacity-0 transition-opacity",
+        "group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 focus-within:pointer-events-auto focus-within:opacity-100 touch:pointer-events-auto touch:opacity-100",
         mirrored && "flex-row-reverse",
         className,
       )}
