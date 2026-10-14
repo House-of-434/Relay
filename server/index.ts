@@ -20431,7 +20431,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           let assertion: string;
           try {
             assertion = signedActorContext(
-              { userId: proposedBy.ownerUserId, botId: proposedBy.id, threadId },
+              { userId: proposedBy.ownerUserId, botId: proposedBy.id, threadId, agent: role },
               process.env.RELAY_TOOL_ACTOR_SECRET,
             );
           } catch {

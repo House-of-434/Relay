@@ -10,9 +10,13 @@ import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
-import { createAgentMcpServer } from "../mcp/agent-server.js";
+import { ArxivProvider } from "../infra/arxiv.js";
+import { SecProvider } from "../infra/sec.js";
+import { RelayGitHubClient } from "../infra/github.js";
+import { ConnectorStateClient } from "../infra/connector-state.js";
+import { createAgentMcpServer, type ConnectorToolContext } from "../mcp/agent-server.js";
 import { databaseToolCallLogger } from "../mcp/tool-log.js";
-import { assertValidPort, bffConfig, bladeConfig, ingestCapability, searchConfig, toolHost, toolPort } from "../config.js";
+import { arxivConfig, assertValidPort, bffConfig, bladeConfig, ingestCapability, searchConfig, secConfig, toolHost, toolPort } from "../config.js";
 
 function mcpActor(request: IncomingMessage, database: RelayDatabase): {
   actor: RelayActorContext | undefined;
@@ -184,6 +188,35 @@ async function handleSweep(
 
 let sharedBladePool: BladeBrowserPool | null = null;
 
+/** Read the actor's per-user connector enablement and build the tool contexts.
+ * A connector disabled for this user is omitted, so its tools are not offered.
+ * SEC is omitted when its required fair-access User-Agent is unconfigured. */
+async function buildConnectors(
+  actorAssertion: string,
+  bffInternalUrl: string,
+  capability: string | undefined,
+): Promise<ConnectorToolContext> {
+  const state = await new ConnectorStateClient({ bffInternalUrl, capability }).state(actorAssertion);
+  const connectors: ConnectorToolContext = {};
+  if (state.arxiv.enabled) {
+    connectors.arxiv = { enabled: true, provider: new ArxivProvider({ userAgent: arxivConfig().userAgent }) };
+  }
+  if (state.sec.enabled) {
+    const { userAgent } = secConfig();
+    if (userAgent) connectors.sec = { enabled: true, provider: new SecProvider({ userAgent }) };
+    else console.error("[relay-tools] SEC is enabled but RELAY_SEC_USER_AGENT is unset; not offering SEC tools");
+  }
+  if (state.github.enabled) {
+    connectors.github = {
+      enabled: true,
+      connected: state.github.connected,
+      client: new RelayGitHubClient({ bffInternalUrl, capability }),
+      actorAssertion,
+    };
+  }
+  return connectors;
+}
+
 export async function createRelayToolServer(
   database: RelayDatabase = new RelayDatabase(),
   requestedPort = toolPort(),
@@ -250,6 +283,12 @@ export async function createRelayToolServer(
         return;
       }
       const userId = actor.actor.userId;
+      // The route and the signed assertion must agree on the agent: an
+      // assertion signed for one role must never reach another role's tools.
+      if (actor.actor.agent !== agentName) {
+        sendJson(response, 401, { error: "actor assertion does not match this agent route" });
+        return;
+      }
 
       // Gmail and Calendar are exposed only to a caller that proved a signed
       // actor identity; without one there is no mailbox or calendar the BFF
@@ -294,12 +333,19 @@ export async function createRelayToolServer(
         }),
       };
 
+      // Per-user connector enablement comes from the BFF; a disabled connector
+      // is never registered. GitHub additionally requires a connected install.
+      const connectors = actor.actorAssertion
+        ? await buildConnectors(actor.actorAssertion, bffInternalUrl, capability)
+        : undefined;
+
       const mcp = createAgentMcpServer(
         agentName,
         { userId, botId: actor.actor.botId, threadId: actor.actor.threadId },
         database, gmail, calendar, browser, search,
         databaseToolCallLogger(database, agentName, userId),
         scribe,
+        connectors,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {

@@ -8,7 +8,7 @@ import { createRelayToolServer } from "./index.js";
 const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
-const ACTOR = { userId: USER_ID, botId: BOT_ID, threadId: THREAD_ID };
+const ACTOR = { userId: USER_ID, botId: BOT_ID, threadId: THREAD_ID, agent: "scout" };
 const SECRET = "relay-tool-actor-secret-test-value-over-32-bytes";
 
 test("MCP rejects actor headers that are spoofed, unsigned, expired, reshaped, or signed with another secret", async () => {

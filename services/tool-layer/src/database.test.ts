@@ -21,7 +21,7 @@ function database(overrides: Record<string, string | undefined> = {}): RelayData
 
 test("a signed harness actor assertion resolves to the owner, bot, and thread", () => {
   const db = database();
-  const assertion = signActorAssertion({ userId: USER_ID, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
+  const assertion = signActorAssertion({ userId: USER_ID, botId: BOT_ID, threadId: THREAD_ID, agent: "scout" }, SECRET);
   const actor = db.authenticateActorAssertion(assertion);
   assert.equal(actor.userId, USER_ID);
   assert.equal(actor.botId, BOT_ID);
@@ -32,7 +32,7 @@ test("a signed harness actor assertion resolves to the owner, bot, and thread", 
 test("an assertion signed with another secret is refused", () => {
   const db = database();
   const assertion = signActorAssertion(
-    { userId: USER_ID, botId: BOT_ID, threadId: THREAD_ID },
+    { userId: USER_ID, botId: BOT_ID, threadId: THREAD_ID, agent: "scout" },
     "different-relay-tool-actor-secret-over-32-bytes",
   );
   assert.throws(() => db.authenticateActorAssertion(assertion), /signature is invalid/);

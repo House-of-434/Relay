@@ -9,12 +9,16 @@ export const ACTOR_ASSERTION_PURPOSE = "relay-actor";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
-const KEYS = "botId,issuedAt,signature,threadId,userId";
+const KEYS = "agent,botId,issuedAt,signature,threadId,userId";
+
+export const RELAY_AGENT_ROLES = ["scout", "mercury", "curator"] as const;
+export type RelayAgentRole = (typeof RELAY_AGENT_ROLES)[number];
 
 export interface RelayActor {
   userId: string;
   botId: string;
   threadId: string;
+  agent: RelayAgentRole;
 }
 
 export class ActorAssertionError extends Error {
@@ -24,8 +28,8 @@ export class ActorAssertionError extends Error {
   }
 }
 
-function signingBytes(userId: string, issuedAt: number, botId: string, threadId: string): string {
-  return JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId]);
+function signingBytes(userId: string, issuedAt: number, botId: string, threadId: string, agent: string): string {
+  return JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent]);
 }
 
 function secretKey(secret: string): string {
@@ -35,10 +39,15 @@ function secretKey(secret: string): string {
   return secret;
 }
 
+function isAgentRole(value: unknown): value is RelayAgentRole {
+  return typeof value === "string" && (RELAY_AGENT_ROLES as readonly string[]).includes(value);
+}
+
 /**
  * The BFF verifies the harness's signed actor assertion itself rather than
  * trusting that a request arrived from the Tool Layer. The signed user id is
- * the only identity used to look up Google credentials.
+ * the only identity used to look up credentials, and the signed agent is the
+ * only source of the calling role.
  */
 export function verifyActorAssertion(
   value: string | undefined,
@@ -68,6 +77,7 @@ export function verifyActorAssertion(
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
+      !isAgentRole(assertion.agent) ||
       typeof assertion.issuedAt !== "number" || !Number.isSafeInteger(assertion.issuedAt) ||
       typeof assertion.signature !== "string" || !SIGNATURE.test(assertion.signature)) {
     throw new ActorAssertionError("actor assertion is invalid");
@@ -78,12 +88,17 @@ export function verifyActorAssertion(
   }
 
   const expected = createHmac("sha256", secretKey(secret))
-    .update(signingBytes(assertion.userId, assertion.issuedAt, assertion.botId, assertion.threadId))
+    .update(signingBytes(assertion.userId, assertion.issuedAt, assertion.botId, assertion.threadId, assertion.agent))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
     throw new ActorAssertionError("actor assertion signature is invalid");
   }
 
-  return { userId: assertion.userId, botId: assertion.botId, threadId: assertion.threadId };
+  return {
+    userId: assertion.userId,
+    botId: assertion.botId,
+    threadId: assertion.threadId,
+    agent: assertion.agent,
+  };
 }

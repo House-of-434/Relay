@@ -17,9 +17,10 @@ const ACTOR_ASSERTION_PURPOSE = "relay-actor";
 
 /** Sign the owner's actor context for the Tool Layer. Email is deliberately
  * absent: the owner key is the Supabase UUID, and the sign-in domain allow-list
- * is enforced where the session is issued, not here. */
+ * is enforced where the session is issued, not here. The agent role travels
+ * signed so the Tool Layer and BFF can both bind a call to its route. */
 export function signedActorContext(
-  actor: { userId: string; botId: string; threadId: string },
+  actor: { userId: string; botId: string; threadId: string; agent: RelayAgent },
   secret: string | undefined,
   issuedAt = Math.floor(Date.now() / 1000),
 ): string {
@@ -29,13 +30,14 @@ export function signedActorContext(
   if (!UUID.test(userId)) throw new Error("Relay MCP actor user id must be a UUID");
   if (!UUID.test(botId)) throw new Error("Relay MCP actor bot id must be a UUID");
   if (!UUID.test(threadId)) throw new Error("Relay MCP actor thread id must be a UUID");
+  if (!AGENTS.has(actor.agent)) throw new Error("Relay MCP actor agent must be a known role");
   if (!secret || Buffer.byteLength(secret) < 32) {
     throw new Error("RELAY_TOOL_ACTOR_SECRET must contain at least 32 bytes");
   }
   const signature = createHmac("sha256", secret)
-    .update(JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId]))
+    .update(JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, actor.agent]))
     .digest("base64url");
-  return JSON.stringify({ userId, issuedAt, botId, threadId, signature });
+  return JSON.stringify({ userId, issuedAt, botId, threadId, agent: actor.agent, signature });
 }
 
 /** Verify an actor assertion the harness (or BFF) signed. Same scheme the
@@ -152,7 +154,7 @@ export function bindRelayMcpForBot(
     );
     if (ownerUserId && threadId) {
       headers["x-relay-actor-user"] = signedActorContext(
-        { userId: ownerUserId, botId, threadId },
+        { userId: ownerUserId, botId, threadId, agent: role },
         process.env.RELAY_TOOL_ACTOR_SECRET,
       );
     }

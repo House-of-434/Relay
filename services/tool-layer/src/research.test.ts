@@ -64,12 +64,12 @@ const ALICE = "423e4567-e89b-42d3-a456-426614174000";
 const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
 
-function assertionFor(userId: string): string {
+function assertionFor(userId: string, agent: "scout" | "mercury" | "curator"): string {
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
-    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID]))
+    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID, agent]))
     .digest("base64url");
-  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, signature });
+  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent, signature });
 }
 
 const database = {
@@ -107,7 +107,7 @@ async function session(agent: string, assertion?: string): Promise<{
 
 test("scout gets the full research loop; others get no search or browser", async () => {
   useResearchEnv();
-  const scout = await session("scout", assertionFor(ALICE));
+  const scout = await session("scout", assertionFor(ALICE, "scout"));
   try {
     assert.deepEqual(scout.tools, [
       "browser_extract",
@@ -122,8 +122,8 @@ test("scout gets the full research loop; others get no search or browser", async
   } finally {
     await scout.close();
   }
-  for (const agent of ["mercury", "curator"]) {
-    const peer = await session(agent, assertionFor(ALICE));
+  for (const agent of ["mercury", "curator"] as const) {
+    const peer = await session(agent, assertionFor(ALICE, agent));
     try {
       assert.ok(!peer.tools.includes("web_search"), agent);
       assert.ok(!peer.tools.some((name) => name.startsWith("browser_")), agent);
@@ -165,7 +165,7 @@ test("anonymous callers are rejected before seeing any tools", async () => {
 
 test("discovery flows into browsing: web_search to browser_open to browser_read", async () => {
   useResearchEnv();
-  const scout = await session("scout", assertionFor(ALICE));
+  const scout = await session("scout", assertionFor(ALICE, "scout"));
   try {
     const found = await scout.call("web_search", { query: "model release" });
     assert.equal(found.isError, undefined);
@@ -193,7 +193,7 @@ test("discovery flows into browsing: web_search to browser_open to browser_read"
 
 test("provider failure is honest, never an empty success", async () => {
   useResearchEnv();
-  const scout = await session("scout", assertionFor(ALICE));
+  const scout = await session("scout", assertionFor(ALICE, "scout"));
   try {
     const failed = await scout.call("web_search", { query: "fixture-fail" });
     assert.equal(failed.isError, true);

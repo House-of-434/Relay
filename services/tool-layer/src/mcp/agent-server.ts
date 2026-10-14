@@ -3,15 +3,21 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SCRIBE_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, ARXIV_PERMISSIONS, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GITHUB_PERMISSIONS, GMAIL_PERMISSIONS, SCRIBE_PERMISSIONS, SEC_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
+import type { ArxivProvider } from "../infra/arxiv.js";
+import type { SecProvider } from "../infra/sec.js";
+import type { RelayGitHubClient } from "../infra/github.js";
 import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
 import { registerTranscriptTools } from "./transcript-server.js";
+import { registerArxivTools } from "./arxiv-server.js";
+import { registerSecTools } from "./sec-server.js";
+import { registerGithubTools } from "./github-server.js";
 import { instrumentToolCalls, type ToolCallLogger } from "./tool-log.js";
 
 export interface RelayGmailContext {
@@ -27,6 +33,15 @@ export interface RelayCalendarContext {
 export interface RelayScribeContext {
   client: RelayScribeJoinClient;
   actorAssertion: string;
+}
+
+/** Per-actor research connectors. Each entry carries both the provider and
+ * whether that user enabled the connector; a disabled connector is never
+ * registered. GitHub also requires a connected installation. */
+export interface ConnectorToolContext {
+  arxiv?: { enabled: boolean; provider: ArxivProvider } | undefined;
+  sec?: { enabled: boolean; provider: SecProvider } | undefined;
+  github?: { enabled: boolean; connected: boolean; client: RelayGitHubClient; actorAssertion: string } | undefined;
 }
 
 function toolError(error: unknown) {
@@ -52,6 +67,7 @@ export function createAgentMcpServer(
   search?: SearchToolContext | undefined,
   log?: ToolCallLogger | undefined,
   scribe?: RelayScribeContext | undefined,
+  connectors?: ConnectorToolContext | undefined,
 ): McpServer {
   const userId = actor.userId;
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
@@ -134,6 +150,22 @@ export function createAgentMcpServer(
   // filters plus the readiness rule above) so one general tool covers it;
   // search/transcript tools stay separate — they read segment text, which
   // relay_read deliberately cannot.
+  // Research connectors: visibility matches authorization and per-user
+  // enablement. A connector disabled for this user, or (for GitHub) not
+  // connected, is never registered — so a disabled connector has no tool to
+  // call. Each handler authorizes again on the call itself.
+  if (connectors?.arxiv?.enabled && userId && ARXIV_PERMISSIONS[agent].length > 0) {
+    registerArxivTools(server, agent, { provider: connectors.arxiv.provider });
+  }
+  if (connectors?.sec?.enabled && userId && SEC_PERMISSIONS[agent].length > 0) {
+    registerSecTools(server, agent, { provider: connectors.sec.provider });
+  }
+  if (connectors?.github?.enabled && connectors.github.connected && userId && GITHUB_PERMISSIONS[agent].length > 0) {
+    registerGithubTools(server, agent, {
+      client: connectors.github.client,
+      actorAssertion: connectors.github.actorAssertion,
+    });
+  }
 
   if (gmail && GMAIL_PERMISSIONS[agent].length > 0) {
     const gmailContext: RelayGmailContext = gmail;

@@ -51,12 +51,12 @@ const BOB = "223e4567-e89b-42d3-a456-426614174001";
 const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
 
-function assertionFor(userId: string): string {
+function assertionFor(userId: string, agent: "scout" | "mercury" | "curator"): string {
   const issuedAt = Math.floor(Date.now() / 1000);
   const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
-    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID]))
+    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID, agent]))
     .digest("base64url");
-  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, signature });
+  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent, signature });
 }
 
 const database = {
@@ -112,7 +112,7 @@ async function callTool(
 
 test("authenticated scout sees browser tools; others do not", async () => {
   useBladeEnv();
-  assert.deepEqual(await toolNames("scout", assertionFor(ALICE)), [
+  assert.deepEqual(await toolNames("scout", assertionFor(ALICE, "scout")), [
     "browser_extract",
     "browser_open",
     "browser_read",
@@ -122,8 +122,8 @@ test("authenticated scout sees browser tools; others do not", async () => {
     "search_meetings",
     "web_search",
   ]);
-  for (const agent of ["mercury", "curator"]) {
-    const listed = await toolNames(agent, assertionFor(ALICE));
+  for (const agent of ["mercury", "curator"] as const) {
+    const listed = await toolNames(agent, assertionFor(ALICE, agent));
     assert.ok(!listed.some((name) => name.startsWith("browser_")), agent);
     assert.ok(!listed.includes("web_search"), agent);
   }
@@ -134,14 +134,14 @@ test("authenticated scout sees browser tools; others do not", async () => {
 
 test("browser tools drive the daemon and stay user-scoped end to end", async () => {
   useBladeEnv();
-  const opened = await callTool("scout", assertionFor(ALICE), "browser_open", { url: "https://example.com" });
+  const opened = await callTool("scout", assertionFor(ALICE, "scout"), "browser_open", { url: "https://example.com" });
   assert.equal(opened.isError, undefined);
   assert.match(opened.text, /fixture page text/);
 
-  const read = await callTool("scout", assertionFor(ALICE), "browser_read", { mode: "content" });
+  const read = await callTool("scout", assertionFor(ALICE, "scout"), "browser_read", { mode: "content" });
   assert.equal(read.isError, undefined);
 
-  const extracted = await callTool("scout", assertionFor(BOB), "browser_extract", {
+  const extracted = await callTool("scout", assertionFor(BOB, "scout"), "browser_extract", {
     url: "https://example.com",
     kind: "auto",
   });
@@ -156,14 +156,14 @@ test("browser tools drive the daemon and stay user-scoped end to end", async () 
 
 test("invalid URLs and page failures refuse clearly", async () => {
   useBladeEnv();
-  const bad = await callTool("scout", assertionFor(ALICE), "browser_open", { url: "ftp://example.com/x" });
+  const bad = await callTool("scout", assertionFor(ALICE, "scout"), "browser_open", { url: "ftp://example.com/x" });
   assert.equal(bad.isError, true);
   assert.match(bad.text, /http\(s\)/);
 });
 
 test("page-level failure surfaces the verdict instead of fabricating", async () => {
   useBladeEnv();
-  const blocked = await callTool("scout", assertionFor(ALICE), "browser_open", {
+  const blocked = await callTool("scout", assertionFor(ALICE, "scout"), "browser_open", {
     url: "https://example.com/fixture-fail",
   });
   assert.equal(blocked.isError, true);

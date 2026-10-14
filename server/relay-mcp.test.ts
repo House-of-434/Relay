@@ -33,12 +33,12 @@ describe("Relay MCP bot binding", () => {
       url: "http://127.0.0.1:8787/mcp/scout",
     });
     const assertion = JSON.parse(relay.headers["x-relay-actor-user"]!) as {
-      userId: string; botId: string; threadId: string; issuedAt: number; signature: string;
+      userId: string; botId: string; threadId: string; agent: string; issuedAt: number; signature: string;
     };
-    expect(assertion).toMatchObject({ userId: USER_ID, botId: BOT_SCOUT, threadId: THREAD_ID });
+    expect(assertion).toMatchObject({ userId: USER_ID, botId: BOT_SCOUT, threadId: THREAD_ID, agent: "scout" });
     expect(assertion.issuedAt).toEqual(expect.any(Number));
     expect(assertion.signature).toBe(createHmac("sha256", SECRET)
-      .update(JSON.stringify(["relay-actor", USER_ID, assertion.issuedAt, BOT_SCOUT, THREAD_ID]))
+      .update(JSON.stringify(["relay-actor", USER_ID, assertion.issuedAt, BOT_SCOUT, THREAD_ID, "scout"]))
       .digest("base64url"));
     expect(relay.headers).not.toHaveProperty("Authorization");
     expect(mounted.notes).toEqual(servers.notes);

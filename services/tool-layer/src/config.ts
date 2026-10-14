@@ -76,6 +76,27 @@ export function searchConfig(env: NodeJS.ProcessEnv = process.env): SearchConfig
   };
 }
 
+export interface ArxivConfig {
+  /** Descriptive User-Agent sent on every arXiv request. */
+  userAgent: string;
+}
+
+export function arxivConfig(env: NodeJS.ProcessEnv = process.env): ArxivConfig {
+  return { userAgent: env.RELAY_ARXIV_USER_AGENT ?? "Relay Research (research@relay.local)" };
+}
+
+export interface SecConfig {
+  /** SEC requires a declared fair-access identity with contact information.
+   * Undefined means the connector is unavailable: it fails closed rather than
+   * calling the SEC without a User-Agent. */
+  userAgent: string | undefined;
+}
+
+export function secConfig(env: NodeJS.ProcessEnv = process.env): SecConfig {
+  const userAgent = env.RELAY_SEC_USER_AGENT?.trim();
+  return { userAgent: userAgent && userAgent.length > 0 ? userAgent : undefined };
+}
+
 export function bladeConfig(env: NodeJS.ProcessEnv = process.env): BladeConfig {
   return {
     dataRoot: env.RELAY_BLADE_ROOT ?? join(homedir(), ".local", "state", "relay-blade"),
