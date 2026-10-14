@@ -81,8 +81,7 @@ interface Anchor {
 
 /**
  * `fitTransform`'s full result — the SVG transform string the web renderer parses, plus
- * its numeric components. iOS has no SVG transform parser: it builds a `CGAffineTransform`
- * straight from `scale`/`tx`/`ty`, which is the whole reason `fitTransform` returns both.
+ * its numeric components.
  */
 type Fit = ReturnType<typeof fitTransform>
 
@@ -249,13 +248,6 @@ interface Baked {
   d: string
   anchor: Anchor
   clearance: number
-  /**
-   * Tight bounds of the fitted outline in the face box, measured on the flattened curve.
-   * Only the Kotlin catalog carries them: Android's native path bounds are the cubic
-   * control hull, which is wider than the drawn shape, and the gradient's corners have to
-   * sit on the shape — the desktop reads `getBBox()` and iOS `boundingBoxOfPath`, both tight.
-   */
-  bounds: { minX: number; minY: number; maxX: number; maxY: number }
 }
 
 function emit(bodies: Baked[]): string {
@@ -328,215 +320,6 @@ export function botMascotBody(value: unknown): MascotBodyId {
 `
 }
 
-/* -------------------------------------------------------------- emitting (iOS) */
-
-/**
- * Wraps space-separated path tokens onto lines no wider than `width`, breaking only at
- * whitespace — never inside a token — matching how `MausSilhouette.path` in
- * `ios/App/MausAvatar.swift` is already formatted. That parser treats newlines as plain
- * separators, so wrapping changes nothing about how the path reads.
- */
-function wrapPathTokens(d: string, width = 100): string {
-  const tokens = d.trim().split(/\s+/)
-  const lines: string[] = []
-  let line = ""
-  for (const token of tokens) {
-    if (line.length === 0) line = token
-    else if (line.length + 1 + token.length <= width) line += " " + token
-    else {
-      lines.push(line)
-      line = token
-    }
-  }
-  if (line.length > 0) lines.push(line)
-  return lines.join("\n")
-}
-
-/** Prefixes every line of `text` with `spaces` worth of indentation. */
-function indent(text: string, spaces: number): string {
-  const pad = " ".repeat(spaces)
-  return text
-    .split("\n")
-    .map(line => pad + line)
-    .join("\n")
-}
-
-/** Swift string literal, close enough to JSON escaping for the plain ASCII names and ids here. */
-const swiftQuote = (s: string) => JSON.stringify(s)
-
-/**
- * Emits the same solved catalog as a Swift source file for `CompanionCore`.
- *
- * CoreGraphics types only (`CGFloat`) and no `import SwiftUI`: `CompanionCore` is
- * deliberately view-free (see the header comment in `ios/Package.swift`), and a later
- * task wraps this data in `SwiftUI.Path` on the app side. The fit is emitted as numbers
- * — `scale`/`tx`/`ty` — rather than the SVG transform string the web takes, because Swift
- * has no SVG transform parser and builds a `CGAffineTransform` straight from the numbers.
- */
-function emitSwift(bodies: Baked[]): string {
-  const order = bodies.map(s => swiftQuote(s.id)).join(", ")
-
-  const entries = bodies
-    .map(body => {
-      const path = indent(wrapPathTokens(body.d), 16)
-      return [
-        `        ${swiftQuote(body.id)}: Body(`,
-        `            id: ${swiftQuote(body.id)},`,
-        `            name: ${swiftQuote(body.name)},`,
-        `            path:`,
-        `                """`,
-        `${path}`,
-        `                """,`,
-        `            fit: (scale: ${body.fit.scale}, tx: ${body.fit.tx}, ty: ${body.fit.ty}),`,
-        `            anchor: (x: ${body.anchor.x}, y: ${body.anchor.y}, scale: ${body.anchor.scale})`,
-        `        ),`,
-      ].join("\n")
-    })
-    .join("\n")
-
-  return `// The mascot bodies a bot can wear — the phone's half of the same solve that
-// bakes \`shared/mascot-bodies.ts\`.
-//
-// GENERATED FILE — do not hand-edit. Run \`pnpm gen:bodies\` to rebuild it from
-// \`scripts/gen-mascot-bodies.ts\`, which solves each face placement against the real
-// expression geometry and verifies that nothing clips. One solve, two writers: this file
-// and \`shared/mascot-bodies.ts\` come from the same solved anchors, which is what stops
-// the two renderers drifting apart the way desktop's 0.74 and iOS's 0.84 already did once.
-//
-// CoreGraphics only, no SwiftUI — \`CompanionCore\` is everything the phone knows that is
-// not a view (see \`ios/Package.swift\`). The fit is numbers, not an SVG transform string:
-// iOS has no SVG transform parser, so it builds a \`CGAffineTransform\` from
-// \`scale\`/\`tx\`/\`ty\` directly.
-//
-// Path data is absolute \`M\`, \`C\`, \`Z\` only — the same twenty-line parser convention as
-// \`MausSilhouette\` in \`ios/App/MausAvatar.swift\`, which treats newlines as separators.
-import CoreGraphics
-
-enum MausBodies {
-    struct Body {
-        let id: String
-        let name: String
-        let path: String
-        let fit: (scale: CGFloat, tx: CGFloat, ty: CGFloat)
-        let anchor: (x: CGFloat, y: CGFloat, scale: CGFloat)
-    }
-
-    /// Every selectable body id, in the order the picker shows them.
-    static let order: [String] = [${order}]
-
-    /// The shipped mascot, and the fallback for any unrecognised value.
-    static let defaultID = "cursor"
-
-    static let all: [String: Body] = [
-${entries}
-    ]
-
-    /// Looks up a body by id, falling back to \`defaultID\` for anything unrecognised
-    /// (including a nil id, e.g. an untrusted persisted or streamed value).
-    static func body(_ id: String?) -> Body {
-        if let id, let match = all[id] { return match }
-        return all[defaultID]!
-    }
-}
-`
-}
-
-/* ----------------------------------------------------------- emitting (Android) */
-
-/** A Kotlin `Float` literal. JS prints integers bare and small values in exponent form; both are valid with an `f` suffix. */
-const kotlinFloat = (n: number) => `${n}f`
-
-/**
- * Emits the same solved catalog as a Kotlin source file for the Android app.
- *
- * Plain Kotlin, no Compose: the data is parsed into a `Path` by `MausSilhouette`, which
- * is also where the per-body cache lives. Like the Swift, the fit is numbers rather than
- * the SVG transform string. Unlike the Swift, each body also carries its tight bounds —
- * see `Baked.bounds` for why Android cannot measure them from the path it draws.
- */
-function emitKotlin(bodies: Baked[]): string {
-  const order = bodies.map(s => quote(s.id)).join(", ")
-
-  const entries = bodies
-    .map(body => {
-      const path = indent(wrapPathTokens(body.d), 16)
-      return [
-        `        ${quote(body.id)} to Body(`,
-        `            id = ${quote(body.id)},`,
-        `            name = ${quote(body.name)},`,
-        `            path =`,
-        `                """`,
-        `${path}`,
-        `                """,`,
-        `            fitScale = ${kotlinFloat(body.fit.scale)},`,
-        `            fitTx = ${kotlinFloat(body.fit.tx)},`,
-        `            fitTy = ${kotlinFloat(body.fit.ty)},`,
-        `            left = ${kotlinFloat(body.bounds.minX)},`,
-        `            top = ${kotlinFloat(body.bounds.minY)},`,
-        `            right = ${kotlinFloat(body.bounds.maxX)},`,
-        `            bottom = ${kotlinFloat(body.bounds.maxY)},`,
-        `            anchorX = ${kotlinFloat(body.anchor.x)},`,
-        `            anchorY = ${kotlinFloat(body.anchor.y)},`,
-        `            anchorScale = ${kotlinFloat(body.anchor.scale)},`,
-        `        ),`,
-      ].join("\n")
-    })
-    .join("\n")
-
-  return `package com.openmausbot.companion.ui
-
-/**
- * The mascot bodies a bot can wear — the Android half of the same solve that bakes
- * \`shared/mascot-bodies.ts\` and \`ios/Sources/CompanionCore/MausBodies.swift\`.
- *
- * GENERATED FILE — do not hand-edit. Run \`pnpm gen:bodies\` to rebuild it from
- * \`scripts/gen-mascot-bodies.ts\`, which solves each face placement against the real
- * expression geometry and verifies that nothing clips. One solve, three writers, so the
- * three renderers cannot drift apart the way desktop's 0.74 and iOS's 0.84 already did once.
- *
- * Plain Kotlin, no Compose: [MausSilhouette] parses the path and caches the result per
- * body. The fit is numbers, not an SVG transform string. The bounds are the tight bounds
- * of the fitted outline: Android's native path bounds are the cubic control hull, which is
- * wider than the drawn shape, and the gradient's corners have to sit on the shape.
- *
- * Path data is absolute \`M\`, \`C\`, \`Z\` only, with newlines as separators.
- */
-internal object MausBodies {
-    data class Body(
-        val id: String,
-        val name: String,
-        val path: String,
-        val fitScale: Float,
-        val fitTx: Float,
-        val fitTy: Float,
-        val left: Float,
-        val top: Float,
-        val right: Float,
-        val bottom: Float,
-        val anchorX: Float,
-        val anchorY: Float,
-        val anchorScale: Float,
-    )
-
-    /** Every selectable body id, in the order the picker shows them. */
-    val order: List<String> = listOf(${order})
-
-    /** The shipped mascot, and the fallback for any unrecognised value. */
-    const val DEFAULT_ID: String = "cursor"
-
-    val all: Map<String, Body> = mapOf(
-${entries}
-    )
-
-    /**
-     * Looks up a body by id, falling back to [DEFAULT_ID] for anything unrecognised
-     * (including a null id, e.g. an untrusted persisted or streamed value).
-     */
-    fun body(id: String?): Body = id?.let { all[it] } ?: all.getValue(DEFAULT_ID)
-}
-`
-}
-
 /* ---------------------------------------------------------------------- main */
 
 function main(): void {
@@ -575,7 +358,6 @@ function main(): void {
       const aim = AIMS[i]
       clipped.push(`${body.def.id} aim (${aim.x}, ${aim.y}): expressions ${expressions.join(", ")}`)
     })
-    const fitted = boundsOf(applyFit(flatten(body.def.d), body.fit))
     baked.push({
       id: body.def.id,
       name: body.def.name,
@@ -583,12 +365,6 @@ function main(): void {
       d: body.def.d,
       anchor,
       clearance: clearanceAt(body.sdf, anchor),
-      bounds: {
-        minX: round(fitted.minX, 4),
-        minY: round(fitted.minY, 4),
-        maxX: round(fitted.maxX, 4),
-        maxY: round(fitted.maxY, 4),
-      },
     })
   }
 
@@ -611,22 +387,6 @@ function main(): void {
   const out = fileURLToPath(new URL("../shared/mascot-bodies.ts", import.meta.url))
   writeFileSync(out, emit(baked))
   console.log(`wrote ${out}`)
-
-  // P1 ruling (task 7): emitted into `ios/Sources/CompanionCore`, not `ios/App` — that is
-  // the package `swift test` actually builds, so a later test over this catalog can run.
-  const swiftOut = fileURLToPath(
-    new URL("../ios/Sources/CompanionCore/MausBodies.swift", import.meta.url)
-  )
-  writeFileSync(swiftOut, emitSwift(baked))
-  console.log(`wrote ${swiftOut}`)
-
-  // The Android app module: its JVM unit tests (Robolectric) can parse the catalog the
-  // way `swift test` can for CompanionCore, so the same drift guard covers it.
-  const kotlinOut = fileURLToPath(
-    new URL("../android/app/src/main/kotlin/com/relay/companion/ui/MausBodies.kt", import.meta.url)
-  )
-  writeFileSync(kotlinOut, emitKotlin(baked))
-  console.log(`wrote ${kotlinOut}`)
 }
 
 try {
