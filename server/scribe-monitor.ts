@@ -91,6 +91,9 @@ export interface ScribeMonitorDeps {
   listManualRequests?: () => Promise<JoinRequest[]>;
   /** Flip an armed manual intent pending → armed. Absent mirrors absent list. */
   noteManualArmed?: (instanceId: string) => void;
+  /** Mark a manual intent terminal once its notice is recorded. Durable end
+   * of the intent lifecycle: only then may the same room be captured again. */
+  noteManualTerminal?: (instanceId: string) => void;
   /** Sent from the harness on a terminal meeting state (or a joinable meeting
    *  that never reached the worker). The harness owns the email wiring. */
   notify?: (notice: ScribeNotice) => void | Promise<void>;
@@ -379,7 +382,7 @@ export class ScribeMonitor {
    * unreachable), reconcile a notice from the worker's /status instead. */
   private async processRequest(request: JoinRequest, now: number): Promise<void> {
     if (this.deps.receipts.has("scribe.arm", request.receiptKey)) {
-      await this.reconcile(request.event, now);
+      await this.reconcile(request, now);
       return;
     }
 
@@ -394,8 +397,11 @@ export class ScribeMonitor {
       // short-circuits on the notify receipt) instead of re-notifying.
       this.deps.receipts.record("scribe.arm", request.receiptKey, "unreachable", now);
       this.log(`scribe: capture service unreachable for ${request.descriptor.instance_id}; window closed`);
-      this.recordNotify(request.event, "unreachable", now);
-      await this.emit(request.event, { kind: "unreachable", reason: "capture service unreachable", signedOut: false });
+      await this.finish(request, "unreachable", {
+        kind: "unreachable",
+        reason: "capture service unreachable",
+        signedOut: false,
+      }, now);
     }
   }
 
@@ -422,7 +428,8 @@ export class ScribeMonitor {
   /** A meeting already handed to the worker: turn the terminal /status into one
    *  notice. Non-terminal states are re-checked next tick, with an exit after
    *  the grace window so a meeting the worker never recorded stops polling. */
-  private async reconcile(event: ReconcilableMeeting, now: number): Promise<void> {
+  private async reconcile(request: JoinRequest, now: number): Promise<void> {
+    const event = request.event;
     if (this.deps.receipts.has("scribe.notify", event.id)) return;
     let status: ScribeWorkerStatus;
     try {
@@ -435,13 +442,13 @@ export class ScribeMonitor {
     if (!(TERMINAL_SCRIBE_STATES as readonly string[]).includes(status.status)) {
       const endMs = eventEndMs(event);
       if (endMs !== null && now > endMs + this.config.reconcileGraceMs) {
-        this.recordNotify(event, "expired", now);
+        await this.finish(request, "expired", null, now);
         this.log(`scribe: no worker record for ${event.id} after the grace window; giving up`);
       }
       return;
     }
     if (status.status === "skipped") {
-      this.recordNotify(event, "skipped", now);
+      await this.finish(request, "skipped", null, now);
       this.log(`scribe: ${event.id} skipped by the worker; no notice`);
       return;
     }
@@ -451,13 +458,26 @@ export class ScribeMonitor {
     const alertAdmins = signedOut && now - this.lastSignedOutAlertMs >= this.config.adminAlertIntervalMs;
     if (alertAdmins) this.lastSignedOutAlertMs = now;
     else if (signedOut) this.log(`scribe: signed-out admin alert for ${event.id} suppressed (rate limit)`);
-    await this.emit(event, {
+    await this.finish(request, status.status, {
       kind: status.status === "failed" ? "failed" : "completed",
       reason: status.error,
       signedOut: alertAdmins,
       segment_count: status.segment_count,
-    });
-    this.recordNotify(event, status.status, now);
+    }, now);
+  }
+
+  /** Terminal close-out, exactly once per request (the notify receipt above
+   * short-circuits repeats): optionally email, then record the notice, then
+   * retire manual intents so the same room may be captured again. */
+  private async finish(
+    request: JoinRequest,
+    result: string,
+    notice: { kind: ScribeNotice["kind"]; reason?: string; signedOut: boolean; segment_count?: number } | null,
+    now: number,
+  ): Promise<void> {
+    if (notice) await this.emit(request.event, notice);
+    this.recordNotify(request.event, result, now);
+    if (request.source === "manual") this.deps.noteManualTerminal?.(request.descriptor.instance_id);
   }
 
   private recordNotify(event: ReconcilableMeeting, result: string, now: number): void {

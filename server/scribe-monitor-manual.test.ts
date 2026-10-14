@@ -63,13 +63,14 @@ interface Harness {
   statuses: Map<string, ScribeWorkerStatus>;
   notices: ScribeNotice[];
   armed: string[];
+  terminal: string[];
   receipts: ReceiptStore & { keys: Set<string> };
   joinBehavior?: (d: ScribeDescriptor) => Promise<{ status: string }>;
 }
 
 function build(h: Partial<Harness> & { manual?: JoinRequest[] } = {}) {
   const full: Harness = {
-    joined: [], statuses: new Map(), notices: [], armed: [],
+    joined: [], statuses: new Map(), notices: [], armed: [], terminal: [],
     receipts: fakeReceipts(), ...h,
   };
   const monitor = new ScribeMonitor(
@@ -80,6 +81,7 @@ function build(h: Partial<Harness> & { manual?: JoinRequest[] } = {}) {
       receipts: full.receipts,
       listManualRequests: async () => h.manual ?? [],
       noteManualArmed: (id) => { full.armed.push(id); },
+      noteManualTerminal: (id) => { full.terminal.push(id); },
       notify: (n) => { full.notices.push(n); },
     },
     cfg,
@@ -107,6 +109,7 @@ describe("manual intent drain", () => {
     expect(full.joined).toHaveLength(0);
     expect(full.notices).toHaveLength(1);
     expect(full.notices[0]).toMatchObject({ instance_id: "inst-manual-1", kind: "completed" });
+    expect(full.terminal).toEqual(["inst-manual-1"]);
   });
 
   it("retries next tick when the worker throws, recording nothing", async () => {

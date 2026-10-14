@@ -241,7 +241,7 @@ const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listPendingScribeJoinIntents, setScribeJoinIntentStatus } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentText, type Incident, type IncidentKind } from "./incidents.ts";
@@ -484,6 +484,7 @@ import {
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, scribeMonitorConfig } from "./scribe-monitor.ts";
+import { joinRequestFromIntent } from "./scribe-intents.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
 import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
 import { commandReceipts } from "./scribe-receipts.ts";
@@ -572,6 +573,7 @@ import { json, onJsonBody, parsedBodyOf, readBody } from "./harness/http.ts";
 import { ROUTES, dispatchRoutes } from "./routes/table.ts";
 import { createHostedSlackRoutes } from "./routes/hosted-slack.ts";
 import { createPortalSessionRoutes } from "./routes/portal-session.ts";
+import { createScribeJoinRoutes } from "./routes/scribe-join.ts";
 import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
@@ -9902,6 +9904,22 @@ if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELA
         status: createWorkerStatusClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
         receipts: commandReceipts(),
         selfAddress: RELAY_MAILBOX_ADDRESS,
+        // Manual intents ("Mercury, join this meeting now") drain from the
+        // durable store through the same arm-if-due loop as calendar events.
+        // Pending survives restarts by construction: the store is SQLite.
+        listManualRequests: async () =>
+          listPendingScribeJoinIntents().map((intent) =>
+            joinRequestFromIntent(intent, {
+              manualLateMs: scribeConfig.manualLateMs,
+              reconcileGraceMs: scribeConfig.reconcileGraceMs,
+            }),
+          ),
+        noteManualArmed: (instanceId) => {
+          setScribeJoinIntentStatus(instanceId, "armed", Date.now());
+        },
+        noteManualTerminal: (instanceId) => {
+          setScribeJoinIntentStatus(instanceId, "terminal", Date.now());
+        },
         notify: async (notice) => {
           const recipient = knownScribeRecipient(notice.organizer_email) ?? knownScribeRecipient(notice.creator_email);
           if (recipient) {
@@ -13967,13 +13985,24 @@ ROUTES.push(createPortalSessionRoutes({
   sessions,
   capability: relayBffCapability,
   sharedWorkspace: () => RELAY_SHARED_WORKSPACE && RELAY_PORTAL_SESSIONS,
-  environment: () => environmentDescriptor({
-    environmentId: ENVIRONMENT_ID,
-    desktopManaged: DESKTOP_MANAGED,
-    emailSignIn: emailSignIn.enabled(),
-    sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
-  }),
-}));
+    environment: () => environmentDescriptor({
+      environmentId: ENVIRONMENT_ID,
+      desktopManaged: DESKTOP_MANAGED,
+      emailSignIn: emailSignIn.enabled(),
+      sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
+    }),
+  }));
+  // Manual Scribe joins ("Mercury, join this meeting now"). Same trust shape
+  // as the portal bridge: the shared BFF capability plus a verified actor
+  // assertion, no loopback requirement — the tool layer calls over the
+  // compose network. The actor must be a Mercury bot in its owner's workspace.
+  ROUTES.push(createScribeJoinRoutes({
+    store,
+    dataDir: DATA_DIR,
+    capability: relayBffCapability,
+    actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
+    scribeReady: () => scribeMonitor !== null,
+  }));
 // The BFF capability is captured at the top of this module and kept there
 // for the process lifetime: the shared-mailbox monitor and Scribe call the
 // BFF's internal routes directly. It is never written back into
