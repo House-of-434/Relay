@@ -111,7 +111,7 @@ export function registerGithubTools(server: McpServer, agent: Agent, context: Gi
         authorizeGithub(agent, "read");
         const scoped = name ? assertRepo(name) : undefined;
         const { items } = await client.searchIssues(actorAssertion, { query, repo: scoped, limit });
-        return { content: [{ type: "text" as const, text: JSON.stringify({ results: items.map(issueResult) }) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ results: items.map((issue) => issueResult({ ...issue, repo: issue.repo ?? scoped })) }) }] };
       } catch (error) {
         return toolError(error);
       }

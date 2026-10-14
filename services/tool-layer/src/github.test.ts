@@ -18,6 +18,11 @@ test("release results without a usable repository are rejected", () => {
   assert.throws(() => releaseResult({ tagName: "v1.0.0", url: "https://github.com/octo/A/releases/tag/v1.0.0" }), /usable repository/);
 });
 
+test("issue results without a usable repository are rejected", () => {
+  assert.throws(() => issueResult({ number: 7, title: "Bug", url: "https://github.com/octo/repo/issues/7", isPullRequest: false }), /usable repository/);
+  assert.throws(() => issueResult({ number: 7, title: "Bug", url: "https://github.com/octo/repo/issues/7", isPullRequest: false, repo: "not-a-repo" }), /usable repository/);
+});
+
 test("repository and issue citations are unchanged by release qualification", () => {
   const repo = repositoryResult({ fullName: "octo/Hello-World", url: "https://github.com/octo/Hello-World", private: false });
   assert.equal(repo.sourceId, "octo/Hello-World");

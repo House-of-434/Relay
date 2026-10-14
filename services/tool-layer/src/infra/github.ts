@@ -156,14 +156,16 @@ export function repositoryResult(repo: GitHubRepositorySummary): ConnectorResult
 export function issueResult(issue: GitHubIssueSummary): ConnectorResult {
   if (!Number.isInteger(issue.number) || issue.number <= 0) throw new Error("GitHub issue payload is missing a usable number");
   if (!isHttpUrl(issue.url)) throw new Error("GitHub issue payload is missing a usable URL");
+  const repo = (issue.repo ?? "").trim();
+  if (!REPO_PATTERN.test(repo)) throw new Error("GitHub issue payload is missing a usable repository");
   return {
     source: "github",
-    sourceId: `${issue.repo ?? ""}#${issue.number}`,
+    sourceId: `${repo}#${issue.number}`,
     canonicalUrl: issue.url,
     title: issue.title,
     updatedAt: issue.updatedAt,
     content: boundedText(issue.body, 2_000),
-    metadata: { number: issue.number, state: issue.state, pullRequest: issue.isPullRequest, repo: issue.repo },
+    metadata: { number: issue.number, state: issue.state, pullRequest: issue.isPullRequest, repo },
   };
 }
 
