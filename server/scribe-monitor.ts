@@ -1,10 +1,11 @@
 /** Scribe monitor — the harness side of the capture workflow.
  *
- * Every tick it lists relay@'s calendar over the BFF internal route, and for
- * each meeting entering its join window it builds a descriptor and posts it to
- * the worker's /join endpoint. Arming is idempotent through a command receipt
- * keyed on instance_id|event_start, so a restart never double-arms and a
- * reschedule re-arms at the new time.
+ * Every tick it gathers JoinRequests from its producers (relay@'s calendar
+ * over the BFF internal route today; manual join requests next), and for each
+ * request past due it builds a descriptor and posts it to the worker's /join
+ * endpoint. Arming is idempotent through a command receipt keyed on
+ * instance_id|event_start, so a restart never double-arms and a reschedule
+ * re-arms at the new time.
  *
  * Receipt order is check -> POST -> write: the POST cannot live inside the
  * synchronous receipt transaction, so a crash between the two just re-posts
@@ -174,7 +175,7 @@ export function meetingUrlFor(event: CalendarEvent): string | null {
 
 /** Event start in ms, or null for an all-day / unparseable event. */
 /** Event end in ms, or null when absent/unparseable. */
-export function eventEndMs(event: CalendarEvent): number | null {
+export function eventEndMs(event: Pick<CalendarEvent, "end">): number | null {
   const dt = event.end?.dateTime;
   if (typeof dt !== "string") return null;
   const ms = Date.parse(dt);
@@ -226,6 +227,73 @@ export function buildDescriptor(event: CalendarEvent, url: string, platform: Scr
   };
 }
 
+/** The fields reconcile/notify need from a meeting. CalendarEvent satisfies
+ * this; manual join requests synthesize it (no schedule required). */
+export interface ReconcilableMeeting {
+  id: string;
+  summary?: string;
+  end?: CalendarEventTime;
+  organizer?: { email?: string };
+  creator?: { email?: string };
+}
+
+/** A normalized "join this meeting" intent from any producer — the calendar
+ * poll today, manual join requests next. dueAtMs/lateAtMs carry the source's
+ * timing so tick() runs one arm-if-due rule for every request, regardless of
+ * where it came from. */
+export interface JoinRequest {
+  /** The exact worker payload. Built once by the producer. */
+  descriptor: ScribeDescriptor;
+  /** Arm when now >= dueAtMs. Calendar: start − armLeadMs. */
+  dueAtMs: number;
+  /** Past this with no arm receipt, the request is terminally unreachable.
+   *  Calendar: start + lateMaxMs. */
+  lateAtMs: number;
+  /** Calendar today; "manual" arrives with the manual producer. */
+  source: "calendar";
+  /** Idempotency namespace. Calendar: event.id|event_start. */
+  receiptKey: string;
+  /** Source fields for reconcile/notify. */
+  event: ReconcilableMeeting;
+}
+
+function isSelfOrganized(event: CalendarEvent, selfAddress: string | undefined): boolean {
+  const self = selfAddress?.trim().toLowerCase();
+  if (!self) return false;
+  return event.organizer?.email?.trim().toLowerCase() === self;
+}
+
+/** Calendar producer: a poll event becomes a JoinRequest, or null for the
+ * same quiet skips tick() always applied (cancelled, relay@'s own, all-day,
+ * no link, non-provider host). */
+export function joinRequestFromEvent(
+  event: CalendarEvent,
+  options: { armLeadMs: number; lateMaxMs: number; selfAddress?: string },
+  log?: (message: string) => void,
+): JoinRequest | null {
+  if (event.status === "cancelled") return null;
+  if (isSelfOrganized(event, options.selfAddress)) return null;
+  const start = eventStartMs(event);
+  if (start === null) return null; // all-day or unparseable
+  const url = meetingUrlFor(event);
+  if (!url) return null;
+  const platform = platformForUrl(url);
+  if (!platform) {
+    log?.(`scribe: skipping ${event.id}: meeting host is not a provider domain`);
+    return null;
+  }
+  const receiptKey = armKey(event);
+  if (receiptKey === null) return null; // unreachable: start parsed above
+  return {
+    descriptor: buildDescriptor(event, url, platform),
+    dueAtMs: start - options.armLeadMs,
+    lateAtMs: start + options.lateMaxMs,
+    source: "calendar",
+    receiptKey,
+    event,
+  };
+}
+
 export class ScribeMonitor {
   private timer: ReturnType<typeof setInterval> | null = null;
   private ticking = false;
@@ -271,42 +339,16 @@ export class ScribeMonitor {
       const timeMax = new Date(now + this.config.windowForwardMs).toISOString();
       const events = await this.deps.listEvents(timeMin, timeMax);
       for (const event of events) {
-        // Quiet skips: cancelled, relay@'s own meetings, all-day, no link, or a
-        // host that is not a provider. None of these produce a notice.
-        if (event.status === "cancelled") continue;
-        if (this.isSelf(event)) continue;
-        const start = eventStartMs(event);
-        if (start === null) continue; // all-day or unparseable
-        const url = meetingUrlFor(event);
-        if (!url) continue;
-        const platform = platformForUrl(url);
-        if (!platform) {
-          this.log(`scribe: skipping ${event.id}: meeting host is not a provider domain`);
-          continue;
-        }
-
-        // Already handed to the worker (or terminally unreachable): reconcile a
-        // notice from the worker's /status instead of arming again.
-        if (this.hasArmReceipt(event)) {
-          await this.reconcile(event, now);
-          continue;
-        }
-
-        if (now < start - this.config.armLeadMs) continue; // not yet
-
-        if (now <= start + this.config.lateMaxMs) {
-          await this.arm(event, url, platform, now);
-        } else {
-          // Join window closed with no arm receipt: the capture service never
-          // accepted this meeting. Terminal + notify once, so the loop stops.
-          // The arm receipt marks it handled so the next tick reconciles (and
-          // short-circuits on the notify receipt) instead of re-notifying.
-          const key = armKey(event);
-          if (key) this.deps.receipts.record("scribe.arm", key, "unreachable", now);
-          this.log(`scribe: capture service unreachable for ${event.id}; window closed`);
-          this.recordNotify(event, "unreachable", now);
-          await this.emit(event, { kind: "unreachable", reason: "capture service unreachable", signedOut: false });
-        }
+        // Quiet skips live in the producer: cancelled, relay@'s own meetings,
+        // all-day, no link, or a host that is not a provider. None of these
+        // produce a notice.
+        const request = joinRequestFromEvent(event, {
+          armLeadMs: this.config.armLeadMs,
+          lateMaxMs: this.config.lateMaxMs,
+          selfAddress: this.deps.selfAddress,
+        }, (message) => this.log(message));
+        if (!request) continue;
+        await this.processRequest(request, now);
       }
     } catch (error) {
       this.log(`scribe: poll failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -315,36 +357,54 @@ export class ScribeMonitor {
     }
   }
 
-  private hasArmReceipt(event: CalendarEvent): boolean {
-    const key = armKey(event);
-    return key !== null && this.deps.receipts.has("scribe.arm", key);
+  /** The single arming rule for every request, whatever produced it: past due
+   * with no arm receipt, arm now; already handed to the worker (or terminally
+   * unreachable), reconcile a notice from the worker's /status instead. */
+  private async processRequest(request: JoinRequest, now: number): Promise<void> {
+    if (this.deps.receipts.has("scribe.arm", request.receiptKey)) {
+      await this.reconcile(request.event, now);
+      return;
+    }
+
+    if (now < request.dueAtMs) return; // not yet
+
+    if (now <= request.lateAtMs) {
+      await this.armRequest(request, now);
+    } else {
+      // Join window closed with no arm receipt: the capture service never
+      // accepted this meeting. Terminal + notify once, so the loop stops.
+      // The arm receipt marks it handled so the next tick reconciles (and
+      // short-circuits on the notify receipt) instead of re-notifying.
+      this.deps.receipts.record("scribe.arm", request.receiptKey, "unreachable", now);
+      this.log(`scribe: capture service unreachable for ${request.descriptor.instance_id}; window closed`);
+      this.recordNotify(request.event, "unreachable", now);
+      await this.emit(request.event, { kind: "unreachable", reason: "capture service unreachable", signedOut: false });
+    }
   }
 
   /** Hand a due meeting to the worker. A crash between the POST and the receipt
    *  write just re-posts onto the idempotent /join next tick. */
-  private async arm(event: CalendarEvent, url: string, platform: ScribeDescriptor["platform"], now: number): Promise<void> {
-    const key = armKey(event);
-    if (!key) return;
-    const descriptor = buildDescriptor(event, url, platform);
+  private async armRequest(request: JoinRequest, now: number): Promise<void> {
+    const descriptor = request.descriptor;
     let result: { status: string };
     try {
       result = await this.deps.joinWorker(descriptor);
     } catch (error) {
       // Worker unreachable: no receipt, so the next tick retries.
-      this.log(`scribe: worker join failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
+      this.log(`scribe: worker join failed for ${descriptor.instance_id}: ${error instanceof Error ? error.message : "unknown"}`);
       return;
     }
     // A worker refusal (e.g. "at capacity" -> status failed) is terminal:
     // record the receipt so it is not retried, and let reconciliation send the
     // failure notice.
-    this.deps.receipts.record("scribe.arm", key, result.status ?? "armed", now);
-    this.log(`scribe: armed ${event.id} (${platform}) -> ${result.status ?? "armed"}`);
+    this.deps.receipts.record("scribe.arm", request.receiptKey, result.status ?? "armed", now);
+    this.log(`scribe: armed ${descriptor.instance_id} (${descriptor.platform}) -> ${result.status ?? "armed"}`);
   }
 
   /** A meeting already handed to the worker: turn the terminal /status into one
    *  notice. Non-terminal states are re-checked next tick, with an exit after
    *  the grace window so a meeting the worker never recorded stops polling. */
-  private async reconcile(event: CalendarEvent, now: number): Promise<void> {
+  private async reconcile(event: ReconcilableMeeting, now: number): Promise<void> {
     if (this.deps.receipts.has("scribe.notify", event.id)) return;
     let status: ScribeWorkerStatus;
     try {
@@ -382,12 +442,12 @@ export class ScribeMonitor {
     this.recordNotify(event, status.status, now);
   }
 
-  private recordNotify(event: CalendarEvent, result: string, now: number): void {
+  private recordNotify(event: ReconcilableMeeting, result: string, now: number): void {
     this.deps.receipts.record("scribe.notify", event.id, result, now);
   }
 
   private async emit(
-    event: CalendarEvent,
+    event: ReconcilableMeeting,
     notice: { kind: ScribeNotice["kind"]; reason?: string; signedOut: boolean; segment_count?: number },
   ): Promise<void> {
     const full: ScribeNotice = {
@@ -403,11 +463,5 @@ export class ScribeMonitor {
     } catch (error) {
       this.log(`scribe: notify failed for ${event.id}: ${error instanceof Error ? error.message : "unknown"}`);
     }
-  }
-
-  private isSelf(event: CalendarEvent): boolean {
-    const self = this.deps.selfAddress?.trim().toLowerCase();
-    if (!self) return false;
-    return event.organizer?.email?.trim().toLowerCase() === self;
   }
 }
