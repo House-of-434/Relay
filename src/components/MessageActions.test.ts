@@ -18,26 +18,23 @@ const render = (props: Partial<Omit<Props, "children">> = {}) =>
   );
 
 describe("MessageActions", () => {
-  it("shows one collapsed handle with the controls tucked into a zero-width tray", () => {
+  it("renders every control in one row that fades in on bubble hover", () => {
     const html = render();
-    expect(html).toContain('aria-label="Message actions"');
-    expect(html).toContain('aria-expanded="false"');
-    expect(html).toContain("grid-cols-[0fr]");
-    expect(html).toContain("group-hover/actions:grid-cols-[1fr]");
     expect(html).toContain(">copy<");
     expect(html).toContain(">reply<");
-    expect(html).not.toContain('data-open="true"');
+    expect(html).toContain("opacity-0");
+    expect(html).toContain("group-hover:opacity-100");
+    expect(html).toContain("touch:opacity-100");
   });
 
-  it("stays open while a control must remain reachable", () => {
-    const html = render({ forceOpen: true });
-    expect(html).toContain('aria-expanded="true"');
-    expect(html).toContain('data-open="true"');
-    expect(html).toContain("grid-cols-[1fr]");
+  it("has no collapsed handle hiding the controls behind a second hover", () => {
+    const html = render();
+    expect(html).not.toContain("Message actions");
+    expect(html).not.toContain("aria-expanded");
     expect(html).not.toContain("grid-cols-[0fr]");
   });
 
-  it("mirrors the tray on the user side so it slides away from the bubble", () => {
+  it("mirrors the tray on the user side so the first control stays nearest the bubble", () => {
     expect(render({ side: "user" })).toContain("flex-row-reverse");
     expect(render({ side: "bot" })).not.toContain("flex-row-reverse");
   });
