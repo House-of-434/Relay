@@ -481,7 +481,7 @@ import {
   routedMailTitle,
   type MailboxMessage,
 } from "./mailbox-monitor.ts";
-import { mailboxBffCall } from "./mailbox-bff.ts";
+import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
@@ -7194,14 +7194,20 @@ bus.subscribe((event: RuntimeEvent) => {
           const routed = settledTask?.mailRouted;
           const detail = routineRun ? reply || routineRun.output || "" : reply;
           if (routed && detail.trim() && !mailboxReplyNeedsNoEmail(detail)) {
-            void sendMailboxCompletionEmail({
-              capability: relayBffCapability,
-              email: routed.email,
-              title: settledTask?.title ?? "Your request",
-              detail,
-            }).catch((error) => {
-              console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
-            });
+            const mailboxActor = relayMailboxActor();
+            if (!mailboxActor) {
+              console.warn("[mailbox] completion email skipped: no Mercury bot is registered for Relay's account");
+            } else {
+              void sendMailboxCompletionEmail({
+                capability: relayBffCapability,
+                actor: mailboxActor,
+                email: routed.email,
+                title: settledTask?.title ?? "Your request",
+                detail,
+              }).catch((error) => {
+                console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+              });
+            }
           }
         }
         void digestSettled.finally(() => settleDirectTurn(true));
@@ -9738,6 +9744,19 @@ routines = new RoutineManager({
 // only in this module and is never written back into process.env.
 const RELAY_MAILBOX_USER_ID = process.env.RELAY_MAILBOX_USER_ID?.trim() || undefined;
 
+/** The per-user actor for relay@-account BFF calls (shared mailbox poll,
+// routed-mail completion emails, Scribe calendar listing and notices): Relay's
+// own user id with its Mercury bot and that bot's standing thread. Mercury
+// roles are scoped per owner since per-user workspaces, so the lookup is by
+// Relay's account, not a global singleton. Undefined when the mailbox is not
+// configured or Relay's account has no Mercury bot yet. */
+function relayMailboxActor(): MailboxActor | undefined {
+  if (!RELAY_MAILBOX_ADDRESS || !RELAY_MAILBOX_USER_ID) return undefined;
+  const mercury = store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === RELAY_MAILBOX_USER_ID);
+  if (!mercury) return undefined;
+  return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId };
+}
+
 const mailboxPollMs = (() => {
   const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
   const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
@@ -9745,10 +9764,11 @@ const mailboxPollMs = (() => {
 })();
 
 if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
-  const mercuryId = relayAgentBotIds(store.bots).mercury;
-  if (!mercuryId) {
-    console.warn("[mailbox] shared mailbox disabled: no Mercury bot is registered");
+  const mailboxActor = relayMailboxActor();
+  if (!mailboxActor) {
+    console.warn("[mailbox] shared mailbox disabled: no Mercury bot is registered for Relay's account");
   } else {
+    const mercuryId = mailboxActor.botId;
     mailboxMonitor = new MailboxMonitor({
       address: RELAY_MAILBOX_ADDRESS,
       pollMs: mailboxPollMs,
@@ -9757,6 +9777,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
           relayBffCapability,
           "/api/internal/gmail/messages/list",
           { query: MAILBOX_POLL_QUERY, maxResults: MAILBOX_LIST_LIMIT, mailbox: "relay" },
+          mailboxActor,
         );
         return result.messages ?? [];
       },
@@ -9765,6 +9786,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
           relayBffCapability,
           "/api/internal/gmail/messages/get",
           { messageId, mailbox: "relay" },
+          mailboxActor,
         );
         return result.message;
       },
@@ -9848,51 +9870,58 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
 // BFF internal route and arms captures on the worker; the worker capability
 // lives only in this module and is never written back into process.env.
 if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELAY_MAILBOX_ADDRESS) {
-  const scribeConfig = scribeMonitorConfig();
-  // Organizer-first, only if the address belongs to a known member.
-  const knownScribeRecipient = (email: string | undefined): string | undefined => {
-    const e = email?.trim().toLowerCase();
-    if (!e) return undefined;
-    return sessions.personByEmail(e) ?? ownerByEmail(DATA_DIR, e) ? e : undefined;
-  };
-  // Admins for the signed-out case: RELAY_SCRIBE_ADMIN_EMAILS, kept only if a
-  // configured address belongs to a known member. Never an invented list.
-  const configuredAdmins = parseAdminEmails(process.env.RELAY_SCRIBE_ADMIN_EMAILS);
-  const scribeAdminEmails = configuredAdmins.filter((email) => knownScribeRecipient(email) !== undefined);
-  if (configuredAdmins.length > 0 && scribeAdminEmails.length === 0) {
-    console.warn(
-      "[scribe] RELAY_SCRIBE_ADMIN_EMAILS is set but none of its addresses belong to a known member; signed-out alerts have no admin recipient",
-    );
-  }
-  scribeMonitor = new ScribeMonitor(
-    {
-      listEvents: createCalendarEventLister({ capability: relayBffCapability, maxResults: scribeConfig.maxResults }),
-      joinWorker: createWorkerJoinClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
-      status: createWorkerStatusClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
-      receipts: commandReceipts(),
-      selfAddress: RELAY_MAILBOX_ADDRESS,
-      notify: async (notice) => {
-        const recipient = knownScribeRecipient(notice.organizer_email) ?? knownScribeRecipient(notice.creator_email);
-        if (recipient) {
-          await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice));
-        } else {
-          console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
-        }
-        if (notice.signedOut) {
-          if (scribeAdminEmails.length === 0) {
-            console.error(
-              `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
-            );
+  // The calendar list and notice emails sign as relay@'s own per-user actor,
+  // so the monitor stays dark until Relay's account owns a Mercury bot.
+  const scribeMailboxActor = relayMailboxActor();
+  if (!scribeMailboxActor) {
+    console.warn("[scribe] monitor disabled: no Mercury bot is registered for Relay's account");
+  } else {
+    const scribeConfig = scribeMonitorConfig();
+    // Organizer-first, only if the address belongs to a known member.
+    const knownScribeRecipient = (email: string | undefined): string | undefined => {
+      const e = email?.trim().toLowerCase();
+      if (!e) return undefined;
+      return sessions.personByEmail(e) ?? ownerByEmail(DATA_DIR, e) ? e : undefined;
+    };
+    // Admins for the signed-out case: RELAY_SCRIBE_ADMIN_EMAILS, kept only if a
+    // configured address belongs to a known member. Never an invented list.
+    const configuredAdmins = parseAdminEmails(process.env.RELAY_SCRIBE_ADMIN_EMAILS);
+    const scribeAdminEmails = configuredAdmins.filter((email) => knownScribeRecipient(email) !== undefined);
+    if (configuredAdmins.length > 0 && scribeAdminEmails.length === 0) {
+      console.warn(
+        "[scribe] RELAY_SCRIBE_ADMIN_EMAILS is set but none of its addresses belong to a known member; signed-out alerts have no admin recipient",
+      );
+    }
+    scribeMonitor = new ScribeMonitor(
+      {
+        listEvents: createCalendarEventLister({ capability: relayBffCapability, actor: scribeMailboxActor, maxResults: scribeConfig.maxResults }),
+        joinWorker: createWorkerJoinClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+        status: createWorkerStatusClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+        receipts: commandReceipts(),
+        selfAddress: RELAY_MAILBOX_ADDRESS,
+        notify: async (notice) => {
+          const recipient = knownScribeRecipient(notice.organizer_email) ?? knownScribeRecipient(notice.creator_email);
+          if (recipient) {
+            await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice), scribeMailboxActor);
           } else {
-            for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail());
+            console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
           }
-        }
+          if (notice.signedOut) {
+            if (scribeAdminEmails.length === 0) {
+              console.error(
+                `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
+              );
+            } else {
+              for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail(), scribeMailboxActor);
+            }
+          }
+        },
+        log: (message) => console.log(message),
       },
-      log: (message) => console.log(message),
-    },
-    scribeConfig,
-  );
-  console.log(`[scribe] monitor enabled -> ${RELAY_SCRIBE_WORKER_URL}`);
+      scribeConfig,
+    );
+    console.log(`[scribe] monitor enabled -> ${RELAY_SCRIBE_WORKER_URL}`);
+  }
 } else if (RELAY_SCRIBE_ENABLED) {
   const missing = [
     relayBffCapability ? null : "RELAY_BFF_CAPABILITY",

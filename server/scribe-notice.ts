@@ -4,7 +4,7 @@
  * decides WHO hears it. The templates are pure and tested; the send reuses the
  * mailbox transport. No model call.
  */
-import { mailboxBffCall } from "./mailbox-bff.ts";
+import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { redactSecretsInText } from "./redact.ts";
 import type { ScribeNotice } from "./scribe-monitor.ts";
 
@@ -61,7 +61,7 @@ export function scribeNotifyEnabled(): boolean {
 
 /** Send one notice email from relay@ via the capability-gated mailbox route.
  *  Kill-switched by RELAY_MAILBOX_NOTIFY; secrets redacted, body bounded. */
-export async function sendScribeEmail(capability: string | undefined, email: string, message: ScribeEmail): Promise<void> {
+export async function sendScribeEmail(capability: string | undefined, email: string, message: ScribeEmail, actor: MailboxActor): Promise<void> {
   if (!scribeNotifyEnabled()) return;
   if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return;
   await mailboxBffCall(capability, "/api/internal/gmail/send", {
@@ -69,5 +69,5 @@ export async function sendScribeEmail(capability: string | undefined, email: str
     subject: message.subject.slice(0, 250),
     body: redactSecretsInText(message.body.trim()).slice(0, 4_000),
     mailbox: "relay",
-  });
+  }, actor);
 }

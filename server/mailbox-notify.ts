@@ -4,7 +4,7 @@
 // with a bounded excerpt; the full thread lives in Relay. Server-only: this
 // is never a model-callable tool, and it is addressed only to the verified
 // sender already recorded on the conversation.
-import { mailboxBffCall } from "./mailbox-bff.ts";
+import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { redactSecretsInText } from "./redact.ts";
 
 /** A reply that asks for nothing (an invitation's NO_ACTION, possibly wrapped
@@ -20,6 +20,7 @@ function mailboxNotifyEnabled(): boolean {
 
 export async function sendMailboxCompletionEmail(input: {
   capability: string | undefined;
+  actor: MailboxActor;
   email: string;
   title: string;
   detail: string;
@@ -39,5 +40,5 @@ export async function sendMailboxCompletionEmail(input: {
     subject: `Relay: ${input.title} finished`.slice(0, 250),
     body,
     mailbox: "relay",
-  });
+  }, input.actor);
 }

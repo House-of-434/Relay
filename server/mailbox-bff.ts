@@ -9,11 +9,18 @@ export function mailboxBffBase(): string {
   return process.env.RELAY_BFF_INTERNAL_URL?.trim() || `http://127.0.0.1:${process.env.RELAY_BFF_PORT?.trim() || "8798"}`;
 }
 
-export async function mailboxBffCall<T>(capability: string | undefined, path: string, payload: unknown): Promise<T> {
-  const address = process.env.RELAY_MAILBOX_ADDRESS?.trim();
-  const userId = process.env.RELAY_MAILBOX_USER_ID?.trim();
-  if (!address || !userId) throw new Error("Relay's shared mailbox is not configured");
-  const assertion = signedActorContext({ userId, email: address }, process.env.RELAY_TOOL_ACTOR_SECRET);
+/** The identity a relay@-account BFF call signs as: Relay's own user with
+ * one of its bots (Mercury) and that bot's standing thread. The BFF resolves
+ * the "relay" mailbox from its own configured owner id; the actor only needs
+ * to be a validly signed per-user identity. */
+export interface MailboxActor {
+  userId: string;
+  botId: string;
+  threadId: string;
+}
+
+export async function mailboxBffCall<T>(capability: string | undefined, path: string, payload: unknown, actor: MailboxActor): Promise<T> {
+  const assertion = signedActorContext(actor, process.env.RELAY_TOOL_ACTOR_SECRET);
   const response = await fetch(new URL(path, mailboxBffBase()), {
     method: "POST",
     redirect: "error",
