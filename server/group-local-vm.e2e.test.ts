@@ -10,6 +10,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch, unregisterOwnerFetch, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 let child: ChildProcess;
@@ -105,6 +106,10 @@ beforeAll(async () => {
   }, computer: { driver: "boxAgent", config: { pollMs: 10 } } } }));
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
+  // Per-user workspaces: session-less loopback sees nothing, so issue the
+  // fixture owner's session before boot and act as that account. The fetch
+  // wrapper injects the bearer into the api() calls below.
+  registerOwnerFetch(base, prepareOwnerSession(data));
   startServer = async () => {
     child = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
@@ -115,6 +120,7 @@ beforeAll(async () => {
         RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1), RELAY_STATIC_DIR: ui, RELAY_TEST_VM_STATE: stateFile,
         RELAY_BOX_API: `http://127.0.0.1:${boatPort}`,
         RELAY_USER_DATA: join(fixtureHome, "user-data"),
+        RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       }, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", () => {});
@@ -130,6 +136,7 @@ afterAll(async () => {
   if (stateFile) vmState();
   if (finishFile) writeFileSync(finishFile, "finish");
   await waitForExit(child, { signal: "SIGTERM" });
+  if (base) unregisterOwnerFetch(base);
   if (boatServer) await new Promise<void>(resolve => boatServer.close(() => resolve()));
   if (fixtureHome) await removeTempDir(fixtureHome);
 });

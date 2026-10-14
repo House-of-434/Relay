@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
@@ -21,7 +22,7 @@ type BotRecord = {
 
 (enabled ? it : it.skip)("edits and arranges the team canvas without losing bots or conversations", async () => {
   let child: ChildProcess | undefined;
-  let info: { ui: string; url: string; botId: string; logPath: string } | undefined;
+  let info: { ui: string; url: string; botId: string; logPath: string; token: string } | undefined;
   const receipts: Record<string, unknown> = { pointerInput: "synthetic DOM events; native pointer capture is not proven" };
   try {
     let stdout = "", stderr = "";
@@ -36,6 +37,7 @@ type BotRecord = {
       try { info = JSON.parse(stdout); return Boolean(info?.ui); } catch { return false; }
     }, { timeout: chrome ? 180_000 : 600_000, interval: 250 }).toBe(true);
     const fixture = info!;
+    registerOwnerFetch(fixture.url, fixture.token);
     const api = fixtureApi(fixture.url);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", fixture.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;

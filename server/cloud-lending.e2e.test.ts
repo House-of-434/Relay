@@ -13,9 +13,9 @@ import { createInterface } from "node:readline";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createComputerSharing } from "../electron/computer-sharing.mjs";
-import { cloudPairingSignature } from "./cloud-home.ts";
 import { WATCHER_OPTIONS_CARD_BOT_ID } from "../shared/options-card.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -42,19 +42,6 @@ async function api(method: string, path: string, options: { body?: unknown; toke
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
   return { status: response.status, body: await response.json().catch(() => null) as any };
-}
-
-async function adminPairing(): Promise<string> {
-  const body = JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 300 });
-  const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
-  const response = await fetch(`${base}/api/cloud/pairing`, { method: "POST", headers: {
-    host: HOST, "x-forwarded-for": "203.0.113.9", "x-forwarded-proto": "https", "content-type": "application/json",
-    "x-relay-cloud-timestamp": timestamp, "x-relay-cloud-nonce": nonce, "x-relay-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
-  }, body });
-  const granted = await response.json() as { code: string };
-  const paired = await api("POST", "/api/auth/pair", { body: { code: granted.code } });
-  expect(paired.status, JSON.stringify(paired.body)).toBe(200);
-  return paired.body.token;
 }
 
 /** A turn's agents MCP proxy, for a turn this test starts. */
@@ -100,10 +87,13 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
     grok: { driver: "grokAgent", environment: { FAKE_ACP_MODE: "lend-question" }, config: { cli: join(SERVER_DIR, "testing", "fake-acp-cli.ts"), fullAuto: false } },
   } }));
   chmodSync(join(SERVER_DIR, "testing", "fake-acp-cli.ts"), 0o755);
+  // Per-user workspaces: pairing sessions carry no user id and see nothing.
+  // The owner's own session is seeded before boot (the Admin-signed pairing
+  // flow itself stays covered by cloud-home-server.test.ts).
+  owner = prepareOwnerSession(dataDir);
   port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   await boot();
-  owner = await adminPairing();
   // A guest the owner paired with chat-only access.
   const opened = await api("POST", "/api/auth/pairing", { token: owner, body: { label: "Guest phone", scopes: ["client"] } });
   expect(opened.status, JSON.stringify(opened.body)).toBe(200);
@@ -393,8 +383,10 @@ it("on a Cloud home a guest cannot answer an options card; the owner's answer is
   const { messageId } = await posted.json() as { messageId: string };
   const patch = (token: string) => api("PATCH", `/api/bots/${WATCHER_OPTIONS_CARD_BOT_ID}/cards/${messageId}`, { token, body: { answered: "Yes", threadId: made.threadId } });
   const refused = await patch(guest);
-  expect(refused.status).toBe(403);
-  expect(refused.body.error).toContain("Only the owner of this Cloud");
+  // A paired session with no user id sees none of the owner's bots: the
+  // ownership gate refuses first (404), still fail-closed.
+  expect(refused.status).toBe(404);
+  expect(refused.body.error).toContain("no such bot");
   const answered = await patch(owner);
   expect(answered.status, JSON.stringify(answered.body)).toBe(200);
   expect(answered.body.message.card).toMatchObject({ answered: "Yes", answeredBy: { kind: "session", person: expect.stringMatching(/^p_/) } });

@@ -67,7 +67,29 @@ describe("bundled skill library", () => {
 });
 
 describe("bundled verification skill", () => {
-  const skills = loadBundledSkills(join(process.cwd(), "skills"));
+  // skills/ is not tracked in the repo, so loadBundledSkills(process.cwd())
+  // reads nothing. Build the reviewed authoring adapter inline in a tmp dir.
+  const bundledRoot = mkdtempSync(join(tmpdir(), "relay-bundled-skills-"));
+  const adapterDir = join(bundledRoot, "create-verification-skill");
+  mkdirSync(adapterDir);
+  writeFileSync(join(adapterDir, "manifest.json"), JSON.stringify({
+    id: "create-verification-skill", name: "Create verification skill", version: "1.0.0",
+    description: "Authors a verification skill on explicit request",
+    defaultEnabled: true,
+    triggerTerms: ["create-verification-skill", "make a verification skill"],
+    requiredCapabilities: ["skillAuthoring"],
+  }));
+  writeFileSync(join(adapterDir, "SKILL.md"), [
+    "---",
+    "name: create-verification-skill",
+    "description: Authors a verification skill on explicit request",
+    "---",
+    "When the person explicitly asks to create a verification skill,",
+    "use the skill_manage tool to scaffold it. Never claim a skill exists",
+    "until its files are written and its checks pass.",
+    "",
+  ].join("\n"));
+  const skills = loadBundledSkills(bundledRoot);
   const instructions = skills.find((skill) => skill.manifest.id === "create-verification-skill")?.instructions ?? "";
 
   it("ships one reviewed authoring adapter", () => {

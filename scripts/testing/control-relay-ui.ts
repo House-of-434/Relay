@@ -44,6 +44,10 @@ export interface UiHandle {
   home: string;
   botId: string;
   logPath: string;
+  /** The fixture owner's session bearer: the launch's own fetches already
+   * carry it, but a test process driving the same fixture must register it
+   * itself (registerOwnerFetch) before its direct API calls. */
+  token: string;
   /** System Chrome the driver launched with. */
   chrome: string;
   /** The Playwright driver daemon holding this handle's browser session. */
@@ -91,6 +95,9 @@ export async function startUiDriver(options: {
   chrome: string;
   home: string;
   url?: string;
+  /** Session cookies to set before the first page loads, so the first
+   * render is already authenticated. */
+  cookies?: Array<{ name: string; value: string }>;
   log?: (line: string) => void;
 }): Promise<DriverHandle> {
   const { chrome, home } = options;
@@ -137,7 +144,7 @@ export async function startUiDriver(options: {
   });
   const url = await ready;
   if (options.url) {
-    await driverCall(url, "open", { url: options.url }, 120_000);
+    await driverCall(url, "open", { url: options.url, ...(options.cookies?.length ? { cookies: options.cookies } : {}) }, 120_000);
   }
   let stopped = false;
   return {
@@ -157,7 +164,7 @@ export async function startUiDriver(options: {
 /** One driver verb. Throws ControlOmbError with the driver's message. */
 export async function driverCall(
   driverUrl: string,
-  verb: "open" | "snapshot" | "click" | "type" | "press" | "eval" | "console" | "screenshot" | "wait-fn" | "wait-load" | "close",
+  verb: "open" | "snapshot" | "click" | "hover" | "type" | "press" | "eval" | "console" | "screenshot" | "wait-fn" | "wait-load" | "close",
   body: Record<string, unknown>,
   timeoutMs = 30_000,
 ): Promise<Record<string, unknown>> {
@@ -210,7 +217,7 @@ function loadHandle(raw: unknown, verb: string): UiHandle {
   } catch (error) {
     throw new ControlOmbError(`could not read the ui handle ${path}: ${error instanceof Error ? error.message : String(error)}`, "the launch that wrote it may have stopped; run `ui launch` again");
   }
-  for (const key of ["url", "previewUrl", "home", "botId", "logPath", "chrome", "driverUrl"] as const) {
+  for (const key of ["url", "previewUrl", "home", "botId", "logPath", "token", "chrome", "driverUrl"] as const) {
     if (typeof handle[key] !== "string" || !handle[key]) throw new ControlOmbError(`the ui handle ${path} lacks ${key}`, "run `ui launch` again and use the handle it prints");
   }
   if (!existsSync(handle.home!)) throw new ControlOmbError(`the ui session's data directory is gone: ${handle.home}`, "its launch was stopped; run `ui launch` again");
@@ -349,14 +356,14 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     return { ok: true, ...(await snapshot(handle)) };
   }
 
-  if (verb === "click" || verb === "type") {
+  if (verb === "click" || verb === "hover" || verb === "type") {
     const values = parse(command, rest, { ...ui, ref: { type: "string" }, name: { type: "string" }, text: { type: "string" } });
     const handle = loadHandle(values.ui, verb);
     const text = verb === "type" ? values.text : undefined;
     if (verb === "type" && typeof text !== "string") throw new ControlOmbError("ui type requires --text TEXT");
     await requireLiveSession(handle);
     const { target, name } = await resolveTarget(handle, values, verb);
-    const data = await driverCall(handle.driverUrl, verb, verb === "click" ? { ref: target } : { ref: target, text: text as string });
+    const data = await driverCall(handle.driverUrl, verb, verb === "type" ? { ref: target, text: text as string } : { ref: target });
     return { ok: true, target, ...(name ? { name } : {}), ...data };
   }
 
@@ -491,11 +498,21 @@ export async function launchUi(
     await api("PATCH", "/api/config", { language: "en" });
     const created = await runControlOmb(["new-bot", "--name", SEEDED_BOT, "--url", fixture.info.url]) as { bot: { id: string } };
     checkpoint();
+    // The browser's page loads authenticated as the fixture owner: same
+    // cookie shape the server sets at sign-in (name from sessionCookieName
+    // in server/request-auth.ts), value the owner's session bearer.
+    const fixturePort = new URL(fixture.info.url).port;
+    const session = await api("GET", "/api/auth/session") as { environmentId?: unknown };
+    const environmentId = typeof session.environmentId === "string" ? session.environmentId : "";
+    const ownerCookie = {
+      name: `relay_session_${fixturePort}_${environmentId.replace(/[^a-z0-9]/gi, "").slice(0, 12)}`,
+      value: fixture.info.token,
+    };
     // stdout carries the handle and nothing else; Vite's port and dependency
     // notes would otherwise land there first.
     preview = await mountPreview(fixture, { ...entry, logLevel: "warn" });
     checkpoint();
-    driver = await startUiDriver({ chrome, home: fixture.info.dataDir, url: preview.previewUrl, log: note });
+    driver = await startUiDriver({ chrome, home: fixture.info.dataDir, url: preview.previewUrl, cookies: [ownerCookie], log: note });
     checkpoint();
     const handle: UiHandle = {
       url: fixture.info.url,
@@ -503,6 +520,7 @@ export async function launchUi(
       home: fixture.info.dataDir,
       botId: created.bot.id,
       logPath: fixture.info.logPath,
+      token: fixture.info.token,
       chrome,
       driverUrl: driver.url,
     };
@@ -510,7 +528,7 @@ export async function launchUi(
     const { writeFileSync } = await import("node:fs");
     writeFileSync(handlePath, `${JSON.stringify(handle, null, 2)}\n`, { mode: 0o600 });
     io.stdout.write(`${JSON.stringify({
-      ok: true, ui: handlePath, url: handle.url, previewUrl: handle.previewUrl, botId: handle.botId, dataDir: handle.home, logPath: handle.logPath,
+      ok: true, ui: handlePath, url: handle.url, previewUrl: handle.previewUrl, botId: handle.botId, dataDir: handle.home, logPath: handle.logPath, token: handle.token,
     }, null, 2)}\n`);
     process.off("SIGINT", requestStop);
     process.off("SIGTERM", requestStop);

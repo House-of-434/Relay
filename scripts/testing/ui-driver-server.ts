@@ -44,6 +44,8 @@ interface CollectedNode {
   name: string;
   path: string;
   depth: number;
+  /** Checked state for checkable roles, so tests can assert selections. */
+  checked?: boolean;
 }
 
 const COLLECT_JS = `(() => {
@@ -61,7 +63,10 @@ const COLLECT_JS = `(() => {
   function cssPath(el) {
     const parts = [];
     let node = el;
-    while (node && node.nodeType === 1 && node !== document.body && parts.length < 12) {
+    // Deep enough for nested settings dialogs (the Connections panel's key
+    // fields sit ~13 levels under body). A truncated path silently matches
+    // nothing and reads as an unactionable element at click time.
+    while (node && node.nodeType === 1 && node !== document.body && parts.length < 24) {
       const tag = node.tagName.toLowerCase();
       let index = 1, sibling = node.previousElementSibling;
       while (sibling) {
@@ -95,11 +100,31 @@ const COLLECT_JS = `(() => {
     return (
       (el.getAttribute("aria-label") || "").trim() ||
       labelledByText(el) ||
+      labelAssociation(el) ||
       (el.tagName === "IMG" ? (el.getAttribute("alt") || "").trim() : "") ||
       (NAME_FROM_CONTENT.has(role) ? textOf(el) : "") ||
       (el.getAttribute("title") || "").trim() ||
       ""
     ).slice(0, MAX_NAME);
+  }
+  // Native label association (wrapping <label> or label[for]): implicit
+  // labels are the accessible name for checkboxes like the bot-settings team
+  // list, which carries no aria-label of its own.
+  function labelAssociation(el) {
+    if (el.tagName !== "INPUT" && el.tagName !== "TEXTAREA" && el.tagName !== "SELECT") return "";
+    const id = el.getAttribute("id");
+    if (id) {
+      try {
+        const labelled = document.querySelector("label[for=" + JSON.stringify(id) + "]");
+        if (labelled) return textOf(labelled);
+      } catch { /* unqueryable id: fall through to ancestors */ }
+    }
+    let parent = el.parentElement;
+    while (parent) {
+      if (parent.tagName === "LABEL") return textOf(parent);
+      parent = parent.parentElement;
+    }
+    return "";
   }
   function roleOf(el) {
     const explicit = (el.getAttribute("role") || "").trim().toLowerCase().split(new RegExp("[ \\t\\n\\r]+"))[0];
@@ -117,7 +142,12 @@ const COLLECT_JS = `(() => {
     let d = 0;
     let p = el.parentElement;
     while (p && p !== document.body) { d += 1; p = p.parentElement; }
-    out.push({ role, name, path: cssPath(el), depth: Math.min(d, 12) });
+    const node = { role, name, path: cssPath(el), depth: Math.min(d, 12) };
+    if (role === "checkbox" || role === "switch" || role === "radio") {
+      const attr = el.getAttribute("aria-checked");
+      node.checked = attr === "true" || attr === "false" ? attr === "true" : el.checked === true;
+    }
+    out.push(node);
   };
   // An element's own direct text (not its descendants'): leaf labels like a
   // model name inside a larger button. agent-browser's AX tree exposed these
@@ -171,7 +201,8 @@ function renderSnapshot(entries: SnapshotEntry[]): { snapshot: string; refs: Rec
   const refs: Record<string, { name: string; role: string }> = {};
   const lines = entries.map((node) => {
     refs[node.id] = { name: node.name, role: node.role };
-    return `${"  ".repeat(node.depth)}- ${node.role}${node.name ? ` ${JSON.stringify(node.name)}` : ""} [ref=${node.id}]`;
+    const checked = typeof node.checked === "boolean" ? ` [checked=${node.checked}]` : "";
+    return `${"  ".repeat(node.depth)}- ${node.role}${node.name ? ` ${JSON.stringify(node.name)}` : ""}${checked} [ref=${node.id}]`;
   });
   return { snapshot: lines.join("\n"), refs };
 }
@@ -276,6 +307,17 @@ async function main(): Promise<void> {
           case "/open": {
             const target = body.url;
             if (typeof target !== "string" || !target) throw new Error("open requires a url");
+            // Optional session cookie (fixture owner sign-in): set before the
+            // page loads so the first render is already authenticated.
+            const cookies = Array.isArray(body.cookies) ? body.cookies : [];
+            const domain = new URL(target).hostname;
+            await context.addCookies(cookies.map((cookie) => {
+              const record = Object(cookie) as Record<string, unknown>;
+              if (typeof record.name !== "string" || !record.name || typeof record.value !== "string") {
+                throw new Error("open cookies must be {name, value}");
+              }
+              return { name: record.name, value: record.value, domain, path: "/", httpOnly: true, sameSite: "Lax" as const };
+            }));
             await page.goto(target, { waitUntil: "domcontentloaded", timeout: 120_000 });
             sendJson(response, 200, { ok: true });
             return;
@@ -287,6 +329,15 @@ async function main(): Promise<void> {
           case "/click": {
             const path = await locatorFor(String(body.ref ?? ""));
             await page.locator(path).click({ timeout: 10_000 });
+            sendJson(response, 200, { ok: true });
+            return;
+          }
+          case "/hover": {
+            // Reveal hover-only controls (sidebar row actions show on
+            // group-hover): a real mouse position, not a synthetic event,
+            // so CSS :hover applies the way it does for a person.
+            const path = await locatorFor(String(body.ref ?? ""));
+            await page.locator(path).hover({ timeout: 10_000 });
             sendJson(response, 200, { ok: true });
             return;
           }

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
 
@@ -15,7 +16,7 @@ if (!enabled) console.log("skipping draft visibility UI: set RELAY_UI_E2E=1 to r
   let child: ChildProcess | undefined;
   try {
     let stdout = "", stderr = "";
-    let info: { ui: string; url: string };
+    let info: { ui: string; url: string; token: string };
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -25,6 +26,7 @@ if (!enabled) console.log("skipping draft visibility UI: set RELAY_UI_E2E=1 to r
       if (child!.exitCode !== null) throw new Error(stderr);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: chrome ? 180_000 : 600_000, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const bots = async () => (await fetch(`${info.url}/api/bots?messages=0`).then(response => response.json())).bots as Array<{ id: string; visibility?: string }>;

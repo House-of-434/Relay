@@ -15,6 +15,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { createCloudMove } from "../electron/cloud-move.mjs";
 import { CLOUD_HOME_RESTART_EXIT_CODE, cloudPairingSignature } from "./cloud-home.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession } from "./testing/owner.ts";
 import { stageWorkspaceBackup } from "./workspace-backup.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
@@ -32,7 +33,7 @@ const CLOUD_KEY = unique("sk-ant-cloud");
 // The servers never reach the network.
 const OFFLINE = `data:text/javascript,${encodeURIComponent('globalThis.fetch = async () => new Response("offline fixture", { status: 503 });')}`;
 
-interface Fixture { name: string; home: string; dataDir: string; base: string; env: NodeJS.ProcessEnv; child?: ChildProcess; log: string; closing: boolean; boots: number }
+interface Fixture { name: string; home: string; dataDir: string; base: string; env: NodeJS.ProcessEnv; child?: ChildProcess; log: string; closing: boolean; boots: number; ownerToken: string }
 let source: Fixture;
 let cloud: Fixture;
 let scratch: string;
@@ -79,6 +80,10 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   writeFileSync(join(dataDir, "config.json"), JSON.stringify(name === "desktop"
     ? { instances, anthropic: { key: SOURCE_SECRETS.anthropic }, tts: { key: SOURCE_SECRETS.tts }, box: { token: SOURCE_SECRETS.box }, features: { sharedComputers: true } }
     : { instances, anthropic: { key: CLOUD_KEY } }));
+  // Per-user workspaces: pairing sessions carry no user id and see nothing.
+  // Each machine gets the owner's own session before boot; data assertions
+  // below read as that owner (the same account on both, as after a move).
+  const ownerToken = prepareOwnerSession(dataDir);
   if (name === "desktop") {
     writeFileSync(join(dataDir, "workspace-credentials.json"), JSON.stringify({ fixture: SOURCE_SECRETS.credential }), { mode: 0o600 });
     mkdirSync(join(dataDir, "providers", "fixture"), { recursive: true });
@@ -95,7 +100,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
       RELAY_CLOUD_BOOTSTRAP_SECRET: bootstrapSecret, RELAY_PUBLIC_URL: ORIGIN,
     } : {}),
   };
-  const fixture: Fixture = { name, home, dataDir, base: `http://127.0.0.1:${port}`, env, log: "", closing: false, boots: 0 };
+  const fixture: Fixture = { name, home, dataDir, base: `http://127.0.0.1:${port}`, env, log: "", closing: false, boots: 0, ownerToken };
   await boot(fixture);
   return fixture;
 }
@@ -160,7 +165,7 @@ async function until(what: string, check: () => Promise<boolean>, timeout = 20_0
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
-const idle = (fixture: Fixture) => until("idle bots", async () => (await api(fixture, "GET", "/api/bots")).body.bots
+const idle = (fixture: Fixture) => until("idle bots", async () => (await api(fixture, "GET", "/api/bots", { token: fixture.ownerToken })).body.bots
   .every((bot: { activity?: string }) => bot.activity !== "working"));
 function filesUnder(root: string): string[] {
   const found: string[] = [];
@@ -182,15 +187,15 @@ beforeAll(async () => {
   expect(paired.status, JSON.stringify(paired.body)).toBe(200);
   windowToken = paired.body.token;
   // The desktop's work: a bot with a real conversation, and a room.
-  const planner = await newBot(source, "Moved Planner");
-  expect((await api(source, "POST", `/api/bots/${planner.id}/messages`, { body: { text: "Plan the launch party" } })).status).toBe(202);
-  await until("the bot's reply", async () => ((await api(source, "GET", `/api/threads/${planner.threadId}/messages`)).body?.messages ?? [])
+  const planner = await newBot(source, "Moved Planner", source.ownerToken);
+  expect((await api(source, "POST", `/api/bots/${planner.id}/messages`, { token: source.ownerToken, body: { text: "Plan the launch party" } })).status).toBe(202);
+  await until("the bot's reply", async () => ((await api(source, "GET", `/api/threads/${planner.threadId}/messages`, { token: source.ownerToken })).body?.messages ?? [])
     .filter((message: { role: string }) => message.role === "bot").length >= 2);
   await idle(source);
-  const room = await api(source, "POST", "/api/groups", { body: { name: "Launch room", memberIds: [planner.id] } });
+  const room = await api(source, "POST", "/api/groups", { token: source.ownerToken, body: { name: "Launch room", memberIds: [planner.id] } });
   expect(room.status, JSON.stringify(room.body)).toBe(201);
-  desktopBots = (await botNames(source)).sort();
-  expect(desktopBots).toHaveLength(2);
+  desktopBots = (await botNames(source, source.ownerToken)).sort();
+  expect(desktopBots).toHaveLength(4);
   // The secrets really are in the desktop's files, so their absence is proof.
   const saved = readFileSync(join(source.dataDir, "config.json"), "utf8");
   for (const value of [SOURCE_SECRETS.anthropic, SOURCE_SECRETS.tts, SOURCE_SECRETS.box, SOURCE_SECRETS.env]) expect(saved).toContain(value);
@@ -206,23 +211,29 @@ afterAll(async () => {
 });
 
 it("moves this computer's bots, chats and rooms to an empty Cloud, which keeps its own sign-ins, sessions and switches", async () => {
-  const before = await api(cloud, "GET", "/api/cloud-move", { token: windowToken });
+  // Per-user workspaces seed the owner's three agents on first sight; an
+  // empty Cloud for the move means removing them first.
+  const seeded = (await api(cloud, "GET", "/api/bots", { token: cloud.ownerToken })).body.bots;
+  for (const bot of seeded) {
+    expect((await api(cloud, "DELETE", `/api/bots/${bot.id}`, { token: cloud.ownerToken })).status).toBeLessThan(300);
+  }
+  const before = await api(cloud, "GET", "/api/cloud-move", { token: cloud.ownerToken });
   expect(before.status, JSON.stringify(before.body)).toBe(200);
   expect(before.body).toMatchObject({ empty: true, previous: null });
   const boots = cloud.boots;
 
   const result = await mover().move();
   expect(result, cloud.log.slice(-2000)).toMatchObject({ phase: "done", action: "move", previous: false });
-  expect(result.moved).toMatchObject({ bots: 2, rooms: 1, chats: 1 });
+  expect(result.moved).toMatchObject({ bots: 4, rooms: 1, chats: 1 });
   expect(cloud.boots).toBe(boots + 1);
 
   // The window's session survived the restore and the restart.
   const session = await api(cloud, "GET", "/api/auth/session", { token: windowToken });
   expect(session.body).toMatchObject({ kind: "session", cloudHome: true, scopes: ["admin", "client"] });
-  expect((await botNames(cloud, windowToken)).sort()).toEqual(desktopBots);
-  const moved = (await api(cloud, "GET", "/api/bots", { token: windowToken })).body;
+  expect((await botNames(cloud, cloud.ownerToken)).sort()).toEqual(desktopBots);
+  const moved = (await api(cloud, "GET", "/api/bots", { token: cloud.ownerToken })).body;
   const planner = moved.bots.find((bot: { name: string }) => bot.name === "Moved Planner");
-  const transcript = await api(cloud, "GET", `/api/threads/${planner.threadId}/messages`, { token: windowToken });
+  const transcript = await api(cloud, "GET", `/api/threads/${planner.threadId}/messages`, { token: cloud.ownerToken });
   expect(JSON.stringify(transcript.body.messages)).toContain("Plan the launch party");
   // The move's own session was signed out; the window's is the one left.
   const sessions = (await api(cloud, "GET", "/api/auth/sessions", { token: windowToken })).body.sessions as Array<{ label: string }>;
@@ -240,16 +251,16 @@ it("moves this computer's bots, chats and rooms to an empty Cloud, which keeps i
   // What the restore replaced is not kept: no safety copy, no staged files.
   expect(readdirSync(join(cloud.dataDir, ".backups")).filter((name) => name.startsWith("safety-") || /^[0-9a-f-]{36}$/.test(name))).toEqual([]);
   // This computer is unchanged: a copy, not a move of its files.
-  expect((await botNames(source)).sort()).toEqual(desktopBots);
+  expect((await botNames(source, source.ownerToken)).sort()).toEqual(desktopBots);
   expect(readFileSync(join(source.dataDir, "config.json"), "utf8")).toContain(SOURCE_SECRETS.anthropic);
 }, 150_000);
 
 it("the bundle a move sends carries no key, sign-in, credential or session of this computer", async () => {
   const password = "fixture bundle password";
-  const exported = await api(source, "POST", "/api/workspace-backup/export", { body: { password, clientState: {} } });
+  const exported = await api(source, "POST", "/api/workspace-backup/export", { token: source.ownerToken, body: { password, clientState: {} } });
   expect(exported.status, JSON.stringify(exported.body)).toBe(200);
   const archive = join(scratch, "bundle.ombbackup");
-  writeFileSync(archive, Buffer.from(await (await fetch(`${source.base}/api/workspace-backup/download/${exported.body.id}`)).arrayBuffer()));
+  writeFileSync(archive, Buffer.from(await (await fetch(`${source.base}/api/workspace-backup/download/${exported.body.id}`, { headers: { authorization: `Bearer ${source.ownerToken}` } })).arrayBuffer()));
   const inspect = mkdtempSync(join(scratch, "bundle-"));
   const staged = await stageWorkspaceBackup(inspect, archive, { password });
   const data = join(inspect, ".backups", staged.id, "staged", "data");
@@ -264,30 +275,30 @@ it("the bundle a move sends carries no key, sign-in, credential or session of th
 }, 60_000);
 
 it("backs up a Cloud that has work before replacing it; swapping back keeps what it replaces, so it can be swapped again", async () => {
-  await newBot(cloud, "Cloud-only bot", windowToken);
-  const before = await api(cloud, "GET", "/api/cloud-move", { token: windowToken });
+  await newBot(cloud, "Cloud-only bot", cloud.ownerToken);
+  const before = await api(cloud, "GET", "/api/cloud-move", { token: cloud.ownerToken });
   expect(before.body).toMatchObject({ empty: false, previous: null });
 
   const result = await mover().move();
   expect(result, cloud.log.slice(-2000)).toMatchObject({ phase: "done", previous: true });
-  expect((await botNames(cloud, windowToken)).sort()).toEqual(desktopBots);
-  const status = await api(cloud, "GET", "/api/cloud-move", { token: windowToken });
-  expect(status.body.previous).toMatchObject({ bots: 3, rooms: 1 });
+  expect((await botNames(cloud, cloud.ownerToken)).sort()).toEqual(desktopBots);
+  const status = await api(cloud, "GET", "/api/cloud-move", { token: cloud.ownerToken });
+  expect(status.body.previous).toMatchObject({ bots: 5, rooms: 1 });
 
   // Work done on the Cloud after the move is not lost by swapping back.
-  await newBot(cloud, "Post-move work", windowToken);
+  await newBot(cloud, "Post-move work", cloud.ownerToken);
   const swapped = await mover().restorePrevious();
   expect(swapped, cloud.log.slice(-2000)).toMatchObject({ phase: "done", action: "restore" });
-  expect((await botNames(cloud, windowToken)).sort()).toEqual(["Cloud-only bot", ...desktopBots].sort());
-  expect((await api(cloud, "GET", "/api/cloud-move", { token: windowToken })).body.previous).toMatchObject({ bots: 3, rooms: 1 });
+  expect((await botNames(cloud, cloud.ownerToken)).sort()).toEqual(["Cloud-only bot", ...desktopBots].sort());
+  expect((await api(cloud, "GET", "/api/cloud-move", { token: cloud.ownerToken })).body.previous).toMatchObject({ bots: 5, rooms: 1 });
   const again = await mover().restorePrevious();
   expect(again, cloud.log.slice(-2000)).toMatchObject({ phase: "done", action: "restore" });
-  expect((await botNames(cloud, windowToken)).sort()).toEqual(["Post-move work", ...desktopBots].sort());
+  expect((await botNames(cloud, cloud.ownerToken)).sort()).toEqual(["Post-move work", ...desktopBots].sort());
 
   // One undo point is all that stays: no safety copies, no staged files.
   const backups = join(cloud.dataDir, ".backups");
   expect(readdirSync(backups).filter((name) => name.startsWith("safety-") || /^[0-9a-f-]{36}$/.test(name) || name === "cloud-previous.next")).toEqual([]);
-  const held = (await api(cloud, "GET", "/api/cloud-move", { token: windowToken })).body;
+  const held = (await api(cloud, "GET", "/api/cloud-move", { token: cloud.ownerToken })).body;
   const archive = lstatSync(join(backups, "cloud-previous", "workspace.ombbackup")).size;
   expect(held.previous.bytes).toBe(archive);
   expect(held.heldBytes).toBeLessThan(archive + 256 * 1024);
@@ -315,9 +326,10 @@ it("refuses a move too big for a Cloud, an upload that is not a backup, and anyo
   expect(refused.job.error).toMatch(/not a supported encrypted workspace backup/);
   expect(refused.upload).toBeNull();
 
-  // A client device cannot, and the machine's own loopback is refused directly.
-  expect((await api(cloud, "GET", "/api/cloud-move")).status).toBe(403);
-  expect((await api(cloud, "POST", "/api/cloud-move/undo", { body: {} })).status).toBe(403);
+  // A client device cannot, and the machine's own loopback is refused directly
+  // (service fail-closed: 404, so a local caller cannot even learn the route).
+  expect((await api(cloud, "GET", "/api/cloud-move")).status).toBe(404);
+  expect((await api(cloud, "POST", "/api/cloud-move/undo", { body: {} })).status).toBe(404);
   const invite = await api(cloud, "POST", "/api/auth/pairing", { token: windowToken, body: { scopes: ["client"], label: "Phone" } });
   const phone = (await api(cloud, "POST", "/api/auth/pair", { remote: true, body: { code: invite.body.code } })).body.token;
   expect((await api(cloud, "GET", "/api/cloud-move", { token: phone })).status).toBe(403);
@@ -325,22 +337,23 @@ it("refuses a move too big for a Cloud, an upload that is not a backup, and anyo
   expect([401, 403]).toContain((await api(cloud, "GET", "/api/cloud-move", { remote: true })).status);
   // A desktop is not a Cloud home: it never receives a workspace.
   expect((await api(source, "GET", "/api/cloud-move")).status).toBe(404);
-  expect((await api(source, "GET", "/api/cloud-move/estimate")).body).toMatchObject({ bots: 2, rooms: 1, chats: 1 });
+  expect((await api(source, "GET", "/api/cloud-move/estimate", { token: source.ownerToken })).body).toMatchObject({ bots: 4, rooms: 1, chats: 1 });
 }, 60_000);
 
 it("a process on the machine (a bot's shell, bare loopback) cannot pair itself as the owner or reach any owner route", async () => {
   // On a Cloud home a request without a session from the machine itself is
   // only ever a service: it may not open a pairing window of any scope, nor
   // use the move, the settings, a bot's instructions or a memory review.
+  // Service fail-closed is 404, so the shell cannot even learn the routes.
   for (const scopes of [["admin", "client"], ["client"]]) {
     const minted = await api(cloud, "POST", "/api/auth/pairing", { body: { scopes, label: "bot shell" } });
-    expect(minted.status, JSON.stringify(minted.body)).toBe(403);
+    expect(minted.status, JSON.stringify(minted.body)).toBe(404);
   }
   for (const [method, path, body] of [
     ["GET", "/api/cloud-move", undefined], ["GET", "/api/config", undefined], ["GET", "/api/auth/sessions", undefined],
     ["PATCH", "/api/config", { profile: { name: "Shell" } }],
   ] as const) {
-    expect((await api(cloud, method, path, body === undefined ? {} : { body })).status, `${method} ${path}`).toBe(403);
+    expect((await api(cloud, method, path, body === undefined ? {} : { body })).status, `${method} ${path}`).toBe(404);
   }
   // Its health check and the turn capability routes still answer.
   expect((await api(cloud, "GET", "/api/health")).status).toBe(200);

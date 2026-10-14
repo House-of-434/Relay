@@ -5,6 +5,7 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { BOT_ROLES, roleProfilePatch } from "../../src/lib/bot-roles.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
@@ -16,7 +17,7 @@ if (!enabled) console.log("skipping bot tools UI e2e: no system Chrome; set RELA
 const chrome = resolveUiChrome(process.env);
 const LAUNCH_TIMEOUT_MS = forced && !chrome ? 600_000 : 180_000;
 
-interface FixtureInfo { ui: string; url: string; dataDir: string; logPath: string }
+interface FixtureInfo { ui: string; url: string; dataDir: string; logPath: string; token: string }
 interface SavedBot { id: string; name: string; soul?: string; mcpServers?: string[]; computer?: string }
 
 describe("bot setup and tools in the real renderer", () => {
@@ -46,6 +47,7 @@ describe("bot setup and tools in the real renderer", () => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: LAUNCH_TIMEOUT_MS + 120_000, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const click = (name: string) => ui("click", "--name", name);

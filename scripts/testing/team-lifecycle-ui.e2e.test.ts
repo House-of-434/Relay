@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
 import { mountPreview, type MountedPreview } from "./preview-fixture.ts";
@@ -22,7 +23,7 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set RELAY_UI_E2E=1 to
   let succeeded = false;
   try {
     let stdout = "", stderr = "";
-    let info: { ui: string; url: string; botId: string; logPath: string };
+    let info: { ui: string; url: string; botId: string; logPath: string; token: string };
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -33,6 +34,7 @@ if (!enabled) console.log("skipping team lifecycle UI e2e: set RELAY_UI_E2E=1 to
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: chrome ? 180_000 : 600_000, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     fixtureHandle = info!.ui;
     fixtureLog = info!.logPath;
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;

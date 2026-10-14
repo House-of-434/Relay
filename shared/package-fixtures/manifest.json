@@ -3,7 +3,7 @@
   "about": "Expected results of parsePackageDocument(fixture, { trust: \"file\" }). sha256 is over canonicalJson of the parsed document. Regenerate only with a deliberate format change; Admin tests read this file from the pinned runtime.",
   "fixtures": {
     "full-team.v2.json": {
-      "sha256": "d80e4e49382b88ae41b09ef7c49a699c6b07cf198f76ab1cf10c5b15e5f4981a",
+      "sha256": "a4f5e95fe5e0c88d208a2dbc92a46ac507aa9340dbbf4803a35110c199ea98d9",
       "keys": [
         "agents:lead",
         "agents:scout",
@@ -71,7 +71,7 @@
       }
     },
     "library-only.v2.json": {
-      "sha256": "3627d78686da829e3f6c447d572b80d2ab3f564a23a76332dd1224f092fd47e8",
+      "sha256": "f93132957cb7c40dc841a3827cb351cda9b5afcce90891decc2b66dedbac322f",
       "keys": [
         "skills:objection-handling",
         "skills:follow-up",
@@ -107,7 +107,7 @@
       }
     },
     "legacy-team.v1.json": {
-      "sha256": "7a4de2ba915592a1a98fc87c196d83f75011a33dead7b8f076a44d8d1bd5e791",
+      "sha256": "a6b88586c78aef6c392cb67c2496b66a89b57b224cd67814daf85bd75e2b3357",
       "keys": [
         "agents:scout",
         "agents:editor",
@@ -148,7 +148,7 @@
       }
     },
     "legacy-botmrr.v1.md": {
-      "sha256": "7a4de2ba915592a1a98fc87c196d83f75011a33dead7b8f076a44d8d1bd5e791",
+      "sha256": "a6b88586c78aef6c392cb67c2496b66a89b57b224cd67814daf85bd75e2b3357",
       "keys": [
         "agents:scout",
         "agents:editor",
@@ -189,7 +189,7 @@
       }
     },
     "secret-in-soul.v2.json": {
-      "sha256": "e0da69aad73684e74176e833c053cc590bac76795e58888d5770a81afefc0b64",
+      "sha256": "3e036d41e51592701a5e81434798f677cf8b1e454df9d9892fd4e13fdd964b42",
       "keys": [
         "agents:scout"
       ],

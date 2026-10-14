@@ -20,6 +20,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { createComputerSharing } from "../electron/computer-sharing.mjs";
 import { cloudPairingSignature } from "./cloud-home.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -159,6 +160,10 @@ await import(${JSON.stringify(fake)});
       brief: { driver: "claudeAgent", displayName: "Brief", config: { cli: brief } },
     },
   }));
+  // Per-user workspaces: pairing sessions carry no user id and see nothing.
+  // The owner's own session is seeded before boot (the Admin-signed pairing
+  // flow itself stays covered by cloud-home-server.test.ts).
+  owner = prepareOwnerSession(dataDir);
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   const offlinePrelude = `data:text/javascript,${encodeURIComponent('const real = globalThis.fetch; globalThis.fetch = async (url, init) => String(url).startsWith("http://127.0.0.1:") ? real(url, init) : new Response("offline fixture", { status: 503 });')}`;
@@ -181,7 +186,7 @@ await import(${JSON.stringify(fake)});
     if (Date.now() > deadline) throw new Error(`the Cloud home did not start:\n${log}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  owner = await adminPairing();
+  // A guest the owner paired with chat-only access (sees nothing, fail-closed).
   const opened = await api("POST", "/api/auth/pairing", { token: owner, body: { label: "Guest phone", scopes: ["client"] } });
   guest = (await api("POST", "/api/auth/pair", { body: { code: opened.body.code } })).body.token;
   // The owner's Mac, lending one folder.

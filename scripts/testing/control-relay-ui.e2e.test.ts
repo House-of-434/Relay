@@ -14,6 +14,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
@@ -45,7 +46,7 @@ const ownsEvidenceDir = !process.env.RELAY_UI_EVIDENCE_DIR;
 
 interface Launched {
   child: ReturnType<typeof spawn>;
-  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string };
+  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string; token: string };
   stderr: () => string;
 }
 
@@ -122,6 +123,7 @@ describe("control-relay ui drives the real renderer", () => {
   run("tests saved keys only from an untouched field and blocks erased drafts", async () => {
     launched = await launch([]);
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     await fixtureApi(info.url)("PUT", "/api/config", {
       openaiCompat: { key: "fixture-saved-key", url: "http://127.0.0.1:1/v1" },
     });
@@ -211,6 +213,7 @@ describe("control-relay ui drives the real renderer", () => {
   run("sends a turn from the composer and shows the reply and the scripted tool chip", async () => {
     launched = await launch(["--tool-calls", TOOL_CALLS]);
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     expect(info.ui).toBe(join(info.dataDir, "ui.json"));
     expect(existsSync(info.ui)).toBe(true);
     const handle = JSON.parse(readFileSync(info.ui, "utf8"));

@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
@@ -45,7 +46,7 @@ const ownsEvidenceDir = !process.env.RELAY_UI_EVIDENCE_DIR;
 
 interface Launched {
   child: ReturnType<typeof spawn>;
-  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string };
+  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string; token: string };
   stderr: () => string;
 }
 
@@ -163,6 +164,7 @@ describe("the thinking timer stays anchored across a thread switch", () => {
   run("counts from the server's turn-start stamp, not from the re-selection", async () => {
     launched = await launch(["--mode", "hang"]); // the turn never settles; the bot stays busy
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     const api = fixtureApi(info.url);
     const evaluate = async (js: string) => (await ui("eval", info.ui, "--js", js)).result;
     const timerText = () => evaluate(`document.querySelector('.turn-presence .tabular-nums')?.textContent ?? null`);
@@ -235,6 +237,7 @@ describe("the thinking timer stays anchored across a thread switch", () => {
   run("counts a group's turn from the speaking member's claim, resuming after a switch away", async () => {
     launched = await launch(["--mode", "hang"]); // the group's turn never settles either
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     const api = fixtureApi(info.url);
     const evaluate = async (js: string) => (await ui("eval", info.ui, "--js", js)).result;
     const timerText = () => evaluate(`document.querySelector('.turn-presence .tabular-nums')?.textContent ?? null`);

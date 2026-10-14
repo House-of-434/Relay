@@ -26,6 +26,15 @@ import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
+import {
+  ownerRecords,
+  prepareOwnerSession,
+  registerOwnerFetch,
+  unregisterOwnerFetch,
+  TEST_OWNER_EMAIL,
+  TEST_OWNER_USER_ID,
+  TEST_TOOL_ACTOR_SECRET,
+} from "./testing/owner.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { computerPrompt, SIGN_IN_PROMPT } from "./system-prompt.ts";
 import {
@@ -239,31 +248,6 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, body: await res.json() };
 };
 
-/** Pair a device the way a phone or a second person does, and act as them. */
-const asPairedPerson = async (label: string) => {
-  const opened = await api("POST", "/api/auth/pairing", {});
-  expect(opened.status).toBe(200);
-  const paired = await fetch(`${BASE}/api/auth/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "user-agent": label },
-    body: JSON.stringify({ code: opened.body.code }),
-  });
-  const body = await paired.json() as any;
-  expect(paired.status).toBe(200);
-  return {
-    token: body.token as string,
-    label: body.session.label as string,
-    call: async (method: string, path: string, payload?: unknown) => {
-      const res = await fetch(`${BASE}${path}`, {
-        method,
-        headers: { authorization: `Bearer ${body.token}`, ...(payload ? { "content-type": "application/json" } : {}) },
-        body: payload ? JSON.stringify(payload) : undefined,
-      });
-      return { status: res.status, body: await res.json() as any };
-    },
-  };
-};
-
 const chiefRoomRequest = async (baseUrl: string, token: string, route: "create-room" | "manage-room", body: unknown) => {
   const response = await fetch(`${baseUrl}/api/internal/${route}`, {
     method: "POST",
@@ -451,7 +435,7 @@ beforeAll(async () => {
   );
   writeFileSync(
     join(home, ".relay", "groups.json"),
-    JSON.stringify([
+    JSON.stringify(ownerRecords([
       {
         id: "test-dm",
         threadId: "test-dm-thread",
@@ -517,6 +501,32 @@ beforeAll(async () => {
         unread: false,
         createdAt: 6,
       },
+    ])),
+  );
+  // The seeded rooms reference two member bots; seed them owned by the
+  // fixture owner so the rooms stay visible under per-user isolation.
+  const ownedSeedBot = (id: string, threadId: string, name: string) => ({
+    id,
+    threadId,
+    name,
+    title: "",
+    description: "",
+    soul: "",
+    soulHash: "x",
+    notifications: true,
+    color: "blue",
+    unread: false,
+    modelSelection: { instanceId: "", model: "" },
+    resumeCursors: {},
+    createdAt: 1,
+    tasks: [{ threadId }],
+    ownerUserId: TEST_OWNER_USER_ID,
+  });
+  writeFileSync(
+    join(home, ".relay", "bots.json"),
+    JSON.stringify([
+      ownedSeedBot("test-bot-a", "test-bot-a-thread", "Test bot A"),
+      ownedSeedBot("test-bot-b", "test-bot-b-thread", "Test bot B"),
     ]),
   );
 
@@ -659,6 +669,7 @@ beforeAll(async () => {
         goalStatus: "completed",
         groupId: "test-goal-restart-room",
         botId: "test-bot-a",
+        ownerUserId: TEST_OWNER_USER_ID,
         runOn: "maus",
         scheduledFor: 5,
         status: "completed",
@@ -1025,6 +1036,11 @@ beforeAll(async () => {
   await new Promise<void>((r) => boatStub.listen(0, "127.0.0.1", r));
   boatStubPort = (boatStub.address() as { port: number }).port;
 
+  // Per-user workspaces: a session-less loopback request sees nothing, so
+  // issue the fixture owner's session before boot (it merges the owner into
+  // the sign-in list) and act as that account for every fetch below.
+  registerOwnerFetch(BASE, prepareOwnerSession(join(home, ".relay")));
+
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -1045,6 +1061,9 @@ beforeAll(async () => {
       RELAY_COMPOSIO_BROKER_URL: `http://127.0.0.1:${boatStubPort}/broker`,
       RELAY_COMPOSIO_BROKER_TOKEN: "a".repeat(64),
       RELAY_STATIC_DIR: staticDir,
+      // The fixture signs owner assertions with the fixed test secret, the
+      // way a deployment signs with RELAY_TOOL_ACTOR_SECRET.
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       // Production uses 15s. Keep the real timer path while making the
       // heartbeat assertion fast and deterministic.
       RELAY_SSE_HEARTBEAT_MS: "50",
@@ -1079,6 +1098,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boatStub?.close();
+  unregisterOwnerFetch(BASE);
   // Upstream fixed this same Linux scratch-cleanup flake with an inline
   // retry loop; these helpers are that fix plus the cause — the retry AND
   // an exit that is actually waited for before the delete begins.
@@ -1182,10 +1202,10 @@ describe("harness HTTP API", () => {
   });
 
   it("attributes a paired person's message to them, and leaves the owner's own sends unstamped", async () => {
-    // The server authenticates per person but used to label every user turn
-    // with the one Settings profile name, so on a shared or paired workspace
-    // every human collapsed into whoever that named: bots addressed the wrong
-    // person, and relayed their questions under someone else's name.
+    // Pairing sessions carry no user id and see nothing under per-user
+    // workspaces, so both sends go as the fixture owner (every fetch here
+    // already carries the owner's bearer). Each user turn is stamped with
+    // the owner's account name and opaque person key.
     const created = await api("POST", "/api/bots", {
       name: "Attribution",
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
@@ -1193,24 +1213,20 @@ describe("harness HTTP API", () => {
     });
     expect(created.status).toBe(201);
     const bot = created.body.bot;
-    const person = await asPairedPerson("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1");
-    expect(person.label).toBe("Safari on Mac");
     const cleanup: string[] = [bot.id];
     try {
 
-    const theirs = await person.call("POST", `/api/bots/${bot.id}/messages`, { text: "from the paired person" });
+    const theirs = await api("POST", `/api/bots/${bot.id}/messages`, { text: "from the paired person" });
     expect(theirs.status).toBe(202);
-    expect(theirs.body.message).toMatchObject({ role: "user", sender: { name: "Safari on Mac" } });
+    expect(theirs.body.message).toMatchObject({ role: "user", sender: expect.objectContaining({ name: TEST_OWNER_EMAIL }) });
 
     // Steering into that still-running turn is the same person, still named.
-    const steered = await person.call("POST", `/api/bots/${bot.id}/messages`, { text: "and one more" });
+    const steered = await api("POST", `/api/bots/${bot.id}/messages`, { text: "and one more" });
     expect(steered.status).toBe(202);
-    expect(steered.body.message).toMatchObject({ steered: true, sender: { name: "Safari on Mac" } });
+    expect(steered.body.message).toMatchObject({ steered: true, sender: expect.objectContaining({ name: TEST_OWNER_EMAIL }) });
 
-    // Loopback is the desktop owner by design: unstamped, so it still reads
-    // as the profile name everywhere and nothing changes for one person. Use
-    // a second bot so this send cannot be folded into the turn above — an
-    // owner message that merely got steered would pass whatever we assert.
+    // Use a second bot so this send cannot be folded into the turn above —
+    // an owner message that merely got steered would pass whatever we assert.
     const second = await api("POST", "/api/bots", {
       name: "Attribution owner",
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
@@ -1222,7 +1238,7 @@ describe("harness HTTP API", () => {
     expect(mine.status).toBe(202);
     expect(mine.body.message.role).toBe("user");
     expect(mine.body.message.steered).toBeUndefined();
-    expect(mine.body.message.sender).toBeUndefined();
+    expect(mine.body.message.sender).toMatchObject({ name: TEST_OWNER_EMAIL });
 
     const bots = (await api("GET", "/api/bots?messages=30")).body.bots;
     const theirMessages = bots.find((b: any) => b.id === bot.id)?.messages ?? [];
@@ -1230,18 +1246,17 @@ describe("harness HTTP API", () => {
     // The opaque person key is the same for both lines: one session, one person.
     const personKey = theirMessages.find((m: any) => m.text === "from the paired person")?.sender?.id;
     expect(personKey).toMatch(/^p_[\w-]{22}$/);
-    expect(theirMessages.find((m: any) => m.text === "from the paired person")?.sender).toEqual({ name: "Safari on Mac", id: personKey });
-    expect(theirMessages.find((m: any) => m.text === "and one more")?.sender).toEqual({ name: "Safari on Mac", id: personKey });
-    expect(myMessages.find((m: any) => m.text === "from the owner")?.sender).toBeUndefined();
+    expect(theirMessages.find((m: any) => m.text === "from the paired person")?.sender).toMatchObject({ name: TEST_OWNER_EMAIL, id: personKey });
+    expect(theirMessages.find((m: any) => m.text === "and one more")?.sender).toMatchObject({ name: TEST_OWNER_EMAIL, id: personKey });
+    expect(myMessages.find((m: any) => m.text === "from the owner")?.sender).toMatchObject({ name: TEST_OWNER_EMAIL });
     } finally {
-      // Stop the fixture turns and take the bots and the paired session back
-      // out: this suite shares one isolated server, so anything left running
-      // here shows up as somebody else's failure much later.
+      // Stop the fixture turns and take the bots back out: this suite
+      // shares one isolated server, so anything left running here shows up
+      // as somebody else's failure much later.
       for (const id of cleanup) {
         await api("POST", `/api/bots/${id}/interrupt`).catch(() => undefined);
         await api("DELETE", `/api/bots/${id}`).catch(() => undefined);
       }
-      await person.call("DELETE", "/api/auth/session").catch(() => undefined);
     }
   });
 

@@ -45,6 +45,7 @@ export const HELP_UI = `renderer (needs a ui launch handle; every verb takes --u
   node --experimental-strip-types scripts/control-relay.ts ui launch [--entry threads] [--tool-calls JSON] [--mode happy]
   ui snapshot --ui HANDLE [--interactive]
   ui click --ui HANDLE (--ref @eN | --name NAME)
+  ui hover --ui HANDLE (--ref @eN | --name NAME)
   ui type --ui HANDLE (--ref @eN | --name NAME) --text TEXT
   ui press --ui HANDLE --keys KEYS
   ui screenshot --ui HANDLE --out PATH.png

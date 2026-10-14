@@ -6,7 +6,8 @@
 //
 // ?scenario=broken-photo answers with a photo URL that cannot load, which is
 // the initials fallback the sidebar has to survive.
-import { setAnalyticsEnabled, setEmailGateDone } from "../../src/lib/analytics";
+import { setEmailGateDone, tourStorage, writeTourSeen } from "../../src/lib/first-run";
+import { TOUR_STEPS } from "../../src/lib/guided-tour";
 
 const scenario = new URLSearchParams(location.search).get("scenario") ?? "google-photo";
 
@@ -42,8 +43,10 @@ const session = {
 };
 Object.assign(window, { sessionFixture: { scenario, session } });
 
-setAnalyticsEnabled(false);
 setEmailGateDone("skipped");
+// The skipped gate opens the guided tour; the launcher tests the sidebar
+// identity, not the tour.
+for (const step of TOUR_STEPS) writeTourSeen(tourStorage(), step.id);
 
 const originalFetch = window.fetch.bind(window);
 window.fetch = async (input, init) => {
