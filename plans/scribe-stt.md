@@ -16,7 +16,7 @@ notice exits, capability-hygiene wording, SQL details).
    in**), Zoom, Teams. Check Workspace admin Meet settings. **If Meet
    admission fails, the plan changes shape.** Dev needs §12 — must be supplied
    before this starts. Pass/fail criteria: §8.
-2. **0004 (no agent-enum change)** + `schema.test.ts` update +
+2. **0006 (no agent-enum change)** + `schema.test.ts` update +
    `transcripts.meetings` read-only shape + read grants + deny-tests.
 3. BFF `safeEvent` fields + `authorizeIngest` + capability-bound ingest route
    + read/search tools + test pins + `third_party/vexa-capture` vendoring +
@@ -277,7 +277,7 @@ See §1 diagram. Three runtimes, each with minimal secrets:
 
 ## 6. Component specs
 
-### 6.1 Database — `supabase/migrations/0004_transcripts.sql`
+### 6.1 Database — `supabase/migrations/0006_transcripts.sql`
 (`0003_tool_call_attribution.sql` already exists. **No agent-enum change in
 this file** — there is no Scribe role, so `history.conversations.agent` stays
 `('scout','mercury','curator')` and `schema.test.ts:47-49` stays green.)
@@ -1018,7 +1018,7 @@ Admitted ~22 s, `active`, 3 remote speakers, 155.6 s, 17 mixed segments.
    whole plan. Anonymous + signed-in Meet, Zoom, Teams, Workspace admin
    check, pass/fail per §8. **If Meet admission fails, the plan changes
    shape — find out first.** Requires §12 from the operator.
-2. `0004_transcripts.sql` (per §6.1, **no enum change**) + `schema.test.ts`
+2. `0006_transcripts.sql` (per §6.1, **no enum change**) + `schema.test.ts`
    update + read-only shape + scout/mercury/curator read grants + deny-tests.
 3. BFF `safeEvent` fields + test; `authorizeIngest` + ingest methods +
    capability-bound route (no retract) + read/search tools + test pins;

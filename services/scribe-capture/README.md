@@ -31,8 +31,8 @@ requirement; the capability is the boundary.
 5. On stop/end → final flush, `completed`; on error → `failed`; on live-meeting
    conflict → `skipped`.
 
-Segments are `speaker: null` in slice 1 (mixed remote stream). Per-channel
-naming is a later slice.
+The mixed lane writes `speaker: null`; the per-channel Meet lane binds the
+resolved speaker name per channel.
 
 ## Run
 
@@ -50,9 +50,10 @@ pnpm --filter @relay/scribe-capture start
 The persistent profile must be signed in as relay@ once (see
 `plans/scribe-stt.md` §7). The worker never holds a database key or BFF secret.
 
-## Not here yet (later slices)
+## Landed since slice 1
 
-- Slice 2: `server/scribe-monitor.ts` (calendar poll + arm receipts).
-- Slice 3: Zoom/Teams (the descriptor already carries `platform`).
-- Slice 4: failure notices, status files, retention timers, compose service,
-  `.env.ingest` / `.env.scribe` wiring.
+The calendar monitor (`server/scribe-monitor.ts`), failure/ready notices, the
+per-channel Meet lane, the compose `scribe`/`stt` services, and the
+`.env.ingest` / `.env.scribe` capability wiring — deploy/run owner is
+`deploy/local/README.md` (Scribe section). Remaining: Zoom/Teams capture
+parity (the descriptor already carries `platform`; Meet is the proven path).

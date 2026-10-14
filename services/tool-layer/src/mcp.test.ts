@@ -92,16 +92,13 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
 
 test("transcript tables are readable but never writable through agent tools", async () => {
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const issuedAt = Math.floor(Date.now() / 1000);
-  const signature = createHmac("sha256", "actor-secret-that-is-at-least-thirty-two-bytes")
-    .update(JSON.stringify([userId, "person@example.test", issuedAt])).digest("base64url");
-  const assertion = JSON.stringify({ userId, email: "person@example.test", issuedAt, signature });
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const database = {
     async verifyRelayProject() {},
-    async authenticateActorAssertion(value: string) {
+    authenticateActorAssertion(value: string) {
       assert.equal(value, assertion);
-      return userId;
+      return JSON.parse(value) as { userId: string; botId: string; threadId: string; issuedAt: number };
     },
     async read(...args: unknown[]) {
       calls.push({ method: "read", args });
