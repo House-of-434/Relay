@@ -86,6 +86,11 @@ export interface ScribeMonitorDeps {
   /** The worker /status; used to reconcile armed meetings into a notice. */
   status: (instanceId: string) => Promise<ScribeWorkerStatus>;
   receipts: ReceiptStore;
+  /** Manual join intents due for arming (durable store drain). Absent in
+   * calendar-only operation — the calendar path never touches this. */
+  listManualRequests?: () => Promise<JoinRequest[]>;
+  /** Flip an armed manual intent pending → armed. Absent mirrors absent list. */
+  noteManualArmed?: (instanceId: string) => void;
   /** Sent from the harness on a terminal meeting state (or a joinable meeting
    *  that never reached the worker). The harness owns the email wiring. */
   notify?: (notice: ScribeNotice) => void | Promise<void>;
@@ -103,6 +108,9 @@ export interface ScribeMonitorConfig {
   armLeadMs: number;
   /** Accept a start up to this late. */
   lateMaxMs: number;
+  /** Manual joins arm immediately when accepted; past created_at + this with
+   * no arm receipt they are terminally unreachable. */
+  manualLateMs: number;
   maxResults: number;
   /** After scheduled_end, give the worker record this long before giving up on
    *  reconciliation (write the receipt, log, stop polling). */
@@ -131,6 +139,7 @@ export function scribeMonitorConfig(env: NodeJS.ProcessEnv = process.env): Scrib
     windowForwardMs: num(env.RELAY_SCRIBE_WINDOW_FORWARD_MS, 24 * 60 * 60 * 1000),
     armLeadMs: num(env.RELAY_SCRIBE_ARM_LEAD_MS, 60_000),
     lateMaxMs: num(env.RELAY_SCRIBE_LATE_MAX_MS, 5 * 60 * 1000),
+    manualLateMs: num(env.RELAY_SCRIBE_MANUAL_LATE_MS, 5 * 60 * 1000),
     maxResults: num(env.RELAY_SCRIBE_MAX_RESULTS, 250),
     reconcileGraceMs: num(env.RELAY_SCRIBE_RECONCILE_GRACE_MS, 30 * 60 * 1000),
     adminAlertIntervalMs: num(env.RELAY_SCRIBE_ADMIN_ALERT_INTERVAL_MS, 3 * 60 * 60 * 1000),
@@ -250,7 +259,7 @@ export interface JoinRequest {
    *  Calendar: start + lateMaxMs. */
   lateAtMs: number;
   /** Calendar today; "manual" arrives with the manual producer. */
-  source: "calendar";
+  source: "calendar" | "manual";
   /** Idempotency namespace. Calendar: event.id|event_start. */
   receiptKey: string;
   /** Source fields for reconcile/notify. */
@@ -338,6 +347,8 @@ export class ScribeMonitor {
       const timeMin = new Date(now - this.config.windowBackMs).toISOString();
       const timeMax = new Date(now + this.config.windowForwardMs).toISOString();
       const events = await this.deps.listEvents(timeMin, timeMax);
+      const manual = this.deps.listManualRequests ? await this.deps.listManualRequests() : [];
+      const requests: JoinRequest[] = [];
       for (const event of events) {
         // Quiet skips live in the producer: cancelled, relay@'s own meetings,
         // all-day, no link, or a host that is not a provider. None of these
@@ -347,7 +358,13 @@ export class ScribeMonitor {
           lateMaxMs: this.config.lateMaxMs,
           selfAddress: this.deps.selfAddress,
         }, (message) => this.log(message));
-        if (!request) continue;
+        if (request) requests.push(request);
+      }
+      // Manual intents arrive already due (dueAtMs = acceptance time) and
+      // carry their own receipt namespace, so they flow through the same
+      // single arm-if-due rule below.
+      requests.push(...manual);
+      for (const request of requests) {
         await this.processRequest(request, now);
       }
     } catch (error) {
@@ -398,6 +415,7 @@ export class ScribeMonitor {
     // record the receipt so it is not retried, and let reconciliation send the
     // failure notice.
     this.deps.receipts.record("scribe.arm", request.receiptKey, result.status ?? "armed", now);
+    if (request.source === "manual") this.deps.noteManualArmed?.(descriptor.instance_id);
     this.log(`scribe: armed ${descriptor.instance_id} (${descriptor.platform}) -> ${result.status ?? "armed"}`);
   }
 

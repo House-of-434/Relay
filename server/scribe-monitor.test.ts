@@ -18,7 +18,7 @@ import {
 
 const NOW = Date.parse("2026-10-11T12:00:00Z");
 const THREE_HOURS = 3 * 60 * 60 * 1000;
-const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
+const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, manualLateMs: 300_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
 const SELF = "relay@houseof434.com";
 
 function fakeReceipts(): ReceiptStore & { keys: Set<string> } {
