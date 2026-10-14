@@ -12,6 +12,7 @@ import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
 import { toSegment } from "./gmeet-segment.js";
 import { hostAllowed, nativeIdFor } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
+import { createNavigationGuard } from "./navigation-guard.js";
 import { postMeetDisclosure } from "./chat.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
@@ -200,11 +201,23 @@ class MeetSession {
     try {
       const { getJoinBrowserArgs } = await loadVexaJoin();
       const args = getJoinBrowserArgs().filter((a) => a !== "--incognito");
+      // Navigation guard first: resolves + validates the meeting host and
+      // pins it for this session. A violation fails the join here, before
+      // any browser exists — never after navigation starts.
+      const guard = await createNavigationGuard({
+        meetingUrl: this.descriptor.meeting_url,
+        log: (message) => console.log(message),
+      });
+      const pin = guard.resolverRulesFlag();
       this.context = await chromium.launchPersistentContext(this.config.profileDir, {
         headless: this.config.headless,
-        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", ...(pin ? [pin] : [])],
         locale: "en-US",
       });
+      // Context-wide interception before any navigation: every request —
+      // initial page, redirect hops, subresources, iframes, popups — is
+      // validated pre-flight, so aborts never contact their destination.
+      await guard.install(this.context);
       const isMeet = this.descriptor.platform === "google_meet";
       if (isMeet) {
         // Per-channel Meet lane: the remote-audio hook (so elements exist even if
