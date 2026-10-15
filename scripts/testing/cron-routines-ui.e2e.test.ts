@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import type { Routine } from "../../src/lib/routines.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
 
@@ -19,11 +20,12 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], { cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout!.on("data", chunk => { output += String(chunk); });
   child.stderr!.on("data", chunk => { stderr += String(chunk); });
-  let fixture: { ui: string; url: string; botId: string; logPath: string };
+  let fixture: { ui: string; url: string; botId: string; logPath: string; token: string };
   await expect.poll(() => {
     if (child!.exitCode !== null) throw new Error(stderr);
     try { fixture = JSON.parse(output); return Boolean(fixture.ui); } catch { return false; }
-  }, { timeout: 600_000 }).toBe(true);
+    }, { timeout: 600_000 }).toBe(true);
+  registerOwnerFetch(fixture!.url, fixture!.token);
   const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", fixture.ui, ...args]) as Promise<Record<string, any>>;
   const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
   const click = (name: string) => ui("click", "--name", name);
@@ -70,7 +72,7 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   await select("Repeat", "cron");
   expect(await evaluate('document.querySelector(\'input[placeholder="0 9 1 * *"]\').value')).toBe("0 9 L * *");
   await fill('input[placeholder="0 9 1 * *"]', "0 9 31 2 *");
-  await expect.poll(() => evaluate('document.querySelector("[role=alert]")?.textContent')).toContain("no future runs");
+  await expect.poll(() => evaluate('document.querySelector("#routine-cron-error")?.textContent')).toContain("no future runs");
   expect(await evaluate("[...document.querySelectorAll('button')].find(button => button.textContent === 'Schedule routine').disabled")).toBe(true);
   await select("Repeat", "monthly");
   await click("Schedule routine");
@@ -108,6 +110,11 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   await expect.poll(async () => (await routines()).find(routine => routine.id === custom.id)?.name).toBe("Renamed report");
   expect((await routines()).find(routine => routine.id === custom.id)?.schedule).toEqual(customSchedule);
   const browserConsole = await ui("console");
-  expect((browserConsole.messages as Array<{ type: string }>).filter(message => message.type === "error")).toEqual([]);
+  // The fixture serves no Google Calendar, so the Automations panel's two
+  // google fetches answer 404 and the browser logs a resource error. Any
+  // other console error is a real renderer fault.
+  const unexpectedErrors = (browserConsole.messages as Array<{ type: string; text: string }>)
+    .filter(message => message.type === "error" && !message.text.includes("Failed to load resource: the server responded with a status of 404"));
+  expect(unexpectedErrors).toEqual([]);
   console.log(`Cron UI evidence: ${fixture!.logPath}.cron-monthly.png`);
 }, 720_000);

@@ -1,6 +1,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 
@@ -12,10 +13,11 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   let output = "";
   child = spawn(process.execPath, ["--experimental-strip-types", "scripts/control-relay.ts", "ui", "launch"], { cwd: root, env: process.env, stdio: ["ignore", "pipe", "pipe"] });
   child.stdout!.on("data", chunk => { output += chunk; });
-  let fixture: { ui: string; url: string; botId: string };
+  let fixture: { ui: string; url: string; botId: string; token: string };
   await expect.poll(() => {
     try { fixture = JSON.parse(output); return Boolean(fixture.ui); } catch { return false; }
   }, { timeout: 120_000 }).toBe(true);
+  registerOwnerFetch(fixture!.url, fixture!.token);
   const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", fixture.ui, ...args]) as Promise<any>;
   const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
   const click = (name: string) => ui("click", "--name", name);
