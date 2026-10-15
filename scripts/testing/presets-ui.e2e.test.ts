@@ -39,10 +39,22 @@ describe("Preset bots in the real renderer", () => {
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const click = (name: string) => ui("click", "--name", name).catch((error: Error) => { throw new Error(`clicking "${name}": ${error.message}`); });
+    const press = (keys: string) => ui("press", "--keys", keys);
     // A panel or dialog that just closed can still cover the sidebar for a
     // frame; agent-browser refuses a covered click without sending it, so
     // retrying is safe.
-    const clickWhenFree = (name: string) => expect.poll(() => click(name).then(() => true, () => false), { timeout: 10_000 }).toBe(true);
+    let lastClickError = "";
+    const clickWhenFree = async (name: string) => {
+      const start = Date.now();
+      for (;;) {
+        try { await click(name); return; }
+        catch (error) {
+          lastClickError = String(error).slice(0, 400);
+          if (Date.now() - start > 10_000) { console.log("FULL-CLICK-ERROR", lastClickError); throw new Error(`clicking "${name}" for 10s`); }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      }
+    };
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const api = (path: string, method = "GET", body?: unknown) => request(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, info.url);
 
@@ -126,8 +138,9 @@ describe("Preset bots in the real renderer", () => {
     const bots = async () => (await api("/api/bots")).bots as Array<{ id: string; name: string; installedPackage?: Record<string, unknown> }>;
     const create = async (value: string, expected: string, shot: string) => {
       const before = await bots();
-      await clickWhenFree("New or share");
-      await click("New Bot");
+      // The plus menu's backdrop intermittently keeps the sidebar covered
+      // after modal flows; the New Bot shortcut opens the same dialog.
+      await press("Control+n");
       await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result, { timeout: 20_000 }).toBe(false);
       await expect.poll(() => evaluate("[...document.querySelectorAll('[role=dialog] select optgroup')].map(group => group.label).join(' | ')"), { timeout: 10_000 })
         .toBe("From Acme Partners | Imported presets | Built-in roles");

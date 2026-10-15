@@ -49,12 +49,14 @@ interface CollectedNode {
 }
 
 const COLLECT_JS = `(() => {
-  const MAX_NAME = 200;
+  // Long enough for full-sentence hints and error copy: truncating names
+  // mid-sentence hides the assertions' tail ("Never their model, …").
+  const MAX_NAME = 500;
   const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "HEAD", "META", "LINK"]);
   const IMPLICIT_ROLE = {
     A: "link", BUTTON: "button", INPUT: "textbox", SELECT: "combobox",
     TEXTAREA: "textbox", IMG: "img", H1: "heading", H2: "heading", H3: "heading",
-    H4: "heading", H5: "heading", H6: "heading",
+    H4: "heading", H5: "heading", H6: "heading", DT: "term",
   };
   const INPUT_ROLE = {
     button: "button", submit: "button", reset: "button", checkbox: "checkbox",
@@ -95,6 +97,10 @@ const COLLECT_JS = `(() => {
   const NAME_FROM_CONTENT = new Set([
     "button", "link", "heading", "menuitem", "menuitemcheckbox", "menuitemradio",
     "tab", "option", "treeitem", "cell", "rowheader", "columnheader", "switch",
+    "term",
+    // Live regions announce their text; the notice/error copy is the name a
+    // person (and --name lookup) addresses them by.
+    "alert", "status",
   ]);
   function nameOf(el, role) {
     return (
@@ -172,7 +178,11 @@ const COLLECT_JS = `(() => {
     const role = roleOf(el);
     if (rendered && role && role !== "generic") {
       push(el, role, nameOf(el, role));
-    } else if (rendered && el.children.length === 0) {
+    } else if (rendered) {
+      // A person reads a generic container's own words ("Added" beside its
+      // check icon) even when the container also holds elements, so keep
+      // that direct text. Repeats of an actionable's exact name are still
+      // dropped downstream, so this adds information, not duplicates.
       const text = ownText(el);
       if (text) push(el, "text", text);
     }
@@ -186,7 +196,7 @@ interface SnapshotEntry extends CollectedNode {
   id: string;
 }
 
-function collectEntries(nodes: CollectedNode[], interactive = false): SnapshotEntry[] {
+function collectEntries(nodes: CollectedNode[]): SnapshotEntry[] {
   // A text leaf that merely repeats an actionable element's exact name would
   // make --name ambiguous (e.g. a "You" label inside a "You" button). Keep
   // only text that adds information, like a model name inside a longer row.
@@ -195,14 +205,12 @@ function collectEntries(nodes: CollectedNode[], interactive = false): SnapshotEn
   );
   const kept = nodes.filter((node) => node.role !== "text" || node.name === "" || ![...named].some((key) => key.endsWith(`::${node.name}`)));
   // Text leaves read as StaticText, the agent-browser vocabulary transcript
-  // assertions address. (The --interactive flag is accepted for compatibility
-  // but no longer changes the rendering.)
-  void interactive;
+  // assertions address.
   const role = (node: CollectedNode) => node.role === "text" ? "StaticText" : node.role;
   return kept.map((node, i) => ({ ...node, role: role(node), id: `e${i + 1}` }));
 }
 
-function renderSnapshot(entries: SnapshotEntry[], interactive = false): { snapshot: string; refs: Record<string, { name: string; role: string }> } {
+function renderSnapshot(entries: SnapshotEntry[]): { snapshot: string; refs: Record<string, { name: string; role: string }> } {
   const refs: Record<string, { name: string; role: string }> = {};
   const lines = entries.map((node) => {
     refs[node.id] = { name: node.name, role: node.role };
@@ -236,12 +244,12 @@ async function main(): Promise<void> {
     if (consoleMessages.length > 200) consoleMessages.splice(0, consoleMessages.length - 200);
   });
 
-  async function takeSnapshot(interactive = false): Promise<{ snapshot: string; refs: Record<string, { name: string; role: string }> }> {
+  async function takeSnapshot(): Promise<{ snapshot: string; refs: Record<string, { name: string; role: string }> }> {
     // (shape verified against the e2e contract: { snapshot, refs })
     const nodes = (await page.evaluate(COLLECT_JS)) as CollectedNode[];
-    const entries = collectEntries(nodes, interactive);
+    const entries = collectEntries(nodes);
     refs = new Map(entries.map((node) => [node.id, { id: node.id, role: node.role, name: node.name, path: node.path }]));
-    return renderSnapshot(entries, interactive);
+    return renderSnapshot(entries);
   }
 
   /** A fresh CSS path for a ref, resolved at action time: re-snapshot and
@@ -328,7 +336,7 @@ async function main(): Promise<void> {
             return;
           }
           case "/snapshot": {
-            sendJson(response, 200, { ok: true, ...(await takeSnapshot(body.interactive === true)) });
+            sendJson(response, 200, { ok: true, ...(await takeSnapshot()) });
             return;
           }
           case "/click": {
