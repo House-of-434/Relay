@@ -136,7 +136,7 @@ describe("the organization library in the real renderer", () => {
     // Row actions reveal on hover; the profile dialog holds Identity.
     const rowState = await ui("snapshot", "--interactive");
     const profile = Object.entries(rowState.refs as Record<string, { role: string; name: string }>)
-      .find(([, entry]) => entry.role === "button" && /^Sales lead/.test(entry.name));
+      .find(([, entry]) => entry.role === "button" && entry.name.startsWith("Sales lead"));
     expect(profile).toBeDefined();
     await ui("hover", "--ref", `@${profile![0]}`);
     await click("Actions for Morgan");

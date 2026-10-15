@@ -53,12 +53,6 @@ const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(proc
     };
     // Row actions reveal on hover: hover the bot's row first, or its
     // Actions button is pointer-events-none and unactionable.
-    const hoverRole = async (role: string, name: string | RegExp) => {
-      const refs = (await ui("snapshot")).refs as Record<string, { role: string; name: string }>;
-      const match = Object.entries(refs).find(([, entry]) => entry.role === role && (typeof name === "string" ? entry.name === name : name.test(entry.name)));
-      expect(match).toBeDefined();
-      return ui("hover", "--ref", "@" + match![0]);
-    };
     const saved = async () => (await api("/api/bots?messages=0")).bots.find((bot: any) => bot.id === info.botId);
     await api(`/api/bots/${info.botId}`, { name: "Clive", section: "Office", chiefOfStaff: true });
     await api("/api/bots", { name: "Engineer", section: "Engineering" }, "POST");
@@ -67,7 +61,10 @@ const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(proc
     await api("/api/sidebar-sections", { name: "Empty delivery" }, "POST");
     await ui("eval", "--js", "location.reload(); true");
     await expect.poll(snapshot, { timeout: 15_000 }).toContain("Actions for Clive");
-    await hoverRole("button", /^Clive/);
+    const rowRefs = (await ui("snapshot")).refs as Record<string, { role: string; name: string }>;
+    const row = Object.entries(rowRefs).find(([, entry]) => entry.role === "button" && entry.name.startsWith("Clive"));
+    expect(row).toBeDefined();
+    await ui("hover", "--ref", "@" + row![0]);
     await click("Actions for Clive");
     await click("Edit Profile");
     await click("Permissions");

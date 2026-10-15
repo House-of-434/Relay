@@ -58,7 +58,7 @@ describe("bot setup in the real renderer", () => {
       // Row actions reveal on hover; the bot settings dialog holds Access.
       const state = await ui("snapshot", "--interactive");
       const row = Object.entries(state.refs as Record<string, { role: string; name: string }>)
-        .find(([, entry]) => entry.role === "button" && /^Pepper/.test(entry.name));
+        .find(([, entry]) => entry.role === "button" && entry.name.startsWith("Pepper"));
       expect(row).toBeDefined();
       await ui("hover", "--ref", `@${row![0]}`);
       await click("Actions for Pepper");
