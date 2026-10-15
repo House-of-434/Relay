@@ -241,7 +241,7 @@ const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listPendingScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listActiveScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentText, type Incident, type IncidentKind } from "./incidents.ts";
@@ -9929,7 +9929,7 @@ if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELA
         // durable store through the same arm-if-due loop as calendar events.
         // Pending survives restarts by construction: the store is SQLite.
         listManualRequests: async () =>
-          listPendingScribeJoinIntents().map((intent) =>
+          listActiveScribeJoinIntents().map((intent) =>
             joinRequestFromIntent(intent, {
               manualLateMs: scribeConfig.manualLateMs,
               reconcileGraceMs: scribeConfig.reconcileGraceMs,

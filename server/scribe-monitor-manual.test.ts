@@ -161,6 +161,33 @@ describe("manual intent drain", () => {
     expect(receipts.keys.size).toBe(0);
   });
 
+describe("manual reconcile bounds", () => {
+  it("never expires a capture the worker reports live, however late", async () => {
+    const req = manualRequest();
+    const { monitor, full } = build({ manual: [req] });
+    await monitor.tick(NOW + 5_000);
+    // Worker insists the capture is live, far past the synthesized end +
+    // grace: keep polling, do not expire, do not notify.
+    full.statuses.set(req.descriptor.instance_id, { status: "active", segment_count: 10 });
+    await monitor.tick(NOW + 10_000_000);
+    expect(full.notices).toHaveLength(0);
+    expect(full.terminal).toHaveLength(0);
+    expect(full.receipts.keys.has("scribe.notify:inst-manual-1")).toBe(false);
+  });
+
+  it("still expires a manual capture the worker has no record of", async () => {
+    const req = manualRequest();
+    const { monitor, full } = build({ manual: [req] });
+    await monitor.tick(NOW + 5_000);
+    full.statuses.set(req.descriptor.instance_id, { status: "unknown", segment_count: 0 });
+    // Past created_at + reconcileGraceMs + reconcileGraceMs.
+    await monitor.tick(NOW + 4_000_000);
+    expect(full.notices).toHaveLength(0); // expired is quiet, like calendar
+    expect(full.receipts.keys.has("scribe.notify:inst-manual-1")).toBe(true);
+    expect(full.terminal).toEqual(["inst-manual-1"]);
+  });
+});
+
 describe("worker restart recovery", () => {
   const BOOT_A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
   const BOOT_B = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";

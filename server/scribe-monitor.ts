@@ -505,6 +505,14 @@ export class ScribeMonitor {
       this.lastWorkerBootId = status.worker_boot_id;
     }
     if (!(TERMINAL_SCRIBE_STATES as readonly string[]).includes(status.status)) {
+      // Manual captures carry a synthesized end (acceptance + grace), not a
+      // real schedule: expiring them by wall clock would kill long meetings
+      // mid-recording. Expire a manual capture only when the worker has no
+      // record of it; while the worker reports it live, the worker owns the
+      // lifecycle (its maxMeetingMs bounds it). Calendar captures keep the
+      // scheduled-end grace, which is real data.
+      const unknownToWorker = status.status === "unknown";
+      if (request.source === "manual" && !unknownToWorker) return;
       const endMs = eventEndMs(event);
       if (endMs !== null && now > endMs + this.config.reconcileGraceMs) {
         await this.finish(request, "expired", null, now);

@@ -438,6 +438,18 @@ export function listPendingScribeJoinIntents(): ScribeJoinIntent[] {
   return rows.map(rowToIntent);
 }
 
+/** Pending AND armed intents, pending first — the monitor's full drain
+ * source. Armed intents must be revisited every tick: unlike calendar
+ * events (re-listed from Google each poll), nothing else brings an armed
+ * manual capture back for reconcile, so draining pending alone strands
+ * them after the arm with no notices ever. */
+export function listActiveScribeJoinIntents(): ScribeJoinIntent[] {
+  const rows = db()
+    .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE status IN ('pending','armed') ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at ASC`)
+    .all() as Record<string, unknown>[];
+  return rows.map(rowToIntent);
+}
+
 export function setScribeJoinIntentStatus(instanceId: string, status: ScribeJoinIntentStatus, now: number): boolean {
   const result = db()
     .prepare("UPDATE scribe_join_intents SET status = ?, updated_at = ? WHERE instance_id = ?")

@@ -113,6 +113,16 @@ describe("acceptManualJoin idempotency", () => {
     expect(dbmod.listPendingScribeJoinIntents()).toHaveLength(1);
   });
 
+  it("lists pending and armed intents for the drain, pending first", () => {
+    const first = accept({ requestKey: "req-a", meetingUrl: MEET });
+    const second = accept({ requestKey: "req-b", meetingUrl: MEET_OTHER });
+    expect(dbmod.setScribeJoinIntentStatus(first.intent.instanceId, "armed", 2_000)).toBe(true);
+    expect(dbmod.setScribeJoinIntentStatus(second.intent.instanceId, "terminal", 2_000)).toBe(true);
+    const third = accept({ requestKey: "req-c", meetingUrl: "https://meet.google.com/third-room-xyz" });
+    const active = dbmod.listActiveScribeJoinIntents();
+    expect(active.map((i) => i.instanceId)).toEqual([third.intent.instanceId, first.intent.instanceId]);
+  });
+
   it("survives a restart: pending intents and idempotency persist", async () => {
     const first = accept();
     expect(first.outcome).toBe("created");
