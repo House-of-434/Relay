@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { resolveUiChrome } from "./control-relay-ui.ts";
 
@@ -23,7 +24,7 @@ describe("Slack management in agent settings", () => {
   (enabled ? it : it.skip)("shows the Slack row only when Admin can manage it, and never another agent's link", async () => {
     let output = "";
     let errors = "";
-    let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string } | undefined;
+    let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string; token: string } | undefined;
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -35,26 +36,34 @@ describe("Slack management in agent settings", () => {
       try { info = JSON.parse(output); return Boolean(info?.ui); } catch { return false; }
     }, { timeout: launchTimeout, interval: 250 }).toBe(true);
     const fixture = info!;
+    registerOwnerFetch(fixture.url, fixture.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", fixture.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const click = (name: string) => ui("click", "--name", name);
     const link = () => evaluate("document.querySelector('[data-bot-settings-section=slack] a')?.getAttribute('href') ?? null");
     const row = () => evaluate("Boolean(document.querySelector('[data-bot-settings-section=slack]'))");
-    const openProfile = async () => {
-      const state = await ui("snapshot", "--interactive");
-      const profile = Object.entries(state.refs as Record<string, { role: string; name: string }>)
-        .find(([, entry]) => entry.role === "button" && /Open .+ profile/.test(entry.name));
-      expect(profile).toBeDefined();
-      await ui("click", "--ref", `@${profile![0]}`);
+    const openProfile = async (name = "Pepper") => {
+      // Row actions reveal on hover; the profile dialog holds Identity. The
+      // row paints a beat after the launch handle, so poll for it.
+      let rowRef: [string, unknown] | undefined;
+      await expect.poll(async () => {
+        const state = await ui("snapshot", "--interactive");
+        rowRef = Object.entries(state.refs as Record<string, { role: string; name: string }>)
+          .find(([, entry]) => entry.role === "button" && entry.name.startsWith(name));
+        return Boolean(rowRef);
+      }, { timeout: 15_000, message: `a sidebar row named ${name}` }).toBe(true);
+      await ui("hover", "--ref", `@${rowRef![0]}`);
+      await click(`Actions for ${name}`);
+      await click("Edit Profile");
       await expect.poll(snapshot, { timeout: 10_000 }).toContain("Identity");
     };
     // Availability is read when settings open, so each mode reopens them.
-    const reopen = async (mode: string) => {
+    const reopen = async (mode: string, name = "Pepper") => {
       await click("Close settings");
       await evaluate(`window.slackFixture.mode = ${JSON.stringify(mode)}; true`);
       const before = await evaluate("window.slackFixture.requests.length") as number;
-      await openProfile();
+      await openProfile(name);
       await expect.poll(() => evaluate("window.slackFixture.requests.length"), { timeout: 10_000 }).toBeGreaterThan(before);
     };
 
@@ -121,7 +130,7 @@ describe("Slack management in agent settings", () => {
     expect(sidebarRow).toBeDefined();
     await ui("click", "--ref", `@${sidebarRow![0]}`);
     await evaluate("window.slackFixture.mode = 'ready'; true");
-    await openProfile();
+    await openProfile("Slack Juniper");
     await expect.poll(row, { timeout: 10_000 }).toBe(true);
     await click("Slack");
     const expected = `https://admin.example.test/slack?workspace=acme&bot=${second.id}`;
