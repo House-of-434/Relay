@@ -4,11 +4,13 @@ import {
   ScribeMonitor,
   armKey,
   buildDescriptor,
+  createDegradedTracker,
   eventStartMs,
   meetingUrlFor,
   passcodeFor,
   platformForUrl,
   type CalendarEvent,
+  type JoinRequest,
   type ReceiptStore,
   type ScribeDescriptor,
   type ScribeMonitorConfig,
@@ -286,5 +288,73 @@ describe("scribe monitor reconciliation", () => {
     await late.m.tick();
     expect(receipts.keys.has("scribe.notify:inst-1")).toBe(true);
     expect(late.notified).toHaveLength(0);
+  });
+});
+
+describe("createDegradedTracker", () => {
+  it("warns once while degraded, logs once on recovery, then repeats the cycle", () => {
+    const warns: string[] = [];
+    const infos: string[] = [];
+    const tracker = createDegradedTracker({
+      warn: (message) => { warns.push(message); },
+      info: (message) => { infos.push(message); },
+    });
+    tracker.degraded("calendar dark");
+    tracker.degraded("calendar dark");
+    expect(warns).toEqual(["calendar dark"]);
+    expect(infos).toEqual([]);
+    tracker.recovered("calendar back");
+    tracker.recovered("calendar back");
+    expect(infos).toEqual(["calendar back"]);
+    tracker.degraded("calendar dark again");
+    expect(warns).toEqual(["calendar dark", "calendar dark again"]);
+  });
+
+  it("recovery without prior degradation logs nothing", () => {
+    const infos: string[] = [];
+    const tracker = createDegradedTracker({ warn: () => {}, info: (message) => { infos.push(message); } });
+    tracker.recovered("spurious");
+    expect(infos).toEqual([]);
+  });
+});
+
+describe("manual intents are independent of calendar discovery", () => {
+  it("discovers, arms, and processes a manual intent while the calendar is degraded", async () => {
+    const receipts = fakeReceipts();
+    const joined: ScribeDescriptor[] = [];
+    let listed = 0;
+    const manual: JoinRequest[] = [{
+      descriptor: {
+        instance_id: "inst-manual-9",
+        platform: "google_meet",
+        meeting_url: "https://meet.google.com/abc-defg-hij",
+      },
+      dueAtMs: NOW,
+      lateAtMs: NOW + 300_000,
+      source: "manual",
+      receiptKey: "manual|inst-manual-9",
+      event: { id: "inst-manual-9" },
+    }];
+    const monitor = new ScribeMonitor(
+      {
+        // Degraded discovery: polled every tick, always empty. The manual
+        // path must not depend on what this returns.
+        listEvents: async () => { listed += 1; return []; },
+        joinWorker: async (d) => { joined.push(d); return { status: "joining" }; },
+        status: async () => ({ status: "unknown" }),
+        receipts,
+        listManualRequests: async () => manual,
+        notify: () => {},
+        selfAddress: SELF,
+        now: () => NOW,
+        log: () => {},
+      },
+      cfg,
+    );
+    await monitor.tick(NOW + 1_000);
+    expect(listed).toBeGreaterThan(0);
+    expect(joined).toHaveLength(1);
+    expect(joined[0]!.instance_id).toBe("inst-manual-9");
+    expect(receipts.keys.has("scribe.arm:manual|inst-manual-9")).toBe(true);
   });
 });

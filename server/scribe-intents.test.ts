@@ -196,6 +196,39 @@ describe("verifyActorAssertion (harness)", () => {
   });
 });
 
+describe("resolveNoticeSender", () => {
+  const relay = { userId: USER, botId: MERCURY, threadId: THREAD };
+  const intentRow = {
+    requestKey: "req-1",
+    instanceId: "inst-1",
+    source: "manual",
+    meetingUrl: MEET,
+    urlKey: "google_meet|meet.google.com/abc-defg-hij",
+    platform: "google_meet",
+    title: null,
+    organizerEmail: null,
+    ownerUserId: OTHER_USER,
+    botId: SCOUT,
+    threadId: THREAD,
+    status: "armed" as const,
+    createdAt: 1_000,
+    updatedAt: 1_000,
+  };
+
+  it("prefers the persisted intent triple over the relay actor", () => {
+    expect(intents.resolveNoticeSender(intentRow, relay)).toEqual({
+      userId: OTHER_USER,
+      botId: SCOUT,
+      threadId: THREAD,
+    });
+  });
+
+  it("falls back to the relay actor without an intent, undefined last", () => {
+    expect(intents.resolveNoticeSender(null, relay)).toEqual(relay);
+    expect(intents.resolveNoticeSender(null, undefined)).toBeUndefined();
+  });
+});
+
 describe("joinRequestFromIntent", () => {
   it("builds an immediately-due request with a manual receipt namespace", () => {
     const { intent } = accept({ title: "Investor sync" });

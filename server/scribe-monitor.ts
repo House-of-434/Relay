@@ -253,6 +253,34 @@ export interface ReconcilableMeeting {
   creator?: { email?: string };
 }
 
+/** Degraded-integration tracker: warn once while a dependency is missing,
+ * log when it recovers. Keeps log noise down without hiding state — an
+ * empty result and a failed integration stay distinguishable by the warn /
+ * recover lines around them. Pure state machine over two log sinks. */
+export function createDegradedTracker(options: {
+  warn: (message: string) => void;
+  info: (message: string) => void;
+}): {
+  degraded: (message: string) => void;
+  recovered: (message: string) => void;
+} {
+  let degraded = false;
+  return {
+    degraded: (message: string) => {
+      if (!degraded) {
+        degraded = true;
+        options.warn(message);
+      }
+    },
+    recovered: (message: string) => {
+      if (degraded) {
+        degraded = false;
+        options.info(message);
+      }
+    },
+  };
+}
+
 /** A normalized "join this meeting" intent from any producer — the calendar
  * poll today, manual join requests next. dueAtMs/lateAtMs carry the source's
  * timing so tick() runs one arm-if-due rule for every request, regardless of

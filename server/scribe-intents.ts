@@ -27,6 +27,19 @@ export interface ScribeActor {
   threadId: string;
 }
 
+/** Notice-sender selection for a terminal capture. The persisted intent
+ * triple wins: it is the initiating user's identity, captured at request
+ * time. Calendar captures have no intent row and keep the relay service
+ * actor; with neither, the caller keeps its existing "unsent" warning
+ * instead of inventing an identity. Pure and deterministic. */
+export function resolveNoticeSender(
+  intent: { ownerUserId: string; botId: string; threadId: string } | null,
+  relayActor: ScribeActor | undefined,
+): ScribeActor | undefined {
+  if (intent) return { userId: intent.ownerUserId, botId: intent.botId, threadId: intent.threadId };
+  return relayActor;
+}
+
 /** Normalize a meeting URL into an active-session matching key. Purely
  * syntactic (scheme/host/path shape) — destination safety policy (SSRF) is
  * enforced separately at the route, never inferred from this key. */
