@@ -68,6 +68,7 @@ interface VexaJoin {
   leaveZoomMeeting: (page: unknown) => Promise<void>;
   getJoinBrowserArgs: () => string[];
   countRealParticipantTiles: (page: unknown) => Promise<number>;
+  countMeetingPeople: (page: unknown) => Promise<number | null>;
 }
 let vexaJoinCache: VexaJoin | null = null;
 async function loadVexaJoin(): Promise<VexaJoin> {
@@ -121,11 +122,9 @@ async function leaveFor(page: Page, platform: string): Promise<void> {
   return vexa.leaveGoogleMeet(page);
 }
 
-/** Solo-participant end detection: poll the real tile count, and report when
- * the bot has been alone for `threshold` consecutive polls. Pure logic over
- * an injected counter — no browser needed, fully unit-testable. A count of
- * 1 means the bot alone (its own tile); 0 means the page is gone or unreadable
- * and also counts as solo (nothing to capture). Any count above 1 resets. */
+/** Consecutive-poll counter behind solo end detection. Dumb by design: the
+ * caller (soloPollAllowsLeaving) decides what counts — this only tracks
+ * repetition. No browser needed, fully unit-testable. */
 export class SoloWatcher {
   private solos = 0;
 
@@ -145,9 +144,43 @@ export class SoloWatcher {
   }
 }
 
+/** Decide one solo poll from three independent signals. Tiles say who is
+ * present; remote audio says who is transmitting; the roster headcount is
+ * layout-independent. Any one showing company vetoes the leave:
+ * - tiles > 1: company, reset unconditionally;
+ * - remote audio active since the last poll: someone is transmitting even if
+ *   the tile count missed them — reset (this is what saves a present-but-
+ *   tileless participant from a wrong leave);
+ * - roster headcount > 1: the directory sees company even if tiles do not
+ *   (muted, camera-off, unlabeled tiles) — reset. This is what saves a
+ *   present-but-silent participant; silence is never evidence of absence;
+ * - tiles === 0: the page is unreadable (not evidence of solitude) — reset
+ *   and log loudly so a blind capture is visible instead of silent;
+ * - otherwise (exactly 1 tile, quiet room, roster solo-or-unknown): count
+ *   toward leaving. */
+export function soloPollAllowsLeaving(
+  tiles: number,
+  audioActive: boolean,
+  watcher: SoloWatcher,
+  people: number | null = null,
+): boolean {
+  if (tiles > 1 || audioActive || (people !== null && people > 1)) {
+    watcher.reset();
+    return false;
+  }
+  if (tiles === 0) {
+    watcher.reset();
+    return false;
+  }
+  return watcher.observe(tiles);
+}
+
 /** Poll cadence and grace for solo end: every 15s, leave after ~45s alone. */
 const SOLO_POLL_MS = 15_000;
 const SOLO_CONSECUTIVE_POLLS = 3;
+/** Remote-audio energy floor mirroring the capture bundle's silence gate:
+ * frames above this prove someone is transmitting. */
+const REMOTE_AUDIO_ENERGY = 0.005;
 
 class MeetSession {
   status: CaptureStatus = "joining";
@@ -165,6 +198,9 @@ class MeetSession {
   private readonly ingest: IngestClient;
   private gmeet: GmeetPipeline | null = null;
   private captureStartMs = 0;
+  /** Last time a remote frame carried above-silence energy. Second opinion
+   * for solo detection: transmitting audio vetoes a tile-count leave. */
+  private lastRemoteAudioAt = 0;
   private probeFrames: ProbeFrame[] = [];
   private probeSegments: Segment[] = [];
   private probeTiles: Array<Record<string, unknown>> = [];
@@ -341,13 +377,23 @@ class MeetSession {
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
         // Solo end: when everyone else leaves, the bot must not sit in the
         // empty room holding the profile (blocking later captures) until
-        // maxMeetingMs. Meet-only: the tile counter is Meet DOM truth.
+        // maxMeetingMs. Meet-only: the counters are Meet DOM truth. Two
+        // independent signals plus the roster: tiles say who is present,
+        // remote audio says who is transmitting, the roster headcount is
+        // layout-independent. Counts only in the log — never names — and a
+        // failed count is not evidence of solitude.
         if (isMeet && this.status === "active" && Date.now() - lastSoloCheck >= SOLO_POLL_MS) {
           lastSoloCheck = Date.now();
           try {
             const vexa = await loadVexaJoin();
-            if (solo.observe(await vexa.countRealParticipantTiles(this.page))) {
-              console.log(`scribe: ${this.descriptor.instance_id} alone in the meeting; leaving`);
+            const tiles = await vexa.countRealParticipantTiles(this.page);
+            const people = await vexa.countMeetingPeople(this.page);
+            const audioActive = Date.now() - this.lastRemoteAudioAt <= SOLO_POLL_MS;
+            if (tiles === 0 && (people === null || people <= 1)) {
+              console.log(`scribe: ${this.descriptor.instance_id} presence unreadable (tiles=0); not counting toward leave`);
+            }
+            if (soloPollAllowsLeaving(tiles, audioActive, solo, people)) {
+              console.log(`scribe: ${this.descriptor.instance_id} alone in the meeting (tiles=${tiles}, people=${people ?? "?"}); leaving`);
               leftAlone = true;
               break;
             }
@@ -450,6 +496,9 @@ class MeetSession {
       return;
     }
     for (const f of frames) {
+      if (typeof f.energy === "number" && f.energy > REMOTE_AUDIO_ENERGY) {
+        this.lastRemoteAudioAt = Date.now();
+      }
       if (!f.pcm) continue;
       this.gmeet.feedAudio(f.channel, f.name ?? undefined, Float32Array.from(f.pcm), f.ts);
       if (this.config.gmeetProbe) {

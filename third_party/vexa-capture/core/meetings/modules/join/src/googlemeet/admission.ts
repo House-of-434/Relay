@@ -4,6 +4,7 @@ import { BotConfig } from "../_host";
 import { checkEscalation, triggerEscalation, getEscalationExtensionMs } from "../shared/escalation";
 import {
   googleInitialAdmissionIndicators,
+  googlePeopleButtonSelectors,
   googleWaitingRoomIndicators,
   googleRejectionIndicators,
   googleConsentPromptIndicators
@@ -173,8 +174,7 @@ export async function checkForGoogleRejection(page: Page, now: number = Date.now
  * Presence of >=1 such tile is a POSITIVE admitted signal independent of that guard.
  */
 const EFFECTS_TILE = /visual_effects|backgrounds and effects/i;
-export async function countRealParticipantTiles(page: Page): Promise<number> {
-  try {
+export async function countRealParticipantTiles(page: Page): Promise<number> {  try {
     const labels = await page.locator("[data-participant-id]").evaluateAll(
       els => els.map(e => e.getAttribute("aria-label") || (e.textContent || "").trim()),
     );
@@ -182,6 +182,51 @@ export async function countRealParticipantTiles(page: Page): Promise<number> {
   } catch {
     return 0;
   }
+}
+
+/**
+ * Headcount from the People button ("Show everyone, N people", "People (N)",
+ * bare "N"), or null when no button yields a number. Layout-independent where
+ * tile labels are not: a muted, camera-off tile can go unlabeled while the
+ * roster count stays exact. Counts include self under either convention, so
+ * callers treat <=1 as alone either way. Never throws.
+ */
+export function parsePeopleCount(text: string | null | undefined): number | null {
+  if (!text) return null;
+  const clean = text.replace(/,/g, "").trim();
+  // "2 people", "2 participants", "Show everyone, 2 people".
+  const withWord = /(\d{1,4})\s*(?:people|persons?|participants?|members?)/i.exec(clean);
+  if (withWord) {
+    const n = Number(withWord[1]);
+    if (Number.isSafeInteger(n)) return n;
+  }
+  // "People (2)", "(2)".
+  const paren = /\(\s*(\d{1,4})\s*\)/.exec(clean);
+  if (paren) {
+    const n = Number(paren[1]);
+    if (Number.isSafeInteger(n)) return n;
+  }
+  // Bare badge count.
+  if (/^\d{1,4}$/.test(clean)) return Number(clean);
+  return null;
+}
+
+export async function countMeetingPeople(page: Page): Promise<number | null> {
+  for (const selector of googlePeopleButtonSelectors) {
+    try {
+      const button = page.locator(selector).first();
+      if (!(await button.isVisible())) continue;
+      const label = await button.getAttribute("aria-label").catch(() => null);
+      const fromLabel = parsePeopleCount(label);
+      if (fromLabel !== null) return fromLabel;
+      const text = await button.textContent().catch(() => null);
+      const fromText = parsePeopleCount(text);
+      if (fromText !== null) return fromText;
+    } catch {
+      continue;
+    }
+  }
+  return null;
 }
 
 export async function dumpAdmissionState(page: Page, tag: string): Promise<void> {
