@@ -329,11 +329,10 @@ describe("adding from the shelf", () => {
       packageId: TEAM_ID, ref: "acme/sales-desk", release: "1.3.0", sha256: team.sha256, status: "installed", kind: "team",
       section: "Sales desk", bots: { lead: byKey.get("lead")!.id, scout: scout.id, writer: byKey.get("writer")!.id },
       rooms: { desk: room.id }, removedLocally: [],
-      connections: { crm: { name: "crm", r: expect.stringMatching(hex), w: expect.stringMatching(hex) } },
+      connections: {},
     });
     for (const part of app.parts.TEAM_PARTS) expect(install.team.parts[part]).toEqual({ r: expect.stringMatching(hex), w: expect.stringMatching(hex) });
     for (const part of ["name", "brief"] as const) expect(install.team.parts[part].w, part).toBe(install.team.parts[part].r);
-    expect(install.connections.crm.w).toBe(install.connections.crm.r);
     // The team's preset is in New bot, with the release-side hash (§1.6).
     const [preset] = app.importDeps.presets.list();
     expect(preset).toMatchObject({ source: "org", installId, key: "support", ref: "acme/sales-desk", sha256: team.sha256 });

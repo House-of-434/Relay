@@ -107,7 +107,7 @@ it("recalls, captures, suggests, forgets and tidies a bot's memory", async () =>
     // A later invalid field rejects the entire patch: queued capture must
     // survive, since memory upkeep was never actually switched off.
     expect((await memoryFile(bot.id)).text).not.toContain("The person is vegetarian");
-    await api(`/api/bots/${bot.id}`, "PATCH", { memoryUpkeep: false, browser: "invalid" }, 400);
+    await api(`/api/bots/${bot.id}`, "PATCH", { memoryUpkeep: false, cloudBackend: "invalid" }, 400);
     expect(await api(`/api/bots/${bot.id}/memory/upkeep`)).toMatchObject({ enabled: true });
     await expect.poll(async () => (await memoryFile(bot.id)).text, { timeout: 20_000 }).toContain("The person is vegetarian");
     await api("/api/config", "PUT", { memory: { captureQuietMs: 1_000 } });

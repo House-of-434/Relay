@@ -109,11 +109,11 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
     // saves deliberately contact the provider, so seed only this owned file.
     const configPath = join(source.info.dataDir, "config.json");
     const savedConfig = JSON.parse(readFileSync(configPath, "utf8"));
-    savedConfig.tts = { ...savedConfig.tts, key: "fixture-voice-key" };
+    savedConfig.anthropic = { ...savedConfig.anthropic, key: "fixture-voice-key" };
     writeFileSync(configPath, JSON.stringify(savedConfig), { mode: 0o600 });
     const destinationConfigPath = join(destination.info.dataDir, "config.json");
     const destinationConfig = JSON.parse(readFileSync(destinationConfigPath, "utf8"));
-    destinationConfig.tts = { key: "destination-voice-key", provider: "elevenlabs", voice: "destination-voice" };
+    destinationConfig.anthropic = { key: "destination-voice-key" };
     writeFileSync(destinationConfigPath, JSON.stringify(destinationConfig), { mode: 0o600 });
 
     // A reviewed skill and memory seed are written only into our fixture;
@@ -178,7 +178,7 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
     assert.equal(preview.body.summary.bots, before.bots.length);
     const staged = join(destination.info.dataDir, ".backups", preview.body.id, "staged");
     const stagedConfig = JSON.parse(readFileSync(join(staged, "data", "config.json"), "utf8"));
-    assert.equal(Object.hasOwn(stagedConfig, "tts"), false);
+    assert.equal(Object.hasOwn(stagedConfig, "anthropic"), false);
     assert.equal(Object.hasOwn(stagedConfig, "instances"), false);
     const manifest = JSON.parse(readFileSync(join(staged, "manifest.json"), "utf8"));
     assert.equal(Object.hasOwn(manifest, "credentials"), false);
@@ -211,9 +211,9 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
     assert.deepEqual((await api(destination, "GET", `/api/bots/${bot.id}/skills`)).body, sourceSkills);
     const restoredConfig = JSON.parse(readFileSync(join(destination.info.dataDir, "config.json"), "utf8"));
     assert.equal(restoredConfig.profile.name, "Workspace backup fixture");
-    assert.deepEqual(restoredConfig.tts, destinationConfig.tts);
+    assert.deepEqual(restoredConfig.anthropic, destinationConfig.anthropic);
     assert.deepEqual(restoredConfig.instances, destinationConfig.instances);
-    assert.equal((await api(destination, "GET", "/api/config")).body.tts.configured, true);
+    assert.equal((await api(destination, "GET", "/api/config")).body.anthropic.configured, true);
     const status = (await api(destination, "GET", "/api/workspace-backup/status")).body;
     assert.equal(status.lastRestoreId, preview.body.id);
     assert.ok(status.safetyCopyPath.startsWith(join(destination.info.dataDir, ".backups")));

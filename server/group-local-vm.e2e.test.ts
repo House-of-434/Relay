@@ -558,6 +558,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
     const { bot } = await api("POST", "/api/bots", { name: `Chat selects computer ${randomUUID().slice(0, 8)}` });
     try {
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
+      await api("PATCH", "/api/config", { localVm: { mode: "per-bot" } });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on an available VM and inspect its page title" });
       const before: any = await dump();
       expect(computer(before)).toBeUndefined();
@@ -595,8 +596,13 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect((await call("GET")).status).toBe(401);
     } finally {
       writeFileSync(finishFile, "finish");
+      // No per-bot container survives the wipe below, so the switch back to
+      // shared is never blocked by the empty fixture state reading as "every
+      // container exists".
+      vmState({ containers: [] });
       await stopBot(bot.id);
       await api("PUT", "/api/config", { box: { token: "" } });
+      await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
     }
   });
 
@@ -604,17 +610,19 @@ describe("Group Local VM ownership on the real isolated server", () => {
     vmState(); rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
     const { bot } = await api("POST", "/api/bots", { name: `Computer selection ${failure} ${randomUUID().slice(0, 8)}` });
     try {
-      // Cloud selection needs a configured provider to dispatch the turn that
-      // carries the selection token (neighboring computer tests set the same
-      // fixture box token and an archived boat).
+      // A selection turn runs on Auto: the shared Local VM this fixture
+      // otherwise leaves "seen" would be auto-mounted and there would be no
+      // pending selection to continue. Per-bot keeps this bot's untouched
+      // target unseen, so the turn dispatches with select_computer available.
       await api("PUT", "/api/config", { box: { token: "box_fixture" } });
+      await api("PATCH", "/api/config", { localVm: { mode: "per-bot" } });
       const environmentId = readFileSync(join(fixtureHome, "data", "environment-id"), "utf8").trim();
       const scope = createHash("sha256").update(environmentId).digest("hex").slice(0, 12);
       const prefix = bot.id.slice(0, 8).replace(/[^a-z0-9]/g, "");
       const suffix = createHash("sha256").update(bot.id).digest("hex").slice(0, 6);
       boatRow = { id: "bx_23456789", name: `ogb-${scope}-${prefix}-${suffix}`, state: "archived" };
       allowBoatCreation = true;
-      await api("PATCH", `/api/bots/${bot.id}`, { computer: failure === "off" ? "off" : "cloud" });
+      await api("PATCH", `/api/bots/${bot.id}`, { computer: failure === "off" ? "off" : null });
       await api("POST", `/api/bots/${bot.id}/messages`, { text: "Open Chrome on the VM" });
       const sent: any = await dump();
       const token = sent.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
@@ -630,6 +638,10 @@ describe("Group Local VM ownership on the real isolated server", () => {
         await api("POST", `/api/bots/${bot.id}/interrupt`, {}); await idle(bot.id);
         await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, { surface: "cloud" });
       } else if (failure === "new-request") {
+        // The new request is an Auto turn on a bot whose target the selection
+        // probe has just marked "seen"; Auto would recreate that VM. Turn
+        // Works on Off so the superseding request provably mounts nothing.
+        await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" });
         const text = "Forget the VM request. Just answer this new question.";
         const queued = await api("POST", `/api/bots/${bot.id}/messages`, { text });
         expect(queued.queued).toBe(true);
@@ -652,8 +664,10 @@ describe("Group Local VM ownership on the real isolated server", () => {
       }
     } finally {
       writeFileSync(finishFile, "finish");
+      vmState({ containers: [] });
       await stopBot(bot.id);
       boatRow = null; allowBoatCreation = false;
+      await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } });
     }
   });
 

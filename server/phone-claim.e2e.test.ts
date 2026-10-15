@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch, unregisterOwnerFetch, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 // Phone exclusivity on the real server (issue #1663): trigger-term matching
 // may mount the phone tools, but computer:phone is claimed only at the first
@@ -127,14 +128,28 @@ beforeAll(async () => {
     driver: "claudeAgent", config: { cli: join(ROOT, "server/testing/fake-claude-cli.ts") },
     environment: { FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_DUMP: dumpFile, FAKE_CLAUDE_SLOW_FINISH_GATE: finishFile },
   } } }));
+  // Bundled skills are not tracked in the repo, so seed the phone skill these
+  // turns assert on: an Android trigger term is what mounts the phone tools.
+  const skillsDir = join(fixtureHome, "skills");
+  mkdirSync(join(skillsDir, "phone-harness"), { recursive: true });
+  writeFileSync(join(skillsDir, "phone-harness", "manifest.json"), JSON.stringify({
+    id: "phone-harness", name: "Phone harness", version: "1.0.0", description: "Android phone harness",
+    defaultEnabled: true, triggerTerms: ["android", "mobile", "phone", "uber", "gradle"], requiredCapabilities: ["phoneMcp"],
+  }));
+  writeFileSync(join(skillsDir, "phone-harness", "SKILL.md"), "---\nname: phone-harness\ndescription: Android phone harness\n---\nPhone harness instructions.\n");
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
+  // Per-user workspaces: a session-less loopback sees nothing, so issue the
+  // fixture owner's session before boot and act as that account.
+  registerOwnerFetch(base, prepareOwnerSession(data));
   child = spawn(process.execPath, [join(ROOT, "server/index.ts")], {
     cwd: ROOT, env: {
       PATH: process.env.PATH, HOME: fixtureHome, USERPROFILE: fixtureHome, RELAY_DATA_DIR: data,
       APPDATA: join(fixtureHome, "appdata"), LOCALAPPDATA: join(fixtureHome, "localappdata"),
       TEMP: fixtureHome, TMP: fixtureHome, TMPDIR: fixtureHome,
       RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1), RELAY_STATIC_DIR: ui,
+      RELAY_SKILLS_DIR: skillsDir,
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
     }, stdio: ["ignore", "pipe", "pipe"],
   });
   child.stdout!.on("data", () => {});
@@ -147,6 +162,7 @@ beforeAll(async () => {
 afterAll(async () => {
   if (finishFile) writeFileSync(finishFile, "finish");
   await waitForExit(child, { signal: "SIGTERM" });
+  if (base) unregisterOwnerFetch(base);
   if (fixtureHome) await removeTempDir(fixtureHome);
 });
 const bots: string[] = [];

@@ -21,6 +21,11 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { freePortBlock } from "./testing/ports.ts";
+import { prepareOwnerSession, registerOwnerFetch, unregisterOwnerFetch, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
+
+/** Opt a request out of the fixture owner bearer so it reaches the server as
+ * a session-less loopback caller — the shape a bot's own shell has. */
+const ANONYMOUS = { "x-relay-test-anonymous": "1" };
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -84,6 +89,9 @@ beforeAll(async () => {
   }));
   const port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
+  // Per-user workspaces: a session-less loopback sees nothing, so issue the
+  // fixture owner's session before boot and act as that account.
+  registerOwnerFetch(base, prepareOwnerSession(data));
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -95,6 +103,7 @@ beforeAll(async () => {
       RELAY_WEBHOOK_PORT: String(port + 1),
       RELAY_STATIC_DIR: staticDir,
       RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -115,6 +124,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   if (child) await waitForExit(child, { signal: "SIGTERM" });
+  if (base) unregisterOwnerFetch(base);
   if (home) await removeTempDir(home);
 });
 
@@ -168,10 +178,10 @@ const mintCapability = async (botId: string, threadId: string): Promise<string> 
 };
 
 const hideSeededBot = async () => {
-  // the seeded bot would otherwise join the unsectioned team and make the
-  // roster and listing assertions depend on install order
-  const seeded = (await api("GET", "/api/bots?messages=0")).body.bots[0];
-  await api("PATCH", `/api/bots/${seeded.id}`, { hidden: true });
+  // the owner's seeded agents would otherwise join the unsectioned team and
+  // make the roster and listing assertions depend on install order
+  const seeded = (await api("GET", "/api/bots?messages=0")).body.bots.filter((bot: any) => bot.relayAgent);
+  for (const bot of seeded) await api("PATCH", `/api/bots/${bot.id}`, { hidden: true });
 };
 
 const peerNames = async (selfId: string, token: string) => {
@@ -438,13 +448,12 @@ describe("peer allow-list", () => {
     }
   }, 60_000);
 
-  it("refuses to loosen a bot from a bare loopback call while any bot is working", async () => {
-    // Outside the packaged desktop the acknowledgement flag is a JSON field
-    // any caller can send — including the bot it constrains, from its own
-    // shell, mid-turn. What a tool call does not have is a browser origin or
-    // a paired session; what it always has is a running turn. So an
-    // originless, session-less loopback PATCH may loosen a bot only while
-    // every bot is idle. The served UI sends its origin and is unaffected.
+  it("refuses a bot's own shell any reach to the bot, and edits only through the owner session", async () => {
+    // A bot's own shell is an originless (or forged-origin) loopback caller
+    // with no session. Per-user workspaces own records by user id, and a
+    // loopback request has none, so the bot is hidden: every loosening
+    // attempt is a 404 ("no such bot"), not a filter the shell can argue
+    // past — busy or idle. The served UI is a signed-in session instead.
     await hideSeededBot();
     const held = await createBot("Held", "stuck");
     const bound = await createBot("Ivy", "plain");
@@ -452,15 +461,16 @@ describe("peer allow-list", () => {
     const other = await createBot("Elm", "plain");
     const botState = async (id: string) =>
       (await api("GET", "/api/bots?messages=0")).body.bots.find((bot: { id: string }) => bot.id === id);
-    const browser = async (path: string, body: unknown) => api("PATCH", path, body, { origin: base });
+    // A forged browser origin is no more a session than no origin at all.
+    const browser = async (path: string, body: unknown) => api("PATCH", path, body, { origin: base, ...ANONYMOUS });
 
     try {
-      // wired tight while everything is idle: narrowing is always free
+      // wired tight by the owner while everything is idle
       expect((await api("PATCH", `/api/bots/${bound.id}`, { peers: [peer.id], approvePeerComms: true, section: "Ops" })).status).toBe(200);
       expect((await api("POST", `/api/bots/${held.id}/messages`, { text: "hold the line" })).status).toBe(202);
       await expect.poll(async () => (await botState(held.id))?.busy, { timeout: 20_000 }).toBe(true);
 
-      // every way of loosening the leash, refused with the same message
+      // every way of loosening the leash from a shell: hidden, so 404
       const attempts: Array<Record<string, unknown>> = [
         { peers: [peer.id, other.id], acknowledgePeerScope: true },
         { peers: null, acknowledgePeerScope: true },
@@ -469,28 +479,28 @@ describe("peer allow-list", () => {
         { alwaysAllow: ["Bash", "Bash:curl"] },
       ];
       for (const body of attempts) {
-        const refused = await api("PATCH", `/api/bots/${bound.id}`, body);
-        expect(refused.status, JSON.stringify(body)).toBe(409);
-        expect(String(refused.body.error)).toContain("desktop app or a paired device");
+        const refused = await api("PATCH", `/api/bots/${bound.id}`, body, ANONYMOUS);
+        expect(refused.status, JSON.stringify(body)).toBe(404);
+        expect(String(refused.body.error)).toBe("no such bot");
       }
       // A fake browser header does not grant cross-team authority to a shell.
       for (const headers of [{}, { origin: base }] as Record<string, string>[]) {
         const refused = await api("PATCH", `/api/bots/${bound.id}`, {
           chiefOfStaff: true, managedSections: ["Engineering"], acknowledgePeerScope: true,
-        }, headers);
-        expect(refused.status).toBe(409);
-        expect(String(refused.body.error)).toContain("paired owner session");
+        }, { ...headers, ...ANONYMOUS });
+        expect(refused.status).toBe(404);
+        expect(String(refused.body.error)).toBe("no such bot");
       }
       // refused means unchanged
       expect(await botState(bound.id)).toMatchObject({ peers: [peer.id], approvePeerComms: true, section: "Ops" });
       // tightening still needs nothing, and so does an unrelated field
       expect((await api("PATCH", `/api/bots/${bound.id}`, { peers: [] })).status).toBe(200);
       expect((await api("PATCH", `/api/bots/${bound.id}`, { name: "Ivy renamed" })).status).toBe(200);
-      // the served UI is a browser: its origin is what tells it apart
-      expect((await browser(`/api/bots/${bound.id}`, { peers: [peer.id], acknowledgePeerScope: true })).status).toBe(200);
-      expect((await browser(`/api/bots/${bound.id}`, { section: "Finance" })).status).toBe(200);
+      // the same forged origin from a shell is refused, not treated as the UI
+      expect((await browser(`/api/bots/${bound.id}`, { peers: [peer.id], acknowledgePeerScope: true })).status).toBe(404);
+      expect((await browser(`/api/bots/${bound.id}`, { section: "Finance" })).status).toBe(404);
 
-      // and once nothing is running, a script may loosen again (and is logged)
+      // the owner session may loosen again once nothing is running
       expect((await api("POST", `/api/bots/${held.id}/interrupt`, {})).status).toBe(200);
       await expect.poll(async () => (await botState(held.id))?.busy, { timeout: 20_000 }).toBeFalsy();
       expect((await api("PATCH", `/api/bots/${bound.id}`, { peers: null, acknowledgePeerScope: true })).status).toBe(200);

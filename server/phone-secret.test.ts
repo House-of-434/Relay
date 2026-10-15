@@ -70,7 +70,7 @@ async function seal(
 }
 
 describe("PhoneSecretBridge", () => {
-  it("opens an envelope produced by Apple's CryptoKit HPKE implementation", async () => {
+  it("opens a pinned fixed-vector envelope from the phone's CryptoKit key", async () => {
     let bridge!: PhoneSecretBridge;
     const send = vi.fn((message: { requestId: string; value: string }) => {
       expect(message.value).toBe("swift-to-node-secret");
@@ -82,8 +82,10 @@ describe("PhoneSecretBridge", () => {
       return true;
     });
     bridge = new PhoneSecretBridge(send, 200);
-    // Historical CryptoKit vector sealed with target "ttsKey" — kept as opaque
-    // crypto test data (AAD binds the target, so it cannot be renamed).
+    // Fixed vector for the phone's key, sealed with the current
+    // PHONE_SECRET_INFO and AAD prefix. Re-sealed when the module rename
+    // changed those strings: the previous bytes authenticated the old
+    // "OpenMausBot phone credential v1" prefix and no longer open.
     bridge.receive({
       type: "relay:phone-secret-key",
       version: 1,
@@ -106,8 +108,8 @@ describe("PhoneSecretBridge", () => {
       messageId: "message-1",
       target: "ttsKey",
       requestKey: "credential-request-1",
-      encapsulatedKey: "BDhy_5hMSvVIy3zGSmBwBECAedYBAwwFLvbWoXCGTJyLRH1cItoQXo9NBcEG0cTQV_VwaEf5judXcsJlh2jfW7Q",
-      ciphertext: "CjM0CnBT8NYd_BHAXJRKFrbYrSw6OgMIlJLAKs8VUPSSCsa2",
+      encapsulatedKey: "BNm73Fr1_Ca33Gvfrf42sPr9rGFw_jrJor6yuKb35CHmFkNDpwWiWl2PcpD2KsXS7yIJTM3AZpX72JVHtN8kJ6A",
+      ciphertext: "gcVm3FBL8lPGLJd1arDXZmKm3AkE-4r6eJT2QLoyfU6HGaw2",
     })).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(1);
   });

@@ -13,6 +13,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { freePortBlock } from "./testing/ports.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { readCuaConnection } from "./local-computer.ts";
+import { prepareOwnerSession, registerOwnerFetch, unregisterOwnerFetch, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 
@@ -81,6 +82,9 @@ describe("surface pin provenance against the real server", () => {
     const port = await freePortBlock([0, 1]);
     base = `http://127.0.0.1:${port}`;
     output = "";
+    // Per-user workspaces: a session-less loopback sees nothing, so issue the
+    // fixture owner's session before boot and act as that account.
+    registerOwnerFetch(base, prepareOwnerSession(data));
     const proc = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
@@ -89,6 +93,7 @@ describe("surface pin provenance against the real server", () => {
         TEMP: home, TMP: home, TMPDIR: home,
         RELAY_PORT: String(port), RELAY_WEBHOOK_PORT: String(port + 1), RELAY_STATIC_DIR: ui, RELAY_TEST_VM_STATE: stateFile,
         RELAY_BOX_API: boatApi, RELAY_USER_DATA: join(home, "user-data"),
+        RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       }, stdio: ["ignore", "pipe", "pipe"],
     });
     child = proc;
@@ -105,6 +110,7 @@ describe("surface pin provenance against the real server", () => {
     child = null;
     writeFileSync(finishFile, "finish");
     await waitForExit(proc, { signal: "SIGTERM" });
+    if (base) unregisterOwnerFetch(base);
   }
 
   beforeAll(async () => {
