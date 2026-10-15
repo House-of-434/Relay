@@ -2,6 +2,33 @@ export const SCRIBE_INTERNAL_PATHS = {
   join: "/api/internal/scribe/join",
 } as const;
 
+/** Native meeting id from a URL, mirroring the capture worker's nativeIdFor
+ * (services/scribe-capture/src/urls.ts) — Meet path code, Zoom /j|wc|s id,
+ * Teams /meet id. Kept in sync by the parity tests below; the worker remains
+ * the source of truth for joining. */
+export function nativeIdForUrl(url: string): { platform: "google_meet" | "zoom" | "teams"; nativeId: string } | null {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (host === "meet.google.com") {
+    const code = parsed.pathname.replace(/^\//, "").split("/")[0];
+    return code ? { platform: "google_meet", nativeId: code } : null;
+  }
+  const zoom = host === "zoom.us" || host.endsWith(".zoom.us");
+  const teams = host === "teams.microsoft.com" || host === "teams.live.com";
+  if (!zoom && !teams) return null;
+  const seg = parsed.pathname.split("/").filter(Boolean);
+  const markers = zoom ? ["j", "wc", "s"] : ["meet"];
+  const i = seg.findIndex((s) => markers.includes(s));
+  const id = i >= 0 ? seg[i + 1] : undefined;
+  if (!id) return null;
+  return { platform: zoom ? "zoom" : "teams", nativeId: id };
+}
+
 export interface ScribeJoinResult {
   status: "accepted" | "already_accepted";
   instance_id: string;

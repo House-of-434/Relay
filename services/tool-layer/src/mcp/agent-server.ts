@@ -11,6 +11,7 @@ import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
+import { registerScribeStatusTools } from "./scribe-status.js";
 import { registerTranscriptTools } from "./transcript-server.js";
 import { instrumentToolCalls, type ToolCallLogger } from "./tool-log.js";
 
@@ -128,6 +129,13 @@ export function createAgentMcpServer(
   // transcripts read grant; the handlers re-check it per call.
   if (userId) {
     registerTranscriptTools(server, agent, database, userId);
+  }
+
+  // Capture-status rides with the join tool: same Mercury-only grant, same
+  // authenticated-actor rule. It answers "did it join / is it transcribed"
+  // from the transcript rows, so follow-ups resolve to a meeting_id.
+  if (userId && scribe && SCRIBE_PERMISSIONS[agent].length > 0) {
+    registerScribeStatusTools(server, agent, database, userId);
   }
 
   if (gmail && GMAIL_PERMISSIONS[agent].length > 0) {
@@ -293,7 +301,7 @@ export function createAgentMcpServer(
     server.registerTool(
       "scribe_join_meeting",
       {
-        description: "Ask Relay Scribe to join a live meeting right now and transcribe it. Pass the meeting URL the user gave you (Google Meet, Zoom, or Teams). The join is announced in the meeting chat. Returns accepted with a capture id, or already_accepted when that room is already being captured. Use this when the user asks you to join, record, or transcribe a meeting happening now — scheduled meetings are picked up automatically and must not be submitted here.",
+        description: "Queue a request for Relay Scribe to join a live meeting and transcribe it. Pass the meeting URL the user gave you (Google Meet, Zoom, or Teams). Accepted means queued, NOT joined: Scribe typically appears within ~30 seconds and announces itself in the meeting chat, but admission cannot be confirmed from here — use scribe_capture_status to confirm it joined. already_accepted means a capture for this room is already queued or underway; do not resubmit. Scheduled meetings are picked up automatically and must not be submitted here.",
         inputSchema: {
           meeting_url: z.string().min(1).max(2048),
           title: z.string().trim().min(1).max(200).optional(),
@@ -312,7 +320,17 @@ export function createAgentMcpServer(
             meetingUrl: meeting_url,
             ...(title ? { title } : {}),
           });
-          return { content: [{ type: "text", text: JSON.stringify(result) }] };
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                ...result,
+                note: result.status === "accepted"
+                  ? "queued for joining; confirm with scribe_capture_status before telling the user it joined."
+                  : "this room already has a capture queued or underway; check it with scribe_capture_status.",
+              }),
+            }],
+          };
         } catch (error) {
           return toolError(error);
         }
