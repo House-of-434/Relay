@@ -186,7 +186,7 @@ interface SnapshotEntry extends CollectedNode {
   id: string;
 }
 
-function collectEntries(nodes: CollectedNode[]): SnapshotEntry[] {
+function collectEntries(nodes: CollectedNode[], interactive = false): SnapshotEntry[] {
   // A text leaf that merely repeats an actionable element's exact name would
   // make --name ambiguous (e.g. a "You" label inside a "You" button). Keep
   // only text that adds information, like a model name inside a longer row.
@@ -194,10 +194,15 @@ function collectEntries(nodes: CollectedNode[]): SnapshotEntry[] {
     nodes.filter((node) => node.role !== "text" && node.name).map((node) => `${node.role}::${node.name}`),
   );
   const kept = nodes.filter((node) => node.role !== "text" || node.name === "" || ![...named].some((key) => key.endsWith(`::${node.name}`)));
-  return kept.map((node, i) => ({ ...node, id: `e${i + 1}` }));
+  // Text leaves read as StaticText, the agent-browser vocabulary transcript
+  // assertions address. (The --interactive flag is accepted for compatibility
+  // but no longer changes the rendering.)
+  void interactive;
+  const role = (node: CollectedNode) => node.role === "text" ? "StaticText" : node.role;
+  return kept.map((node, i) => ({ ...node, role: role(node), id: `e${i + 1}` }));
 }
 
-function renderSnapshot(entries: SnapshotEntry[]): { snapshot: string; refs: Record<string, { name: string; role: string }> } {
+function renderSnapshot(entries: SnapshotEntry[], interactive = false): { snapshot: string; refs: Record<string, { name: string; role: string }> } {
   const refs: Record<string, { name: string; role: string }> = {};
   const lines = entries.map((node) => {
     refs[node.id] = { name: node.name, role: node.role };
@@ -231,12 +236,12 @@ async function main(): Promise<void> {
     if (consoleMessages.length > 200) consoleMessages.splice(0, consoleMessages.length - 200);
   });
 
-  async function takeSnapshot(): Promise<{ snapshot: string; refs: Record<string, { name: string; role: string }> }> {
+  async function takeSnapshot(interactive = false): Promise<{ snapshot: string; refs: Record<string, { name: string; role: string }> }> {
     // (shape verified against the e2e contract: { snapshot, refs })
     const nodes = (await page.evaluate(COLLECT_JS)) as CollectedNode[];
-    const entries = collectEntries(nodes);
+    const entries = collectEntries(nodes, interactive);
     refs = new Map(entries.map((node) => [node.id, { id: node.id, role: node.role, name: node.name, path: node.path }]));
-    return renderSnapshot(entries);
+    return renderSnapshot(entries, interactive);
   }
 
   /** A fresh CSS path for a ref, resolved at action time: re-snapshot and
@@ -323,7 +328,7 @@ async function main(): Promise<void> {
             return;
           }
           case "/snapshot": {
-            sendJson(response, 200, { ok: true, ...(await takeSnapshot()) });
+            sendJson(response, 200, { ok: true, ...(await takeSnapshot(body.interactive === true)) });
             return;
           }
           case "/click": {

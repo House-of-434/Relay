@@ -6,7 +6,8 @@ import { applySkin, readSkin } from "../../src/lib/skins";
 import "../../src/styles.css";
 
 // This entry point is served only by the disposable verification launcher.
-if (!new URLSearchParams(location.search).has("onboarding")) {
+const params = new URLSearchParams(location.search);
+if (!params.has("onboarding")) {
   setEmailGateDone("skipped");
   // Skipping the gate marks the welcome done, which is exactly what opens
   // the guided tour — so mark every tour step seen too. The launcher drives

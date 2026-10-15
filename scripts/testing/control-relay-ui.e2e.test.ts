@@ -291,8 +291,10 @@ describe("control-relay ui drives the real renderer", () => {
     expect(tree).not.toContain("Not logged in");
     expect(tree).not.toContain("Execution timeline");
     // The run card: the three scripted commands all go through the control
-    // CLI, so all three are verified; one failed and one was a dry run.
-    expect(tree).toContain("3 steps · 3 verified · 1 failed · 1 dry run");
+    // CLI, so all three are verified (one failed and one was a dry run, but
+    // the card reports verification, not outcome).
+    expect(tree).toContain("Did 3 tool calls");
+    expect(tree.match(/StaticText "verified"/g)).toHaveLength(3);
 
     // Hit-test the actual layout, not just the Tailwind class strings: the
     // blank band beside the floating card must reach the transcript while
@@ -374,27 +376,11 @@ describe("control-relay ui drives the real renderer", () => {
     expect(collapsed.snapshot).toContain("Expand the run");
     expect(collapsed.snapshot).not.toContain('list "Run steps"');
 
-    await ui("click", info.ui, "--name", "Inspector");
-    const inspected = await ui("snapshot", info.ui);
-    const runLog = (inspected.snapshot as string).slice((inspected.snapshot as string).indexOf('complementary "Inspector"'));
-    expect(runLog).toContain('tab "Run Log" [selected');
-    expect(runLog).toContain("pnpm control:relay doctor");
-    expect(runLog).toContain("pnpm control:relay ui click --name Missing");
-    expect(runLog).toContain('StaticText "Failed"');
-    expect(runLog).toContain("Copy redacted run log");
-    await ui("screenshot", info.ui, "--out", join(evidenceDir, "run-log.png"));
-
-    // Existing technical views remain reachable by accessible tab references.
-    const [eventsTab] = refsNamed(inspected, "Events", "tab");
-    expect(eventsTab).toBeDefined();
-    await ui("click", info.ui, "--ref", eventsTab);
-    const events = await ui("snapshot", info.ui);
-    expect(events.snapshot).toContain("turn.started");
-    const [rawTab] = refsNamed(events, "Raw", "tab");
-    await ui("click", info.ui, "--ref", rawTab);
-    expect((await ui("snapshot", info.ui)).snapshot).toContain('tab "Raw" [selected');
-    await ui("click", info.ui, "--name", "Close the Inspector");
-    expect((await ui("snapshot", info.ui)).snapshot).not.toContain('complementary "Inspector"');
+    // The in-chat inspector toggle was removed from the product UI and
+    // nothing opens InspectorPanel anymore, so the Run Log / Events / Raw
+    // tabs have no entry point to drive here. (If an entry point returns,
+    // re-cover them: Run Log lists the three commands with a Failed marker
+    // and redacted copy, Events carries turn.started, Raw selects its tab.)
 
     const logs = await ui("console", info.ui);
     expect(logs.ok).toBe(true);

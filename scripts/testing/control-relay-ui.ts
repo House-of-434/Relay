@@ -236,8 +236,8 @@ async function requireLiveSession(handle: UiHandle): Promise<void> {
   }
 }
 
-async function snapshot(handle: UiHandle): Promise<Record<string, unknown>> {
-  return driverCall(handle.driverUrl, "snapshot", {});
+async function snapshot(handle: UiHandle, interactive = false): Promise<Record<string, unknown>> {
+  return driverCall(handle.driverUrl, "snapshot", interactive ? { interactive: true } : {});
 }
 
 /** How long `--name` waits for its element to be rendered before giving up. */
@@ -353,7 +353,7 @@ export async function runControlOmbUi(args: string[]): Promise<unknown> {
     const values = parse(command, rest, { ...ui, interactive: { type: "boolean", default: false } });
     const handle = loadHandle(values.ui, verb);
     await requireLiveSession(handle);
-    return { ok: true, ...(await snapshot(handle)) };
+    return { ok: true, ...(await snapshot(handle, values.interactive === true)) };
   }
 
   if (verb === "click" || verb === "hover" || verb === "type") {
