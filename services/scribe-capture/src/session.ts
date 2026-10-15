@@ -69,6 +69,7 @@ interface VexaJoin {
   getJoinBrowserArgs: () => string[];
   countRealParticipantTiles: (page: unknown) => Promise<number>;
   countMeetingPeople: (page: unknown) => Promise<number | null>;
+  describePeopleButtons: (page: unknown) => Promise<string[]>;
 }
 let vexaJoinCache: VexaJoin | null = null;
 async function loadVexaJoin(): Promise<VexaJoin> {
@@ -377,11 +378,13 @@ class MeetSession {
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
         // Solo end: when everyone else leaves, the bot must not sit in the
         // empty room holding the profile (blocking later captures) until
-        // maxMeetingMs. Meet-only: the counters are Meet DOM truth. Two
-        // independent signals plus the roster: tiles say who is present,
-        // remote audio says who is transmitting, the roster headcount is
-        // layout-independent. Counts only in the log — never names — and a
-        // failed count is not evidence of solitude.
+        // maxMeetingMs. Meet-only: the counters are Meet DOM truth. Three
+        // signals, logged every poll as counts only (never names): tiles say
+        // who is present, remote audio says who is transmitting, the roster
+        // headcount is layout-independent. Any one showing company vetoes
+        // the leave; silence is never evidence of absence. Kill-switch
+        // RELAY_SCRIBE_SOLO_LEAVE=0 disables leaving (still logs) for
+        // presence debugging.
         if (isMeet && this.status === "active" && Date.now() - lastSoloCheck >= SOLO_POLL_MS) {
           lastSoloCheck = Date.now();
           try {
@@ -392,7 +395,11 @@ class MeetSession {
             if (tiles === 0 && (people === null || people <= 1)) {
               console.log(`scribe: ${this.descriptor.instance_id} presence unreadable (tiles=0); not counting toward leave`);
             }
-            if (soloPollAllowsLeaving(tiles, audioActive, solo, people)) {
+            if (tiles <= 1 && (people === null || people <= 1)) {
+              const buttons = await vexa.describePeopleButtons(this.page);
+              console.log(`scribe: solo-check tiles=${tiles} people=${people ?? "?"} audio=${audioActive ? "live" : "quiet"} buttons=[${buttons.join(" | ")}]`);
+            }
+            if (this.config.soloLeaveEnabled && soloPollAllowsLeaving(tiles, audioActive, solo, people)) {
               console.log(`scribe: ${this.descriptor.instance_id} alone in the meeting (tiles=${tiles}, people=${people ?? "?"}); leaving`);
               leftAlone = true;
               break;

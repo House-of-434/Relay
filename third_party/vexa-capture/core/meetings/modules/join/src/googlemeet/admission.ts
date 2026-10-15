@@ -229,6 +229,28 @@ export async function countMeetingPeople(page: Page): Promise<number | null> {
   return null;
 }
 
+/** Raw people-button surfaces for diagnostics: one short string per visible
+ * candidate button (aria-label, else text, truncated). UI chrome only — no
+ * participant names flow through here. Logged when presence is disputed so
+ * the next selector miss is debuggable from the worker log. */
+export async function describePeopleButtons(page: Page): Promise<string[]> {
+  const out: string[] = [];
+  for (const selector of googlePeopleButtonSelectors) {
+    try {
+      const button = page.locator(selector).first();
+      if (!(await button.isVisible())) continue;
+      const label = await button.getAttribute("aria-label").catch(() => null);
+      const text = await button.textContent().catch(() => null);
+      const shown = (label ?? text ?? "").trim().replace(/\s+/g, " ").slice(0, 80);
+      if (shown) out.push(`${selector} :: ${shown}`);
+      if (out.length >= 5) break;
+    } catch {
+      continue;
+    }
+  }
+  return out;
+}
+
 export async function dumpAdmissionState(page: Page, tag: string): Promise<void> {
   if (!process.env.DEBUG_ADMISSION) return;
   try {

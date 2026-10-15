@@ -7,7 +7,7 @@ import test from "node:test";
 import { WORKER_BOOT_ID } from "./boot.js";
 import { workerConfig } from "./config.js";
 import { selectRoomDuplicate, SessionController, SoloWatcher, soloPollAllowsLeaving } from "./session.js";
-import { countMeetingPeople, parsePeopleCount } from "../../../third_party/vexa-capture/core/meetings/modules/join/src/googlemeet/admission.js";
+import { countMeetingPeople, describePeopleButtons, parsePeopleCount } from "../../../third_party/vexa-capture/core/meetings/modules/join/src/googlemeet/admission.js";
 
 test("SoloWatcher fires after threshold consecutive solo polls", () => {
   const watcher = new SoloWatcher(3);
@@ -114,6 +114,22 @@ test("countMeetingPeople prefers aria-label, falls back to text, else null", asy
   assert.equal(await countMeetingPeople(pageFor("Show everyone, 2 people", null) as never), 2);
   assert.equal(await countMeetingPeople(pageFor(null, "People (1)") as never), 1);
   assert.equal(await countMeetingPeople(pageFor("People", "Chat") as never), null);
+});
+
+test("describePeopleButtons reports UI chrome only, capped", async () => {
+  const page = {
+    locator: (sel: string) => ({
+      first: () => ({
+        isVisible: async () => sel.includes("people"),
+        getAttribute: async () => "Show everyone, 2 people",
+        textContent: async () => "ignored",
+      }),
+    }),
+  };
+  const lines = await describePeopleButtons(page as never);
+  assert.ok(lines.length >= 1 && lines.length <= 5);
+  assert.ok(lines.every((line) => line.length <= 120));
+  assert.ok(lines.some((line) => line.includes("Show everyone")));
 });
 
 test("soloPollAllowsLeaving: transmitting audio vetoes a tile miss", () => {
