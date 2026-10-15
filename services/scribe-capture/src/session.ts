@@ -66,6 +66,7 @@ interface VexaJoin {
   leaveMicrosoftTeams: (page: unknown) => Promise<void>;
   leaveZoomMeeting: (page: unknown) => Promise<void>;
   getJoinBrowserArgs: () => string[];
+  countRealParticipantTiles: (page: unknown) => Promise<number>;
 }
 let vexaJoinCache: VexaJoin | null = null;
 async function loadVexaJoin(): Promise<VexaJoin> {
@@ -118,6 +119,34 @@ async function leaveFor(page: Page, platform: string): Promise<void> {
   if (platform === "zoom") return vexa.leaveZoomMeeting(page);
   return vexa.leaveGoogleMeet(page);
 }
+
+/** Solo-participant end detection: poll the real tile count, and report when
+ * the bot has been alone for `threshold` consecutive polls. Pure logic over
+ * an injected counter — no browser needed, fully unit-testable. A count of
+ * 1 means the bot alone (its own tile); 0 means the page is gone or unreadable
+ * and also counts as solo (nothing to capture). Any count above 1 resets. */
+export class SoloWatcher {
+  private solos = 0;
+
+  constructor(private readonly threshold: number) {}
+
+  observe(participantCount: number): boolean {
+    if (participantCount <= 1) {
+      this.solos += 1;
+    } else {
+      this.solos = 0;
+    }
+    return this.solos >= this.threshold;
+  }
+
+  reset(): void {
+    this.solos = 0;
+  }
+}
+
+/** Poll cadence and grace for solo end: every 15s, leave after ~45s alone. */
+const SOLO_POLL_MS = 15_000;
+const SOLO_CONSECUTIVE_POLLS = 3;
 
 class MeetSession {
   status: CaptureStatus = "joining";
@@ -292,6 +321,9 @@ class MeetSession {
       }
 
       const deadline = Date.now() + this.config.maxMeetingMs;
+      const solo = new SoloWatcher(SOLO_CONSECUTIVE_POLLS);
+      let lastSoloCheck = 0;
+      let leftAlone = false;
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
@@ -299,10 +331,28 @@ class MeetSession {
         else await this.captureOnce();
         await this.flush(false, "active");
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
+        // Solo end: when everyone else leaves, the bot must not sit in the
+        // empty room holding the profile (blocking later captures) until
+        // maxMeetingMs. Meet-only: the tile counter is Meet DOM truth.
+        if (isMeet && this.status === "active" && Date.now() - lastSoloCheck >= SOLO_POLL_MS) {
+          lastSoloCheck = Date.now();
+          try {
+            const vexa = await loadVexaJoin();
+            if (solo.observe(await vexa.countRealParticipantTiles(this.page))) {
+              console.log(`scribe: ${this.descriptor.instance_id} alone in the meeting; leaving`);
+              leftAlone = true;
+              break;
+            }
+          } catch {
+            /* a failed count is not evidence of solitude; try again next poll */
+          }
+        }
       }
-      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped ? "partial" : "completed");
+      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped && !leftAlone ? "partial" : "completed");
     } catch (e) {
       this.error = describeJoinFailure(e);
+      // Never log full URLs: navigation errors can embed meeting ?pwd=.
+      console.error(`scribe: ${this.descriptor.instance_id} failed: ${this.error.replace(/([?&]pwd=)[^&\s]*/gi, "$1<redacted>")}`);
       await this.finalize("failed");
     }
   }

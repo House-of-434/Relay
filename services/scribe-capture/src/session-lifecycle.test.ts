@@ -6,7 +6,27 @@ import test from "node:test";
 
 import { WORKER_BOOT_ID } from "./boot.js";
 import { workerConfig } from "./config.js";
-import { selectRoomDuplicate, SessionController } from "./session.js";
+import { selectRoomDuplicate, SessionController, SoloWatcher } from "./session.js";
+
+test("SoloWatcher fires after threshold consecutive solo polls", () => {
+  const watcher = new SoloWatcher(3);
+  assert.equal(watcher.observe(1), false);
+  assert.equal(watcher.observe(1), false);
+  assert.equal(watcher.observe(1), true);
+});
+
+test("SoloWatcher treats zero and resets on company", () => {
+  const watcher = new SoloWatcher(2);
+  assert.equal(watcher.observe(0), false);
+  assert.equal(watcher.observe(0), true);
+  const mixed = new SoloWatcher(2);
+  assert.equal(mixed.observe(1), false);
+  assert.equal(mixed.observe(4), false);
+  assert.equal(mixed.observe(1), false);
+  assert.equal(mixed.observe(1), true);
+  mixed.reset();
+  assert.equal(mixed.observe(1), false);
+});
 
 test("worker boot id is a stable uuid", () => {
   assert.match(WORKER_BOOT_ID, /^[0-9a-f-]{36}$/);
