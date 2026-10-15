@@ -144,9 +144,3 @@ test("disclosure config defaults on and can be overridden or disabled", () => {
   assert.equal(workerConfig({ RELAY_SCRIBE_DISCLOSURE: "custom line" }).disclosure, "custom line");
   assert.equal(workerConfig({ RELAY_SCRIBE_DISCLOSURE: "" }).disclosure, "");
 });
-
-test("solo leave defaults on and can be disabled for presence debugging", () => {
-  assert.equal(workerConfig({}).soloLeaveEnabled, true);
-  assert.equal(workerConfig({ RELAY_SCRIBE_SOLO_LEAVE: "0" }).soloLeaveEnabled, false);
-  assert.equal(workerConfig({ RELAY_SCRIBE_SOLO_LEAVE: "1" }).soloLeaveEnabled, true);
-});

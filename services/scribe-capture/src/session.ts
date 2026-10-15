@@ -67,9 +67,6 @@ interface VexaJoin {
   leaveMicrosoftTeams: (page: unknown) => Promise<void>;
   leaveZoomMeeting: (page: unknown) => Promise<void>;
   getJoinBrowserArgs: () => string[];
-  countRealParticipantTiles: (page: unknown) => Promise<number>;
-  countMeetingPeople: (page: unknown) => Promise<number | null>;
-  describePeopleButtons: (page: unknown) => Promise<string[]>;
 }
 let vexaJoinCache: VexaJoin | null = null;
 async function loadVexaJoin(): Promise<VexaJoin> {
@@ -123,62 +120,29 @@ async function leaveFor(page: Page, platform: string): Promise<void> {
   return vexa.leaveGoogleMeet(page);
 }
 
-/** Consecutive-poll counter behind solo end detection. Dumb by design: the
- * caller (soloPollAllowsLeaving) decides what counts — this only tracks
- * repetition. No browser needed, fully unit-testable. */
-export class SoloWatcher {
-  private solos = 0;
-
-  constructor(private readonly threshold: number) {}
-
-  observe(participantCount: number): boolean {
-    if (participantCount <= 1) {
-      this.solos += 1;
-    } else {
-      this.solos = 0;
-    }
-    return this.solos >= this.threshold;
+/** Voice-idle end decision. A meeting with no remote voice is over whether
+ * or not tiles agree: leave after VOICE_IDLE_MS of silence once speech was
+ * heard, or after FIRST_VOICE_TIMEOUT_MS with nothing ever heard (covers
+ * waiting for others who never arrive). Pure logic over timestamps — no
+ * browser needed, fully unit-testable. maxMeetingMs remains the hard
+ * backstop; non-Meet lanes keep maxMeetingMs only (no per-frame energy). */
+export function voiceIdleExpired(args: {
+  captureStartMs: number;
+  firstVoiceAt: number | null;
+  lastVoiceAt: number | null;
+  now: number;
+}): boolean {
+  const { captureStartMs, firstVoiceAt, lastVoiceAt, now } = args;
+  if (firstVoiceAt === null) {
+    return now - captureStartMs >= FIRST_VOICE_TIMEOUT_MS;
   }
-
-  reset(): void {
-    this.solos = 0;
-  }
+  return lastVoiceAt !== null && now - lastVoiceAt >= VOICE_IDLE_MS;
 }
 
-/** Decide one solo poll from three independent signals. Tiles say who is
- * present; remote audio says who is transmitting; the roster headcount is
- * layout-independent. Any one showing company vetoes the leave:
- * - tiles > 1: company, reset unconditionally;
- * - remote audio active since the last poll: someone is transmitting even if
- *   the tile count missed them — reset (this is what saves a present-but-
- *   tileless participant from a wrong leave);
- * - roster headcount > 1: the directory sees company even if tiles do not
- *   (muted, camera-off, unlabeled tiles) — reset. This is what saves a
- *   present-but-silent participant; silence is never evidence of absence;
- * - tiles === 0: the page is unreadable (not evidence of solitude) — reset
- *   and log loudly so a blind capture is visible instead of silent;
- * - otherwise (exactly 1 tile, quiet room, roster solo-or-unknown): count
- *   toward leaving. */
-export function soloPollAllowsLeaving(
-  tiles: number,
-  audioActive: boolean,
-  watcher: SoloWatcher,
-  people: number | null = null,
-): boolean {
-  if (tiles > 1 || audioActive || (people !== null && people > 1)) {
-    watcher.reset();
-    return false;
-  }
-  if (tiles === 0) {
-    watcher.reset();
-    return false;
-  }
-  return watcher.observe(tiles);
-}
-
-/** Poll cadence and grace for solo end: every 15s, leave after ~45s alone. */
-const SOLO_POLL_MS = 15_000;
-const SOLO_CONSECUTIVE_POLLS = 3;
+/** Leave after 3 minutes without remote voice; 10 minutes without ever
+ * hearing any (waiting room that never fills). */
+const VOICE_IDLE_MS = 3 * 60_000;
+const FIRST_VOICE_TIMEOUT_MS = 10 * 60_000;
 /** Remote-audio energy floor mirroring the capture bundle's silence gate:
  * frames above this prove someone is transmitting. */
 const REMOTE_AUDIO_ENERGY = 0.005;
@@ -199,9 +163,11 @@ class MeetSession {
   private readonly ingest: IngestClient;
   private gmeet: GmeetPipeline | null = null;
   private captureStartMs = 0;
-  /** Last time a remote frame carried above-silence energy. Second opinion
-   * for solo detection: transmitting audio vetoes a tile-count leave. */
-  private lastRemoteAudioAt = 0;
+  /** First and last time a remote frame carried above-silence energy. Drives
+   * voice-idle end: the clock starts at first voice; 10 quiet minutes with
+   * no voice at all also ends (waiting room that never fills). */
+  private firstVoiceAt: number | null = null;
+  private lastRemoteAudioAt: number | null = null;
   private probeFrames: ProbeFrame[] = [];
   private probeSegments: Segment[] = [];
   private probeTiles: Array<Record<string, unknown>> = [];
@@ -366,9 +332,7 @@ class MeetSession {
       }
 
       const deadline = Date.now() + this.config.maxMeetingMs;
-      const solo = new SoloWatcher(SOLO_CONSECUTIVE_POLLS);
-      let lastSoloCheck = 0;
-      let leftAlone = false;
+      let endedIdle = false;
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
@@ -376,40 +340,22 @@ class MeetSession {
         else await this.captureOnce();
         await this.flush(false, "active");
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
-        // Solo end: when everyone else leaves, the bot must not sit in the
-        // empty room holding the profile (blocking later captures) until
-        // maxMeetingMs. Meet-only: the counters are Meet DOM truth. Three
-        // signals, logged every poll as counts only (never names): tiles say
-        // who is present, remote audio says who is transmitting, the roster
-        // headcount is layout-independent. Any one showing company vetoes
-        // the leave; silence is never evidence of absence. Kill-switch
-        // RELAY_SCRIBE_SOLO_LEAVE=0 disables leaving (still logs) for
-        // presence debugging.
-        if (isMeet && this.status === "active" && Date.now() - lastSoloCheck >= SOLO_POLL_MS) {
-          lastSoloCheck = Date.now();
-          try {
-            const vexa = await loadVexaJoin();
-            const tiles = await vexa.countRealParticipantTiles(this.page);
-            const people = await vexa.countMeetingPeople(this.page);
-            const audioActive = Date.now() - this.lastRemoteAudioAt <= SOLO_POLL_MS;
-            if (tiles === 0 && (people === null || people <= 1)) {
-              console.log(`scribe: ${this.descriptor.instance_id} presence unreadable (tiles=0); not counting toward leave`);
-            }
-            if (tiles <= 1 && (people === null || people <= 1)) {
-              const buttons = await vexa.describePeopleButtons(this.page);
-              console.log(`scribe: solo-check tiles=${tiles} people=${people ?? "?"} audio=${audioActive ? "live" : "quiet"} buttons=[${buttons.join(" | ")}]`);
-            }
-            if (this.config.soloLeaveEnabled && soloPollAllowsLeaving(tiles, audioActive, solo, people)) {
-              console.log(`scribe: ${this.descriptor.instance_id} alone in the meeting (tiles=${tiles}, people=${people ?? "?"}); leaving`);
-              leftAlone = true;
-              break;
-            }
-          } catch {
-            /* a failed count is not evidence of solitude; try again next poll */
-          }
+        // Voice-idle end (Meet only): no remote voice for 3 minutes means
+        // the meeting is over whether or not tiles agree; 10 minutes without
+        // ever hearing any covers waiting for others who never arrive.
+        // maxMeetingMs remains the hard backstop.
+        if (isMeet && this.status === "active" && voiceIdleExpired({
+          captureStartMs: this.captureStartMs,
+          firstVoiceAt: this.firstVoiceAt,
+          lastVoiceAt: this.lastRemoteAudioAt,
+          now: Date.now(),
+        })) {
+          console.log(`scribe: ${this.descriptor.instance_id} no voice for 3m; leaving`);
+          endedIdle = true;
+          break;
         }
       }
-      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped && !leftAlone ? "partial" : "completed");
+      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped && !endedIdle ? "partial" : "completed");
     } catch (e) {
       this.error = describeJoinFailure(e);
       // Never log full URLs: navigation errors can embed meeting ?pwd=.
@@ -504,7 +450,9 @@ class MeetSession {
     }
     for (const f of frames) {
       if (typeof f.energy === "number" && f.energy > REMOTE_AUDIO_ENERGY) {
-        this.lastRemoteAudioAt = Date.now();
+        const at = Date.now();
+        if (this.firstVoiceAt === null) this.firstVoiceAt = at;
+        this.lastRemoteAudioAt = at;
       }
       if (!f.pcm) continue;
       this.gmeet.feedAudio(f.channel, f.name ?? undefined, Float32Array.from(f.pcm), f.ts);

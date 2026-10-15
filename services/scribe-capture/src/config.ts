@@ -54,10 +54,6 @@ export interface WorkerConfig {
   /** One-line join disclosure posted to the meeting chat after admission.
    *  Empty string disables it. */
   disclosure: string;
-  /** Solo end: leave when the bot is alone (~45s). Set
-   *  RELAY_SCRIBE_SOLO_LEAVE=0 to disable (debugging admit/presence issues);
-   *  the maxMeetingMs backstop still applies. */
-  soloLeaveEnabled: boolean;
 }
 
 function num(value: string | undefined, fallback: number): number {
@@ -90,6 +86,5 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     diskMinBytes: num(env.RELAY_SCRIBE_DISK_MIN_BYTES, 1024 * 1024 * 1024),
     maintenanceMs: num(env.RELAY_SCRIBE_MAINTENANCE_MS, 60 * 60 * 1000),
     disclosure: (env.RELAY_SCRIBE_DISCLOSURE ?? "This meeting is transcribed by Relay AI.").trim(),
-    soloLeaveEnabled: (env.RELAY_SCRIBE_SOLO_LEAVE ?? "1") !== "0",
   };
 }
