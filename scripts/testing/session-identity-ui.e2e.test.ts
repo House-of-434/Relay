@@ -54,10 +54,6 @@ describe("Google sign-in identity in the sidebar", () => {
       const photo = row?.querySelector('img');
       return photo ? { src: photo.src.slice(0, 30), width: photo.naturalWidth, height: photo.naturalHeight } : null;
     })()`);
-    const tileLabels = () => evaluate(`(() => {
-      const tile = Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').startsWith('App settings for'));
-      return tile ? { ariaLabel: tile.getAttribute('aria-label'), title: tile.getAttribute('title') } : null;
-    })()`);
 
     preview = await mountPreview({ info: { url: info!.url } }, {
       entry: "/scripts/testing/session-identity-preview.tsx", route: "/__session-identity.html",
@@ -69,13 +65,13 @@ describe("Google sign-in identity in the sidebar", () => {
     expect(await snapshot()).not.toContain('button "You"');
     await ui("screenshot", "--out", evidence("comfortable"));
 
-    // The compact density hides the name, so the tile has to say who it is and
-    // what it opens — the case a typed Relay name would have covered before.
+    // The compact density hides the name, so the row button itself has to
+    // say who it is — the case a typed Relay name would have covered before.
+    // (The old separate app-settings tile is gone; settings live in the
+    // profile menu now.)
     await evaluate(`(() => { localStorage.setItem("relay.sidebarDensity", "icons"); location.reload(); return true; })()`);
-    await expect.poll(tileLabels, { timeout: 20_000 }).toMatchObject({
-      ariaLabel: "App settings for Ada Lovelace",
-      title: "Ada Lovelace — App settings",
-    });
+    await expect.poll(snapshot, { timeout: 20_000 }).toContain('button "Ada Lovelace"');
+    expect(await snapshot()).not.toContain('button "You"');
     expect(await rowPhoto()).toMatchObject({ width: 128, height: 128 });
     await ui("screenshot", "--out", evidence("icons-density"));
 
@@ -83,7 +79,9 @@ describe("Google sign-in identity in the sidebar", () => {
     // error loop: the row falls back to the same initials as before.
     await go("broken-photo");
     await expect.poll(() => evaluate("!!Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada Lovelace'))"), { timeout: 20_000 }).toBe(true);
-    expect(await evaluate("Array.from(document.querySelectorAll('aside img')).every((img) => img.complete && img.naturalWidth > 0)")).toBe(true);
+    // The broken photo fails asynchronously; poll until every aside image
+    // has resolved (the row falls back to initials, never a broken image).
+    await expect.poll(() => evaluate("Array.from(document.querySelectorAll('aside img')).every((img) => img.complete && img.naturalWidth > 0)"), { timeout: 20_000 }).toBe(true);
     await ui("screenshot", "--out", evidence("broken-photo-initials"));
-  });
+  }, launchTimeout + 120_000);
 });
