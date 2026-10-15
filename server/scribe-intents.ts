@@ -61,6 +61,16 @@ export function normalizeMeetingUrlKey(platform: ScribePlatform, url: string): s
   return `${platform}|${host}${path}`;
 }
 
+/** Permanent notice-delivery failures must retire loudly instead of
+ * retrying forever: a mailbox that is not connected or configured will
+ * never heal by waiting. Matches the BFF's stable error texts for the
+ * shared-mailbox send path. Everything else (timeouts, refused
+ * connections, 5xx) stays transient and retries. */
+export function isPermanentNoticeError(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /mailbox.*not (connected|configured)|not connected for this user|shared mailbox call failed \(404\)/i.test(message);
+}
+
 /** The immediate-join permission contract, checked server-side against the
  * verified actor: the asserted bot must exist, carry the Mercury role, and
  * belong to the asserted user. Organizer/invited_by/owner for the descriptor,

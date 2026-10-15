@@ -206,6 +206,18 @@ describe("verifyActorAssertion (harness)", () => {
   });
 });
 
+describe("isPermanentNoticeError", () => {
+  it("retires mailbox-unconnected failures, retries everything else", () => {
+    expect(intents.isPermanentNoticeError(new Error("shared mailbox call failed (404): Relay's shared mailbox is not connected"))).toBe(true);
+    expect(intents.isPermanentNoticeError(new Error("Relay's shared mailbox is not configured"))).toBe(true);
+    expect(intents.isPermanentNoticeError(new Error("Gmail is not connected for this user"))).toBe(true);
+    expect(intents.isPermanentNoticeError(new Error("the capture service is unreachable"))).toBe(false);
+    expect(intents.isPermanentNoticeError(new Error("connect ECONNREFUSED 127.0.0.1:8798"))).toBe(false);
+    expect(intents.isPermanentNoticeError(new Error("request timed out"))).toBe(false);
+    expect(intents.isPermanentNoticeError(undefined)).toBe(false);
+  });
+});
+
 describe("resolveNoticeSender", () => {
   const relay = { userId: USER, botId: MERCURY, threadId: THREAD };
   const intentRow = {

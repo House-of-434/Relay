@@ -484,7 +484,7 @@ import {
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, createDegradedTracker, scribeMonitorConfig } from "./scribe-monitor.ts";
-import { joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
+import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
 import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
 import { commandReceipts } from "./scribe-receipts.ts";
@@ -9946,28 +9946,39 @@ if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELA
           // The sending actor is the initiating identity: a manual capture
           // uses its persisted intent triple, a calendar capture keeps
           // Relay's actor. With neither, the notice stays unsent (warned),
-          // never sent as somebody else — and a failed send propagates so
-          // the monitor retries instead of recording it delivered.
+          // never sent as somebody else. A failed send propagates so the
+          // monitor retries instead of recording it delivered — except a
+          // permanently undeliverable mailbox (not connected/configured),
+          // which retires loudly after one attempt instead of wedging the
+          // intent on an error that waiting cannot heal.
           const sender = resolveNoticeSender(getScribeJoinIntent(notice.instance_id), relayMailboxActor());
-          if (recipient) {
-            if (sender) {
-              await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice), sender);
+          try {
+            if (recipient) {
+              if (sender) {
+                await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice), sender);
+              } else {
+                console.warn(`[scribe] notice unsent for ${notice.instance_id}: no Mercury bot is registered for Relay's account`);
+              }
             } else {
-              console.warn(`[scribe] notice unsent for ${notice.instance_id}: no Mercury bot is registered for Relay's account`);
+              console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
             }
-          } else {
-            console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
-          }
-          if (notice.signedOut) {
-            if (scribeAdminEmails.length === 0) {
-              console.error(
-                `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
-              );
-            } else if (sender) {
-              for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail(), sender);
-            } else {
-              console.warn(`[scribe] signed-out alert unsent for ${notice.instance_id}: no Mercury bot is registered for Relay's account`);
+            if (notice.signedOut) {
+              if (scribeAdminEmails.length === 0) {
+                console.error(
+                  `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
+                );
+              } else if (sender) {
+                for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail(), sender);
+              } else {
+                console.warn(`[scribe] signed-out alert unsent for ${notice.instance_id}: no Mercury bot is registered for Relay's account`);
+              }
             }
+          } catch (error) {
+            if (isPermanentNoticeError(error)) {
+              console.error(`[scribe] notice for ${notice.instance_id} undeliverable (${error instanceof Error ? error.message.slice(0, 160) : "unknown"}); retiring without retry`);
+              return;
+            }
+            throw error;
           }
         },
         log: (message) => console.log(message),

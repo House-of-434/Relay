@@ -160,6 +160,7 @@ describe("manual intent drain", () => {
     await monitor.tick(NOW);
     expect(receipts.keys.size).toBe(0);
   });
+});
 
 describe("manual reconcile bounds", () => {
   it("never expires a capture the worker reports live, however late", async () => {
@@ -233,8 +234,26 @@ describe("worker restart recovery", () => {
   });
 });
 
-describe("notice delivery", () => {
-  it("retries a failed email instead of recording it as sent", async () => {
+describe("tick isolation", () => {
+  it("a poison intent cannot stall the rest of the tick", async () => {
+    const poison = manualRequest({ instanceId: "inst-poison" } as never);
+    const healthy = manualRequest();
+    const seen: string[] = [];
+    const { monitor, full } = build({
+      manual: [poison, healthy],
+      joinBehavior: async (d) => {
+        seen.push(d.instance_id);
+        if (d.instance_id === "inst-poison") throw new Error("worker exploded");
+        return { status: "joining" };
+      },
+    });
+    await monitor.tick(NOW + 5_000);
+    // The healthy request armed in the same tick despite the poison one.
+    expect(seen).toContain("inst-manual-1");
+    expect(full.armed).toEqual(["inst-manual-1"]);
+  });
+
+  it("a throwing notify retries next tick instead of recording", async () => {
     const req = manualRequest();
     const { monitor, full } = build({ manual: [req], failNotifyTimes: 1 });
     await monitor.tick(NOW + 5_000);
@@ -249,6 +268,8 @@ describe("notice delivery", () => {
     expect(full.terminal).toEqual(["inst-manual-1"]);
   });
 });
+
+describe("terminal handling", () => {
   it("treats a worker refusal as terminal for manual joins too", async () => {
     const { monitor, full } = build({
       manual: [manualRequest()],

@@ -404,7 +404,14 @@ export class ScribeMonitor {
       // single arm-if-due rule below.
       requests.push(...manual);
       for (const request of requests) {
-        await this.processRequest(request, now);
+        // One poison request must never stall the tick: a throwing notify
+        // (or status client) otherwise aborts calendar arming and every
+        // later manual behind it, wedging the whole monitor on one intent.
+        try {
+          await this.processRequest(request, now);
+        } catch (error) {
+          this.log(`scribe: request ${request.descriptor.instance_id} failed: ${error instanceof Error ? error.message : "unknown"}`);
+        }
       }
     } catch (error) {
       this.log(`scribe: poll failed: ${error instanceof Error ? error.message : "unknown"}`);
