@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { type BrowserContext, type Page } from "playwright";
 
 import type { WorkerConfig } from "./config.js";
 import { CAPTURE_INIT_SCRIPT } from "./capture-init.js";
@@ -13,6 +13,7 @@ import { toSegment } from "./gmeet-segment.js";
 import { hostAllowed, meetingUrlKey, nativeIdFor } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
+import { sharedBrowserContext } from "./shared-browser.js";
 import { WORKER_BOOT_ID } from "./boot.js";
 import { postMeetDisclosure } from "./chat.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
@@ -231,35 +232,43 @@ class MeetSession {
     try {
       const { getJoinBrowserArgs } = await loadVexaJoin();
       const args = getJoinBrowserArgs().filter((a) => a !== "--incognito");
-      // Navigation guard first: resolves + validates the meeting host and
-      // pins it for this session. A violation fails the join here, before
-      // any browser exists — never after navigation starts.
+      // Navigation guard first: resolves + validates the meeting host. A
+      // violation fails the join here, before any browser exists — never
+      // after navigation starts.
       const guard = await createNavigationGuard({
         meetingUrl: this.descriptor.meeting_url,
         log: (message) => console.log(message),
       });
-      const pin = guard.resolverRulesFlag();
-      this.context = await chromium.launchPersistentContext(this.config.profileDir, {
+      // One persistent context per worker process: the signed-in profile is
+      // single-instance, so a second launchPersistentContext fails on the
+      // profile lock. Every capture takes its own tab instead (verified
+      // live: one account can sit in two meetings in two tabs).
+      this.context = await sharedBrowserContext({
+        profileDir: this.config.profileDir,
         headless: this.config.headless,
-        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu", ...(pin ? [pin] : [])],
+        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
         locale: "en-US",
       });
-      // Context-wide interception before any navigation: every request —
+      // Fresh tab per capture; never reuse a stray about:blank page.
+      this.page = await this.context.newPage();
+      // Per-page interception before any navigation: every request —
       // initial page, redirect hops, subresources, iframes, popups — is
       // validated pre-flight, so aborts never contact their destination.
-      await guard.install(this.context);
+      await guard.install(this.page);
       const isMeet = this.descriptor.platform === "google_meet";
       if (isMeet) {
         // Per-channel Meet lane: the remote-audio hook (so elements exist even if
         // Meet hides them — the entry dedupes by audio track id) + the capture
-        // bundle. The mixed tap is NOT installed for Meet.
+        // bundle. The mixed tap is NOT installed for Meet. Installed per page
+        // (was: per context) so Meet and non-Meet captures sharing the browser
+        // keep their lanes separate.
         const bundle = this.config.gmeetBundlePath ?? DEFAULT_GMEET_BUNDLE;
         if (!existsSync(bundle)) {
           throw new Error(`gmeet capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
         }
-        await this.context.addInitScript({ content: REMOTE_AUDIO_HOOK });
-        await this.context.addInitScript({ path: bundle });
-        await this.context.addInitScript({
+        await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
+        await this.page.addInitScript({ path: bundle });
+        await this.page.addInitScript({
           content: `window.__scribeGmeetConfig = ${JSON.stringify({
             selfName: this.config.selfName,
             maxStreams: this.config.maxStreams,
@@ -267,9 +276,8 @@ class MeetSession {
           })};`,
         });
       } else {
-        await this.context.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+        await this.page.addInitScript({ content: CAPTURE_INIT_SCRIPT });
       }
-      this.page = this.context.pages()[0] ?? await this.context.newPage();
 
       this.status = "joining";
       const { joinMeeting } = await loadVexaJoin();
@@ -548,7 +556,10 @@ class MeetSession {
         } catch { /* best effort */ }
       }
     } finally {
-      await this.context?.close().catch(() => {});
+      // Close this capture's tab only. The persistent context is shared by
+      // every capture in the worker and outlives any one of them.
+      await this.page?.close().catch(() => {});
+      this.page = null;
     }
     try {
       await this.flush(true, status);

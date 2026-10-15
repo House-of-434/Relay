@@ -58,7 +58,7 @@ test("decide allows the meeting host and public supporting hosts", async () => {
   assert.deepEqual((await guard.decide(MEET)).allow, true);
   assert.deepEqual((await guard.decide("https://accounts.google.com/o/oauth2/auth")).allow, true);
   assert.deepEqual((await guard.decide("data:text/plain,hi")).allow, true);
-  assert.equal(guard.resolverRulesFlag(), "--host-resolver-rules=MAP meet.google.com 142.250.1.2");
+  assert.deepEqual(guard.pinnedIps, ["142.250.1.2", "2607:f8b0:4004:837::200e"]);
 });
 
 test("decide aborts literals, private answers, credentials, ports, schemes", async () => {

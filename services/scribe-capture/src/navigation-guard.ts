@@ -5,22 +5,21 @@
  * redirects natively. This guard runs INSIDE the capture worker, at the only
  * point that actually opens connections: the browser's request pipeline.
  *
- * Three mechanisms, each covering the others' gaps:
- * 1. Host-resolver pinning: the meeting host is resolved once, every answer
- *    must be a public address, and Chromium is launched with
- *    --host-resolver-rules mapping the host to the validated addresses. DNS
- *    cannot rebind between validation and connection.
- * 2. Pre-flight interception: a context-wide route handler validates EVERY
- *    request before it leaves the browser — initial navigation, every
+ * Two mechanisms, each covering the other's gaps:
+ * 1. Resolve-and-validate: the meeting host is resolved once per guard;
+ *    every answer must be public or the join fails before any browser
+ *    exists. Every subsequent request reuses the per-guard DNS cache, so a
+ *    host cannot rebind between the check and the connection.
+ * 2. Pre-flight interception: a route handler installed PER PAGE validates
+ *    EVERY request before it leaves the browser — initial navigation, every
  *    redirect hop (Playwright re-fires the handler per hop with the
  *    redirectedFrom chain), subresources, iframes, popups. Aborted requests
  *    never contact their destination, so post-navigation rejection races do
  *    not apply. Destinations resolving to non-public addresses (IPv4 and
- *    IPv6, including mapped/embedded forms), IP literals outside the pinned
- *    set, and credentialed URLs are all refused.
- * 3. Uniform policy: navigation and supporting traffic (auth, CDN) share one
- *    rule — every hop must resolve public. There is no weaker lane for an
- *    attacker-controlled redirect to hide in.
+ *    IPv6, including mapped/embedded forms), IP literals outside the
+ *    validated meeting set, and credentialed URLs are all refused. Per-page
+ *    installation is what makes multi-meeting tabs safe: each page enforces
+ *    its own meeting's policy instead of sharing one context-wide rule.
  *
  * Out of scope by design: UDP media (STUN/TURN) never traverses the request
  * pipeline — same residual as any browser. Container-level egress policy is
@@ -32,7 +31,7 @@
  */
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
-import type { BrowserContext, Route } from "playwright";
+import type { Route } from "playwright";
 
 function parseV4(ip: string): number[] | null {
   const parts = ip.split(".");
@@ -162,12 +161,16 @@ export interface NavigationGuardOptions {
 export interface NavigationGuard {
   meetingHost: string;
   pinnedIps: string[];
-  /** Chromium --host-resolver-rules flag pinning the meeting host, or null
-   * when pinning is unavailable (interception still enforces). */
-  resolverRulesFlag(): string | null;
-  install(context: BrowserContext): Promise<void>;
+  install(page: RoutablePage): Promise<void>;
   /** The per-request verdict, exposed for tests. Aborts never contact. */
   decide(url: string): Promise<{ allow: boolean; reason: string }>;
+}
+
+/** Anything that can carry a request route: a whole context or one page.
+ * Multi-meeting tabs install per page so each capture enforces its own
+ * meeting's policy. */
+export interface RoutablePage {
+  route(pattern: string, handler: (route: Route) => void): Promise<void>;
 }
 
 /** Build the guard: parse + resolve + validate the meeting host NOW, so a
@@ -239,18 +242,13 @@ export async function createNavigationGuard(options: NavigationGuardOptions): Pr
   return {
     meetingHost,
     pinnedIps: [...pinnedIps],
-    resolverRulesFlag() {
-      const firstV4 = pinnedIps.find((ip) => isIP(ip) === 4) ?? pinnedIps[0];
-      if (!firstV4) return null;
-      return `--host-resolver-rules=MAP ${meetingHost} ${firstV4}`;
-    },
-    async install(context: BrowserContext): Promise<void> {
-      // Context-wide: covers the initial navigation, every redirect hop
+    async install(page: RoutablePage): Promise<void> {
+      // Per page: covers the initial navigation, every redirect hop
       // (each fires the handler with its redirectedFrom chain), subresources,
-      // iframes, and popups. The handler runs before the request leaves the
-      // browser, so abort() means no contact — there is no post-navigation
-      // rejection race.
-      await context.route("**", (route: Route) => {
+      // iframes, and popups opened from the page. The handler runs before the
+      // request leaves the browser, so abort() means no contact — there is
+      // no post-navigation rejection race.
+      await page.route("**", (route: Route) => {
         void (async () => {
           let verdict: { allow: boolean; reason: string };
           try {
