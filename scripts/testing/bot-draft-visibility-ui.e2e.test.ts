@@ -40,7 +40,7 @@ if (!enabled) console.log("skipping draft visibility UI: set RELAY_UI_E2E=1 to r
     // macOS. Exercise the real select's change handler without the OS popup;
     // creation and its resulting audience still run through the real UI/API.
     const state = await ui("snapshot");
-    const audience = Object.entries(state.refs as Record<string, { name: string; role: string }>).find(([, item]) => item.role === "combobox" && item.name === "Who can see it");
+    const audience = Object.entries(state.refs as Record<string, { name: string; role: string }>).find(([, item]) => item.role === "combobox" && item.name.startsWith("Who can see it"));
     expect(audience).toBeDefined();
     await ui("eval", "--js", "(() => { const select = document.querySelector('[data-new-bot-visibility] select'); select.value = 'admins'; select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()");
     await expect.poll(async () => (await ui("eval", "--js", "document.querySelector('[data-new-bot-visibility] select')?.value")).result).toBe("admins");
