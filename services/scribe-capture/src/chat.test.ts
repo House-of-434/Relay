@@ -10,6 +10,8 @@ interface FakeOptions {
   buttonVisible?: boolean;
   buttonOpens?: boolean;
   fillThrows?: boolean;
+  /** Composer keeps the text after send (focus lost / wrong box). */
+  stuckAfterSend?: boolean;
 }
 
 interface FakeLocator {
@@ -17,11 +19,15 @@ interface FakeLocator {
   isVisible(): Promise<boolean>;
   fill(text: string): Promise<void>;
   click(): Promise<void>;
+  inputValue(): Promise<string>;
+  textContent(): Promise<string | null>;
 }
 
 function fakePage(options: FakeOptions = {}) {
   const calls: string[] = [];
+  const logs: string[] = [];
   let visible = options.openInitially ?? false;
+  let content = "";
 
   const inputLocator: FakeLocator = {
     first: () => inputLocator,
@@ -29,10 +35,13 @@ function fakePage(options: FakeOptions = {}) {
     fill: async (text: string): Promise<void> => {
       if (options.fillThrows) throw new Error("fill failed");
       calls.push(`fill:${text}`);
+      content = text;
     },
     click: async (): Promise<void> => {
       calls.push("click:input");
     },
+    inputValue: async (): Promise<string> => options.stuckAfterSend ? content : "",
+    textContent: async (): Promise<string | null> => options.stuckAfterSend ? content : "",
   };
   const buttonLocator: FakeLocator = {
     first: () => buttonLocator,
@@ -49,12 +58,12 @@ function fakePage(options: FakeOptions = {}) {
     waitForTimeout: async (): Promise<void> => {},
     keyboard: {
       press: async (key: string): Promise<void> => { calls.push(`press:${key}`); },
-      type: async (text: string): Promise<void> => { calls.push(`type:${text}`); },
+      type: async (text: string): Promise<void> => { calls.push(`type:${text}`); content = text; },
     },
   };
   page.mainFrame = () => page;
   page.frames = () => [page];
-  return { page: page as Page, calls };
+  return { page: page as Page, calls, logs };
 }
 
 test("sendMeetChat opens the chat, fills the composer, and sends", async () => {
@@ -80,6 +89,33 @@ test("sendMeetChat falls back to click+type when fill() is unsupported", async (
 test("sendMeetChat rejects a message over Meet's own limit", async () => {
   const { page } = fakePage({ openInitially: true });
   await assert.rejects(() => sendMeetChat(page, "x".repeat(MEET_CHAT_MAX + 1)), /500 characters/);
+});
+
+test("sendMeetChat logs which composer matched", async () => {
+  const { page, logs } = fakePage({ openInitially: true });
+  await sendMeetChat(page, "hello", 1500, 16, (m) => logs.push(m));
+  assert.ok(logs.some((line) => line.includes("chat composer matched")));
+});
+
+test("sendMeetChat throws when the composer keeps the message", async () => {
+  const { page } = fakePage({ openInitially: true, stuckAfterSend: true });
+  await assert.rejects(() => sendMeetChat(page, "hello"), /still holds the message/);
+});
+
+test("postMeetDisclosure retries a stuck send once, then uses the fallback", async () => {
+  const { page, calls } = fakePage({ openInitially: true, stuckAfterSend: true });
+  let seen: string | undefined;
+  const outcome = await postMeetDisclosure(page, "notice", {
+    fallback: async (_page, text) => { seen = text; },
+  });
+  assert.equal(outcome, "fallback");
+  assert.equal(seen, "notice");
+  assert.equal(calls.filter((c) => c === "fill:notice").length, 2);
+});
+
+test("postMeetDisclosure reports failure after two stuck attempts with no fallback", async () => {
+  const { page } = fakePage({ openInitially: true, stuckAfterSend: true });
+  assert.equal(await postMeetDisclosure(page, "notice"), "failed");
 });
 
 test("postMeetDisclosure runs the fallback when the scripted send fails", async () => {
