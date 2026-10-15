@@ -335,35 +335,6 @@ export class RelayDatabase {
   }
 
   /**
-   * Capture rows by capture identity, for the capture-status tool. A meeting
-   * row is written at admission (status active) and updated through
-   * completed/partial/failed, so presence alone proves the join happened;
-   * absence means still queued/joining (or never requested). Bounded and
-   * read-only.
-   */
-  async findMeetingsByInstanceIds(instanceIds: string[]): Promise<Record<string, unknown>[]> {
-    const ids = [...new Set(instanceIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 64))].slice(0, 20);
-    if (ids.length === 0) return [];
-    const client = this.client("relay");
-    const { data, error } = await client.schema("transcripts").from("meetings")
-      .select("id,instance_id,native_id,title,status,segment_count,actual_start,organizer_email,error")
-      .in("instance_id", ids);
-    supabaseError(error);
-    return (data ?? []) as Record<string, unknown>[];
-  }
-
-  async findMeetingsByNativeIds(nativeIds: string[]): Promise<Record<string, unknown>[]> {
-    const ids = [...new Set(nativeIds.filter((id) => typeof id === "string" && id.length > 0 && id.length <= 64))].slice(0, 20);
-    if (ids.length === 0) return [];
-    const client = this.client("relay");
-    const { data, error } = await client.schema("transcripts").from("meetings")
-      .select("id,instance_id,native_id,title,status,segment_count,actual_start,organizer_email,error")
-      .in("native_id", ids);
-    supabaseError(error);
-    return (data ?? []) as Record<string, unknown>[];
-  }
-
-  /**
    * Operational tool-call log. Unlike `write`, this is not an agent-facing
    * table: logs.* is denied to agents (permissions.ts) and only the service
    * role writes it. Callers swallow a failure so a logging outage never

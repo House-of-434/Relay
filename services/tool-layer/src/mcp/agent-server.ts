@@ -11,7 +11,6 @@ import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
-import { registerScribeStatusTools } from "./scribe-status.js";
 import { registerTranscriptTools } from "./transcript-server.js";
 import { instrumentToolCalls, type ToolCallLogger } from "./tool-log.js";
 
@@ -63,7 +62,7 @@ export function createAgentMcpServer(
   server.registerTool(
     "relay_read",
     {
-      description: "Read rows from a table explicitly permitted for this Relay agent. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported.",
+      description: "Read rows from a table explicitly permitted for this Relay agent: app.companies, app.people, app.events (shared workspace knowledge), history.conversations (your own conversations), transcripts.meetings (captured meeting records). Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. transcripts.meetings readiness: status is the capture lifecycle (terminal: completed, partial, failed, skipped); a transcript is readable only when segment_count > 0 — a terminal capture with 0 segments has none. Find a meeting from its link by filtering native_id eq the provider meeting code (Meet: the meet.google.com path code; Zoom: the /j|wc|s/ number; Teams: the /meet/ id), or look up a scribe_join_meeting call by filtering instance_id eq its returned id. No matching row means no capture exists: say so and never invent transcript content.",
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
@@ -131,12 +130,10 @@ export function createAgentMcpServer(
     registerTranscriptTools(server, agent, database, userId);
   }
 
-  // Capture-status rides with the join tool: same Mercury-only grant, same
-  // authenticated-actor rule. It answers "did it join / is it transcribed"
-  // from the transcript rows, so follow-ups resolve to a meeting_id.
-  if (userId && scribe && SCRIBE_PERMISSIONS[agent].length > 0) {
-    registerScribeStatusTools(server, agent, database, userId);
-  }
+  // Capture-status was folded into relay_read (native_id/instance_id
+  // filters plus the readiness rule above) so one general tool covers it;
+  // search/transcript tools stay separate — they read segment text, which
+  // relay_read deliberately cannot.
 
   if (gmail && GMAIL_PERMISSIONS[agent].length > 0) {
     const gmailContext: RelayGmailContext = gmail;
@@ -301,7 +298,7 @@ export function createAgentMcpServer(
     server.registerTool(
       "scribe_join_meeting",
       {
-        description: "Queue a request for Relay Scribe to join a live meeting and transcribe it. Pass the meeting URL the user gave you (Google Meet, Zoom, or Teams). Accepted means queued, NOT joined: Scribe typically appears within ~30 seconds and announces itself in the meeting chat, but admission cannot be confirmed from here — use scribe_capture_status to confirm it joined. already_accepted means a capture for this room is already queued or underway; do not resubmit. Scheduled meetings are picked up automatically and must not be submitted here.",
+        description: "Queue a request for Relay Scribe to join a live meeting and transcribe it. Pass the meeting URL the user gave you (Google Meet, Zoom, or Teams). Accepted means queued, NOT joined: Scribe typically appears within ~30 seconds and announces itself in the meeting chat, but admission cannot be confirmed from here — read transcripts.meetings (filter instance_id eq the returned id) to confirm it joined. already_accepted means a capture for this room is already queued or underway; do not resubmit. Scheduled meetings are picked up automatically and must not be submitted here.",
         inputSchema: {
           meeting_url: z.string().min(1).max(2048),
           title: z.string().trim().min(1).max(200).optional(),
@@ -326,8 +323,8 @@ export function createAgentMcpServer(
               text: JSON.stringify({
                 ...result,
                 note: result.status === "accepted"
-                  ? "queued for joining; confirm with scribe_capture_status before telling the user it joined."
-                  : "this room already has a capture queued or underway; check it with scribe_capture_status.",
+                  ? "queued for joining; read transcripts.meetings by instance_id to confirm before telling the user it joined."
+                  : "this room already has a capture queued or underway; read transcripts.meetings by native_id to check it.",
               }),
             }],
           };

@@ -138,6 +138,12 @@ test("filters allow only shaped columns and fixed operators", () => {
   assert.deepEqual(validateFilters("app.companies", { actor_user: ACTOR_USER_ID }), [
     { column: "actor_user", operator: "eq", value: ACTOR_USER_ID },
   ]);
-  assert.throws(() => validateFilters("app.companies", { actor_user: "analyst@houseof434.com" }), /UUID/);
+  // Meeting lookups by provider code and capture id ride the same machinery.
+  assert.deepEqual(validateFilters("transcripts.meetings", { native_id: "abc-defg-hij" }), [
+    { column: "native_id", operator: "eq", value: "abc-defg-hij" },
+  ]);
+  assert.deepEqual(validateFilters("transcripts.meetings", { instance_id: "inst-1" }), [
+    { column: "instance_id", operator: "eq", value: "inst-1" },
+  ]);  assert.throws(() => validateFilters("app.companies", { actor_user: "analyst@houseof434.com" }), /UUID/);
   assert.throws(() => validateFilters("public.newsletter_subscribers", { email: "a@example.com" }), /No column shape/);
 });

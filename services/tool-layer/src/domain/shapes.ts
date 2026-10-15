@@ -94,8 +94,8 @@ export const SHAPES: Record<string, Shape> = {
       "created_at", "updated_at",
     ],
     filterable: [
-      "id", "platform", "status", "scheduled_start", "organizer_email",
-      "calendar_event_id",
+      "id", "instance_id", "native_id", "platform", "status", "scheduled_start",
+      "organizer_email", "calendar_event_id",
     ],
     valueEnums: {
       platform: ["google_meet", "zoom", "teams"],
