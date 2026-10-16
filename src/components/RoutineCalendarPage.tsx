@@ -1969,8 +1969,10 @@ export function RoutinesPage({ onBack, onOpenRoom }: { onBack: () => void; onOpe
     try {
       const response = await api("/api/calendar-calls");
       setCalls(response.calls ?? []);
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : String(cause));
+    } catch {
+      // Never surface the raw API error (e.g. a scope 403) beside the week
+      // picker; the calendar still renders and the row dismisses.
+      setError("Could not load scheduled calls.");
     }
   }, []);
   useEffect(() => {

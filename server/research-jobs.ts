@@ -14,9 +14,11 @@ import { newId } from "./contracts.ts";
  * it up instead of trusting anything on the wire.
  *
  * Lifecycle (server-enforced, the client never transitions state):
- *   proposed -> confirmed -> running -> completed | failed | cancelled
- * Terminal run states arrive from the run ledger via finish(); the registry
- * itself only moves jobs forward through propose/confirm/start.
+ *   proposed -> confirmed -> running
+ * `running` means the confirmation claimed a dedicated research thread. The
+ * registry stops there: the thread is the record, so no terminal run state is
+ * tracked here (a user's Stop and the thread transcript own completion).
+ * Cancellation before confirmation settles the job without a thread.
  */
 
 export const RESEARCH_JOB_TTL_MS = 24 * 60 * 60 * 1000;
@@ -51,7 +53,10 @@ export interface ResearchJob {
    * the actual provider (and any fallback) in its methodology section. */
   requestedProvider: "tinyfish";
   status: ResearchStatus;
-  runId: string | undefined;
+  /** The dedicated research thread claimed on confirmation. Claiming is the
+   * terminal act of this registry: the thread's own transcript is the durable
+   * record of execution, so nothing here tracks run progress. */
+  executionThreadId: string | undefined;
   createdAt: number;
   updatedAt: number;
 }
@@ -84,7 +89,7 @@ export class PendingResearchJobs {
   private readonly jobs = new Map<string, ResearchJob>();
   /** What a consumed request already did. A repeated tap on Confirm must
    * return this instead of falling through to a generic resolver. */
-  private readonly settled = new Map<string, { outcome: string; runId: string | undefined }>();
+  private readonly settled = new Map<string, { outcome: string; executionThreadId: string | undefined }>();
   private readonly settledAt = new Map<string, number>();
   private readonly now: () => number;
 
@@ -132,7 +137,7 @@ export class PendingResearchJobs {
       timeoutMinutes: parsed.data.timeoutMinutes,
       requestedProvider: "tinyfish",
       status: "proposed",
-      runId: undefined,
+      executionThreadId: undefined,
       createdAt: this.now(),
       updatedAt: this.now(),
     };
@@ -157,29 +162,26 @@ export class PendingResearchJobs {
     return job;
   }
 
-  /** confirmed -> running. Consume-once: only the first start attaches a
-   * run; every later call returns undefined so a retry or double-tap can
+  /** confirmed -> running. Consume-once: only the first start claims a
+   * thread; every later call returns undefined so a retry or double-tap can
    * never launch duplicate execution. */
-  start(researchId: string, runId: string): ResearchJob | undefined {
+  start(researchId: string, executionThreadId: string): ResearchJob | undefined {
     this.evictExpired();
     const job = this.jobs.get(researchId);
     if (!job || job.status !== "confirmed") return undefined;
     job.status = "running";
-    job.runId = runId;
+    job.executionThreadId = executionThreadId;
     job.updatedAt = this.now();
     return job;
   }
 
-  /** running -> completed | failed | cancelled. Called from the run ledger's
-   * completion path; unknown or already-terminal jobs resolve to nothing. */
-  finish(researchId: string, outcome: "completed" | "failed" | "cancelled"): ResearchJob | undefined {
+  /** Whether this thread is a claimed research execution. The one proposal
+   * that must not run from inside it is another deep-research proposal, which
+   * would nest a confirmation whose thread then waits on a busy bot. Scoped
+   * here to the research path only: normal bot-to-bot delegation stays open. */
+  isResearchExecutionThread(threadId: string): boolean {
     this.evictExpired();
-    const job = this.jobs.get(researchId);
-    if (!job || job.status !== "running") return undefined;
-    job.status = outcome;
-    job.updatedAt = this.now();
-    this.settle(researchId, outcome, job.runId);
-    return job;
+    return [...this.jobs.values()].some((job) => job.status === "running" && job.executionThreadId === threadId);
   }
 
   /** proposed | confirmed -> cancelled. The user declined the card. */
@@ -195,20 +197,22 @@ export class PendingResearchJobs {
 
   /** Record the outcome of a consumed request, so an identical repeat is
    * answered from history instead of being treated as a stranger's request. */
-  settle(researchId: string, outcome: string, runId: string | undefined): void {
-    this.settled.set(researchId, { outcome, runId });
+  settle(researchId: string, outcome: string, executionThreadId: string | undefined): void {
+    this.settled.set(researchId, { outcome, executionThreadId });
     this.settledAt.set(researchId, this.now());
   }
 
-  settledOutcome(researchId: string): { outcome: string; runId: string | undefined } | undefined {
+  settledOutcome(researchId: string): { outcome: string; executionThreadId: string | undefined } | undefined {
     this.evictExpired();
     return this.settled.get(researchId);
   }
 
   private evictExpired(): void {
+    // A claimed job is only needed while its thread is new enough to guard
+    // against re-proposal; nothing tracks its progress, so it ages out too.
     const cutoff = this.now() - RESEARCH_JOB_TTL_MS;
     for (const [id, job] of this.jobs) {
-      if (job.updatedAt <= cutoff && job.status !== "running") this.jobs.delete(id);
+      if (job.updatedAt <= cutoff) this.jobs.delete(id);
     }
     // Keep a consumed request replayable a little longer than it was open.
     const replayCutoff = this.now() - RESEARCH_JOB_TTL_MS * 2;

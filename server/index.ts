@@ -421,7 +421,7 @@ import { LocalVmSeatPool, type LocalVmSeatHolder } from "./local-vm-seat-pool.ts
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
-import { isLiveResearchExecution, resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createOptionsCard } from "./options-card.ts";
@@ -9553,12 +9553,6 @@ function syncRoutineRunToSource(run: RoutineRun): string | null {
     if (source.group) store.patchGroup(source.group.id, { unread: true });
     else store.patchTask(source.bot.id, sourceThreadId, { unread: true });
   }
-  // Close the research job lifecycle from the run ledger's terminal truth:
-  // the registry moves proposed -> confirmed -> running, and the ledger
-  // reports running -> completed | failed | cancelled here.
-  if (run.triggerSource === "research" && ["completed", "failed", "cancelled"].includes(run.status)) {
-    researchJobs?.finish(run.routineId, run.status as "completed" | "failed" | "cancelled");
-  }
   return sourceThreadId;
 }
 
@@ -15174,20 +15168,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const role = from.relayAgent;
         if (role !== "scout") return json(res, 403, { error: "only Scout may propose deep research" });
         if (!researchJobs) return json(res, 503, { error: "research proposals are unavailable" });
-        // A live research execution thread is the confirmed run itself.
-        // Proposing from inside it would nest a second confirmation whose
-        // run then defers behind this busy bot, so nothing ever starts.
-        // Scope the check to this thread's own run: other active runs by the
-        // same bot never block a proposal, and terminal runs stay open to
-        // legitimate follow-up research.
-        if (routines) {
-          const executionRunId = store.taskByThread(from.id, body.fromThreadId)?.routineRunId;
-          if (executionRunId) {
-            const execution = routines.listRuns().find((run) => run.id === executionRunId);
-            if (isLiveResearchExecution(execution)) {
-              return json(res, 409, { error: "this conversation is already the confirmed deep-research execution — do the investigation here with web_search and the browser tools and deliver the cited report, instead of calling propose_deep_research again" });
-            }
-          }
+        // A claimed research execution thread is the confirmed run itself.
+        // Proposing another deep-research job from inside it would nest a
+        // second confirmation whose thread then has to wait, so nothing ever
+        // starts. Scoped to THIS proposal path only: it is not a ban on
+        // bot-to-bot delegation, which a research thread may still use.
+        if (researchJobs.isResearchExecutionThread(body.fromThreadId)) {
+          return json(res, 409, { error: "this conversation is already the confirmed deep-research execution — do the investigation here with web_search and the browser tools and deliver the cited report, instead of calling propose_deep_research again" });
         }
         let job;
         try {
@@ -20385,16 +20372,24 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           settleCard("allow");
           return json(res, 200, { ok: true, outcome });
         }
-        // One-shot deep research: the pending job is server-side only, and
-        // confirming it starts exactly one execution — never a routine, never
-        // a calendar entry. A requestId with no live pending entry is not
-        // ours; fall through.
+        // One-shot deep research: the pending job is server-side only. On
+        // confirmation this opens ONE dedicated research thread through the
+        // ordinary thread path — never a routine, never a run receipt. The
+        // thread is created and dispatched here, in the same synchronous
+        // claim, so the model never gets a turn between approval and
+        // execution. A requestId with no live pending entry is not ours;
+        // fall through.
         if (researchJobs) {
           const researchPending = researchJobs.peek(requestId);
           const researchReplayed = researchJobs.settledOutcome(requestId);
           if (researchReplayed !== undefined) {
             console.log(`[relay-research] resolve ${requestId} replay -> ${researchReplayed.outcome}`);
-            return json(res, 200, { ok: true, outcome: researchReplayed.outcome, ...(researchReplayed.runId ? { runId: researchReplayed.runId } : {}), replayed: true });
+            return json(res, 200, { ok: true, outcome: researchReplayed.outcome, ...(researchReplayed.executionThreadId ? { threadId: researchReplayed.executionThreadId } : {}), replayed: true });
+          }
+          // A claim in flight (its dispatch is still awaiting) already owns
+          // this confirmation: answer with its thread instead of a second one.
+          if (researchPending?.status === "running") {
+            return json(res, 200, { ok: true, outcome: "started", threadId: researchPending.executionThreadId, replayed: true });
           }
           if (researchPending) {
             const cardMessage = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
@@ -20423,38 +20418,49 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               settleResearchCard("deny");
               return json(res, 200, { ok: true, outcome: "cancelled" });
             }
-            if (!routines) return json(res, 503, { error: "research execution is unavailable" });
             const confirmed = researchJobs.confirm(requestId);
             if (!confirmed) return json(res, 410, { error: "this confirmation is no longer pending" });
-            let runId: string;
-            try {
-              ({ id: runId } = routines.enqueueResearch({
-                researchId: requestId,
-                title: confirmed.title,
-                brief: `${confirmed.brief}\n\nResearch provider: TinyFish via the web_search tool for discovery, then browser_open/browser_read for real reading. If web_search reports it is unavailable, say so in the report's methodology section and record which provider actually answered (including any fallback) — never present fallback results as TinyFish results.`,
-                botId: confirmed.botId,
-                runOn: "maus",
-                sourceThreadId: confirmed.threadId,
-                ...(confirmed.timeoutMinutes !== undefined ? { timeoutMinutes: confirmed.timeoutMinutes } : {}),
-                requestedAt: Date.now(),
-              }));
-            } catch (error) {
-              return json(res, 502, { error: error instanceof Error ? error.message : "the research could not start" });
+            // Create the thread and claim it with no await between them: the
+            // claim is the exactly-once gate, so a double tap or retry can
+            // never open a second research thread.
+            const task = store.createTask(bot.id, confirmed.title, false, undefined, { botId: bot.id, name: bot.name, at: Date.now() });
+            if (!task) return json(res, 500, { error: "the research thread could not be created" });
+            const claimed = researchJobs.start(requestId, task.threadId);
+            if (!claimed) {
+              // A concurrent resolve won the race: take back the thread this
+              // attempt just made and answer with the winner's.
+              store.deleteTask(bot.id, task.threadId);
+              const winner = researchJobs.settledOutcome(requestId);
+              return json(res, 200, { ok: true, outcome: "started", threadId: winner?.executionThreadId ?? task.threadId, replayed: true });
             }
-            const started = researchJobs.start(requestId, runId);
-            if (!started) {
-              // A concurrent resolve won the race: answer with its run.
-              const winner = researchJobs.peek(requestId);
-              return json(res, 200, { ok: true, outcome: "started", runId: winner?.runId ?? runId, replayed: true });
-            }
+            threadStarters.set(task.threadId, threadPersonKey(confirmed.threadId));
+            // The work is still for the person whose request the proposal was
+            // on, in the same conversation the plan card was shown in.
+            inheritThreadOwner(DATA_DIR, confirmed.threadId, task.threadId);
+            const originOwner = connectorThread(bot.id, confirmed.threadId);
+            const originTitle = originOwner?.group ? originOwner.group.name : (store.taskByThread(bot.id, confirmed.threadId)?.title ?? "");
+            const providerNote = "Research provider: TinyFish via the web_search tool for discovery, then browser_open/browser_read for real reading. If web_search reports it is unavailable, say so in the report's methodology section and record which provider actually answered (including any fallback) — never present fallback results as TinyFish results.";
+            const timebox = confirmed.timeoutMinutes !== undefined
+              ? `\n\nTimebox: aim to finish within ${confirmed.timeoutMinutes} minutes. This is guidance, not an enforced deadline; the person can stop this thread at any time.`
+              : "";
+            const opening = `[Research thread you opened yourself${originTitle ? ` from #${originTitle}` : ""}. The plan below was confirmed by the person: do the investigation here with web_search and the browser tools, then deliver the cited report in this conversation.]\n\n${confirmed.title}\n\n${confirmed.brief}\n\n${providerNote}${timebox}`;
+            const chip: Omit<Message, "id" | "at"> = {
+              role: "bot",
+              kind: "activity",
+              tool: { name: `Opened thread #${task.title}`, ok: true },
+              threadRef: { botId: bot.id, threadId: task.threadId, title: task.title },
+            };
+            if (originOwner?.group) chip.from = { botId: bot.id, name: bot.name, color: bot.color };
+            store.appendMessage(confirmed.threadId, chip);
+            const dispatchState = await startOrQueueOpenedThread(bot.id, task.threadId, opening, isUnattended(bot.id, confirmed.threadId));
             appendDecision(DATA_DIR, {
               threadId, requestId, botId: bot.id, botName: bot.name,
               tool: "research_start",
               summary: `research started: ${confirmed.title}`, decision: "user-approved", source: "research",
             });
-            researchJobs.settle(requestId, "started", runId);
+            researchJobs.settle(requestId, "started", task.threadId);
             settleResearchCard("allow");
-            return json(res, 200, { ok: true, outcome: "started", runId });
+            return json(res, 200, { ok: true, outcome: "started", threadId: task.threadId, state: dispatchState.state });
           }
         }
         const skillCard = store.messagesFor(threadId).find(

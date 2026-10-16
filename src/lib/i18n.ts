@@ -82,7 +82,10 @@ export function tFromServer(key: string | undefined, fallback: string | undefine
  * a placeholder without a matching param stays verbatim so a bad pack shows
  * its seams instead of dropping words. */
 export function t(key: LocaleKey, params?: Record<string, string | number>): string {
-  const template = applyProductName(activePack[key] ?? en[key]);
+  // A key the catalog does not know (a newer server's trigger, a dynamic key
+  // built at runtime) must never throw: that unmounts the whole view to a
+  // blank page. Fall back to the key itself so the row still renders.
+  const template = applyProductName(activePack[key] ?? en[key] ?? key);
   if (!params) return template;
   return template.replace(/\{(\w+)\}/g, (match, name: string) =>
     name in params ? String(params[name]) : match,

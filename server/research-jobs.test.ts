@@ -48,20 +48,30 @@ describe("research job proposals", () => {
 });
 
 describe("research job lifecycle", () => {
-  it("enforces proposed -> confirmed -> running -> completed", () => {
+  it("enforces proposed -> confirmed -> running, claiming the thread exactly once", () => {
     const pending = jobs();
     const job = pending.submit({ ...PROPOSAL, botId: BOT, threadId: THREAD });
-    // Cannot start before confirmation.
-    expect(pending.start(job.researchId, "run-1")).toBeUndefined();
+    // Cannot claim a thread before confirmation.
+    expect(pending.start(job.researchId, "exec-1")).toBeUndefined();
     expect(pending.confirm(job.researchId)?.status).toBe("confirmed");
     // Confirming again is idempotent, not new work.
     expect(pending.confirm(job.researchId)?.status).toBe("confirmed");
-    expect(pending.start(job.researchId, "run-1")?.status).toBe("running");
+    expect(pending.start(job.researchId, "exec-1")?.status).toBe("running");
     // A second start never launches duplicate execution.
-    expect(pending.start(job.researchId, "run-2")).toBeUndefined();
-    expect(pending.peek(job.researchId)?.runId).toBe("run-1");
-    expect(pending.finish(job.researchId, "completed")?.status).toBe("completed");
-    expect(pending.finish(job.researchId, "failed")).toBeUndefined();
+    expect(pending.start(job.researchId, "exec-2")).toBeUndefined();
+    expect(pending.peek(job.researchId)?.executionThreadId).toBe("exec-1");
+  });
+
+  it("recognizes its own execution thread, and only that thread", () => {
+    const pending = jobs();
+    const job = pending.submit({ ...PROPOSAL, botId: BOT, threadId: THREAD });
+    expect(pending.isResearchExecutionThread("exec-1")).toBe(false);
+    pending.confirm(job.researchId);
+    pending.start(job.researchId, "exec-1");
+    expect(pending.isResearchExecutionThread("exec-1")).toBe(true);
+    // The proposing conversation is not itself an execution thread.
+    expect(pending.isResearchExecutionThread(THREAD)).toBe(false);
+    expect(pending.isResearchExecutionThread("other")).toBe(false);
   });
 
   it("cancels a proposed job and replays the outcome", () => {
@@ -69,15 +79,16 @@ describe("research job lifecycle", () => {
     const job = pending.submit({ ...PROPOSAL, botId: BOT, threadId: THREAD });
     expect(pending.cancel(job.researchId)?.status).toBe("cancelled");
     expect(pending.confirm(job.researchId)).toBeUndefined();
-    expect(pending.settledOutcome(job.researchId)).toEqual({ outcome: "cancelled", runId: undefined });
+    expect(pending.settledOutcome(job.researchId)).toEqual({ outcome: "cancelled", executionThreadId: undefined });
   });
 
   it("an unknown researchId resolves to nothing", () => {
     const pending = jobs();
     expect(pending.peek("missing")).toBeUndefined();
     expect(pending.confirm("missing")).toBeUndefined();
-    expect(pending.start("missing", "run-1")).toBeUndefined();
+    expect(pending.start("missing", "exec-1")).toBeUndefined();
     expect(pending.settledOutcome("missing")).toBeUndefined();
+    expect(pending.isResearchExecutionThread("missing")).toBe(false);
   });
 });
 

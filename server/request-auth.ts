@@ -339,6 +339,13 @@ export const CLIENT_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: Reg
   { methods: ["POST"], path: /^\/api\/routines\/[\w-]+\/run$/ },
   { methods: ["POST"], path: /^\/api\/routine-runs\/[\w-]+\/(?:cancel|seen)$/ },
   { methods: ["POST"], path: /^\/api\/routine-runs\/seen-all$/ },
+  // scheduled calls: the same shape as routines (a scheduled message with no
+  // secrets), so the Automations calendar the client already reads does not
+  // 403 beside the week picker on a client-scope session.
+  { methods: ["GET"], path: /^\/api\/calendar-calls$/ },
+  { methods: ["POST"], path: /^\/api\/calendar-calls$/ },
+  { methods: ["PATCH", "DELETE"], path: /^\/api\/calendar-calls\/[\w-]+$/ },
+  { methods: ["POST"], path: /^\/api\/calendar-calls\/[\w-]+\/room$/ },
   // webhook list is secret-free; creating or rotating one is not
   { methods: ["GET"], path: /^\/api\/webhooks$/ },
   // configured-or-not booleans; the handler strips the few identifying fields for clients

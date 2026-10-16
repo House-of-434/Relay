@@ -6,6 +6,16 @@ import { isRoutineProblemRun, type RoutineRun, type RoutineRunStatusFilter } fro
 import { routineDateTime, routineRunLabel, routineRunTime, routineRunTone } from "@/lib/routine-display";
 import type { Bot } from "@/state/store";
 
+function triggerLabel(run: RoutineRun): string {
+  // A row loaded from an older build can name a trigger this one has no
+  // catalog string for. Fall back rather than build a key t() cannot resolve,
+  // which once threw and blanked the whole logs section.
+  const trigger = run.triggerSource ?? (run.manual ? "manual" : "schedule");
+  return trigger === "schedule" || trigger === "manual" || trigger === "webhook"
+    ? t(`routines.trigger.${trigger}`)
+    : t("routines.trigger.schedule");
+}
+
 export function RoutineLogs({ runs, bots, loading, error, routineId, status, onStatusChange, onClearRoutine, onOpen }: {
   runs: RoutineRun[];
   bots: Bot[];
@@ -35,7 +45,7 @@ export function RoutineLogs({ runs, bots, loading, error, routineId, status, onS
     <div className="space-y-2">{filtered.slice(0, limit).map((run) => {
       const bot = bots.find((candidate) => candidate.id === run.botId);
       return <button type="button" key={run.id} onClick={() => onOpen(run)} aria-label={t("routines.openRun", { name: run.routineName, status: routineRunLabel(run) }) + (isRoutineProblemRun(run) && !run.seenAt ? ` · ${t("routines.unread")}` : "")} className="block w-full rounded-xl border border-hairline/40 bg-card p-4 text-left hover:border-accent/40 hover:bg-raised/40">
-        <div className="flex items-start justify-between gap-3"><div className="min-w-0"><span className="block truncate text-[13px] font-semibold text-ink">{run.routineName}</span><span className="mt-1 block text-[11px] text-ink-secondary">{bot?.name ?? t("routines.unavailableBot")} · {routineDateTime(run.scheduledFor)} · {t(`routines.trigger.${run.triggerSource ?? (run.manual ? "manual" : "schedule")}`)}</span></div><div className="flex shrink-0 items-center gap-1.5">{isRoutineProblemRun(run) && !run.seenAt && <span className="size-1.5 shrink-0 rounded-full bg-danger" title={t("routines.unread")} />}<span className={cn("text-[11.5px] font-medium", routineRunTone(run))}>{routineRunLabel(run)}</span></div></div>
+        <div className="flex items-start justify-between gap-3"><div className="min-w-0"><span className="block truncate text-[13px] font-semibold text-ink">{run.routineName}</span><span className="mt-1 block text-[11px] text-ink-secondary">{bot?.name ?? t("routines.unavailableBot")} · {routineDateTime(run.scheduledFor)} · {triggerLabel(run)}</span></div><div className="flex shrink-0 items-center gap-1.5">{isRoutineProblemRun(run) && !run.seenAt && <span className="size-1.5 shrink-0 rounded-full bg-danger" title={t("routines.unread")} />}<span className={cn("text-[11.5px] font-medium", routineRunTone(run))}>{routineRunLabel(run)}</span></div></div>
         <p className={cn("mt-2 line-clamp-2 whitespace-pre-wrap text-[12px] leading-relaxed", run.error ? "text-danger" : "text-ink-secondary")}>{run.attention || run.error || run.output || t("routines.noOutput")}</p>
       </button>;
     })}</div>
