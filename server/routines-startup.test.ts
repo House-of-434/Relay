@@ -135,7 +135,12 @@ it("recovers queued/due work without resurrecting an interrupted routine after r
     expect(runs.filter(run => run.routineId === cron.id && run.scheduledFor < Math.floor(Date.now() / 60_000) * 60_000)).toHaveLength(1);
     const restoredCron = (await api("GET", "/api/routines")).routines.find((routine: { id: string }) => routine.id === cron.id);
     expect(restoredCron.schedule).toEqual(cron.schedule);
-    expect(restoredCron.nextRunAt).toBeGreaterThan(Date.now());
+    // The every-minute cron re-arms to the next minute boundary computed at
+    // boot. A slow restart can cross that boundary before this assertion, so
+    // allow the boundary that just passed (still < one period away) rather
+    // than racing the clock.
+    expect(restoredCron.nextRunAt % 60_000).toBe(0);
+    expect(restoredCron.nextRunAt).toBeGreaterThan(Date.now() - 60_000);
     const recoveredPeer = (await api("GET", "/api/bots")).bots.find((bot: { id: string }) => bot.id === orphanPeer.id);
     expect(recoveredPeer.messages.some((message: { role: string }) => message.role === "user")).toBe(false);
     expect(Boolean(recoveredPeer.busy)).toBe(false);
