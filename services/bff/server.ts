@@ -12,6 +12,7 @@ import { handleInternalGmail, isInternalGmailPath, fetchGmailAttachment } from "
 import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-internal.ts";
 import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
 import { handleInternalBrowserTakeover, isInternalBrowserTakeoverPath } from "./browser-takeover.ts";
+import { handleInternalScribeStop, isInternalScribeStopPath } from "./scribe-stop.ts";
 import { handleInternalGitHub, isInternalGitHubPath } from "./github-internal.ts";
 import { handleInternalNotion, isInternalNotionPath } from "./notion-internal.ts";
 import { exchangeNotionToken, normalizeNotionId, NOTION_OAUTH_AUTHORIZE_URL } from "./notion-api.ts";
@@ -1986,6 +1987,18 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     // the Scribe join route; the harness persists the card and owns resume.
     if (isInternalBrowserTakeoverPath(url.pathname)) {
       await handleInternalBrowserTakeover(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        harnessBase,
+        harnessCapability: config.relayBffCapability,
+        fetcher,
+        now,
+      });
+      return;
+    }
+
+    if (isInternalScribeStopPath(url.pathname)) {
+      await handleInternalScribeStop(req, res, url.pathname, {
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
         harnessBase,

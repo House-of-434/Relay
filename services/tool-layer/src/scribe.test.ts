@@ -8,17 +8,39 @@ const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
 const ACTOR = '{"userId":"1457cb2a-7543-4b48-8854-a63cd160241f","botId":"bot","threadId":"thread"}';
 const MEET = "https://meet.google.com/abc-defg-hij";
 
-test("only Mercury may request a capture join", () => {
-  assert.deepEqual([...SCRIBE_PERMISSIONS.mercury], ["join"]);
+test("only Mercury may join or stop a capture", () => {
+  assert.deepEqual([...SCRIBE_PERMISSIONS.mercury], ["join", "stop"]);
   assert.deepEqual(SCRIBE_PERMISSIONS.scout, []);
   assert.deepEqual(SCRIBE_PERMISSIONS.curator, []);
   assert.doesNotThrow(() => authorizeScribe("mercury", "join"));
+  assert.doesNotThrow(() => authorizeScribe("mercury", "stop"));
   assert.throws(() => authorizeScribe("scout", "join"), /join access denied for scout/);
-  assert.throws(() => authorizeScribe("curator", "join"), /join access denied for curator/);
+  assert.throws(() => authorizeScribe("curator", "stop"), /stop access denied for curator/);
 });
 
-test("the join client posts exactly one BFF path", () => {
-  assert.deepEqual(Object.values(SCRIBE_INTERNAL_PATHS), ["/api/internal/scribe/join"]);
+test("the scribe client posts to the join and stop BFF paths", () => {
+  assert.deepEqual(Object.values(SCRIBE_INTERNAL_PATHS), [
+    "/api/internal/scribe/join",
+    "/api/internal/scribe/stop",
+  ]);
+});
+
+test("stopMeeting posts the reference to the stop path with capability and actor", async () => {
+  const seen: Array<{ url: string; init: RequestInit }> = [];
+  const client = new RelayScribeJoinClient({
+    bffInternalUrl: "http://127.0.0.1:8798/",
+    capability: CAPABILITY,
+    fetcher: (async (input: string | URL, init: RequestInit = {}) => {
+      seen.push({ url: String(input), init });
+      return new Response(JSON.stringify({ status: "stopped", instance_id: "inst-1" }), { status: 200 });
+    }) as unknown as typeof fetch,
+  });
+  const result = await client.stopMeeting(ACTOR, { meetingUrl: MEET });
+  assert.deepEqual(result, { status: "stopped", instance_id: "inst-1" });
+  assert.equal(seen[0]!.url, "http://127.0.0.1:8798/api/internal/scribe/stop");
+  assert.equal((seen[0]!.init.headers as Record<string, string>).authorization, `Bearer ${CAPABILITY}`);
+  assert.equal((seen[0]!.init.headers as Record<string, string>)["x-relay-actor-user"], ACTOR);
+  assert.deepEqual(JSON.parse(String(seen[0]!.init.body)), { meeting_url: MEET });
 });
 
 test("the client sends capability, actor, and idempotency key", async () => {
