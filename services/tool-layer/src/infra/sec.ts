@@ -366,7 +366,8 @@ export class SecProvider {
     if (!document) throw new Error(`no document found for filing ${accession}`);
     const url = `${SEC_ARCHIVES_BASE}/${cik}/${accession.replace(/-/g, "")}/${document}`;
     const body = await this.fetchDocument(url);
-    const text = htmlToText(body).slice(0, FILING_TEXT_MAX);
+    const fullText = htmlToText(body);
+    const text = fullText.slice(0, FILING_TEXT_MAX);
     return {
       source: "sec-edgar",
       sourceId: `${accession}:${document}`,
@@ -377,7 +378,7 @@ export class SecProvider {
         cik,
         accessionNumber: accession,
         primaryDocument: document,
-        truncated: body.length > FILING_TEXT_MAX,
+        truncated: fullText.length > FILING_TEXT_MAX,
       },
     };
   }
@@ -539,9 +540,10 @@ export function filingResult(
 
 function fullTextResult(hit: SecFullTextHit): ConnectorResult | undefined {
   const id = safeString(hit._id);
+  if (!id || !id.includes(":")) return undefined;
   const source = hit._source ?? {};
-  const accession = safeString(source.adsh) ?? (id ? id.slice(0, id.indexOf(":")) : undefined);
-  const document = safeString(id ? id.slice(id.indexOf(":") + 1) : undefined);
+  const accession = safeString(source.adsh) ?? safeString(id.slice(0, id.indexOf(":")));
+  const document = safeString(id.slice(id.indexOf(":") + 1));
   const ciks = Array.isArray(source.ciks) ? source.ciks.map(safeString).filter((cik): cik is string => cik !== undefined) : [];
   const cik = ciks[0] ? normalizeCik(ciks[0]) : undefined;
   if (!accession || !document || cik === undefined) return undefined;
@@ -614,7 +616,7 @@ function frameResult(
   const end = safeString(entry.end);
   return {
     source: "sec-edgar",
-    sourceId: `${padCik(cik)}:${taxonomy}:${tag}:${period}`,
+    sourceId: `${padCik(cik)}:${taxonomy}:${tag}:${unit}:${period}`,
     canonicalUrl: `${SEC_COMPANY_FACTS_URL}/CIK${padCik(cik)}.json`,
     title: entityName ? `${entityName} — ${tag}` : `${tag} (${period})`,
     publishedAt: end,
