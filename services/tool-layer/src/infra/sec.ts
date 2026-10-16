@@ -644,7 +644,7 @@ function factResult(
   });
   return {
     source: "sec-edgar",
-    sourceId: `${padCik(cik)}:${taxonomy}:${tag}`,
+    sourceId: unit ? `${padCik(cik)}:${taxonomy}:${tag}:${unit}` : `${padCik(cik)}:${taxonomy}:${tag}`,
     canonicalUrl: `${SEC_COMPANY_FACTS_URL}/CIK${padCik(cik)}.json`,
     title: `${taxonomy} ${tag}`,
     content: boundedText(`${taxonomy} ${tag}${unit ? ` (${unit})` : ""}`, SUMMARY_MAX),

@@ -88,7 +88,7 @@ export function registerGithubTools(server: McpServer, agent: Agent, context: Gi
         authorizeGithub(agent, "read");
         const normalized = assertRepo(name);
         const file = await client.getFile(actorAssertion, { repo: normalized, path, ref });
-        return { content: [{ type: "text" as const, text: JSON.stringify({ file: fileResult(normalized, file) }) }] };
+        return { content: [{ type: "text" as const, text: JSON.stringify({ file: fileResult(normalized, { ...file, ref }) }) }] };
       } catch (error) {
         return toolError(error);
       }

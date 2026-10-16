@@ -85,8 +85,8 @@ test("identical taxonomy/tag pairs from different companies produce distinct sou
   const [first] = await provider.companyFacts({ company: "AAA" });
   const [second] = await provider.companyFacts({ company: "BBB" });
   assert.ok(first && second);
-  assert.equal(first.sourceId, "0000320193:us-gaap:Revenues");
-  assert.equal(second.sourceId, "0000789019:us-gaap:Revenues");
+  assert.equal(first.sourceId, "0000320193:us-gaap:Revenues:USD");
+  assert.equal(second.sourceId, "0000789019:us-gaap:Revenues:USD");
   assert.notEqual(first.sourceId, second.sourceId);
   assert.equal(first.canonicalUrl, second.canonicalUrl.replace("0000789019", "0000320193"));
 });
@@ -280,7 +280,7 @@ test("compareFacts returns one result per company for the same tag", async () =>
   const provider = new SecProvider({ userAgent: UA, fetcher });
   const results = await provider.compareFacts({ companies: ["AAA", "BBB"], tag: "Revenues" });
   assert.equal(results.length, 2);
-  assert.equal(results[0]!.sourceId, "0000320193:us-gaap:Revenues");
+  assert.equal(results[0]!.sourceId, "0000320193:us-gaap:Revenues:USD");
   assert.equal((results[0]!.metadata as { values: Array<{ val: number }> }).values[0]!.val, 100);
   assert.equal((results[1]!.metadata as { values: Array<{ val: number }> }).values[0]!.val, 200);
   await assert.rejects(provider.compareFacts({ companies: ["AAA"], tag: "Revenues" }), /at least two/);
