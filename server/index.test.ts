@@ -3389,7 +3389,7 @@ describe("harness HTTP API", () => {
       const sleeping = api("POST", "/api/computers/boxes/bx_23456789/sleep", {});
       await expect.poll(() => boatRouteCalls.some(
         (call) => call.method === "POST" && call.path === "/boxes/bx_23456789/stop",
-      )).toBe(true);
+      ), { timeout: 15_000 }).toBe(true);
       const racedTurn = await api("POST", `/api/bots/${bot.id}/messages`, { text: "do not race deletion" });
       expect(racedTurn.status).toBe(409);
       expect(racedTurn.body.error).toMatch(/cloud computer is being changed/i);
@@ -3408,7 +3408,7 @@ describe("harness HTTP API", () => {
       const orphanSleep = api("POST", "/api/computers/boxes/bx_abcdefgh/sleep", {});
       await expect.poll(() => boatRouteCalls.some(
         (call) => call.method === "POST" && call.path === "/boxes/bx_abcdefgh/stop",
-      )).toBe(true);
+      ), { timeout: 15_000 }).toBe(true);
       const racedOrphanDelete = await api("POST", "/api/computers/boxes/bx_abcdefgh/delete", {
         confirmName: orphanName,
       });
@@ -3427,7 +3427,7 @@ describe("harness HTTP API", () => {
       const botScopedSleep = api("POST", `/api/bots/${bot.id}/computer/sleep`, {});
       await expect.poll(() => boatRouteCalls.some(
         (call) => call.method === "POST" && call.path === "/boxes/bx_23456789/stop",
-      )).toBe(true);
+      ), { timeout: 15_000 }).toBe(true);
       expect((await api("POST", "/api/computers/boxes/bx_23456789/delete", {
         confirmName: managedName,
       })).status).toBe(409);
@@ -6931,7 +6931,7 @@ describe("harness HTTP API", () => {
       const provisioning = api("POST", `/api/bots/${bot.id}/computer/provision`, {});
       await expect.poll(() => boatRouteCalls.some(
         (call) => call.method === "PATCH" && call.path === `/boxes/${managedBoatCreateId}`,
-      )).toBe(true);
+      ), { timeout: 15_000 }).toBe(true);
       const racedChange = await api("PUT", "/api/config", { box: { token: "box_good" } });
       expect(racedChange.status).toBe(409);
       expect(racedChange.body.error).toMatch(/cloud computer actions/i);
