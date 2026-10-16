@@ -241,7 +241,7 @@ const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listActiveScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentText, type Incident, type IncidentKind } from "./incidents.ts";
@@ -483,7 +483,8 @@ import {
 } from "./mailbox-monitor.ts";
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
-import { ScribeMonitor, scribeMonitorConfig } from "./scribe-monitor.ts";
+import { ScribeMonitor, createDegradedTracker, meetingCodeFor, scribeMonitorConfig } from "./scribe-monitor.ts";
+import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
 import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
 import { commandReceipts } from "./scribe-receipts.ts";
@@ -572,6 +573,7 @@ import { json, onJsonBody, parsedBodyOf, readBody } from "./harness/http.ts";
 import { ROUTES, dispatchRoutes } from "./routes/table.ts";
 import { createHostedSlackRoutes } from "./routes/hosted-slack.ts";
 import { createPortalSessionRoutes } from "./routes/portal-session.ts";
+import { createScribeJoinRoutes } from "./routes/scribe-join.ts";
 import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
@@ -9867,58 +9869,130 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
 // BFF internal route and arms captures on the worker; the worker capability
 // lives only in this module and is never written back into process.env.
 if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELAY_MAILBOX_ADDRESS) {
-  // The calendar list and notice emails sign as relay@'s own per-user actor,
-  // so the monitor stays dark until Relay's account owns a Mercury bot.
-  const scribeMailboxActor = relayMailboxActor();
-  if (!scribeMailboxActor) {
-    console.warn("[scribe] monitor disabled: no Mercury bot is registered for Relay's account");
-  } else {
-    const scribeConfig = scribeMonitorConfig();
-    // Organizer-first, only if the address belongs to a known member.
-    const knownScribeRecipient = (email: string | undefined): string | undefined => {
-      const e = email?.trim().toLowerCase();
-      if (!e) return undefined;
-      return sessions.personByEmail(e) ?? ownerByEmail(DATA_DIR, e) ? e : undefined;
-    };
-    // Admins for the signed-out case: RELAY_SCRIBE_ADMIN_EMAILS, kept only if a
-    // configured address belongs to a known member. Never an invented list.
-    const configuredAdmins = parseAdminEmails(process.env.RELAY_SCRIBE_ADMIN_EMAILS);
-    const scribeAdminEmails = configuredAdmins.filter((email) => knownScribeRecipient(email) !== undefined);
-    if (configuredAdmins.length > 0 && scribeAdminEmails.length === 0) {
-      console.warn(
-        "[scribe] RELAY_SCRIBE_ADMIN_EMAILS is set but none of its addresses belong to a known member; signed-out alerts have no admin recipient",
-      );
-    }
-    scribeMonitor = new ScribeMonitor(
-      {
-        listEvents: createCalendarEventLister({ capability: relayBffCapability, actor: scribeMailboxActor, maxResults: scribeConfig.maxResults }),
+  // The monitor always runs: manual joins ("Mercury, join this meeting now")
+  // carry the requester's own per-user actor, so they never depend on
+  // Relay's account. Only the calendar listing and the notice emails sign
+  // as relay@'s actor, and those degrade loudly (not silently) until Relay's
+  // account owns a Mercury bot.
+  if (!relayMailboxActor()) {
+    console.warn("[scribe] calendar listing and notice emails need Relay's account to own a Mercury bot; manual joins stay available");
+  }
+  const scribeConfig = scribeMonitorConfig();
+  // Organizer-first, only if the address belongs to a known member.
+  const knownScribeRecipient = (email: string | undefined): string | undefined => {
+    const e = email?.trim().toLowerCase();
+    if (!e) return undefined;
+    return sessions.personByEmail(e) ?? ownerByEmail(DATA_DIR, e) ? e : undefined;
+  };
+  // Admins for the signed-out case: RELAY_SCRIBE_ADMIN_EMAILS, kept only if a
+  // configured address belongs to a known member. Never an invented list.
+  const configuredAdmins = parseAdminEmails(process.env.RELAY_SCRIBE_ADMIN_EMAILS);
+  const scribeAdminEmails = configuredAdmins.filter((email) => knownScribeRecipient(email) !== undefined);
+  if (configuredAdmins.length > 0 && scribeAdminEmails.length === 0) {
+    console.warn(
+      "[scribe] RELAY_SCRIBE_ADMIN_EMAILS is set but none of its addresses belong to a known member; signed-out alerts have no admin recipient",
+    );
+  }
+  // Relay's actor is resolved per tick, not once at startup: a Mercury
+  // created for Relay's account later lights up calendar listing and
+  // notices without a restart. Degraded-vs-empty stays observable: one
+  // warn on entry, one line on recovery, retries every tick in between.
+  const calendarTracker = createDegradedTracker({
+    warn: (message) => console.warn(message),
+    info: (message) => console.log(message),
+  });
+  scribeMonitor = new ScribeMonitor(
+    {
+      listEvents: async (timeMinIso, timeMaxIso) => {
+        const actor = relayMailboxActor();
+        if (!actor) {
+          calendarTracker.degraded("[scribe] calendar listing disabled: no Mercury bot is registered for Relay's account");
+          return [];
+        }
+        calendarTracker.recovered("[scribe] calendar listing recovered");
+        return createCalendarEventLister({ capability: relayBffCapability, actor, maxResults: scribeConfig.maxResults })(
+          timeMinIso,
+          timeMaxIso,
+        );
+      },
         joinWorker: createWorkerJoinClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
         status: createWorkerStatusClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
         receipts: commandReceipts(),
         selfAddress: RELAY_MAILBOX_ADDRESS,
+        // Manual intents ("Mercury, join this meeting now") drain from the
+        // durable store through the same arm-if-due loop as calendar events.
+        // Pending survives restarts by construction: the store is SQLite.
+        listManualRequests: async () =>
+          listActiveScribeJoinIntents().map((intent) =>
+            joinRequestFromIntent(intent, {
+              manualLateMs: scribeConfig.manualLateMs,
+              reconcileGraceMs: scribeConfig.reconcileGraceMs,
+            }),
+          ),
+        noteManualArmed: (instanceId) => {
+          setScribeJoinIntentStatus(instanceId, "armed", Date.now());
+        },
+        noteManualTerminal: (instanceId) => {
+          setScribeJoinIntentStatus(instanceId, "terminal", Date.now());
+        },
         notify: async (notice) => {
           const recipient = knownScribeRecipient(notice.organizer_email) ?? knownScribeRecipient(notice.creator_email);
-          if (recipient) {
-            await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice), scribeMailboxActor);
-          } else {
-            console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
-          }
-          if (notice.signedOut) {
-            if (scribeAdminEmails.length === 0) {
-              console.error(
-                `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
-              );
+          // The sending actor is the initiating identity: a manual capture
+          // uses its persisted intent triple, a calendar capture keeps
+          // Relay's actor. With neither, the notice stays unsent (warned),
+          // never sent as somebody else. A failed send propagates so the
+          // monitor retries instead of recording it delivered — except a
+          // permanently undeliverable mailbox (not connected/configured),
+          // which retires loudly after one attempt instead of wedging the
+          // intent on an error that waiting cannot heal.
+          const sender = resolveNoticeSender(getScribeJoinIntent(notice.instance_id), relayMailboxActor());
+          try {
+            if (recipient) {
+              if (sender) {
+                await sendScribeEmail(relayBffCapability, recipient, scribeOrganizerEmail(notice), sender);
+              } else {
+                console.warn(`[scribe] notice unsent for ${notice.instance_id}: no Mercury bot is registered for Relay's account`);
+              }
             } else {
-              for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail(), scribeMailboxActor);
+              console.warn(`[scribe] no known member to notify for ${notice.instance_id}`);
             }
+            if (notice.signedOut) {
+              if (scribeAdminEmails.length === 0) {
+                console.error(
+                  `[scribe] SIGNED-OUT ALERT for ${notice.instance_id} has no admin recipient (set RELAY_SCRIBE_ADMIN_EMAILS to known members)`,
+                );
+              } else if (sender) {
+                for (const admin of scribeAdminEmails) await sendScribeEmail(relayBffCapability, admin, scribeAdminEmail(), sender);
+              } else {
+                console.warn(`[scribe] signed-out alert unsent for ${notice.instance_id}: no Mercury bot is registered for Relay's account`);
+              }
+            }
+          } catch (error) {
+            if (isPermanentNoticeError(error)) {
+              console.error(`[scribe] notice for ${notice.instance_id} undeliverable (${error instanceof Error ? error.message.slice(0, 160) : "unknown"}); retiring without retry`);
+              return;
+            }
+            throw error;
           }
+        },
+        // A manual capture posts its own chat update to the requesting thread:
+        // "joined" once it is live, "ready" once it ends with content. The
+        // thread and name come from the persisted intent; the monitor skips
+        // calendar captures, which have no thread.
+        announce: async (update) => {
+          const intent = getScribeJoinIntent(update.instance_id);
+          if (!intent) return;
+          const named = intent.title ? `"${intent.title}"` : (meetingCodeFor(intent.meetingUrl) ?? "your meeting");
+          const text = update.kind === "joined"
+            ? `Relay Scribe has joined ${named} and is transcribing.`
+            : `Relay Scribe finished ${named} — the notes are ready whenever you want them.`;
+          store.appendMessage(intent.threadId, { role: "bot", kind: "text", text });
         },
         log: (message) => console.log(message),
       },
       scribeConfig,
     );
     console.log(`[scribe] monitor enabled -> ${RELAY_SCRIBE_WORKER_URL}`);
-  }
 } else if (RELAY_SCRIBE_ENABLED) {
   const missing = [
     relayBffCapability ? null : "RELAY_BFF_CAPABILITY",
@@ -13961,13 +14035,24 @@ ROUTES.push(createPortalSessionRoutes({
   sessions,
   capability: relayBffCapability,
   sharedWorkspace: () => RELAY_SHARED_WORKSPACE && RELAY_PORTAL_SESSIONS,
-  environment: () => environmentDescriptor({
-    environmentId: ENVIRONMENT_ID,
-    desktopManaged: DESKTOP_MANAGED,
-    emailSignIn: emailSignIn.enabled(),
-    sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
-  }),
-}));
+    environment: () => environmentDescriptor({
+      environmentId: ENVIRONMENT_ID,
+      desktopManaged: DESKTOP_MANAGED,
+      emailSignIn: emailSignIn.enabled(),
+      sharedComputers: !RELAY_COMPUTER_DISABLED && lendingEnabled(),
+    }),
+  }));
+  // Manual Scribe joins ("Mercury, join this meeting now"). Same trust shape
+  // as the portal bridge: the shared BFF capability plus a verified actor
+  // assertion, no loopback requirement — the tool layer calls over the
+  // compose network. The actor must be a Mercury bot in its owner's workspace.
+  ROUTES.push(createScribeJoinRoutes({
+    store,
+    dataDir: DATA_DIR,
+    capability: relayBffCapability,
+    actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
+    scribeReady: () => scribeMonitor !== null,
+  }));
 // The BFF capability is captured at the top of this module and kept there
 // for the process lifetime: the shared-mailbox monitor and Scribe call the
 // BFF's internal routes directly. It is never written back into

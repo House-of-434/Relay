@@ -165,6 +165,24 @@ export function authorizeSearch(agent: Agent, capability: SearchCapability): voi
   }
 }
 
+/** Meeting-capture requests: Mercury only. Asking Scribe to join a meeting
+ * is a visible external action (the join is announced in the meeting), so it
+ * stays with the agent that owns external comms — the same agents that may
+ * not even see Gmail or calendar tools must not see this one either. */
+export type ScribeCapability = "join";
+
+export const SCRIBE_PERMISSIONS: Record<Agent, readonly ScribeCapability[]> = {
+  scout: [],
+  mercury: ["join"],
+  curator: [],
+};
+
+export function authorizeScribe(agent: Agent, capability: ScribeCapability): void {
+  if (!SCRIBE_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`${capability} access denied for ${agent}`);
+  }
+}
+
 /**
  * Capture-ingest writes: the only path that may touch transcript tables.
  * There is deliberately no agent in the signature — no agent route may ever

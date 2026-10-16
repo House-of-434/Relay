@@ -4,11 +4,14 @@ import {
   ScribeMonitor,
   armKey,
   buildDescriptor,
+  createDegradedTracker,
   eventStartMs,
+  meetingCodeFor,
   meetingUrlFor,
   passcodeFor,
   platformForUrl,
   type CalendarEvent,
+  type JoinRequest,
   type ReceiptStore,
   type ScribeDescriptor,
   type ScribeMonitorConfig,
@@ -18,7 +21,7 @@ import {
 
 const NOW = Date.parse("2026-10-11T12:00:00Z");
 const THREE_HOURS = 3 * 60 * 60 * 1000;
-const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
+const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, manualLateMs: 300_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
 const SELF = "relay@houseof434.com";
 
 function fakeReceipts(): ReceiptStore & { keys: Set<string> } {
@@ -209,6 +212,13 @@ describe("scribe monitor helpers", () => {
     expect(passcodeFor({ id: "z" }, "https://us02web.zoom.us/j/123?pwd=abc123")).toBe("abc123");
   });
 
+  it("reads the provider room code from a meeting URL", () => {
+    expect(meetingCodeFor("https://meet.google.com/bsr-etyd-afq?pli=1")).toBe("bsr-etyd-afq");
+    expect(meetingCodeFor("https://us02web.zoom.us/j/1234567890")).toBe("1234567890");
+    expect(meetingCodeFor("https://teams.live.com/meet/9385623070170")).toBe("9385623070170");
+    expect(meetingCodeFor("not a url")).toBeNull();
+  });
+
   it("builds a descriptor from the event", () => {
     const d = buildDescriptor(meetingEvent(), "https://meet.google.com/abc", "google_meet");
     expect(d.invitees).toEqual(["host@houseof434.com", "guest@example.com"]);
@@ -286,5 +296,73 @@ describe("scribe monitor reconciliation", () => {
     await late.m.tick();
     expect(receipts.keys.has("scribe.notify:inst-1")).toBe(true);
     expect(late.notified).toHaveLength(0);
+  });
+});
+
+describe("createDegradedTracker", () => {
+  it("warns once while degraded, logs once on recovery, then repeats the cycle", () => {
+    const warns: string[] = [];
+    const infos: string[] = [];
+    const tracker = createDegradedTracker({
+      warn: (message) => { warns.push(message); },
+      info: (message) => { infos.push(message); },
+    });
+    tracker.degraded("calendar dark");
+    tracker.degraded("calendar dark");
+    expect(warns).toEqual(["calendar dark"]);
+    expect(infos).toEqual([]);
+    tracker.recovered("calendar back");
+    tracker.recovered("calendar back");
+    expect(infos).toEqual(["calendar back"]);
+    tracker.degraded("calendar dark again");
+    expect(warns).toEqual(["calendar dark", "calendar dark again"]);
+  });
+
+  it("recovery without prior degradation logs nothing", () => {
+    const infos: string[] = [];
+    const tracker = createDegradedTracker({ warn: () => {}, info: (message) => { infos.push(message); } });
+    tracker.recovered("spurious");
+    expect(infos).toEqual([]);
+  });
+});
+
+describe("manual intents are independent of calendar discovery", () => {
+  it("discovers, arms, and processes a manual intent while the calendar is degraded", async () => {
+    const receipts = fakeReceipts();
+    const joined: ScribeDescriptor[] = [];
+    let listed = 0;
+    const manual: JoinRequest[] = [{
+      descriptor: {
+        instance_id: "inst-manual-9",
+        platform: "google_meet",
+        meeting_url: "https://meet.google.com/abc-defg-hij",
+      },
+      dueAtMs: NOW,
+      lateAtMs: NOW + 300_000,
+      source: "manual",
+      receiptKey: "manual|inst-manual-9",
+      event: { id: "inst-manual-9" },
+    }];
+    const monitor = new ScribeMonitor(
+      {
+        // Degraded discovery: polled every tick, always empty. The manual
+        // path must not depend on what this returns.
+        listEvents: async () => { listed += 1; return []; },
+        joinWorker: async (d) => { joined.push(d); return { status: "joining" }; },
+        status: async () => ({ status: "unknown" }),
+        receipts,
+        listManualRequests: async () => manual,
+        notify: () => {},
+        selfAddress: SELF,
+        now: () => NOW,
+        log: () => {},
+      },
+      cfg,
+    );
+    await monitor.tick(NOW + 1_000);
+    expect(listed).toBeGreaterThan(0);
+    expect(joined).toHaveLength(1);
+    expect(joined[0]!.instance_id).toBe("inst-manual-9");
+    expect(receipts.keys.has("scribe.arm:manual|inst-manual-9")).toBe(true);
   });
 });

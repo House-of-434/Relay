@@ -76,6 +76,24 @@ function open(): DatabaseSync {
       result TEXT NOT NULL,
       PRIMARY KEY (kind, key)
     );
+    CREATE TABLE IF NOT EXISTS scribe_join_intents (
+      request_key TEXT PRIMARY KEY,
+      instance_id TEXT NOT NULL UNIQUE,
+      source TEXT NOT NULL,
+      meeting_url TEXT NOT NULL,
+      url_key TEXT NOT NULL,
+      platform TEXT NOT NULL,
+      title TEXT,
+      organizer_email TEXT,
+      owner_user_id TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      thread_id TEXT NOT NULL,
+      status TEXT NOT NULL,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS scribe_join_intents_active ON scribe_join_intents(url_key, status);
+    CREATE INDEX IF NOT EXISTS scribe_join_intents_status ON scribe_join_intents(status, created_at);
   `);
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
@@ -310,6 +328,133 @@ export function withCommandReceipt(
       .run(kind, key, at, result);
     return { result, replayed: false };
   });
+}
+
+/** A manual Scribe join intent: durably registered at request acceptance so a
+ * restart loses neither the request nor its idempotency. Calendar joins are
+ * NOT stored here — the calendar itself is the repeatable source and
+ * command_receipts already covers their arm-once memory. */
+export type ScribeJoinIntentStatus = "pending" | "armed" | "terminal";
+
+export interface ScribeJoinIntent {
+  requestKey: string;
+  instanceId: string;
+  source: string;
+  meetingUrl: string;
+  urlKey: string;
+  platform: string;
+  title: string | null;
+  organizerEmail: string | null;
+  ownerUserId: string;
+  botId: string;
+  threadId: string;
+  status: ScribeJoinIntentStatus;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface ScribeJoinIntentInput {
+  requestKey: string;
+  instanceId: string;
+  source: string;
+  meetingUrl: string;
+  urlKey: string;
+  platform: string;
+  title?: string;
+  organizerEmail?: string;
+  ownerUserId: string;
+  botId: string;
+  threadId: string;
+}
+
+const INTENT_COLUMNS = "request_key, instance_id, source, meeting_url, url_key, platform, title, organizer_email, owner_user_id, bot_id, thread_id, status, created_at, updated_at";
+
+function rowToIntent(row: Record<string, unknown>): ScribeJoinIntent {
+  return {
+    requestKey: row.request_key as string,
+    instanceId: row.instance_id as string,
+    source: row.source as string,
+    meetingUrl: row.meeting_url as string,
+    urlKey: row.url_key as string,
+    platform: row.platform as string,
+    title: (row.title as string | null) ?? null,
+    organizerEmail: (row.organizer_email as string | null) ?? null,
+    ownerUserId: row.owner_user_id as string,
+    botId: row.bot_id as string,
+    threadId: row.thread_id as string,
+    status: row.status as ScribeJoinIntentStatus,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  };
+}
+
+/** Accept a manual join intent. Check-request-key, check-active-session, and
+ * insert run in ONE transaction (BEGIN IMMEDIATE), so for a given request key
+ * at most one capture instance is ever created and concurrent same-room
+ * submissions serialize: the loser sees the winner's row.
+ *
+ * Outcomes: "duplicate" (same request retried — the original instance),
+ * "active" (different request, same room already pending/armed — the live
+ * instance, no new capture), "created" (fresh instance). */
+export function acceptScribeJoinIntent(
+  input: ScribeJoinIntentInput,
+  now: number,
+): { outcome: "created" | "duplicate" | "active"; intent: ScribeJoinIntent } {
+  return transaction((database) => {
+    const byKey = database
+      .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE request_key = ?`)
+      .get(input.requestKey) as Record<string, unknown> | undefined;
+    if (byKey) return { outcome: "duplicate" as const, intent: rowToIntent(byKey) };
+    const active = database
+      .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE url_key = ? AND status IN ('pending','armed') ORDER BY created_at ASC LIMIT 1`)
+      .get(input.urlKey) as Record<string, unknown> | undefined;
+    if (active) return { outcome: "active" as const, intent: rowToIntent(active) };
+    database
+      .prepare(`INSERT INTO scribe_join_intents(${INTENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+      .run(
+        input.requestKey, input.instanceId, input.source, input.meetingUrl, input.urlKey,
+        input.platform, input.title ?? null, input.organizerEmail ?? null,
+        input.ownerUserId, input.botId, input.threadId, now, now,
+      );
+    const created = database
+      .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE request_key = ?`)
+      .get(input.requestKey) as Record<string, unknown>;
+    return { outcome: "created" as const, intent: rowToIntent(created) };
+  });
+}
+
+export function getScribeJoinIntent(instanceId: string): ScribeJoinIntent | null {
+  const row = db()
+    .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE instance_id = ?`)
+    .get(instanceId) as Record<string, unknown> | undefined;
+  return row ? rowToIntent(row) : null;
+}
+
+/** Pending intents, oldest first — the monitor's drain source. */
+export function listPendingScribeJoinIntents(): ScribeJoinIntent[] {
+  const rows = db()
+    .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE status = 'pending' ORDER BY created_at ASC`)
+    .all() as Record<string, unknown>[];
+  return rows.map(rowToIntent);
+}
+
+/** Pending AND armed intents, pending first — the monitor's full drain
+ * source. Armed intents must be revisited every tick: unlike calendar
+ * events (re-listed from Google each poll), nothing else brings an armed
+ * manual capture back for reconcile, so draining pending alone strands
+ * them after the arm with no notices ever. */
+export function listActiveScribeJoinIntents(): ScribeJoinIntent[] {
+  const rows = db()
+    .prepare(`SELECT ${INTENT_COLUMNS} FROM scribe_join_intents WHERE status IN ('pending','armed') ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, created_at ASC`)
+    .all() as Record<string, unknown>[];
+  return rows.map(rowToIntent);
+}
+
+export function setScribeJoinIntentStatus(instanceId: string, status: ScribeJoinIntentStatus, now: number): boolean {
+  const result = db()
+    .prepare("UPDATE scribe_join_intents SET status = ?, updated_at = ? WHERE instance_id = ?")
+    .run(status, now, instanceId);
+  return result.changes > 0;
 }
 
 export function saveChatFollowup(followup: Omit<ChatFollowup, "status">): void {

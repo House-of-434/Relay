@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join as joinPath } from "node:path";
 import { fileURLToPath } from "node:url";
-import { chromium, type BrowserContext, type Page } from "playwright";
+import { type BrowserContext, type Page } from "playwright";
 
 import type { WorkerConfig } from "./config.js";
 import { CAPTURE_INIT_SCRIPT } from "./capture-init.js";
@@ -10,8 +10,11 @@ import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
 import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
 import { toSegment } from "./gmeet-segment.js";
-import { hostAllowed, nativeIdFor } from "./urls.js";
+import { hostAllowed, meetingUrlKey, nativeIdFor } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
+import { createNavigationGuard } from "./navigation-guard.js";
+import { sharedBrowserContext } from "./shared-browser.js";
+import { WORKER_BOOT_ID } from "./boot.js";
 import { postMeetDisclosure } from "./chat.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
@@ -117,6 +120,33 @@ async function leaveFor(page: Page, platform: string): Promise<void> {
   return vexa.leaveGoogleMeet(page);
 }
 
+/** Voice-idle end decision. A meeting with no remote voice is over whether
+ * or not tiles agree: leave after VOICE_IDLE_MS of silence once speech was
+ * heard, or after FIRST_VOICE_TIMEOUT_MS with nothing ever heard (covers
+ * waiting for others who never arrive). Pure logic over timestamps — no
+ * browser needed, fully unit-testable. maxMeetingMs remains the hard
+ * backstop; non-Meet lanes keep maxMeetingMs only (no per-frame energy). */
+export function voiceIdleExpired(args: {
+  captureStartMs: number;
+  firstVoiceAt: number | null;
+  lastVoiceAt: number | null;
+  now: number;
+}): boolean {
+  const { captureStartMs, firstVoiceAt, lastVoiceAt, now } = args;
+  if (firstVoiceAt === null) {
+    return now - captureStartMs >= FIRST_VOICE_TIMEOUT_MS;
+  }
+  return lastVoiceAt !== null && now - lastVoiceAt >= VOICE_IDLE_MS;
+}
+
+/** Leave after 3 minutes without remote voice; 5 minutes without ever
+ * hearing any (a room that never produces a single frame never will). */
+const VOICE_IDLE_MS = 3 * 60_000;
+const FIRST_VOICE_TIMEOUT_MS = 5 * 60_000;
+/** Remote-audio energy floor mirroring the capture bundle's silence gate:
+ * frames above this prove someone is transmitting. */
+const REMOTE_AUDIO_ENERGY = 0.005;
+
 class MeetSession {
   status: CaptureStatus = "joining";
   captureStartedAt: string | null = null;
@@ -133,6 +163,12 @@ class MeetSession {
   private readonly ingest: IngestClient;
   private gmeet: GmeetPipeline | null = null;
   private captureStartMs = 0;
+  /** First and last time a remote frame carried above-silence energy. Drives
+   * voice-idle end: the clock starts at first voice; 3 quiet minutes after
+   * the last voice ends, and 5 minutes with no voice at all also ends
+   * (waiting room that never fills). */
+  private firstVoiceAt: number | null = null;
+  private lastRemoteAudioAt: number | null = null;
   private probeFrames: ProbeFrame[] = [];
   private probeSegments: Segment[] = [];
   private probeTiles: Array<Record<string, unknown>> = [];
@@ -163,6 +199,7 @@ class MeetSession {
       error: this.error,
       organizer_email: d.organizer_email ?? null,
       invited_by: d.invited_by ?? null,
+      organizer_user_id: d.organizer_user_id ?? null,
       invitees: d.invitees ?? [],
       segment_count: this.spool.added,
       duration_seconds: this.lastEnd > 0 ? this.lastEnd : null,
@@ -200,23 +237,49 @@ class MeetSession {
     try {
       const { getJoinBrowserArgs } = await loadVexaJoin();
       const args = getJoinBrowserArgs().filter((a) => a !== "--incognito");
-      this.context = await chromium.launchPersistentContext(this.config.profileDir, {
+      // Navigation guard first: resolves + validates the meeting host. A
+      // violation fails the join here, before any browser exists — never
+      // after navigation starts.
+      const guard = await createNavigationGuard({
+        meetingUrl: this.descriptor.meeting_url,
+        log: (message) => console.log(message),
+      });
+      // One persistent context per worker process: the signed-in profile is
+      // single-instance, so a second launchPersistentContext fails on the
+      // profile lock. Every capture takes its own tab instead (verified
+      // live: one account can sit in two meetings in two tabs).
+      this.context = await sharedBrowserContext({
+        profileDir: this.config.profileDir,
         headless: this.config.headless,
-        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+          // Headless Chrome has zero media engagement, so programmatic play()
+          // on the hook's mirrored <audio> elements is autoplay-blocked without
+          // this — the mirrors stay paused, findMedia skips them, and the tap
+          // hears digital silence while the room has audio. (Diagnosed live
+          // 2026-10-16: frames flowed, every window below the silence gate.)
+          "--autoplay-policy=no-user-gesture-required"],
         locale: "en-US",
       });
+      // Fresh tab per capture; never reuse a stray about:blank page.
+      this.page = await this.context.newPage();
+      // Per-page interception before any navigation: every request —
+      // initial page, redirect hops, subresources, iframes, popups — is
+      // validated pre-flight, so aborts never contact their destination.
+      await guard.install(this.page);
       const isMeet = this.descriptor.platform === "google_meet";
       if (isMeet) {
         // Per-channel Meet lane: the remote-audio hook (so elements exist even if
         // Meet hides them — the entry dedupes by audio track id) + the capture
-        // bundle. The mixed tap is NOT installed for Meet.
+        // bundle. The mixed tap is NOT installed for Meet. Installed per page
+        // (was: per context) so Meet and non-Meet captures sharing the browser
+        // keep their lanes separate.
         const bundle = this.config.gmeetBundlePath ?? DEFAULT_GMEET_BUNDLE;
         if (!existsSync(bundle)) {
           throw new Error(`gmeet capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
         }
-        await this.context.addInitScript({ content: REMOTE_AUDIO_HOOK });
-        await this.context.addInitScript({ path: bundle });
-        await this.context.addInitScript({
+        await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
+        await this.page.addInitScript({ path: bundle });
+        await this.page.addInitScript({
           content: `window.__scribeGmeetConfig = ${JSON.stringify({
             selfName: this.config.selfName,
             maxStreams: this.config.maxStreams,
@@ -224,9 +287,8 @@ class MeetSession {
           })};`,
         });
       } else {
-        await this.context.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+        await this.page.addInitScript({ content: CAPTURE_INIT_SCRIPT });
       }
-      this.page = this.context.pages()[0] ?? await this.context.newPage();
 
       this.status = "joining";
       const { joinMeeting } = await loadVexaJoin();
@@ -278,6 +340,8 @@ class MeetSession {
       }
 
       const deadline = Date.now() + this.config.maxMeetingMs;
+      let endedIdle = false;
+      let idleFinalStatus: CaptureStatus = "completed";
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
@@ -285,10 +349,33 @@ class MeetSession {
         else await this.captureOnce();
         await this.flush(false, "active");
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
+        // Voice-idle end (Meet only): no remote voice for 3 minutes means
+        // the meeting is over whether or not tiles agree; 5 minutes without
+        // ever hearing any covers a room that never fills. maxMeetingMs
+        // remains the hard backstop. The idle reason is written to error so
+        // the row explains why it ended; status stays completed when any
+        // segment landed, else partial.
+        if (isMeet && this.status === "active" && voiceIdleExpired({
+          captureStartMs: this.captureStartMs,
+          firstVoiceAt: this.firstVoiceAt,
+          lastVoiceAt: this.lastRemoteAudioAt,
+          now: Date.now(),
+        })) {
+          const reason = this.firstVoiceAt
+            ? `voice-idle: no speech for 3m after last voice (${new Date(this.lastRemoteAudioAt!).toISOString()})`
+            : "voice-idle: no voice heard within 5m of joining";
+          console.log(`scribe: ${this.descriptor.instance_id} ${reason}; leaving`);
+          this.error = reason;
+          idleFinalStatus = this.spool.added > 0 ? "completed" : "partial";
+          endedIdle = true;
+          break;
+        }
       }
-      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped ? "partial" : "completed");
+      await this.finalize(this.current === "skipped" ? "skipped" : endedIdle ? idleFinalStatus : this.stopped ? "partial" : "completed");
     } catch (e) {
       this.error = describeJoinFailure(e);
+      // Never log full URLs: navigation errors can embed meeting ?pwd=.
+      console.error(`scribe: ${this.descriptor.instance_id} failed: ${this.error.replace(/([?&]pwd=)[^&\s]*/gi, "$1<redacted>")}`);
       await this.finalize("failed");
     }
   }
@@ -378,6 +465,11 @@ class MeetSession {
       return;
     }
     for (const f of frames) {
+      if (typeof f.energy === "number" && f.energy > REMOTE_AUDIO_ENERGY) {
+        const at = Date.now();
+        if (this.firstVoiceAt === null) this.firstVoiceAt = at;
+        this.lastRemoteAudioAt = at;
+      }
       if (!f.pcm) continue;
       this.gmeet.feedAudio(f.channel, f.name ?? undefined, Float32Array.from(f.pcm), f.ts);
       if (this.config.gmeetProbe) {
@@ -484,7 +576,10 @@ class MeetSession {
         } catch { /* best effort */ }
       }
     } finally {
-      await this.context?.close().catch(() => {});
+      // Close this capture's tab only. The persistent context is shared by
+      // every capture in the worker and outlives any one of them.
+      await this.page?.close().catch(() => {});
+      this.page = null;
     }
     try {
       await this.flush(true, status);
@@ -505,17 +600,53 @@ class MeetSession {
       segment_count: this.spool.added,
       capture_started_at: this.captureStartedAt ?? undefined,
       error: this.error ?? undefined,
+      worker_boot_id: WORKER_BOOT_ID,
     };
   }
+
+  /** Normalized room identity for cross-instance dedup (see meetingUrlKey). */
+  roomKey(): string | null {
+    return meetingUrlKey(this.descriptor.platform, this.descriptor.meeting_url);
+  }
+
+  /** Live for dedup purposes: states where a browser participant exists or
+   * is imminent. Terminal states never block a room. */
+  get roomLive(): boolean {
+    return this.status === "joining" || this.status === "awaiting_admission" || this.status === "active";
+  }
+}
+
+/** Cross-instance room dedup, extracted pure for tests: the live instance for
+ * a room key, or null. Terminal instances never block. The caller guarantees
+ * check-then-insert runs without an intervening await. */
+export function selectRoomDuplicate(
+  sessions: Array<{ instanceId: string; live: boolean; urlKey: string | null }>,
+  urlKey: string | null,
+): string | null {
+  if (!urlKey) return null;
+  return sessions.find((s) => s.live && s.urlKey === urlKey)?.instanceId ?? null;
 }
 
 /** Owns one session per instance_id. join is idempotent by instance_id. */
 export class SessionController implements JoinController {
   private readonly sessions = new Map<string, MeetSession>();
+  /** One orphan sweep per worker generation, run before the first join: a fresh
+   *  process owns zero sessions, so any live row belongs to a dead generation
+   *  and holds its room's unique live slot. Reset on failure so a later join
+   *  retries once the tool layer is reachable. */
+  private reapOnce: Promise<void> | null = null;
 
-  constructor(private readonly config: WorkerConfig) {}
+  constructor(
+    private readonly config: WorkerConfig,
+    private readonly injectedIngest?: IngestClient,
+  ) {}
+
+  private ingest(): IngestClient {
+    return this.injectedIngest ?? new IngestClient({ url: this.config.ingestUrl, capability: this.config.ingestCapability });
+  }
 
   async join(descriptor: JoinDescriptor): Promise<JoinOutcome> {
+    await this.reapOrphans();
     const existing = this.sessions.get(descriptor.instance_id);
     if (existing) {
       const s = existing.outcome();
@@ -529,7 +660,7 @@ export class SessionController implements JoinController {
     if (!reject && live >= this.config.maxConcurrent) reject = "at capacity";
     if (!reject && !hostAllowed(descriptor.platform, descriptor.meeting_url)) reject = "meeting host is not an allowed provider domain";
     if (reject) {
-      const ingest = new IngestClient({ url: this.config.ingestUrl, capability: this.config.ingestCapability });
+      const ingest = this.ingest();
       const row: MeetingRow = {
         platform: descriptor.platform,
         instance_id: descriptor.instance_id,
@@ -538,6 +669,7 @@ export class SessionController implements JoinController {
         scheduled_end: descriptor.scheduled_end ?? null,
         organizer_email: descriptor.organizer_email ?? null,
         invited_by: descriptor.invited_by ?? null,
+        organizer_user_id: descriptor.organizer_user_id ?? null,
         invitees: descriptor.invitees ?? [],
         status: "failed",
         error: reject,
@@ -547,15 +679,50 @@ export class SessionController implements JoinController {
       return { instance_id: descriptor.instance_id, status: "failed", error: reject };
     }
 
+    // Cross-instance dedup: at most one LIVE capture per room. A second join
+    // for a room that is already joining/admitted/active — same calendar
+    // event re-armed, a manual request colliding with a calendar arm, or two
+    // manual requests racing — returns duplicate instead of seating a second
+    // bot. Terminal sessions never block their room. Check-then-insert runs
+    // with no await between, so same-process concurrent joins serialize on
+    // the event loop; cross-restart duplicates are the harness's reconcile
+    // job (armed intents re-post the same instance_id, which dedupes above).
+    const roomOwner = selectRoomDuplicate(
+      [...this.sessions.entries()].map(([id, s]) => ({ instanceId: id, live: s.roomLive, urlKey: s.roomKey() })),
+      meetingUrlKey(descriptor.platform, descriptor.meeting_url),
+    );
+    if (roomOwner) {
+      return { instance_id: descriptor.instance_id, status: "duplicate", error: `room already captured as ${roomOwner}` };
+    }
+
     const session = new MeetSession(descriptor, this.config);
     this.sessions.set(descriptor.instance_id, session);
     void session.run();
     return { instance_id: descriptor.instance_id, status: session.status };
   }
 
+  /** Sweep orphaned live rows once per process, before the first capture. A
+   *  failure is non-fatal (logging only) and clears the memo so a later join
+   *  retries: the tool layer may not be reachable yet at container start. */
+  private reapOrphans(): Promise<void> {
+    if (!this.config.enabled) return Promise.resolve();
+    if (!this.reapOnce) {
+      this.reapOnce = this.sweepOrphans().catch((error) => {
+        this.reapOnce = null;
+        console.error(`[relay-scribe] orphan sweep failed: ${error instanceof Error ? error.message : "unknown"}`);
+      });
+    }
+    return this.reapOnce;
+  }
+
+  private async sweepOrphans(): Promise<void> {
+    const { swept } = await this.ingest().sweep("capture worker restarted; the recording session did not survive");
+    if (swept > 0) console.log(`[relay-scribe] reaped ${swept} orphaned live meeting(s) from a previous run`);
+  }
+
   async status(instanceId: string): Promise<StatusOutcome> {
     const session = this.sessions.get(instanceId);
-    if (!session) return { instance_id: instanceId, status: "unknown", segment_count: 0 };
+    if (!session) return { instance_id: instanceId, status: "unknown", segment_count: 0, worker_boot_id: WORKER_BOOT_ID };
     return session.outcome();
   }
 

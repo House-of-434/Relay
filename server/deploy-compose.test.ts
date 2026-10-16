@@ -48,4 +48,14 @@ describe("deploy compose — capability separation", () => {
     // then routes to the terminal-notice path).
     expect(compose.services.app.environment?.RELAY_SCRIBE_WORKER_URL).toBe("http://scribe:8791");
   });
+
+  it("the tools reach the harness only through the BFF, never directly", () => {
+    // The harness edge gate requires a loopback Host, which a compose-network
+    // caller can never present — so the scribe-join tool must target the BFF
+    // (which terminates tool-facing auth and proxies over loopback), and the
+    // harness must stay loopback-bound. Pin both sides of that invariant.
+    expect(compose.services.tools.environment?.RELAY_BFF_INTERNAL_URL).toBe("http://app:8798");
+    expect(compose.services.tools.environment?.RELAY_HARNESS_INTERNAL_URL).toBeUndefined();
+    expect(compose.services.app.environment?.RELAY_HARNESS_HOST).toBeUndefined();
+  });
 });

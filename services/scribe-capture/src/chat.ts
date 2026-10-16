@@ -50,14 +50,19 @@ export interface DisclosureDeps {
   polls?: number;
 }
 
-/** The first visible chat composer across the page and every frame, or null. */
-async function visibleInput(page: Page): Promise<Locator | null> {
-  const scopes: Array<Page | Frame> = [page, ...page.frames().filter((frame) => frame !== page.mainFrame())];
-  for (const scope of scopes) {
+/** The first visible chat composer across the page and every frame, with the
+ * selector that matched (logged so a misdirected send is diagnosable), or
+ * null. */
+async function visibleInput(page: Page): Promise<{ input: Locator; selector: string; frame: string } | null> {
+  const scopes: Array<{ scope: Page | Frame; name: string }> = [
+    { scope: page, name: "main" },
+    ...page.frames().filter((frame) => frame !== page.mainFrame()).map((frame, i) => ({ scope: frame, name: `frame[${i}]=${frame.url().slice(0, 60)}` })),
+  ];
+  for (const { scope, name } of scopes) {
     for (const selector of MEET_CHAT_INPUTS) {
       const locator = scope.locator(selector).first();
       try {
-        if (await locator.isVisible()) return locator;
+        if (await locator.isVisible()) return { input: locator, selector, frame: name };
       } catch {
         /* try the next selector / frame */
       }
@@ -67,7 +72,7 @@ async function visibleInput(page: Page): Promise<Locator | null> {
 }
 
 /** Open the chat panel once if needed and poll for the composer. */
-async function openChat(page: Page, timeoutMs: number, polls: number): Promise<Locator | null> {
+async function openChat(page: Page, timeoutMs: number, polls: number): Promise<{ input: Locator; selector: string; frame: string } | null> {
   const alreadyOpen = await visibleInput(page);
   if (alreadyOpen) return alreadyOpen;
   const openers = [
@@ -84,12 +89,12 @@ async function openChat(page: Page, timeoutMs: number, polls: number): Promise<L
       /* try the next opener */
     }
   }
-  let input: Locator | null = null;
-  for (let poll = 0; poll < polls && !input; poll++) {
+  let found: { input: Locator; selector: string; frame: string } | null = null;
+  for (let poll = 0; poll < polls && !found; poll++) {
     await page.waitForTimeout(300);
-    input = await visibleInput(page);
+    found = await visibleInput(page);
   }
-  return input;
+  return found;
 }
 
 /** One-time diagnostic so a selector miss is debuggable from the worker log. */
@@ -109,7 +114,25 @@ async function logChatSurface(page: Page, log: (message: string) => void): Promi
   }
 }
 
-/** Scripted Meet chat send. Throws when the composer never appears. */
+/** Read back whatever the composer holds. Prefers inputValue (real fields),
+ * falls back to textContent (contenteditable/div composers). Unreadable
+ * returns "" — an unreadable box must not fail the send on telemetry alone. */
+async function readComposer(input: Locator): Promise<string> {
+  try {
+    return await input.inputValue({ timeout: 1000 });
+  } catch {
+    /* not a form field */
+  }
+  try {
+    return (await input.textContent({ timeout: 1000 })) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+/** Scripted Meet chat send. Throws when the composer never appears, and when
+ * the composer still holds the message after send (typed into the void or a
+ * box that never submitted — previously reported as sent). */
 export async function sendMeetChat(
   page: Page,
   text: string,
@@ -120,11 +143,13 @@ export async function sendMeetChat(
   if (text.length > MEET_CHAT_MAX) {
     throw new Error(`disclosure exceeds ${MEET_CHAT_MAX} characters`);
   }
-  const input = await openChat(page, timeoutMs, polls);
-  if (!input) {
+  const found = await openChat(page, timeoutMs, polls);
+  if (!found) {
     await logChatSurface(page, log);
     throw new Error("Meet chat input is not available");
   }
+  log(`scribe: chat composer matched ${found.selector} (${found.frame})`);
+  const { input } = found;
   try {
     // Preferred when the composer is a real input/textarea/contenteditable.
     await input.fill(text, { timeout: timeoutMs });
@@ -136,10 +161,19 @@ export async function sendMeetChat(
   }
   await page.waitForTimeout(500);
   await page.keyboard.press("Enter");
+  // Delivery check: Meet clears the composer on send. Text still present
+  // means focus was lost, the box re-rendered, or the wrong box got the
+  // keystrokes — all previously misreported as sent.
+  await page.waitForTimeout(800);
+  const remaining = await readComposer(input);
+  if (remaining.trim().length > 0) {
+    throw new Error("composer still holds the message after send");
+  }
 }
 
-/** Post the disclosure once: scripted first, then the optional agent fallback.
- *  Never throws; returns what happened so the caller records `disclosure_posted`. */
+/** Post the disclosure: up to two scripted attempts (focus loss and UI
+ * re-renders are transient), then the optional agent fallback. Never
+ * throws; returns what happened so the caller records `disclosure_posted`. */
 export async function postMeetDisclosure(
   page: Page,
   text: string,
@@ -149,12 +183,14 @@ export async function postMeetDisclosure(
   const message = text.trim();
   if (!message) return "failed";
 
-  try {
-    await sendMeetChat(page, message, deps.timeoutMs, deps.polls, log);
-    log("scribe: join disclosure posted to Meet chat");
-    return "sent";
-  } catch (error) {
-    log(`scribe: scripted Meet chat send failed: ${error instanceof Error ? error.message : "unknown"}`);
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await sendMeetChat(page, message, deps.timeoutMs, deps.polls, log);
+      log("scribe: join disclosure posted to Meet chat");
+      return "sent";
+    } catch (error) {
+      log(`scribe: scripted Meet chat send failed (attempt ${attempt}/2): ${error instanceof Error ? error.message : "unknown"}`);
+    }
   }
 
   if (deps.fallback) {

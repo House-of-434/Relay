@@ -63,6 +63,49 @@ function supabaseError(error: { code?: string; message?: string } | null): never
   if (error) throw new Error(`Database request failed${error.code ? ` (${error.code})` : ""}: ${error.message ?? "unknown error"}`);
 }
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** Model-facing read projection for transcripts.meetings, used by relay_read.
+ * Emails, invitee lists, audio_path and internal timestamps stay out of agent
+ * reads: they are plumbing, not notes. `error` (the end reason) stays here so
+ * a debugging relay_read can see why a capture stopped, but the curated
+ * transcript read below omits it so it is never narrated as a finding. */
+export const MEETING_READ_COLUMNS =
+  "id, platform, instance_id, native_id, title, scheduled_start, scheduled_end, " +
+  "actual_start, actual_end, status, error, segment_count, duration_seconds, " +
+  "organizer_user_id, creator_user_id";
+
+/** Curated projection for get_meeting_transcript: what an agent needs to name
+ * the meeting (title, or the native room code) and read it, and nothing it
+ * would narrate as plumbing (no internal UUIDs, error/end-reason, emails, or
+ * internal timestamps). */
+export const MEETING_TRANSCRIPT_COLUMNS =
+  "platform, native_id, title, status, segment_count, duration_seconds, " +
+  "actual_start, actual_end";
+
+/** Provider meeting code (native_id) from a meeting reference that is a URL or
+ * a bare code — null when neither parses. Mirrors the capture worker's
+ * nativeIdFor so the URL an agent just joined resolves to the stored row:
+ * Meet uses the first path segment, Zoom the id after /j|/wc|/s, Teams after
+ * /meet, and anything else the last non-empty path segment. */
+export function nativeIdFromMeetingRef(ref: string): string | null {
+  const trimmed = ref.trim();
+  if (!trimmed) return null;
+  if (!trimmed.includes("://")) return trimmed.slice(0, 128); // already a code
+  let url: URL;
+  try {
+    url = new URL(trimmed);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  const seg = url.pathname.split("/").filter(Boolean);
+  if (host === "meet.google.com") return seg[0] ?? null;
+  const markers = host === "zoom.us" || host.endsWith(".zoom.us") ? ["j", "wc", "s"] : ["meet"];
+  const i = seg.findIndex((s) => markers.includes(s));
+  return i >= 0 && seg[i + 1] ? seg[i + 1]! : null;
+}
+
 /**
  * Distinguishable ingest conflict: the meetings_live_once partial unique
  * index fired (two calendar events pointing at the same live Meet link).
@@ -149,7 +192,8 @@ export class RelayDatabase {
     }
 
     const [schema, relation] = table.split(".");
-    let query: any = client.schema(schema!).from(relation!).select("*").limit(limit);
+    const columns = table === "transcripts.meetings" ? MEETING_READ_COLUMNS : "*";
+    let query: any = client.schema(schema!).from(relation!).select(columns).limit(limit);
 
     // service_role bypasses Postgres RLS, so preserve the agent classification
     // ceiling explicitly in the Tool Layer.
@@ -280,6 +324,33 @@ export class RelayDatabase {
   }
 
   /**
+   * Finalize every non-terminal meeting row. Called by a freshly-booted
+   * capture worker (the only writer, and it owns zero sessions at boot): a row
+   * still live at boot is a previous generation's orphan that would otherwise
+   * hold the meetings_live_once slot and block the room forever. Rows with any
+   * segment become `partial` (an interrupted capture), the rest `failed`;
+   * actual_end is left to the reaper's wall clock via the error reason rather
+   * than a fabricated end time.
+   */
+  async sweepOrphanedMeetings(reason: string): Promise<{ partial: number; failed: number }> {
+    const live = ["joining", "awaiting_admission", "active"];
+    const updatedAt = new Date().toISOString();
+    const client = this.client("relay");
+    const withSegments = await client.schema("transcripts").from("meetings")
+      .update({ status: "partial", error: reason, updated_at: updatedAt })
+      .in("status", live).gt("segment_count", 0).select("id");
+    supabaseError(withSegments.error);
+    const empty = await client.schema("transcripts").from("meetings")
+      .update({ status: "failed", error: reason, updated_at: updatedAt })
+      .in("status", live).eq("segment_count", 0).select("id");
+    supabaseError(empty.error);
+    return {
+      partial: Array.isArray(withSegments.data) ? withSegments.data.length : 0,
+      failed: Array.isArray(empty.data) ? empty.data.length : 0,
+    };
+  }
+
+  /**
    * Ordered, paged transcript read for agents. Segments come back ordered by
    * start_seconds; complete is false while the meeting is still live, so
    * readers can mark in-progress transcripts incomplete.
@@ -291,11 +362,12 @@ export class RelayDatabase {
     complete: boolean;
   }> {
     if (!meetingId) throw new Error("meeting_id is required");
+    const resolvedId = await this.resolveMeetingId(meetingId);
     const safeOffset = Math.max(0, Math.floor(offset));
     const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
     const client = this.client("relay");
     const { data: meeting, error: meetingError } = await client.schema("transcripts").from("meetings")
-      .select("*").eq("id", meetingId).maybeSingle();
+      .select(MEETING_TRANSCRIPT_COLUMNS).eq("id", resolvedId).maybeSingle();
     supabaseError(meetingError);
     if (!meeting) throw new Error("meeting not found");
     // Project only what a reader needs. select("*") would also ship id,
@@ -303,20 +375,56 @@ export class RelayDatabase {
     // generated search_vector (a long word-position string) — pure token bloat.
     const { data: segments, error: segmentsError } = await client.schema("transcripts").from("meeting_segments")
       .select("speaker, start_seconds, end_seconds, text, confidence")
-      .eq("meeting_id", meetingId)
+      .eq("meeting_id", resolvedId)
       .order("start_seconds", { ascending: true })
       .range(safeOffset, safeOffset + safeLimit - 1);
     supabaseError(segmentsError);
     const { count, error: countError } = await client.schema("transcripts").from("meeting_segments")
-      .select("*", { count: "exact", head: true }).eq("meeting_id", meetingId);
+      .select("*", { count: "exact", head: true }).eq("meeting_id", resolvedId);
     supabaseError(countError);
-    const row = meeting as Record<string, unknown>;
+    // The projection is a runtime string, so PostgREST's generated types fall
+    // back to GenericStringError; the row is the selected columns at runtime.
+    const row = meeting as unknown as Record<string, unknown>;
     return {
       meeting: row,
       segments: (segments ?? []) as Record<string, unknown>[],
       total_length: count ?? 0,
       complete: row.status === "completed",
     };
+  }
+
+  /**
+   * Resolve a meeting reference — a meeting id (uuid), a capture instance_id,
+   * a provider URL, or a room code — to the meeting row's id. This is what
+   * lets an agent read "the meeting I just joined" in one call, instead of
+   * having to list rows and chain ids. UUIDs match id then instance_id;
+   * anything else matches native_id, newest first (a room code reused over
+   * time resolves to the latest capture).
+   */
+  async resolveMeetingId(ref: string): Promise<string> {
+    const trimmed = ref.trim();
+    if (!trimmed) throw new Error("meeting_id is required");
+    const client = this.client("relay");
+    if (UUID_RE.test(trimmed)) {
+      const byId = await client.schema("transcripts").from("meetings")
+        .select("id").eq("id", trimmed).maybeSingle();
+      supabaseError(byId.error);
+      if (byId.data?.id) return byId.data.id as string;
+      const byInstance = await client.schema("transcripts").from("meetings")
+        .select("id").eq("instance_id", trimmed).maybeSingle();
+      supabaseError(byInstance.error);
+      if (byInstance.data?.id) return byInstance.data.id as string;
+      throw new Error(`meeting not found: ${trimmed}`);
+    }
+    const nativeId = nativeIdFromMeetingRef(trimmed);
+    if (!nativeId) throw new Error(`could not parse a meeting reference from "${trimmed}"`);
+    const { data, error } = await client.schema("transcripts").from("meetings")
+      .select("id").eq("native_id", nativeId)
+      .order("created_at", { ascending: false }).limit(1);
+    supabaseError(error);
+    const row = Array.isArray(data) ? data[0] : null;
+    if (!row?.id) throw new Error(`no capture found for meeting ${nativeId}`);
+    return row.id as string;
   }
 
   /**

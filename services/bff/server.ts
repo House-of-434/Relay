@@ -10,6 +10,7 @@ import { createRemoteJWKSet, customFetch, jwtVerify, type JWTPayload } from "jos
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
 import { handleInternalGmail, isInternalGmailPath } from "./gmail-internal.ts";
 import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-internal.ts";
+import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
 import {
   GOOGLE_SERVICE_REGISTRY,
   GoogleConnectionStore,
@@ -1423,6 +1424,22 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
+        now,
+      });
+      return;
+    }
+
+    // Manual Scribe join: the tool layer cannot reach the harness directly
+    // (harness edge gate requires a loopback Host), so the BFF terminates
+    // tool-facing auth here and proxies to the harness over loopback, where
+    // the capability and actor are verified a second time.
+    if (isInternalScribeJoinPath(url.pathname)) {
+      await handleInternalScribeJoin(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        harnessBase,
+        harnessCapability: config.relayBffCapability,
+        fetcher,
         now,
       });
       return;

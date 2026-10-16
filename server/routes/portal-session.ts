@@ -32,6 +32,11 @@ const revokeSchema = z.union([
   z.object({ sessionId: z.string().uuid() }).strict(),
 ]);
 
+/** Hash side of bearerCapabilityMatches. Receivers hold only the digest. */
+export function capabilityHash(value: string): Buffer {
+  return hash(value);
+}
+
 function header(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
@@ -47,7 +52,11 @@ function hash(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
-function bearerCapabilityMatches(req: IncomingMessage, expectedHash: Buffer): boolean {
+/** Shared-capability Bearer check, reused by internal routes that accept the
+ * BFF capability (portal sessions, scribe join). The capability is the
+ * boundary; these routes carry no loopback requirement because legitimate
+ * callers (BFF, tool layer) reach the harness over the compose network. */
+export function bearerCapabilityMatches(req: IncomingMessage, expectedHash: Buffer): boolean {
   const authorization = header(req.headers.authorization);
   const match = authorization ? /^Bearer\s+(\S+)$/i.exec(authorization.trim()) : null;
   if (!match || Buffer.byteLength(match[1]!) > 4096) return false;

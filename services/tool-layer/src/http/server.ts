@@ -7,6 +7,7 @@ import type { RelayActorContext } from "../infra/actor-assertion.js";
 import { authorizeIngest, isAgent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
+import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { createAgentMcpServer } from "../mcp/agent-server.js";
@@ -135,6 +136,52 @@ async function handleIngest(
   }
 }
 
+/**
+ * Orphan-sweep route: a freshly-booted capture worker finalizes rows a
+ * previous, dead generation left live (it owns zero sessions at boot, so any
+ * live row is an orphan holding the room's meetings_live_once slot). Same
+ * ingest capability as the write route — it is the same writer — and no actor;
+ * there is no agent here.
+ */
+async function handleSweep(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: RelayDatabase,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    sendJson(response, 405, { error: "method not allowed" });
+    return;
+  }
+  const capability = ingestCapability();
+  if (!capability) {
+    sendJson(response, 503, { error: "transcript ingest is not configured" });
+    return;
+  }
+  if (!ingestCapabilityMatches(ingestBearerToken(request), capability)) {
+    sendJson(response, 401, { error: "unauthorized" });
+    return;
+  }
+  let reason = "capture worker restarted; the recording session did not survive";
+  if (/^application\/json\b/i.test(typeof request.headers["content-type"] === "string" ? request.headers["content-type"] : "")) {
+    try {
+      const raw = await readIngestBody(request);
+      if (raw && typeof raw === "object" && typeof (raw as { reason?: unknown }).reason === "string") {
+        reason = (raw as { reason: string }).reason.slice(0, 200);
+      }
+    } catch {
+      sendJson(response, 400, { error: "invalid sweep body" });
+      return;
+    }
+  }
+  try {
+    const result = await database.sweepOrphanedMeetings(reason);
+    sendJson(response, 200, { swept: result.partial + result.failed, ...result });
+  } catch {
+    sendJson(response, 500, { error: "sweep failed" });
+  }
+}
+
 let sharedBladePool: BladeBrowserPool | null = null;
 
 export async function createRelayToolServer(
@@ -170,6 +217,10 @@ export async function createRelayToolServer(
       const match = /^\/mcp\/(scout|mercury|curator)$/.exec(url.pathname);
       if (url.pathname === "/internal/transcripts") {
         await handleIngest(request, response, database);
+        return;
+      }
+      if (url.pathname === "/internal/transcripts/sweep") {
+        await handleSweep(request, response, database);
         return;
       }
       if (request.method !== "POST" || !match) {
@@ -211,6 +262,14 @@ export async function createRelayToolServer(
         ? { client: new RelayCalendarClient({ bffInternalUrl, capability }), actorAssertion: actor.actorAssertion }
         : undefined;
 
+      // Meeting capture goes through the BFF like Gmail and Calendar: the
+      // harness edge gate requires a loopback Host, which a compose-network
+      // caller can never present, so the BFF terminates tool-facing auth and
+      // proxies to the harness over loopback. Same capability, same assertion.
+      const scribe = actor.actorAssertion
+        ? { client: new RelayScribeJoinClient({ bffInternalUrl, capability }), actorAssertion: actor.actorAssertion }
+        : undefined;
+
       // The research browser needs an authenticated user to scope the daemon
       // workspace. The pool is process-shared so daemon tracking survives
       // across requests. Search carries no per-user state, so the provider
@@ -240,6 +299,7 @@ export async function createRelayToolServer(
         { userId, botId: actor.actor.botId, threadId: actor.actor.threadId },
         database, gmail, calendar, browser, search,
         databaseToolCallLogger(database, agentName, userId),
+        scribe,
       );
       const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
       try {

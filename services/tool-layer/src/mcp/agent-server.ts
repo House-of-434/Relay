@@ -1,10 +1,12 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GMAIL_PERMISSIONS, SCRIBE_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
+import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { getShape, prepareWrite, validateFilters } from "../domain/shapes.js";
 import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE_INPUT } from "./schemas.js";
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
@@ -19,6 +21,11 @@ export interface RelayGmailContext {
 
 export interface RelayCalendarContext {
   client: RelayCalendarClient;
+  actorAssertion: string;
+}
+
+export interface RelayScribeContext {
+  client: RelayScribeJoinClient;
   actorAssertion: string;
 }
 
@@ -44,6 +51,7 @@ export function createAgentMcpServer(
   browser?: BladeBrowserContext | undefined,
   search?: SearchToolContext | undefined,
   log?: ToolCallLogger | undefined,
+  scribe?: RelayScribeContext | undefined,
 ): McpServer {
   const userId = actor.userId;
   const server = new McpServer({ name: "relay-tools", version: "0.1.0" });
@@ -54,7 +62,7 @@ export function createAgentMcpServer(
   server.registerTool(
     "relay_read",
     {
-      description: "Read rows from a table explicitly permitted for this Relay agent. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported.",
+      description: "Read rows from a table explicitly permitted for this Relay agent: app.companies, app.people, app.events (shared workspace knowledge), history.conversations (your own conversations), transcripts.meetings (captured meeting records). Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.",
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
@@ -121,6 +129,11 @@ export function createAgentMcpServer(
   if (userId) {
     registerTranscriptTools(server, agent, database, userId);
   }
+
+  // Capture-status was folded into relay_read (native_id/instance_id
+  // filters plus the readiness rule above) so one general tool covers it;
+  // search/transcript tools stay separate — they read segment text, which
+  // relay_read deliberately cannot.
 
   if (gmail && GMAIL_PERMISSIONS[agent].length > 0) {
     const gmailContext: RelayGmailContext = gmail;
@@ -190,8 +203,7 @@ export function createAgentMcpServer(
     );
   }
 
-  if (calendar && CALENDAR_PERMISSIONS[agent].length > 0) {
-    const calendarContext: RelayCalendarContext = calendar;
+  if (calendar && CALENDAR_PERMISSIONS[agent].length > 0) {    const calendarContext: RelayCalendarContext = calendar;
 
     server.registerTool(
       "calendar_list_events",
@@ -270,6 +282,52 @@ export function createAgentMcpServer(
           authorizeCalendar(agent, "delete");
           const result = await calendarContext.client.deleteEvent(calendarContext.actorAssertion, { eventId, notify });
           return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    );
+  }
+
+  // Meeting capture is Mercury-only, like Gmail and calendar: joining is a
+  // visible external action (announced in the meeting), so agents without
+  // external comms must not even see the tool offered.
+  if (scribe && SCRIBE_PERMISSIONS[agent].length > 0) {
+    const scribeContext: RelayScribeContext = scribe;
+
+    server.registerTool(
+      "scribe_join_meeting",
+      {
+        description: "Ask Relay Scribe to join a live meeting and transcribe it. Pass the meeting link the user gave you (Google Meet, Zoom, or Teams). This queues the join: Scribe usually appears within a couple of minutes and announces itself in the meeting chat, but admission varies — do not tell the user it is in the meeting until you have confirmed it. already_accepted means the room already has a capture queued or underway; do not resubmit. Scheduled meetings are picked up automatically — do not submit them here.",
+        inputSchema: {
+          meeting_url: z.string().min(1).max(2048),
+          title: z.string().trim().min(1).max(200).optional(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      async ({ meeting_url, title }) => {
+        try {
+          authorizeScribe(agent, "join");
+          // Fresh idempotency key per tool call: a model-level retry of the
+          // same user intent carries a new key, and the harness collapses it
+          // onto the live capture through the active-session rule instead of
+          // starting a duplicate.
+          const result = await scribeContext.client.joinMeeting(scribeContext.actorAssertion, {
+            requestKey: randomUUID(),
+            meetingUrl: meeting_url,
+            ...(title ? { title } : {}),
+          });
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                status: result.status,
+                note: result.status === "accepted"
+                  ? "queued. In your reply, name the meeting by its title or room code — never an internal id — and say you will confirm once Scribe has joined rather than claiming it is already in. Confirm later with get_meeting_transcript."
+                  : "this room already has a capture queued or underway; check it with get_meeting_transcript.",
+              }),
+            }],
+          };
         } catch (error) {
           return toolError(error);
         }

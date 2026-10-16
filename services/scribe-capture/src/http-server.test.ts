@@ -21,7 +21,10 @@ class FakeController implements JoinController {
   }
   async status(instanceId: string): Promise<StatusOutcome> {
     const s = this.live.get(instanceId);
-    return s ? { instance_id: instanceId, status: s.status as any, segment_count: s.segments } : { instance_id: instanceId, status: "unknown", segment_count: 0 };
+    const boot = "11111111-1111-4111-8111-111111111111";
+    return s
+      ? { instance_id: instanceId, status: s.status as never, segment_count: s.segments, worker_boot_id: boot }
+      : { instance_id: instanceId, status: "unknown", segment_count: 0, worker_boot_id: boot };
   }
   async stop(instanceId: string): Promise<JoinOutcome> {
     this.live.set(instanceId, { status: "partial", segments: 0 });
@@ -87,5 +90,17 @@ test("healthz needs no capability", async () => {
   await withServer(async (base) => {
     const res = await fetch(`${base}/healthz`);
     assert.equal(res.status, 200);
+    const body = await res.json() as { worker_boot_id?: unknown };
+    assert.match(String(body.worker_boot_id ?? ""), /^[0-9a-f-]{36}$/);
+  });
+});
+
+test("unknown status still carries the worker boot id", async () => {
+  await withServer(async (base) => {
+    const first = await (await post(base, "/status", { instance_id: "missing" })).json() as StatusOutcome;
+    const second = await (await post(base, "/status", { instance_id: "missing" })).json() as StatusOutcome;
+    assert.equal(first.status, "unknown");
+    assert.match(String(first.worker_boot_id ?? ""), /^[0-9a-f-]{36}$/);
+    assert.equal(second.worker_boot_id, first.worker_boot_id);
   });
 });
