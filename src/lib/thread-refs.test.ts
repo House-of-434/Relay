@@ -132,7 +132,7 @@ describe("canonical thread links", () => {
       `relay://thread/${uuid}/extra?bot=scout`,
       `relay://thread/${uuid}?bot=scout&x=1`,
       `relay://thread/${uuid}?bot=`,
-      `relay://thread/${uuid}?bot=scout`,
+      "openmausbot://thread/" + uuid + "?bot=scout",
       "https://thread/" + uuid,
     ]) {
       expect(parseThreadRefUrl(miss)).toBeNull();

@@ -137,26 +137,21 @@ describe("Settings → Appearance", () => {
     expect(render()).not.toContain('<option value="desktopWorkspaces"');
   });
 
-  it("offers optional Organisation settings only through the local desktop bridge", () => {
+  it("retired the Organisation settings page, even through the local desktop bridge", () => {
     fixture.section = "organization";
     vi.stubGlobal("window", { ogb: { organization: {} } });
-    const local = render();
-    expect(local).toContain('<option value="organization" selected="">Organization</option>');
-    expect(local).toContain("personal and local models");
-    fixture.section = "appearance";
-    vi.stubGlobal("window", {});
     expect(render()).not.toContain('<option value="organization"');
+    fixture.section = "appearance";
     vi.stubGlobal("window", { ogb: { organization: {}, remoteClient: { active: true } } });
     expect(render()).not.toContain('<option value="organization"');
     expect(render()).toContain("Midnight");
   });
-  it("offers personal Cloud separately and only through the local desktop bridge", () => {
+  it("retired the personal OMB Cloud settings page from Settings", () => {
     fixture.section = "cloudAccount";
     vi.stubGlobal("window", { ogb: { cloudAccount: {} } });
-    expect(render()).toContain('<option value="cloudAccount" selected="">OMB Cloud</option>');
-    expect(render()).toContain("Free local use");
+    expect(render()).not.toContain('<option value="cloudAccount"');
+    expect(render()).not.toContain("OMB Cloud</option>");
     fixture.section = "appearance";
-    vi.stubGlobal("window", {}); expect(render()).not.toContain('<option value="cloudAccount"');
     vi.stubGlobal("window", { ogb: { cloudAccount: {}, remoteClient: { active: true } } });
     expect(render()).not.toContain('<option value="cloudAccount"');
   });

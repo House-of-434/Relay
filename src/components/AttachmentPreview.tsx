@@ -847,7 +847,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
             disabled={save.state === "saving"}
             aria-label={saveLabel}
             title={t("attach.download")}
-            className="mr-2 shrink-0 rounded p-1 text-ink-secondary opacity-0 transition-all hover:text-ink focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 group-hover:opacity-100 disabled:cursor-wait"
+            className="mr-2 shrink-0 rounded p-1 text-ink-secondary opacity-0 transition-all hover:text-ink focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent/60 group-hover:opacity-100 touch:opacity-100 disabled:cursor-wait"
           >
             {saveIcon}
           </button>

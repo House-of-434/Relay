@@ -1,4 +1,6 @@
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { SAVE_RUN_AS_SKILL_LINE } from "../../shared/learn-request";
@@ -35,8 +37,22 @@ const stagedSkill = (): Message => ({
   id: `o${++seq}`, at: seq, role: "bot", kind: "options",
   card: { title: "Enable this skill?", options: [], skillRequest: { name: "verify-relay" } } as unknown as Message["card"],
 });
+// skills/ is not tracked in the repo, so the shipped manifest is absent in CI.
+// Build the reviewed authoring adapter inline in a tmp dir, the way the
+// server's skill-library and index suites do, and read its triggers back.
+const skillDir = join(mkdtempSync(join(tmpdir(), "relay-bundled-skills-")), "create-verification-skill");
+mkdirSync(skillDir);
+writeFileSync(join(skillDir, "manifest.json"), JSON.stringify({
+  id: "create-verification-skill",
+  name: "Create verification skill",
+  version: "1.0.0",
+  description: "Authors a verification skill on explicit request",
+  defaultEnabled: true,
+  triggerTerms: ["create a verification skill", "make a verification skill"],
+  requiredCapabilities: ["skillAuthoring"],
+}));
 const triggerTerms = (): string[] =>
-  JSON.parse(readFileSync(new URL("../../skills/create-verification-skill/manifest.json", import.meta.url), "utf8")).triggerTerms;
+  JSON.parse(readFileSync(join(skillDir, "manifest.json"), "utf8")).triggerTerms;
 
 const DOCTOR = "pnpm control:relay doctor --url http://127.0.0.1:8799";
 const SEND = "node --experimental-strip-types scripts/control-relay.ts send --bot x --text y";

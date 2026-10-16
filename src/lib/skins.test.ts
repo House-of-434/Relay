@@ -46,7 +46,7 @@ describe("skins", () => {
       const scheme = id === "lagoon" ? "light" : "dark";
       expect(body).toContain(`--code-color-scheme: ${scheme};`);
     }
-    expect(css).toMatch(/\.chat-md \.shiki\s*\{\s*color-scheme:\s*var\(--code-color-scheme\);\s*\}/);
+    expect(css).toMatch(/\.chat-md \.shiki[^{}]*\{[^}]*color-scheme:\s*var\(--code-color-scheme\);[^}]*\}/);
   });
 
   it("describes each skin exactly once", () => {

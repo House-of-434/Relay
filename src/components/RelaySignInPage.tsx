@@ -28,7 +28,7 @@ export function RelaySignInPage() {
           style={{
             fontFamily: '"Inter Tight", "Inter", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
           }}
-          className="text-[12px] tracking-wide text-ink-secondary/70 underline-offset-4 hover:underline"
+          className="text-[12px] tracking-wide text-ink-tertiary underline-offset-4 hover:underline"
         >
           House of 434
         </a>

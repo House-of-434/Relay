@@ -94,16 +94,16 @@ describe("AccessSection always-allowed list", () => {
 });
 
 describe("AccessSection Works on", () => {
-  const places = (markup: string) => [...markup.matchAll(/>(Auto|Cloud|Local VM|This computer|Browser|Off)<\/button>/g)].map((match) => match[1]);
+  const places = (markup: string) => [...markup.matchAll(/>(Auto|Cloud|Local VM|This computer|Off)<\/button>/g)].map((match) => match[1]);
 
   it("offers this computer and a Local VM on a desktop or self-hosted server", () => {
-    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Browser", "Off"]);
+    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Off"]);
     fixture.config = { cloudHome: false } as Partial<ConfigStatus>;
-    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Browser", "Off"]);
+    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Off"]);
   });
 
   it("never offers them on an OMB Cloud home", () => {
     fixture.config = { cloudHome: true } as Partial<ConfigStatus>;
-    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Browser", "Off"]);
+    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Off"]);
   });
 });
