@@ -23,10 +23,9 @@ function withArtifactNote(text: string, artifact: string | undefined): string {
 const READ_MODES = ["content", "outline", "find", "artifact"] as const;
 const EXTRACT_KINDS = ["auto", "links", "forms"] as const;
 
-/** Scout's research browser: rendered pages, JavaScript, links, and
- * structured extraction inside the calling user's own browser workspace.
- * Available on normal and deep research alike — depth is orchestration,
- * not tooling. */
+/** Scout's browser: interactive navigation, persistent page state, and
+ * site-aware structured extraction inside the calling user's own browser
+ * workspace. */
 export function registerBrowserTools(server: McpServer, agent: Agent, context: BladeBrowserContext): void {
   const { pool, userId } = context;
 
@@ -34,7 +33,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_open",
     {
       description:
-        "Open a URL in the research browser and read the rendered page: JavaScript runs, feeds expand, links resolve. Prefer this when web_search finds a promising result that needs real reading, or when a page needs interaction. Returns bounded text; oversized pages spill to a paged artifact.",
+        "Open a URL in the persistent research browser. Use for clicking, navigating, expanding content, interacting with pages, or maintaining state across steps. Returns bounded page text.",
       inputSchema: { url: z.string().min(1).max(2048) },
       annotations: { readOnlyHint: true },
     },
@@ -53,7 +52,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_read",
     {
       description:
-        "Read the current page: content (clean markdown), outline (headings only, cheapest), find (locate text and return refs), or artifact (page a spilled artifact by name with offset/limit). Use outline first on unknown pages; escalate only what you need.",
+        "Read the current browser page: content, headings, find text, or page through a large artifact. Use the narrowest mode that answers the question.",
       inputSchema: {
         mode: z.enum(READ_MODES),
         query: z.string().min(1).max(512).optional(),
@@ -78,7 +77,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_extract",
     {
       description:
-        "Extract structured data from a page: auto (site-aware lists — comment trees, threads, repos, products — in one call), links, or forms. Pass a URL to navigate first, or omit it to extract the current page. Blocked or challenged pages report honestly instead of fabricating.",
+        "Extract structured page data such as repository rankings, comment threads, products, links, or forms. Use when relationships between fields matter and plain text is insufficient. Reports blocked pages rather than fabricating results.",
       inputSchema: {
         url: z.string().min(1).max(2048).optional(),
         kind: z.enum(EXTRACT_KINDS).optional(),

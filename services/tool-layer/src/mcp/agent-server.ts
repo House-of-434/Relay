@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, ARXIV_PERMISSIONS, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, GITHUB_PERMISSIONS, GMAIL_PERMISSIONS, SCRIBE_PERMISSIONS, SEC_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, ARXIV_PERMISSIONS, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, FETCH_PERMISSIONS, GITHUB_PERMISSIONS, GMAIL_PERMISSIONS, SCRIBE_PERMISSIONS, SEC_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
@@ -15,6 +15,7 @@ import { EVENT_CHANGES_INPUT, EVENT_DRAFT_INPUT, NOTIFY_INPUT, READ_INPUT, WRITE
 import { registerBrowserTools, type BladeBrowserContext } from "./browser-server.js";
 import { registerSearchTools, type SearchToolContext } from "./search-server.js";
 import { registerTranscriptTools } from "./transcript-server.js";
+import { registerFetchTools, type FetchToolContext } from "./fetch-server.js";
 import { registerArxivTools } from "./arxiv-server.js";
 import { registerSecTools } from "./sec-server.js";
 import { registerGithubTools } from "./github-server.js";
@@ -65,6 +66,7 @@ export function createAgentMcpServer(
   calendar: RelayCalendarContext | undefined,
   browser?: BladeBrowserContext | undefined,
   search?: SearchToolContext | undefined,
+  fetch?: FetchToolContext | undefined,
   log?: ToolCallLogger | undefined,
   scribe?: RelayScribeContext | undefined,
   connectors?: ConnectorToolContext | undefined,
@@ -150,6 +152,13 @@ export function createAgentMcpServer(
   // filters plus the readiness rule above) so one general tool covers it;
   // search/transcript tools stay separate — they read segment text, which
   // relay_read deliberately cannot.
+  // Web fetch, like search, carries no per-user state, but listing it still
+  // requires an authenticated actor. Visibility still matches authorization.
+  if (fetch && userId && FETCH_PERMISSIONS[agent].length > 0) {
+    registerFetchTools(server, agent, fetch);
+  }
+
+
   // Research connectors: visibility matches authorization. arXiv and SEC are
   // public built-ins, so an authenticated Scout sees them whenever the operator
   // configured them; only a connected installation makes GitHub visible. Each

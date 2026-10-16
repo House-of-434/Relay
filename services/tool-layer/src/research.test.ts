@@ -122,6 +122,7 @@ test("scout gets the full research loop; others get no search or browser", async
       "relay_read",
       "relay_write",
       "search_meetings",
+      "web_fetch",
       "web_search",
     ]);
   } finally {
@@ -131,6 +132,7 @@ test("scout gets the full research loop; others get no search or browser", async
     const peer = await session(agent, assertionFor(ALICE, agent));
     try {
       assert.ok(!peer.tools.includes("web_search"), agent);
+      assert.ok(!peer.tools.includes("web_fetch"), agent);
       assert.ok(!peer.tools.some((name) => name.startsWith("browser_")), agent);
     } finally {
       await peer.close();

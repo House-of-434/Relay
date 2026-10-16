@@ -4,12 +4,12 @@ The Tool Layer is the database security boundary. It binds to `127.0.0.1:8787`
 by default (compose overrides the bind for the container network, where the
 HMAC actor assertion below is the real boundary) and exposes `relay_read` and
 `relay_write` on every MCP route (`/mcp/scout`, `/mcp/mercury`, or
-`/mcp/curator`); agents with research capability additionally expose browser
-and search tools to authenticated callers. Scout additionally exposes the
-arXiv, SEC EDGAR, and GitHub research connectors, but only when the caller
-enabled that connector for their own account (GitHub also requires a connected
-installation, and SEC requires its fair-access User-Agent below); a disabled
-connector has no reachable tool. Agent identity
+`/mcp/curator`); agents with research capability additionally expose browser,
+search, and page-fetch tools to authenticated callers. Scout also exposes the arXiv and
+SEC EDGAR research connectors as public built-ins (SEC requires its
+fair-access User-Agent below), and the GitHub connector — repository search,
+file reads, issues, and releases — only once the caller has connected a GitHub
+installation; an unavailable connector has no reachable tool. Agent identity
 comes from the configured MCP route, never from tool arguments. Every MCP
 request requires a signed `x-relay-actor-user` assertion and is rejected with
 401 without one, because the service-role credential bypasses Postgres RLS.

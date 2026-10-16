@@ -6,17 +6,12 @@ const scout = RELAY_AGENT_SEEDS.find((seed) => seed.role === "scout");
 if (!scout) throw new Error("scout seed missing");
 
 describe("scout capability manifest", () => {
-  it("names every research capability the soul may direct", () => {
-    for (const capability of [
-      "relay_read",
-      "relay_write",
-      "web_search",
-      "browser_open",
-      "browser_read",
-      "browser_extract",
-    ]) {
-      expect(scout.profile.soul).toContain(capability);
-    }
+  it("states the tool-selection policy instead of enumerating every tool", () => {
+    // Tools advertise themselves (name + description via MCP); the soul only
+    // sets the policy: simplest tool that works, escalate when it falls short.
+    expect(scout.profile.soul).toContain("most appropriate available tool");
+    expect(scout.profile.soul).toMatch(/Escalate when results are incomplete/);
+    expect(scout.profile.soul).toContain("specialized connectors");
   });
 
   it("defines the deep-research protocol: plan preview, confirmed one-shot", () => {

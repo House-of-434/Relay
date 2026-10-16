@@ -10,6 +10,7 @@ import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
+import { TinyFishFetchProvider } from "../infra/fetch.js";
 import { ArxivProvider } from "../infra/arxiv.js";
 import { SecProvider } from "../infra/sec.js";
 import { RelayGitHubClient } from "../infra/github.js";
@@ -343,6 +344,14 @@ export async function createRelayToolServer(
           home: searchConfigValue.home,
         }),
       };
+      // Fetch shares TinyFish's CLI, credential, and probe with search.
+      const fetch = {
+        provider: new TinyFishFetchProvider({
+          binary: searchConfigValue.binary,
+          apiKey: searchConfigValue.apiKey,
+          home: searchConfigValue.home,
+        }),
+      };
 
       // Per-user connector enablement comes from the BFF; a disabled connector
       // is never registered. GitHub additionally requires a connected install.
@@ -353,7 +362,7 @@ export async function createRelayToolServer(
       const mcp = createAgentMcpServer(
         agentName,
         { userId, botId: actor.actor.botId, threadId: actor.actor.threadId },
-        database, gmail, calendar, browser, search,
+        database, gmail, calendar, browser, search, fetch,
         databaseToolCallLogger(database, agentName, userId),
         scribe,
         connectors,

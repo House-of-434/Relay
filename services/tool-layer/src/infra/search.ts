@@ -10,10 +10,9 @@
  * normalized {url, title, snippet} only.
  */
 
-import { execFile as execFileCallback } from "node:child_process";
-import { promisify } from "node:util";
+import { TinyFishCli, type SpawnFn } from "./tinyfish.js";
 
-const execFileAsync = promisify(execFileCallback);
+export type { SpawnFn, SpawnOptions, SpawnResult } from "./tinyfish.js";
 
 /** Agent-facing result: the full contract. Providers may return richer
  * payloads; the adapter narrows to exactly these fields. */
@@ -52,50 +51,6 @@ export interface ProviderReport {
   errorSummary?: string;
 }
 
-export interface SpawnResult {
-  exitCode: number | null;
-  stdout: string;
-  stderr: string;
-}
-
-export interface SpawnOptions {
-  env: Record<string, string>;
-  timeoutMs: number;
-  maxBufferBytes: number;
-}
-
-export type SpawnFn = (binary: string, args: string[], options: SpawnOptions) => Promise<SpawnResult>;
-
-async function defaultSpawn(binary: string, args: string[], options: SpawnOptions): Promise<SpawnResult> {
-  try {
-    const { stdout, stderr } = await execFileAsync(binary, args, {
-      env: options.env,
-      timeout: options.timeoutMs,
-      maxBuffer: options.maxBufferBytes,
-    });
-    return { exitCode: 0, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") };
-  } catch (error) {
-    const failure = error as {
-      code?: unknown;
-      killed?: boolean;
-      stdout?: unknown;
-      stderr?: unknown;
-      message?: unknown;
-    };
-    if (failure.killed) throw new Error(`web search timed out after ${options.timeoutMs}ms`);
-    if (typeof failure.code === "number") {
-      return {
-        exitCode: failure.code,
-        stdout: String(failure.stdout ?? ""),
-        stderr: String(failure.stderr ?? ""),
-      };
-    }
-    throw new Error(
-      `web search failed to start: ${typeof failure.message === "string" ? failure.message : "unknown error"}`,
-    );
-  }
-}
-
 export interface TinyFishOptions {
   binary?: string;
   path?: string;
@@ -114,7 +69,6 @@ export const SEARCH_MAX_BUFFER_BYTES = 1024 * 1024;
 export const SEARCH_QUERY_MAX_LENGTH = 512;
 export const SEARCH_DEFAULT_LIMIT = 10;
 export const SEARCH_MAX_LIMIT = 20;
-const TINYFISH_PROBE_TIMEOUT_MS = 15_000;
 
 interface TinyFishRow {
   url?: unknown;
@@ -125,7 +79,7 @@ interface TinyFishRow {
   [key: string]: unknown;
 }
 
-function isHttpUrl(value: unknown): boolean {
+export function isHttpUrl(value: unknown): boolean {
   if (typeof value !== "string") return false;
   try {
     const url = new URL(value);
@@ -165,44 +119,25 @@ function cleanDomains(values: string[] | undefined, name: string): string | unde
 }
 
 export class TinyFishSearchProvider implements SearchProvider {
-  private readonly binary: string;
-  private readonly path: string;
-  private readonly apiKey: string | undefined;
-  private readonly home: string | undefined;
+  private readonly cli: TinyFishCli;
   private readonly timeoutMs: number;
-  private readonly spawn: SpawnFn;
-  private available: boolean | null = null;
   private lastError: string | null = null;
 
   constructor(options: TinyFishOptions = {}) {
-    this.binary = options.binary ?? "tinyfish";
-    this.path = options.path ?? process.env.PATH ?? "/usr/bin:/bin";
-    this.apiKey = options.apiKey;
-    this.home = options.home;
+    this.cli = new TinyFishCli({
+      binary: options.binary,
+      path: options.path,
+      apiKey: options.apiKey,
+      home: options.home,
+      spawn: options.spawn,
+    });
     this.timeoutMs = options.timeoutMs ?? SEARCH_TIMEOUT_MS;
-    this.spawn = options.spawn ?? defaultSpawn;
   }
 
   /** Whether the CLI answers and holds credentials. Cached: presence
    * cannot change without a redeploy. */
   async probe(): Promise<boolean> {
-    if (this.available !== null) return this.available;
-    try {
-      const result = await this.spawn(this.binary, ["auth", "status"], {
-        env: this.baseEnv(),
-        timeoutMs: TINYFISH_PROBE_TIMEOUT_MS,
-        maxBufferBytes: 65536,
-      });
-      if (result.exitCode !== 0) {
-        this.available = false;
-      } else {
-        const status = JSON.parse(result.stdout) as { authenticated?: unknown };
-        this.available = status.authenticated === true;
-      }
-    } catch {
-      this.available = false;
-    }
-    return this.available;
+    return this.cli.probe();
   }
 
   /** Machine-readable provider report for preflight and run metadata.
@@ -258,8 +193,8 @@ export class TinyFishSearchProvider implements SearchProvider {
     // No freshness flag exists on this provider; recency is judged from
     // result dates downstream. Accepted (not rejected) so the interface
     // stays provider-agnostic.
-    const result = await this.spawn(this.binary, args, {
-      env: this.baseEnv(),
+    const result = await this.cli.spawn(this.cli.binary, args, {
+      env: this.cli.baseEnv(),
       timeoutMs: this.timeoutMs,
       maxBufferBytes: SEARCH_MAX_BUFFER_BYTES,
     });
@@ -287,12 +222,8 @@ export class TinyFishSearchProvider implements SearchProvider {
     }
   }
 
-  /** Curated CLI environment: PATH, key, telemetry off. Telemetry from a
-   * server process is never the operator's choice to make per call. */
+  /** Curated CLI environment; shared with the fetch provider. */
   baseEnv(): Record<string, string> {
-    const env: Record<string, string> = { PATH: this.path, TINYFISH_NO_TELEMETRY: "1" };
-    if (this.apiKey) env.TINYFISH_API_KEY = this.apiKey;
-    else if (this.home) env.HOME = this.home;
-    return env;
+    return this.cli.baseEnv();
   }
 }
