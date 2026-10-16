@@ -29,7 +29,7 @@ describe("control-relay command mapping", () => {
 
   it("keeps every ui verb off discovery: the launch handle is required, whatever the environment says", async () => {
     const env = { RELAY_URL: "http://127.0.0.1:19999", RELAY_PORT: "19999" };
-    const verbs = [...UI_MUTATING, "snapshot", "screenshot", "console", "wait-settle"];
+    const verbs = [...UI_MUTATING, "snapshot", "screenshot", "console", "wait-settle", "hover"];
     expect(UI_MUTATING).toEqual(new Set(["click", "type", "press", "flag", "eval"]));
     for (const verb of verbs) {
       await expect(runControlOmb(["ui", verb], { env })).rejects.toMatchObject({
@@ -51,8 +51,8 @@ describe("control-relay command mapping", () => {
       const handle = join(dir, "ui.json");
       writeFileSync(handle, JSON.stringify({
         url: "http://127.0.0.1:19999", previewUrl: "http://127.0.0.1:5199/__threads.html",
-        home: join(dir, "gone"), botId: "bot-1", logPath: "/fixture/server.log", chrome: "/fixture/chrome",
-        driverUrl: "http://127.0.0.1:19998",
+        home: join(dir, "gone"), botId: "bot-1", logPath: "/fixture/server.log", token: "fixture-owner-token",
+        chrome: "/fixture/chrome", driverUrl: "http://127.0.0.1:19998",
       }));
       await expect(runControlOmb(["ui", "snapshot", "--ui", handle])).rejects.toMatchObject({
         message: expect.stringContaining("data directory is gone"),

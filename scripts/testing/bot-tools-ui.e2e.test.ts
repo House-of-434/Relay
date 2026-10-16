@@ -5,21 +5,22 @@ import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { BOT_ROLES, roleProfilePatch } from "../../src/lib/bot-roles.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 if (!enabled) console.log("skipping bot tools UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");
 const chrome = resolveUiChrome(process.env);
 const LAUNCH_TIMEOUT_MS = forced && !chrome ? 600_000 : 180_000;
 
-interface FixtureInfo { ui: string; url: string; dataDir: string; logPath: string }
+interface FixtureInfo { ui: string; url: string; dataDir: string; logPath: string; token: string }
 interface SavedBot { id: string; name: string; soul?: string; mcpServers?: string[]; computer?: string }
 
-describe("bot setup and tools in the real renderer", () => {
+describe("bot setup in the real renderer", () => {
   let child: ChildProcess | undefined;
   let info: FixtureInfo;
   afterAll(async () => {
@@ -27,7 +28,7 @@ describe("bot setup and tools in the real renderer", () => {
     await waitForExit(child, { graceMs: 30_000 });
   });
 
-  (enabled ? it : it.skip)("creates roles, configures per-bot MCP access, and recovers a rejected preset", async () => {
+  (enabled ? it : it.skip)("creates roles and recovers a rejected preset", async () => {
     let stdout = "";
     let stderr = "";
     // Windows kill("SIGINT") terminates immediately instead of delivering a
@@ -46,6 +47,7 @@ describe("bot setup and tools in the real renderer", () => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: LAUNCH_TIMEOUT_MS + 120_000, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const click = (name: string) => ui("click", "--name", name);
@@ -53,13 +55,14 @@ describe("bot setup and tools in the real renderer", () => {
     const bots = async (): Promise<SavedBot[]> => (await fetch(`${info.url}/api/bots`).then((response) => response.json())).bots;
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const openTools = async () => {
-      // Composer tray Tools is gone; open bot settings (mascot) then Access.
-      // Accordion starts collapsed, so Access must be expanded explicitly.
+      // Row actions reveal on hover; the bot settings dialog holds Access.
       const state = await ui("snapshot", "--interactive");
-      const profile = Object.entries(state.refs as Record<string, { role: string; name: string }>)
-        .find(([, entry]) => entry.role === "button" && /Open .+ profile/.test(entry.name));
-      expect(profile).toBeDefined();
-      await ui("click", "--ref", `@${profile![0]}`);
+      const row = Object.entries(state.refs as Record<string, { role: string; name: string }>)
+        .find(([, entry]) => entry.role === "button" && entry.name.startsWith("Pepper"));
+      expect(row).toBeDefined();
+      await ui("hover", "--ref", `@${row![0]}`);
+      await click("Actions for Pepper");
+      await click("Edit Profile");
       await click("Access");
     };
     const chooseRole = async (roleId: string) => {
@@ -125,61 +128,28 @@ describe("bot setup and tools in the real renderer", () => {
     await runControlOmb(["send", "--bot", created[0].id, "--text", "Reply briefly for the sidebar test.", "--url", info.url]);
     expect((await runControlOmb(["wait", "--bot", created[0].id, "--timeout", "20", "--url", info.url]) as { status: string }).status).toBe("settled");
     await openTools();
-    await expect.poll(snapshot, { timeout: 10_000 }).toContain("No MCP servers added yet.");
-    const usageExpanded = () => evaluate("[...document.querySelectorAll('[role=dialog] button')].find(b => b.textContent.trim() === 'Usage')?.getAttribute('aria-expanded')");
-    const openHeaderUsage = async () => {
-      const state = await ui("snapshot", "--interactive");
-      const cost = Object.entries(state.refs as Record<string, { role: string; name: string }>)
-        .filter(([, entry]) => entry.role === "button" && entry.name.includes("$0.01"));
-      expect(cost).toHaveLength(1);
-      await ui("click", "--ref", `@${cost[0][0]}`);
-      await expect.poll(usageExpanded, { timeout: 10_000 }).toBe("true");
-      expect(await snapshot()).toContain("All bots");
-      // Allow subpixel rounding at the bottom edge of the scroll viewport.
-      await expect.poll(() => evaluate("(() => { const row = document.querySelector('[data-bot-settings-section=usage]'); const rect = row?.getBoundingClientRect(); return rect ? Math.max(-rect.top, rect.bottom - innerHeight) : 9999; })()"), { timeout: 10_000 }).toBeLessThanOrEqual(1);
-    };
-    await openHeaderUsage();
+    // Custom MCP servers were retired: the Access section holds Google
+    // connections, webhooks and always-allowed tools instead.
+    await expect.poll(snapshot, { timeout: 10_000 }).toContain("Always allowed");
+    // Usage lives in app settings now (the header cost chip is gone): the
+    // section opens with per-bot cost copy, and Escape in its search clears
+    // a stale query instead of closing the modal.
+    await press("Escape");
+    await expect.poll(dialogCount, { timeout: 10_000 }).toBe(0);
+    await click("You");
+    await click("Settings");
     await click("Usage");
-    expect(await usageExpanded()).toBe("false");
-    await openHeaderUsage(); // same section, already mounted, after collapse
+    await expect.poll(snapshot, { timeout: 10_000 }).toContain("Tokens and cost per bot");
     const search = await ui("snapshot", "--interactive");
     const searchRef = Object.entries(search.refs as Record<string, { role: string; name: string }>)
       .find(([, entry]) => entry.role === "textbox" && entry.name === "Search settings");
     expect(searchRef).toBeDefined();
     await ui("type", "--ref", `@${searchRef![0]}`, "--text", "standing");
     expect(await evaluate("document.querySelector('[aria-label=\"Search settings\"]')?.value")).toBe("standing");
-    await openHeaderUsage(); // a stale search must not hide an external target
+    await press("Escape"); // the search has focus from typing: clears, stays open
     expect(await evaluate("document.querySelector('[aria-label=\"Search settings\"]')?.value")).toBe("");
+    expect(await snapshot()).toContain("Tokens and cost per bot");
     await ui("screenshot", "--out", `${info.logPath}.settings.png`);
-    await click("Overview");
-    await expect.poll(snapshot, { timeout: 10_000 }).toContain("Optional ways to customize this bot. You can start chatting now.");
-    await click("Access");
-    await click("Add an MCP server…");
-    // The registry loads on mount; Paste config is disabled until it finishes.
-    await expect.poll(() => evaluate("[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'Paste config')?.disabled"), { timeout: 10_000 }).toBe(false);
-    await click("Paste config");
-    await expect.poll(() => evaluate("Boolean(document.querySelector('textarea[aria-label=\"Paste config\"]'))"), { timeout: 10_000 }).toBe(true);
-    const pasted = await ui("snapshot", "--interactive");
-    const textarea = Object.entries(pasted.refs as Record<string, { role: string; name: string }>)
-      .find(([, entry]) => entry.role === "textbox" && entry.name === "Paste config");
-    expect(textarea).toBeDefined();
-    await ui("type", "--ref", `@${textarea![0]}`, "--text", JSON.stringify({ mcpServers: {
-      fixture: { command: process.execPath, args: ["-e", "process.exit(0)"] },
-    } }));
-    await click("Add servers");
-    const registry = async () => (await fetch(`${info.url}/api/mcp/servers`).then((response) => response.json())).servers;
-    await expect.poll(registry, { timeout: 10_000 }).toMatchObject([{ name: "fixture", enabled: false }]);
-    await expect.poll(snapshot, { timeout: 10_000 }).toContain("Turn fixture on");
-    await click("Turn fixture on");
-    await expect.poll(registry, { timeout: 10_000 }).toMatchObject([{ name: "fixture", enabled: true }]);
-    await press("Escape");
-    await openTools();
-    await expect.poll(() => evaluate("document.querySelector('[aria-label=\"Let this bot use fixture\"]')?.getAttribute('aria-checked')"), { timeout: 10_000 }).toBe("true");
-    await click("Let this bot use fixture");
-    await expect.poll(async () => (await bots()).find((bot) => bot.id === created[0].id)?.mcpServers, { timeout: 10_000 }).toEqual([]);
-    await press("Escape");
-    await openTools();
-    await expect.poll(() => evaluate("document.querySelector('[aria-label=\"Let this bot use fixture\"]')?.getAttribute('aria-checked')"), { timeout: 10_000 }).toBe("false");
 
     // Opening New Bot above settings must replace the old modal, not leave
     // two focus traps competing. Escape closes only the one remaining layer.
@@ -207,9 +177,11 @@ describe("bot setup and tools in the real renderer", () => {
       };
       return true;
     })()`);
-    const ops = BOT_ROLES.find((role) => role.id === "ops")!;
+    // The coder role needs no connected apps, so its profile PATCH is what
+    // the fixture rejects below (ops would stop at an apps confirm first).
+    const retryRole = BOT_ROLES.find((role) => role.id === "coder")!;
     await press("Control+n");
-    await chooseRole(ops.id);
+    await chooseRole(retryRole.id);
     await click("Create bot");
     await expect.poll(snapshot, { timeout: 10_000 }).toContain("Fixture preset rejected");
     expect((await bots()).map(bot => bot.id)).toEqual(beforeFailure.map(bot => bot.id));
@@ -217,7 +189,7 @@ describe("bot setup and tools in the real renderer", () => {
     await click("Create bot");
     await expect.poll(async () => (await bots()).length, { timeout: 10_000 }).toBe(beforeFailure.length + 1);
     await expect.poll(dialogCount, { timeout: 10_000 }).toBe(0);
-    expect((await bots()).filter(bot => !beforeFailure.some(old => old.id === bot.id))).toMatchObject([{ name: ops.name, soul: ops.soul }]);
+    expect((await bots()).filter(bot => !beforeFailure.some(old => old.id === bot.id))).toMatchObject([{ name: retryRole.name, soul: retryRole.soul }]);
     const logs = await ui("console");
     expect((logs.messages as Array<{ type: string; text: string }>).filter((entry) => entry.type === "error")).toEqual([]);
     if (child?.connected) child.send("stop");

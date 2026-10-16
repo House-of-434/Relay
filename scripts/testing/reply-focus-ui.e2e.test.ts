@@ -4,11 +4,11 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const chrome = resolveUiChrome(process.env);
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(chrome);
+const enabled = uiE2eEnabled();
 if (!enabled) console.info("skipping reply focus UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
 
 // MOCA-263: choosing Reply showed "Replying to …" but left the caret outside

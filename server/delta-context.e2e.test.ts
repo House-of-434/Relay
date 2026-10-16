@@ -228,6 +228,10 @@ it("offers a message steered into a running turn to the next turn once, marked a
   f.plan[f.chief.id] = { reply: "Working", gateFile: f.gate("turn") };
   await f.send("Start on the report.");
   await expect.poll(() => f.launches().length, { timeout: 15_000 }).toBe(2);
+  // A launched provider process is not yet a busy task; on a loaded runner the
+  // send can arrive before the server marks the turn running, so it would not
+  // steer. Wait for the busy flag the steer path keys on.
+  await expect.poll(async () => (await f.api("/api/bots")).bots.find((b: any) => b.id === f.chief.id).tasks.some((t: any) => t.busy), { timeout: 15_000 }).toBe(true);
   expect((await f.send("STEERED_MID_TURN also cover costs")).steered).toBe(true);
   f.open(f.gate("turn"));
   await f.wait();

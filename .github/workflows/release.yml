@@ -18,6 +18,13 @@
 #                                 publish 404s the README's other buttons
 #
 # One-time setup (repo secrets) is documented in docs/releasing.md.
+#
+# DISABLED (2026-10): the product is server-only now. This workflow builds
+# desktop installers (mac/Windows/Ubuntu + electron-updater feeds) via scripts
+# that no longer exist in package.json (package:mac/win/linux, build:cua:*,
+# smoke:*, regenerate-*-feed). Manual runs still work for reference, but the
+# automatic push trigger is off until a server-only release path replaces it.
+# See chore/ci-server-only for the CI overhaul plan.
 name: Release
 
 on:
@@ -37,11 +44,6 @@ on:
         required: false
         type: boolean
         default: false
-  push:
-    branches:
-      - main
-    paths:
-      - package.json
 
 permissions:
   contents: read

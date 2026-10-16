@@ -21,6 +21,7 @@ const ALLOWED = new Set([
   "onboarding.shared.welcome",
   "signIn.workspace.title",
   "signIn.workspace.body",
+  "signIn.workspace.tagline",
   "signIn.workspace.denied",
   "settings.welcome.subtitle",
   "connectors.notConfiguredYet",

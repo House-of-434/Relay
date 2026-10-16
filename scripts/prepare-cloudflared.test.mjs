@@ -107,8 +107,6 @@ const PINNED_ASSETS = {
   },
 };
 
-const packageJson = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
-
 function executableFixture(target) {
   const bytes = Buffer.alloc(128);
   if (target === "darwin-arm64" || target === "darwin-x64") {
@@ -164,13 +162,13 @@ describe("pinned cloudflared packaging", () => {
     expect(() => parsePrepareCloudflaredArgs(["--root", "/a", "--root", "/b"])).toThrow(/Usage:/);
   });
 
-  it("stages the current target for development without narrowing package preparation", () => {
-    expect(packageJson.scripts["dev:desktop"]).toBe(
-      "node scripts/prepare-cloudflared.mjs --current && electron .",
-    );
-    expect(packageJson.scripts["build:cloudflared"]).toBe(
-      "node scripts/prepare-cloudflared.mjs",
-    );
+  it("stages the script through the server bundle, not npm scripts", () => {
+    // The desktop-era dev:desktop/build:cloudflared scripts are gone: the
+    // script ships inside dist-server (bundled by scripts/bundle-server.mjs,
+    // asserted by .github/workflows/npm-package.yml) and runs from
+    // server/tunnel.ts. This pin keeps that wiring from silently dropping it.
+    const bundle = readFileSync(new URL("./bundle-server.mjs", import.meta.url), "utf8");
+    expect(bundle).toContain("scripts\", \"prepare-cloudflared.mjs");
   });
 
   it("pins a complete release asset and digest for every supported target", () => {

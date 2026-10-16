@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import { handleToolCall, request } from "../scripts/mcp-server.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
@@ -36,6 +37,10 @@ it("boots and reports an interrupted routine back to its source room", async () 
       RELAY_PORT: new URL(url).port, RELAY_WEBHOOK_PORT: String(Number(new URL(url).port) + 1),
       PATH: dirname(process.execPath), FAKE_CLAUDE_MODE: "happy",
     });
+    // Re-issue the owner session for the restarted server (Windows kill()
+    // skips graceful shutdown, which can make its boot marker read the prior
+    // session as stale).
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)), env, stdio: ["ignore", log, log],

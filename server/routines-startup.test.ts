@@ -7,6 +7,7 @@ import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 import { RoutineManager, type RoutineRun } from "./routines.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 
 it("recovers queued/due work without resurrecting an interrupted routine after restart", async () => {
   const fixture = await launchVerificationServer();
@@ -104,6 +105,10 @@ it("recovers queued/due work without resurrecting an interrupted routine after r
       RELAY_PORT: new URL(url).port, RELAY_WEBHOOK_PORT: String(Number(new URL(url).port) + 1),
       PATH: dirname(process.execPath), FAKE_CLAUDE_MODE: "happy",
     });
+    // Re-issue the owner session for the restarted server: Windows kill()
+    // terminates the first process without its graceful shutdown, so its boot
+    // marker can read the previous session as stale.
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)), env, stdio: ["ignore", log, log],
@@ -130,7 +135,12 @@ it("recovers queued/due work without resurrecting an interrupted routine after r
     expect(runs.filter(run => run.routineId === cron.id && run.scheduledFor < Math.floor(Date.now() / 60_000) * 60_000)).toHaveLength(1);
     const restoredCron = (await api("GET", "/api/routines")).routines.find((routine: { id: string }) => routine.id === cron.id);
     expect(restoredCron.schedule).toEqual(cron.schedule);
-    expect(restoredCron.nextRunAt).toBeGreaterThan(Date.now());
+    // The every-minute cron re-arms to the next minute boundary computed at
+    // boot. A slow restart can cross that boundary before this assertion, so
+    // allow the boundary that just passed (still < one period away) rather
+    // than racing the clock.
+    expect(restoredCron.nextRunAt % 60_000).toBe(0);
+    expect(restoredCron.nextRunAt).toBeGreaterThan(Date.now() - 60_000);
     const recoveredPeer = (await api("GET", "/api/bots")).bots.find((bot: { id: string }) => bot.id === orphanPeer.id);
     expect(recoveredPeer.messages.some((message: { role: string }) => message.role === "user")).toBe(false);
     expect(Boolean(recoveredPeer.busy)).toBe(false);

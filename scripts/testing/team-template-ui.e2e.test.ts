@@ -3,13 +3,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
 if (!enabled) console.log("skipping template UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
@@ -21,7 +22,7 @@ describe("additive template imports in the real renderer", () => {
   (enabled ? it : it.skip)("adds library and file templates as sections without losing existing chats", async () => {
     let stdout = "";
     let stderr = "";
-    let info: { ui: string; url: string; botId: string; logPath: string };
+    let info: { ui: string; url: string; botId: string; logPath: string; token: string };
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -32,6 +33,7 @@ describe("additive template imports in the real renderer", () => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: launchTimeout, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const click = (name: string) => ui("click", "--name", name);

@@ -18,6 +18,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { CLOUD_IGNORED_KEYS, cloudHomePlaceRefusal, cloudPairingSignature } from "./cloud-home.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession } from "./testing/owner.ts";
 import { freePortBlock } from "./testing/ports.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -92,6 +93,10 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
       claude: { driver: "claudeAgent", displayName: "Claude", config: { cli } },
     },
   }));
+  // Per-user workspaces: pairing sessions carry no user id and see nothing.
+  // The owner's own session is seeded before boot; the Admin-signed pairing
+  // flow itself stays covered by the "pairs the app" test below.
+  ownerToken = prepareOwnerSession(dataDir);
   // The web UI's pages (a stand-in for the built app).
   mkdirSync(join(home, "web"));
   writeFileSync(join(home, "web", "index.html"), "<!doctype html><title>Relay</title>");
@@ -121,19 +126,7 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
     if (Date.now() > deadline) throw new Error(`the Cloud home did not start:\n${log}`);
     await new Promise((resolve) => setTimeout(resolve, 100));
   }
-  ownerToken = await ownerPairing();
 }, 30_000);
-
-/** One of the owner's devices, paired the way the Admin pairs the app. */
-async function ownerPairing(): Promise<string> {
-  const body = JSON.stringify({ label: "Relay app (Cloud)", ttlSeconds: 300 });
-  const timestamp = String(Math.floor(Date.now() / 1000)), nonce = randomBytes(16).toString("base64url");
-  const granted = await api("POST", "/api/cloud/pairing", { remote: true, headers: {
-    "content-type": "application/json", "x-relay-cloud-timestamp": timestamp, "x-relay-cloud-nonce": nonce,
-    "x-relay-cloud-signature": `v1=${cloudPairingSignature(secret, timestamp, nonce, body)}`,
-  }, body: JSON.parse(body) });
-  return (await api("POST", "/api/auth/pair", { remote: true, body: { code: granted.body.code } })).body.token as string;
-}
 
 afterAll(async () => {
   if (child) await waitForExit(child, { signal: "SIGTERM" });
@@ -147,11 +140,12 @@ it("boots with a gateway's settings, says once that it ignores them, and never l
   for (const includedToken of includedTokens) expect(log).not.toContain(includedToken);
 });
 
-it("offers the included computers, voice and decisions with no key, and never shows or saves their tokens", async () => {
+it("offers the included computers and decisions with no key, and never shows or saves their tokens", async () => {
   const status = await api("GET", "/api/config");
   expect(status.status).toBe(200);
   expect(status.body.box).toEqual({ configured: true, included: true });
-  expect(status.body.tts).toMatchObject({ configured: true, ready: true, provider: "elevenlabs", voice: "preset0voice0id", included: true });
+  // Voice was stripped (no server/tts): no tts status is served.
+  expect(status.body.tts).toBeUndefined();
   expect(status.body.decider).toEqual({ provider: "jev", configured: true, included: true, enabled: true, jobs: { roomRouting: true } });
   const saved = readFileSync(join(home, ".relay", "config.json"), "utf8");
   for (const includedToken of includedTokens) {

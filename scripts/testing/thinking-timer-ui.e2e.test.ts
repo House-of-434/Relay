@@ -24,14 +24,15 @@ import { fileURLToPath } from "node:url";
 import { afterAll, afterEach, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "scripts", "control-relay.ts");
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 if (!enabled) {
   console.log(`skipping thinking-timer ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set RELAY_UI_E2E=1 to require it`);
 }
@@ -45,7 +46,7 @@ const ownsEvidenceDir = !process.env.RELAY_UI_EVIDENCE_DIR;
 
 interface Launched {
   child: ReturnType<typeof spawn>;
-  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string };
+  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string; token: string };
   stderr: () => string;
 }
 
@@ -111,17 +112,22 @@ function elapsedSeconds(text: string): number {
   return -1;
 }
 
-/** Selection can already expand a thread list. Click only its collapsed DOM
- * chevron, avoiding both accidental collapse and transient duplicate AX names. */
-async function expandThreads(handle: string, name: string): Promise<void> {
-  const collapsed = JSON.stringify(`button[aria-label="Expand ${name} threads"]`);
-  const expanded = JSON.stringify(`button[aria-label="Collapse ${name} threads"]`);
-  await waitUntil(async () => (await ui("eval", handle, "--js", `(() => {
-    if (document.querySelector(${expanded})) return true;
-    document.querySelector(${collapsed})?.click();
-    return false;
-  })()`)).result, 10_000, `${name}'s thread list to expand`);
+/** The sidebar no longer lists a bot's threads; switching happens through the
+ * chat header's thread switcher menu. Rows read "<title><date>", so match by
+ * prefix and click the row's ref. */
+async function switchThread(handle: string, title: string): Promise<void> {
+  await ui("click", handle, "--name", "Switch thread");
+  await waitUntil(async () => {
+    const refs = (await ui("snapshot", handle, "--interactive")).refs as Record<string, { role: string; name: string }>;
+    const row = Object.entries(refs).find(([, entry]) => entry.role === "menuitem" && entry.name.startsWith(title));
+    if (!row) return false;
+    await ui("click", handle, "--ref", `@${row[0]}`);
+    return true;
+  }, 10_000, `thread ${JSON.stringify(title)} in the switcher`);
 }
+/** The title the switcher trigger shows is the current thread. */
+const currentThreadTitle = async (handle: string): Promise<string | null> =>
+  (await ui("eval", handle, "--js", `document.querySelector('button[aria-label="Switch thread"]')?.title ?? null`)).result ?? null;
 
 /** Poll a probe until it returns a truthy value; fail with the last result. */
 async function waitUntil<T>(probe: () => Promise<T>, timeoutMs: number, what: string): Promise<T> {
@@ -163,25 +169,23 @@ describe("the thinking timer stays anchored across a thread switch", () => {
   run("counts from the server's turn-start stamp, not from the re-selection", async () => {
     launched = await launch(["--mode", "hang"]); // the turn never settles; the bot stays busy
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     const api = fixtureApi(info.url);
     const evaluate = async (js: string) => (await ui("eval", info.ui, "--js", js)).result;
     const timerText = () => evaluate(`document.querySelector('.turn-presence .tabular-nums')?.textContent ?? null`);
-    const selectThread = (threadId: string) => evaluate(`document.querySelector('[data-sidebar-thread-row="${threadId}"]')?.click(); true`);
-    const isCurrent = (threadId: string) => evaluate(`Boolean(document.querySelector('[data-sidebar-thread-row="${threadId}"][aria-current="page"]'))`);
     const taskOf = async (threadId: string) =>
       (await api("GET", "/api/bots")).bots.find((bot: any) => bot.id === info.botId).tasks.find((task: any) => task.threadId === threadId);
 
     // Two threads before the turn: the launcher's, plus one through the same
-    // POST the sidebar's "New thread" menu item dispatches.
+    // POST the header's "New thread" control dispatches, titled so the
+    // switcher menu can address it unambiguously.
     const busyThread = (await api("GET", "/api/bots")).bots.find((bot: any) => bot.id === info.botId).threadId;
-    const otherThread = (await api("POST", `/api/bots/${info.botId}/tasks`, {})).task.threadId;
-    // Expand Pepper's thread list if selection has not already opened it.
-    await expandThreads(info.ui, "Pepper");
-    await waitUntil(() => evaluate(`Boolean(document.querySelector('[data-sidebar-thread-row="${otherThread}"]'))`), 10_000, "the new thread's sidebar row to appear");
-    // Creating a thread selects it on the server. Pin the original thread in
-    // the renderer before sending the turn whose stamp this case observes.
-    await selectThread(busyThread);
-    await waitUntil(() => isCurrent(busyThread), 10_000, "the original thread to become current");
+    await api("POST", `/api/bots/${info.botId}/tasks`, { title: "Away thread" });
+    // Creating a task selects it on the server; pin the original thread back
+    // through the switcher before sending the turn this case observes.
+    const busyTitle = ((await taskOf(busyThread)) as { title: string }).title;
+    await switchThread(info.ui, busyTitle);
+    await waitUntil(async () => (await currentThreadTitle(info.ui)) === busyTitle, 10_000, "the original thread to become current");
 
     // The composer sends; the hang-mode engine accepts the turn and holds it.
     await ui("type", info.ui, "--name", "Message Pepper", "--text", "hello");
@@ -204,12 +208,15 @@ describe("the thinking timer stays anchored across a thread switch", () => {
     const beforeSwitch = await timerText();
     expect(elapsedSeconds(beforeSwitch)).toBeGreaterThanOrEqual(Math.floor((Date.now() - stamp) / 1000) - 2);
 
-    // Switch to the other thread, dwell, and come back.
-    await selectThread(otherThread);
-    await waitUntil(() => isCurrent(otherThread), 10_000, "the other thread to become current");
+    // Switch to the other thread, dwell, and come back. A sent turn renames an
+    // untitled thread, so read the busy thread's current title for the return.
+    const awayTitle = "Away thread";
+    const backTitle = ((await taskOf(busyThread)) as { title: string }).title;
+    await switchThread(info.ui, awayTitle);
+    await waitUntil(async () => (await currentThreadTitle(info.ui)) === awayTitle, 10_000, "the other thread to become current");
     await new Promise((done) => setTimeout(done, 3_000));
-    await selectThread(busyThread);
-    await waitUntil(() => isCurrent(busyThread), 10_000, "the busy thread to become current again");
+    await switchThread(info.ui, backTitle);
+    await waitUntil(async () => (await currentThreadTitle(info.ui)) === backTitle, 10_000, "the busy thread to become current again");
 
     // The readout resumes from the stamp — a restart would show single
     // digits after a 13+ second turn.
@@ -235,6 +242,7 @@ describe("the thinking timer stays anchored across a thread switch", () => {
   run("counts a group's turn from the speaking member's claim, resuming after a switch away", async () => {
     launched = await launch(["--mode", "hang"]); // the group's turn never settles either
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     const api = fixtureApi(info.url);
     const evaluate = async (js: string) => (await ui("eval", info.ui, "--js", js)).result;
     const timerText = () => evaluate(`document.querySelector('.turn-presence .tabular-nums')?.textContent ?? null`);

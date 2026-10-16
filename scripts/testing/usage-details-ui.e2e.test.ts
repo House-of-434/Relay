@@ -4,16 +4,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = uiE2eEnabled();
 if (!enabled) console.log("skipping usage details UI: set RELAY_UI_E2E=1 to require system Chrome");
 
 (enabled ? it : it.skip)("renders separate cached input, uncached input and output after a real fixture turn", async () => {
   let child: ChildProcess | undefined;
-  let info: { ui: string; url: string; botId: string; logPath: string } | undefined;
+  let info: { ui: string; url: string; botId: string; logPath: string; token: string } | undefined;
   try {
     let stdout = "", stderr = "";
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
@@ -26,6 +27,7 @@ if (!enabled) console.log("skipping usage details UI: set RELAY_UI_E2E=1 to requ
       try { info = JSON.parse(stdout); return Boolean(info?.ui); } catch { return false; }
     }, { timeout: 600_000, interval: 250 }).toBe(true);
     const handle = info!;
+    registerOwnerFetch(handle.url, handle.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", handle.ui, ...args]) as Promise<Record<string, any>>;
     await ui("type", "--name", "Message Pepper", "--text", "Check the fixture usage");
     await ui("press", "--keys", "Enter");
@@ -36,9 +38,9 @@ if (!enabled) console.log("skipping usage details UI: set RELAY_UI_E2E=1 to requ
     })()`);
     await expect.poll(async () => (await read()).result?.title, { timeout: 15_000 }).toContain("Last message: 10 uncached input · 2 cached input · 5 output");
     const chip = (await read()).result;
-    expect(chip.text).toContain("$0.01");
-    expect(chip.title).not.toContain("17 read");
-    expect(chip.title).not.toContain("15 new");
+    // The chip shows context fullness now, not cost: the token breakdown
+    // lives in its title (asserted above).
+    expect(chip.text).toMatch(/^ctx \d+%$/);
     const consoleResult = await ui("console");
     expect((consoleResult.messages ?? []).filter((row: { type?: string }) => row.type === "error")).toEqual([]);
     const evidence = handle.logPath + ".usage-details.json";

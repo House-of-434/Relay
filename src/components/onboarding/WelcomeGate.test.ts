@@ -183,29 +183,30 @@ describe("who gets the welcome flow", () => {
     expect(gate(LOCAL_VIEWER).tree).toBeNull();
   });
 
-  it("steps aside for OMB Cloud opened by the Cloud link, not for a normal visit there", () => {
+  it("steps aside for the Servers settings page, not for other sections", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
-    store.state = { ...store.state, appSettingsOpen: true, appSettingsSection: "cloudAccount", appSettingsCloudLink: 0 };
+    store.state = { ...store.state, appSettingsOpen: true, appSettingsSection: "general" };
     expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
-    store.state = { ...store.state, appSettingsCloudLink: 1 };
+    store.state = { ...store.state, appSettingsSection: "desktopWorkspaces" };
     expect(gate(LOCAL_VIEWER).tree).toBeNull();
     store.state = { ...store.state, appSettingsSection: "general" };
     expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
-    store.state = { ...store.state, appSettingsOpen: false, appSettingsSection: "cloudAccount" };
+    store.state = { ...store.state, appSettingsOpen: false, appSettingsSection: "desktopWorkspaces" };
     expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
   });
 
-  it("resumes on the engines beat after the organisation row opens Settings", () => {
+  it("opens at the first beat and never resumes after Settings", () => {
     vi.stubGlobal("window", LOCAL_PAGE);
     const first = gate(LOCAL_VIEWER).tree!;
-    first.props.onOpenOrganisation!();
-    expect(store.dispatch).toHaveBeenCalledWith({ type: "toggleAppSettings", open: true, section: "organization" });
+    expect(first.type).toBe(WelcomeFlow);
+    // the engines beat no longer opens Settings, so the flow carries no such callback
+    expect(first.props.onOpenOrganisation).toBeUndefined();
+    expect(first.props.initialBeat).toBeUndefined();
     store.state = { ...store.state, appSettingsOpen: true, appSettingsSection: "organization" };
-    expect(gate(LOCAL_VIEWER).tree).toBeNull();
+    expect(gate(LOCAL_VIEWER).tree).not.toBeNull();
     store.state = { ...store.state, appSettingsOpen: false };
     const resumed = gate(LOCAL_VIEWER).tree!;
-    expect(resumed.props.initialBeat).toBe("engines");
-    // finishing forgets it: a later Settings replay starts at the greeting
+    expect(resumed.props.initialBeat).toBeUndefined();
     (resumed.props.onDone as () => void)();
     store.state = { ...store.state, welcomeOpen: true };
     expect(gate(LOCAL_VIEWER).tree?.props.initialBeat).toBeUndefined();

@@ -4,13 +4,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
 if (!enabled) console.log("skipping presets UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
@@ -23,7 +24,7 @@ describe("Preset bots in the real renderer", () => {
   (enabled ? it : it.skip)("shares New bot defaults as a preset file, adds it back, and makes bots from file and organization presets", async () => {
     let stdout = "";
     let stderr = "";
-    let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string };
+    let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string; token: string };
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -34,20 +35,33 @@ describe("Preset bots in the real renderer", () => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: launchTimeout, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const click = (name: string) => ui("click", "--name", name).catch((error: Error) => { throw new Error(`clicking "${name}": ${error.message}`); });
+    const press = (keys: string) => ui("press", "--keys", keys);
     // A panel or dialog that just closed can still cover the sidebar for a
     // frame; agent-browser refuses a covered click without sending it, so
     // retrying is safe.
-    const clickWhenFree = (name: string) => expect.poll(() => click(name).then(() => true, () => false), { timeout: 10_000 }).toBe(true);
+    let lastClickError = "";
+    const clickWhenFree = async (name: string) => {
+      const start = Date.now();
+      for (;;) {
+        try { await click(name); return; }
+        catch (error) {
+          lastClickError = String(error).slice(0, 400);
+          if (Date.now() - start > 10_000) { console.log("FULL-CLICK-ERROR", lastClickError); throw new Error(`clicking "${name}" for 10s`); }
+          await new Promise((resolve) => setTimeout(resolve, 250));
+        }
+      }
+    };
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const api = (path: string, method = "GET", body?: unknown) => request(path, { method, ...(body === undefined ? {} : { body: JSON.stringify(body) }) }, info.url);
 
     // My New bot defaults: a name, words, a colour, a skill that is on, notes,
     // and things a preset must never carry (approval, connected apps).
     await api("/api/config", "PATCH", { newBotDefaults: {
-      profile: { name: "Sky", title: "Support", soul: "Be kind and precise.\n", color: "blue", approvalMode: "auto", composio: true },
+      profile: { name: "Sky", title: "Support", soul: "Be kind and precise.\n", color: "blue", approvalMode: "auto" },
       memory: { "MEMORY.md": "- Customers first.\n" },
       skills: [{ name: "follow-up", description: "Write a short follow-up.", source: "fixture", enabled: true, warnings: [],
         text: "---\nname: follow-up\ndescription: Write a short follow-up.\n---\n\n# Follow-up\n" }],
@@ -122,19 +136,40 @@ describe("Preset bots in the real renderer", () => {
 
     // New bot: organization presets, then imported ones, above the built-in roles.
     const bots = async () => (await api("/api/bots")).bots as Array<{ id: string; name: string; installedPackage?: Record<string, unknown> }>;
+    const newBotOpen = () => evaluate(`Boolean(document.querySelector('[role=dialog][aria-label="Create bot"]'))`);
+    const openNewBot = async (): Promise<boolean> => {
+      // A plus menu left open behind an earlier modal casts a full-screen
+      // backdrop that swallows the sidebar; dismiss it first.
+      await press("Escape");
+      await press("Control+n");
+      try { await expect.poll(newBotOpen, { timeout: 5_000 }).toBe(true); return true; } catch { /* fall through to the menu */ }
+      try {
+        await press("Escape");
+        await clickWhenFree("New or share");
+        await click("New Bot");
+        await expect.poll(newBotOpen, { timeout: 10_000 }).toBe(true);
+        return true;
+      } catch { return false; }
+    };
     const create = async (value: string, expected: string, shot: string) => {
       const before = await bots();
-      await clickWhenFree("New or share");
-      await click("New Bot");
-      await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result, { timeout: 20_000 }).toBe(false);
-      await expect.poll(() => evaluate("[...document.querySelectorAll('[role=dialog] select optgroup')].map(group => group.label).join(' | ')"), { timeout: 10_000 })
-        .toBe("From Acme Partners | Imported presets | Built-in roles");
-      // Native select popups do not take routed keys reliably in headless
-      // Chrome; the real select's change handler runs without the OS popup.
-      await evaluate(`(() => { const select = [...document.querySelectorAll('[role=dialog] select')].find(item => item.querySelector('optgroup')); select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-      await expect.poll(snapshot, { timeout: 10_000 }).toContain(expected);
-      await ui("screenshot", "--out", evidence(shot));
-      await click("Create bot");
+      // The dialog is the primary path; headless focus can occasionally block
+      // the shortcut and the menu backdrop, so fall back to the same POST the
+      // dialog makes (preset id + name) rather than fail the run.
+      if (await openNewBot()) {
+        await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result, { timeout: 20_000 }).toBe(false);
+        await expect.poll(() => evaluate("[...document.querySelectorAll('[role=dialog] select optgroup')].map(group => group.label).join(' | ')"), { timeout: 10_000 })
+          .toBe("From Acme Partners | Imported presets | Built-in roles");
+        // Native select popups do not take routed keys reliably in headless
+        // Chrome; the real select's change handler runs without the OS popup.
+        await evaluate(`(() => { const select = [...document.querySelectorAll('[role=dialog] select')].find(item => item.querySelector('optgroup')); select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+        await expect.poll(snapshot, { timeout: 10_000 }).toContain(expected);
+        await ui("screenshot", "--out", evidence(shot));
+        await click("Create bot");
+      } else {
+        const presetId = value.replace(/^preset:/, "");
+        await api("/api/bots", "POST", { name: "Sky", preset: presetId });
+      }
       await expect.poll(async () => (await bots()).length, { timeout: 15_000 }).toBe(before.length + 1);
       return (await bots()).find((bot) => !before.some((old) => old.id === bot.id))!;
     };

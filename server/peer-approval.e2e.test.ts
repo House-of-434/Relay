@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
 import { waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 
 it("preserves peer approval expiry through real HTTP responses and durable delegation receipts", async () => {
   const fixture = await launchVerificationServer(process.env);
@@ -47,6 +48,10 @@ it("preserves peer approval expiry through real HTTP responses and durable deleg
     const env = verificationServerEnvironment({ ...process.env, FAKE_CLAUDE_MODE: "slow",
       FAKE_CLAUDE_SLOW_FINISH_GATE: gate }, dataDir, Number(new URL(url).port));
     env.RELAY_TEST_PEER_APPROVAL = "1";
+    // Re-issue the owner session for the restarted server: Windows kill()
+    // terminates the first process without its graceful shutdown, so its boot
+    // marker can read the previous session as stale.
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     child = spawn(process.execPath, ["--import", new URL("./testing/peer-approval-hooks.mjs", import.meta.url).href,
       fileURLToPath(new URL("./index.ts", import.meta.url))], {

@@ -4,19 +4,27 @@ import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import type { WireMessage } from "../../shared/wire.ts";
 import { launchVerificationServer, runControlOmb } from "../control-relay.ts";
-import { driverCall, ensureUiChrome, resolveUiChrome, startUiDriver } from "./control-relay-ui.ts";
+import { driverCall, ensureUiChrome, startUiDriver , uiE2eEnabled } from "./control-relay-ui.ts";
 import { fixtureApi, mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = uiE2eEnabled();
 if (!enabled) console.info("skipping stream-buffer e2e: no system Chrome resolves; set RELAY_UI_E2E=1 to require it");
 
 it.skipIf(!enabled)("drains pending text and reasoning with rAF paused, then settles without duplicated output", async () => {
   const chrome = ensureUiChrome(process.env);
   const fixture = await launchVerificationServer(process.env);
   const driver = await startUiDriver({ chrome, home: fixture.info.dataDir });
+  // This test drives its own driver instead of `ui launch`, so it must sign
+  // the browser in itself: same cookie the server sets at sign-in, value the
+  // fixture owner's bearer.
+  const environment = await fetch(`${fixture.info.url}/.well-known/relay/environment`).then((response) => response.json()) as { environmentId: string };
+  const ownerCookie = {
+    name: `relay_session_${new URL(fixture.info.url).port}_${environment.environmentId.replace(/[^a-z0-9]/gi, "").slice(0, 12)}`,
+    value: fixture.info.token,
+  };
   const browser = async (...args: string[]) => {
     const [verb, ...rest] = args;
-    if (verb === "open") return driverCall(driver.url, "open", { url: rest[0]! });
+    if (verb === "open") return driverCall(driver.url, "open", { url: rest[0]!, cookies: [ownerCookie] });
     if (verb === "wait" && rest[0] === "--fn") return driverCall(driver.url, "wait-fn", { js: rest[1]! });
     if (verb === "wait") return driverCall(driver.url, "wait-load", {});
     if (verb === "eval") return driverCall(driver.url, "eval", { js: rest[0]! });

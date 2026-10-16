@@ -5,15 +5,16 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { canonicalJson, parsePackageDocument } from "../../shared/package-format.ts";
 import { runControlOmb } from "../control-relay.ts";
 import { request } from "../mcp-server.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const FIXTURES = join(ROOT, "shared", "package-fixtures");
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
 if (!enabled) console.log("skipping org-library UI e2e: set RELAY_UI_E2E=1 to require system Chrome");
@@ -53,7 +54,7 @@ describe("the organization library in the real renderer", () => {
     const key = randomBytes(32).toString("hex");
     let stdout = "";
     let stderr = "";
-    let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string };
+    let info: { ui: string; url: string; botId: string; dataDir: string; logPath: string; token: string };
     child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: { ...process.env, RELAY_TEST_ORG_LIBRARY_KEY: key }, stdio: ["ignore", "pipe", "pipe"],
     });
@@ -64,6 +65,7 @@ describe("the organization library in the real renderer", () => {
       if (child!.exitCode !== null || child!.signalCode !== null) throw new Error(`UI launcher exited: ${stderr}`);
       try { info = JSON.parse(stdout); return Boolean(info.ui); } catch { return false; }
     }, { timeout: launchTimeout, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const ui = (verb: string, ...args: string[]) => runControlOmb(["ui", verb, "--ui", info.ui, ...args]) as Promise<Record<string, any>>;
     const click = (name: string) => ui("click", "--name", name);
     const press = (keys: string) => ui("press", "--keys", keys);
@@ -131,11 +133,14 @@ describe("the organization library in the real renderer", () => {
     await press("Escape");
 
     // The added bot's settings: the provenance line, and Skills → From Customer Co.
-    const state = await ui("snapshot", "--interactive");
-    const profile = Object.entries(state.refs as Record<string, { role: string; name: string }>)
-      .find(([, entry]) => entry.role === "button" && /Open .+ profile/.test(entry.name));
+    // Row actions reveal on hover; the profile dialog holds Identity.
+    const rowState = await ui("snapshot", "--interactive");
+    const profile = Object.entries(rowState.refs as Record<string, { role: string; name: string }>)
+      .find(([, entry]) => entry.role === "button" && entry.name.startsWith("Sales lead"));
     expect(profile).toBeDefined();
-    await ui("click", "--ref", `@${profile![0]}`);
+    await ui("hover", "--ref", `@${profile![0]}`);
+    await click("Actions for Morgan");
+    await click("Edit Profile");
     await click("Identity");
     await expect.poll(snapshot, { timeout: 10_000 }).toContain("From Sales desk 1.3.0 · Acme Partners");
     await click("Skills");

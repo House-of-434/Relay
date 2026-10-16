@@ -73,9 +73,36 @@ describe("CI concurrency", () => {
     for (const name of ["electron-smokes", "ios", "android", "windows-cua", "control-plane", "package-linux"]) {
       expect(workflow.jobs[name]).toBeUndefined();
     }
-    // The nightly iOS suite stays paused while browser-only.
+    // The iOS suite stays fully manual while server-only: the ios/ tree is
+    // gone, so even the push trigger (which could never fire without ios/**)
+    // is off. Re-enable with the suite when iOS work resumes.
     const ui = parse(readFileSync(new URL("../.github/workflows/ios-thread-ui.yml", import.meta.url), "utf8"));
-    expect(Object.keys(ui.on).sort()).toEqual(["push", "workflow_dispatch"]);
+    expect(Object.keys(ui.on).sort()).toEqual(["workflow_dispatch"]);
+  });
+
+  it("runs the BFF node-test suite in the static preflight", () => {
+    const runs = (workflow.jobs.static.steps as { run?: string }[]).map((step) => step.run);
+    expect(runs).toContain("pnpm test:bff");
+  });
+
+  it("scopes Tool Layer database settings to the tools service", () => {
+    // RELAY_DB_* rides in via env_file only: the harness (app) and the edge
+    // (caddy) must never name those settings, or a credential-shaped value
+    // gets wired where it is never read.
+    const compose = parse(readFileSync(new URL("../compose.yaml", import.meta.url), "utf8"));
+    for (const name of ["app", "caddy"]) {
+      expect(JSON.stringify(compose.services[name] ?? {})).not.toContain("RELAY_DB_");
+    }
+  });
+
+  it("keeps the tools fail-closed smoke pointed at the real message", () => {
+    // The docker smoke greps the tools log for the exact missing-setting
+    // error: if either side is reworded alone, the pin fails here instead of
+    // as a confusing red smoke on the PR.
+    const docker = readFileSync(new URL("../.github/workflows/docker.yml", import.meta.url), "utf8");
+    const database = readFileSync(new URL("../services/tool-layer/src/infra/database.ts", import.meta.url), "utf8");
+    expect(docker).toContain("Required Tool Layer setting RELAY_DB_URL is missing");
+    expect(database).toContain("Required Tool Layer setting ${key} is missing");
   });
 
   it("makes a release wait for its commit's CI gate before any draft", () => {
@@ -117,7 +144,7 @@ describe("CI concurrency", () => {
     expect(workflow.jobs.static.steps[0].with["fetch-depth"]).toBe(0);
     expect(workflow.jobs.static.steps.find((step: { id?: string }) => step.id === "scope").run).toBe("node scripts/ci-scope.mjs");
     expect(workflow.jobs.static.outputs).toEqual({
-      runtime: "${{ steps.scope.outputs.runtime }}", mobile: "${{ steps.scope.outputs.mobile }}",
+      runtime: "${{ steps.scope.outputs.runtime }}",
       vitest_os: "${{ steps.scope.outputs.vitest_os }}",
     });
     expect(workflow.jobs.static.steps.some((step: { run?: string }) =>

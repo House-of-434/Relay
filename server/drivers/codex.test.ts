@@ -158,7 +158,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.FAKE_CODEX_INTERRUPT_GRACE_MS;
     delete process.env.OPENAI_API_KEY;
     delete process.env.BOX_TOKEN;
-    delete process.env.RELAY_TTS_KEY;
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) delete process.env[name];
     recorder?.stop();
     await instance?.dispose();
@@ -196,7 +195,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     // workspace credentials the harness may hold (env-injected at boot by
     // the desktop shell) must never ride into the CLI child
     process.env.BOX_TOKEN = "box-should-not-leak";
-    process.env.RELAY_TTS_KEY = "tts-should-not-leak";
     Object.assign(process.env, CONTROL_PLANE_FIXTURE);
 
     const { turnId } = await instance.adapter.sendTurn({
@@ -252,7 +250,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(processIsAlive(seen.pid)).toBe(false);
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
-    expect(seen.env.RELAY_TTS_KEY).toBeUndefined();
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) expect(seen.env[name]).toBeUndefined();
     const methods = seen.calls.map((c: { method: string }) => c.method);
     expect(methods).toEqual(["initialize", "initialized", "config/read", "thread/start", "turn/start"]);

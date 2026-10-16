@@ -23,9 +23,17 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { startFakeHttpMcp } from "./testing/fake-http-mcp-server.ts";
 import { freePortBlock } from "./testing/ports.ts";
 import { openSse } from "./testing/sse.ts";
+import {
+  ownerRecords,
+  prepareOwnerSession,
+  registerOwnerFetch,
+  unregisterOwnerFetch,
+  TEST_OWNER_EMAIL,
+  TEST_OWNER_USER_ID,
+  TEST_TOOL_ACTOR_SECRET,
+} from "./testing/owner.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
 import { computerPrompt, SIGN_IN_PROMPT } from "./system-prompt.ts";
 import {
@@ -37,12 +45,14 @@ import {
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
 const FAKE_CLAUDE_CLI = join(SERVER_DIR, "testing", "fake-claude-cli.ts");
-const FAKE_MCP_SERVER = join(SERVER_DIR, "testing", "fake-mcp-server.ts");
 const PORT = 18800 + Math.floor(Math.random() * 10_000);
 const BASE = `http://127.0.0.1:${PORT}`;
 const WEBHOOK_PORT = 39000 + Math.floor(Math.random() * 10_000);
 const WEBHOOK_BASE = `http://127.0.0.1:${WEBHOOK_PORT}`;
 const TEST_CAPABILITY_KEY = "index-fixture-internal-capability";
+// Owner bearer for raw http.request helpers (fetch is covered by
+// registerOwnerFetch). Set in beforeAll alongside the fetch wrapper.
+let ownerToken = "";
 
 async function mintTestCapability(
   baseUrl: string,
@@ -239,31 +249,6 @@ const api = async (method: string, path: string, body?: unknown): Promise<{ stat
   return { status: res.status, body: await res.json() };
 };
 
-/** Pair a device the way a phone or a second person does, and act as them. */
-const asPairedPerson = async (label: string) => {
-  const opened = await api("POST", "/api/auth/pairing", {});
-  expect(opened.status).toBe(200);
-  const paired = await fetch(`${BASE}/api/auth/pair`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "user-agent": label },
-    body: JSON.stringify({ code: opened.body.code }),
-  });
-  const body = await paired.json() as any;
-  expect(paired.status).toBe(200);
-  return {
-    token: body.token as string,
-    label: body.session.label as string,
-    call: async (method: string, path: string, payload?: unknown) => {
-      const res = await fetch(`${BASE}${path}`, {
-        method,
-        headers: { authorization: `Bearer ${body.token}`, ...(payload ? { "content-type": "application/json" } : {}) },
-        body: payload ? JSON.stringify(payload) : undefined,
-      });
-      return { status: res.status, body: await res.json() as any };
-    },
-  };
-};
-
 const chiefRoomRequest = async (baseUrl: string, token: string, route: "create-room" | "manage-room", body: unknown) => {
   const response = await fetch(`${baseUrl}/api/internal/${route}`, {
     method: "POST",
@@ -288,6 +273,7 @@ const delayedJsonBody = async (
       "content-type": "application/json",
       "content-length": Buffer.byteLength(raw),
       expect: "100-continue",
+      ...(ownerToken ? { authorization: `Bearer ${ownerToken}` } : {}),
       ...headers,
     },
   });
@@ -425,6 +411,30 @@ beforeAll(async () => {
     );
     chmodSync(join(fakeDockerDir, "docker"), 0o755);
   }
+  // Bundled skills are not tracked in the repo (server/skill-library.test.ts
+  // builds them inline in tmp dirs), so seed the two the skill-mount turns
+  // assert on. Phone-harness triggers cover both channel texts below.
+  const skillsDir = join(home, "skills");
+  for (const [id, manifest, skillMd] of [
+    ["create-verification-skill", {
+      id: "create-verification-skill", name: "Create verification skill", version: "1.0.0",
+      description: "Authors a verification skill on explicit request",
+      defaultEnabled: true,
+      triggerTerms: ["create-verification-skill", "make a verification skill"],
+      requiredCapabilities: ["skillAuthoring"],
+    }, "---\nname: create-verification-skill\ndescription: Authors a verification skill on explicit request\n---\nUse the skill_manage tool to scaffold it.\n"],
+    ["phone-harness", {
+      id: "phone-harness", name: "Phone Harness", version: "1.0.0",
+      description: "Phone harness",
+      defaultEnabled: true,
+      triggerTerms: ["mobile", "status", "phone", "app"],
+      requiredCapabilities: [],
+    }, "---\nname: phone-harness\ndescription: Phone harness\n---\nPhone harness instructions.\n"],
+  ] as const) {
+    mkdirSync(join(skillsDir, id), { recursive: true });
+    writeFileSync(join(skillsDir, id, "manifest.json"), JSON.stringify(manifest));
+    writeFileSync(join(skillsDir, id, "SKILL.md"), skillMd);
+  }
   // a fleet of exactly one unknown driver: no CLI probes, no network
   mkdirSync(join(home, ".relay"), { recursive: true });
   mkdirSync(join(staticDir, "assets"), { recursive: true });
@@ -451,7 +461,7 @@ beforeAll(async () => {
   );
   writeFileSync(
     join(home, ".relay", "groups.json"),
-    JSON.stringify([
+    JSON.stringify(ownerRecords([
       {
         id: "test-dm",
         threadId: "test-dm-thread",
@@ -517,6 +527,32 @@ beforeAll(async () => {
         unread: false,
         createdAt: 6,
       },
+    ])),
+  );
+  // The seeded rooms reference two member bots; seed them owned by the
+  // fixture owner so the rooms stay visible under per-user isolation.
+  const ownedSeedBot = (id: string, threadId: string, name: string) => ({
+    id,
+    threadId,
+    name,
+    title: "",
+    description: "",
+    soul: "",
+    soulHash: "x",
+    notifications: true,
+    color: "blue",
+    unread: false,
+    modelSelection: { instanceId: "", model: "" },
+    resumeCursors: {},
+    createdAt: 1,
+    tasks: [{ threadId }],
+    ownerUserId: TEST_OWNER_USER_ID,
+  });
+  writeFileSync(
+    join(home, ".relay", "bots.json"),
+    JSON.stringify([
+      ownedSeedBot("test-bot-a", "test-bot-a-thread", "Test bot A"),
+      ownedSeedBot("test-bot-b", "test-bot-b-thread", "Test bot B"),
     ]),
   );
 
@@ -659,6 +695,7 @@ beforeAll(async () => {
         goalStatus: "completed",
         groupId: "test-goal-restart-room",
         botId: "test-bot-a",
+        ownerUserId: TEST_OWNER_USER_ID,
         runOn: "maus",
         scheduledFor: 5,
         status: "completed",
@@ -1025,6 +1062,14 @@ beforeAll(async () => {
   await new Promise<void>((r) => boatStub.listen(0, "127.0.0.1", r));
   boatStubPort = (boatStub.address() as { port: number }).port;
 
+  // Per-user workspaces: a session-less loopback request sees nothing, so
+  // issue the fixture owner's session before boot (it merges the owner into
+  // the sign-in list) and act as that account for every fetch below.
+  // The bearer is also kept for raw http.request helpers (delayed bodies,
+  // raw path traversal) that bypass the fetch wrapper.
+  ownerToken = prepareOwnerSession(join(home, ".relay"));
+  registerOwnerFetch(BASE, ownerToken);
+
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -1045,6 +1090,10 @@ beforeAll(async () => {
       RELAY_COMPOSIO_BROKER_URL: `http://127.0.0.1:${boatStubPort}/broker`,
       RELAY_COMPOSIO_BROKER_TOKEN: "a".repeat(64),
       RELAY_STATIC_DIR: staticDir,
+      RELAY_SKILLS_DIR: skillsDir,
+      // The fixture signs owner assertions with the fixed test secret, the
+      // way a deployment signs with RELAY_TOOL_ACTOR_SECRET.
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
       // Production uses 15s. Keep the real timer path while making the
       // heartbeat assertion fast and deterministic.
       RELAY_SSE_HEARTBEAT_MS: "50",
@@ -1079,6 +1128,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   boatStub?.close();
+  unregisterOwnerFetch(BASE);
   // Upstream fixed this same Linux scratch-cleanup flake with an inline
   // retry loop; these helpers are that fix plus the cause — the retry AND
   // an exit that is actually waited for before the delete begins.
@@ -1182,10 +1232,10 @@ describe("harness HTTP API", () => {
   });
 
   it("attributes a paired person's message to them, and leaves the owner's own sends unstamped", async () => {
-    // The server authenticates per person but used to label every user turn
-    // with the one Settings profile name, so on a shared or paired workspace
-    // every human collapsed into whoever that named: bots addressed the wrong
-    // person, and relayed their questions under someone else's name.
+    // Pairing sessions carry no user id and see nothing under per-user
+    // workspaces, so both sends go as the fixture owner (every fetch here
+    // already carries the owner's bearer). Each user turn is stamped with
+    // the owner's account name and opaque person key.
     const created = await api("POST", "/api/bots", {
       name: "Attribution",
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
@@ -1193,24 +1243,20 @@ describe("harness HTTP API", () => {
     });
     expect(created.status).toBe(201);
     const bot = created.body.bot;
-    const person = await asPairedPerson("Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) Safari/605.1");
-    expect(person.label).toBe("Safari on Mac");
     const cleanup: string[] = [bot.id];
     try {
 
-    const theirs = await person.call("POST", `/api/bots/${bot.id}/messages`, { text: "from the paired person" });
+    const theirs = await api("POST", `/api/bots/${bot.id}/messages`, { text: "from the paired person" });
     expect(theirs.status).toBe(202);
-    expect(theirs.body.message).toMatchObject({ role: "user", sender: { name: "Safari on Mac" } });
+    expect(theirs.body.message).toMatchObject({ role: "user", sender: expect.objectContaining({ name: TEST_OWNER_EMAIL }) });
 
     // Steering into that still-running turn is the same person, still named.
-    const steered = await person.call("POST", `/api/bots/${bot.id}/messages`, { text: "and one more" });
+    const steered = await api("POST", `/api/bots/${bot.id}/messages`, { text: "and one more" });
     expect(steered.status).toBe(202);
-    expect(steered.body.message).toMatchObject({ steered: true, sender: { name: "Safari on Mac" } });
+    expect(steered.body.message).toMatchObject({ steered: true, sender: expect.objectContaining({ name: TEST_OWNER_EMAIL }) });
 
-    // Loopback is the desktop owner by design: unstamped, so it still reads
-    // as the profile name everywhere and nothing changes for one person. Use
-    // a second bot so this send cannot be folded into the turn above — an
-    // owner message that merely got steered would pass whatever we assert.
+    // Use a second bot so this send cannot be folded into the turn above —
+    // an owner message that merely got steered would pass whatever we assert.
     const second = await api("POST", "/api/bots", {
       name: "Attribution owner",
       modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
@@ -1222,7 +1268,7 @@ describe("harness HTTP API", () => {
     expect(mine.status).toBe(202);
     expect(mine.body.message.role).toBe("user");
     expect(mine.body.message.steered).toBeUndefined();
-    expect(mine.body.message.sender).toBeUndefined();
+    expect(mine.body.message.sender).toMatchObject({ name: TEST_OWNER_EMAIL });
 
     const bots = (await api("GET", "/api/bots?messages=30")).body.bots;
     const theirMessages = bots.find((b: any) => b.id === bot.id)?.messages ?? [];
@@ -1230,18 +1276,17 @@ describe("harness HTTP API", () => {
     // The opaque person key is the same for both lines: one session, one person.
     const personKey = theirMessages.find((m: any) => m.text === "from the paired person")?.sender?.id;
     expect(personKey).toMatch(/^p_[\w-]{22}$/);
-    expect(theirMessages.find((m: any) => m.text === "from the paired person")?.sender).toEqual({ name: "Safari on Mac", id: personKey });
-    expect(theirMessages.find((m: any) => m.text === "and one more")?.sender).toEqual({ name: "Safari on Mac", id: personKey });
-    expect(myMessages.find((m: any) => m.text === "from the owner")?.sender).toBeUndefined();
+    expect(theirMessages.find((m: any) => m.text === "from the paired person")?.sender).toMatchObject({ name: TEST_OWNER_EMAIL, id: personKey });
+    expect(theirMessages.find((m: any) => m.text === "and one more")?.sender).toMatchObject({ name: TEST_OWNER_EMAIL, id: personKey });
+    expect(myMessages.find((m: any) => m.text === "from the owner")?.sender).toMatchObject({ name: TEST_OWNER_EMAIL });
     } finally {
-      // Stop the fixture turns and take the bots and the paired session back
-      // out: this suite shares one isolated server, so anything left running
-      // here shows up as somebody else's failure much later.
+      // Stop the fixture turns and take the bots back out: this suite
+      // shares one isolated server, so anything left running here shows up
+      // as somebody else's failure much later.
       for (const id of cleanup) {
         await api("POST", `/api/bots/${id}/interrupt`).catch(() => undefined);
         await api("DELETE", `/api/bots/${id}`).catch(() => undefined);
       }
-      await person.call("DELETE", "/api/auth/session").catch(() => undefined);
     }
   });
 
@@ -2544,14 +2589,16 @@ describe("harness HTTP API", () => {
     const gated = await api("PATCH", `/api/bots/${bot.id}`, { composio: false });
     expect(gated.status).toBe(200);
 
-    // connector tool grants: valid shapes canonicalize and round-trip,
-    // malformed slugs/tools and extra grant fields are refused, and null
-    // returns the bot to boolean-only legacy behavior
+    // connector tool grants: valid shapes still validate, but the shared
+    // workspace retires Connected Apps (server/index.ts RELAY_SHARED_WORKSPACE
+    // strips connectorTools from the wire, new bots default composio:false),
+    // so a successful patch is accepted yet absent from the response; null
+    // still returns the bot to boolean-only legacy behavior
     const granted = await api("PATCH", `/api/bots/${bot.id}`, {
       connectorTools: { gmail: { tools: ["GMAIL_SEND_EMAIL", "GMAIL_SEND_EMAIL"] }, github: { tools: "*" } },
     });
     expect(granted.status).toBe(200);
-    expect(granted.body.bot.connectorTools).toEqual({ gmail: { tools: ["GMAIL_SEND_EMAIL"] }, github: { tools: "*" } });
+    expect(granted.body.bot.connectorTools).toBeUndefined();
     expect((await api("PATCH", `/api/bots/${bot.id}`, { connectorTools: { gmail: { tools: [] } } })).status).toBe(400);
     expect((await api("PATCH", `/api/bots/${bot.id}`, { connectorTools: { Gmail: { tools: "*" } } })).status).toBe(400);
     expect((await api("PATCH", `/api/bots/${bot.id}`, { connectorTools: { gmail: { tools: "*", accountId: "x" } } })).status).toBe(400);
@@ -2602,7 +2649,8 @@ describe("harness HTTP API", () => {
     expect(roomSectionEmpty.body.group).not.toHaveProperty("section");
     expect((await api("DELETE", `/api/groups/${sectionRoom.id}`)).status).toBe(200);
     expect(gated.body.bot.composio).toBe(false);
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).body.bot.composio).toBe(true);
+    // Enabling Connected Apps is retired in the shared workspace.
+    expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(403);
 
     const deleted = await api("DELETE", `/api/bots/${bot.id}`);
     expect(deleted.status).toBe(200);
@@ -2966,7 +3014,7 @@ describe("harness HTTP API", () => {
         (group: { id: string }) => group.id === roomId,
       )), { timeout: 5_000 }).toMatch(/Waiting for its turn on this computer/);
       expect(promptsOnBoat()).toBe(1);
-      expect((await api("POST", `/api/bots/${botIds[0]}/interrupt`, {})).status).toBe(200);
+      expect((await api("POST", `/api/bots/${botIds[0]}/interrupt`, { threadId: firstThread })).status).toBe(200);
       await idle(botIds[0]);
 
       // No Retry or second user message: releasing the owner wakes the turn.
@@ -2998,7 +3046,7 @@ describe("harness HTTP API", () => {
       managedBoatRows = [];
       managedBoatCreatedIds.clear();
       rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${botIds[0]}/messages`, { text: "do not create a replacement" })).status).toBe(202);
+      expect((await api("POST", `/api/bots/${botIds[0]}/messages`, { text: "do not create a replacement", threadId: firstThread })).status).toBe(202);
       await expect.poll(async () => JSON.stringify((await api("GET", "/api/bots?messages=30")).body.bots.find(
         (bot: { id: string }) => bot.id === botIds[0],
       )), { timeout: 5_000 }).toMatch(/team's Boat computer is missing/);
@@ -3043,6 +3091,10 @@ describe("harness HTTP API", () => {
         computer: { driver: "boxAgent", displayName: "Computer" },
       },
     }));
+    // Per-user workspaces: the isolated server needs its own owner session,
+    // following the main fixture pattern above.
+    const isolatedBaseGiveup = `http://127.0.0.1:${isolatedPort}`;
+    registerOwnerFetch(isolatedBaseGiveup, prepareOwnerSession(isolatedData));
     let isolatedStderr = "";
     const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
       cwd: ROOT,
@@ -3055,6 +3107,7 @@ describe("harness HTTP API", () => {
         RELAY_WEBHOOK_PORT: String(isolatedPort + 1),
         RELAY_STATIC_DIR: isolatedStatic,
         RELAY_BOX_API: `http://127.0.0.1:${boatStubPort}`,
+        RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
         FAKE_CLAUDE_MODE: "hang",
         // seconds, not minutes: the point of this file is the cap firing
         RELAY_GOAL_WAIT_MAX_MS: "2000",
@@ -3147,6 +3200,7 @@ describe("harness HTTP API", () => {
       managedBoatCreateMode = "refuse";
       managedBoatCreateId = "bx_cdefghjk";
       await waitForExit(isolatedChild, { signal: "SIGTERM" });
+      unregisterOwnerFetch(isolatedBaseGiveup);
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
@@ -4568,8 +4622,14 @@ describe("harness HTTP API", () => {
       createdAt: index + 1,
       approvalMode,
       autoApprove: false,
+      ownerUserId: TEST_OWNER_USER_ID,
+      tasks: [{ threadId: `${approvalMode}-model-thread` }],
     }));
     writeFileSync(join(isolatedData, "bots.json"), JSON.stringify(trustedBots));
+    // Per-user workspaces: the isolated server needs its own owner session,
+    // following the main fixture pattern above.
+    const isolatedBaseTrusted = `http://127.0.0.1:${isolatedPort}`;
+    registerOwnerFetch(isolatedBaseTrusted, prepareOwnerSession(isolatedData));
 
     let isolatedStderr = "";
     const isolatedChild = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
@@ -4583,6 +4643,7 @@ describe("harness HTTP API", () => {
         RELAY_PORT: String(isolatedPort),
         RELAY_WEBHOOK_PORT: String(isolatedPort + 1),
         RELAY_STATIC_DIR: isolatedStatic,
+        RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
         FAKE_CLAUDE_MODE: "hang",
         FAKE_CLAUDE_DUMP: join(isolatedHome, "fake-claude-dump.json"),
       },
@@ -4677,6 +4738,7 @@ describe("harness HTTP API", () => {
       expect(stillCustom).toMatchObject({ approvalMode: "custom", autoApprove: false });
     } finally {
       await waitForExit(isolatedChild, { signal: "SIGTERM" });
+      unregisterOwnerFetch(isolatedBaseTrusted);
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
@@ -4957,7 +5019,6 @@ describe("harness HTTP API", () => {
     expect(scout).toMatchObject({
       chiefOfStaff: true,
       composio: false,
-      connectorTools: {},
       playbooks: [{ key: "signal-check", instructions: "Keep the source URL and confidence." }],
       installedPackage: {
         id: "signal-desk",
@@ -4966,6 +5027,8 @@ describe("harness HTTP API", () => {
       },
     });
     expect(scout).not.toHaveProperty("autoApprove");
+    // Shared workspace retires connector grants: absent, not empty.
+    expect(scout.connectorTools).toBeUndefined();
     const importedSkills = await api("GET", `/api/bots/${scout.id}/skills`);
     expect(importedSkills.body.skills).toMatchObject([{
       name: "source-check",
@@ -5060,7 +5123,9 @@ describe("harness HTTP API", () => {
       alwaysAllow: ["Bash:git"],
       approvePeerComms: true,
       chiefOfStaff: true,
-      composio: true,
+      // Connected Apps are retired: new bots default composio:false and
+      // composio:true is refused, so the armed bot leaves it off.
+      composio: false,
       computer: "off",
     });
     const beforeImport = (await api("GET", "/api/bots")).body;
@@ -5128,7 +5193,7 @@ describe("harness HTTP API", () => {
       alwaysAllow: ["Bash:git"],
       approvePeerComms: true,
       chiefOfStaff: true,
-      composio: true,
+      composio: false,
       computer: "off",
     });
     // Import must not create or replace any Chief, including Chiefs of other teams.
@@ -5158,7 +5223,9 @@ describe("harness HTTP API", () => {
 
     // re-import after the user edited their copy: the edit survives, the
     // second import creates another fresh record and never reaches back
-    await api("PATCH", `/api/bots/${impostor.id}`, { description: "edited after import", composio: true });
+    expect((await api("PATCH", `/api/bots/${impostor.id}`, { description: "edited after import" })).status).toBe(200);
+    // Enabling Connected Apps stays retired.
+    expect((await api("PATCH", `/api/bots/${impostor.id}`, { composio: true })).status).toBe(403);
     const second = await api("POST", "/api/teams/import", smuggled);
     expect(second.status).toBe(201);
     const secondBot = second.body.bots[0];
@@ -5168,7 +5235,7 @@ describe("harness HTTP API", () => {
     expect((await api("GET", "/api/bots")).body.bots.find((bot: { id: string }) => bot.id === impostor.id)).toMatchObject({
       name: "Mira 2",
       description: "edited after import",
-      composio: true,
+      composio: false,
     });
 
     await api("DELETE", `/api/groups/${room.id}`);
@@ -5506,6 +5573,10 @@ describe("harness HTTP API", () => {
         claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
       },
     }));
+    // Per-user workspaces: the isolated server needs its own owner session,
+    // following the main fixture pattern above.
+    const isolatedBasePhone = `http://127.0.0.1:${isolatedPort}`;
+    registerOwnerFetch(isolatedBasePhone, prepareOwnerSession(isolatedData));
 
     // Model Electron's private utility-process bridge. Both encrypted saves
     // pause after decryption, before the external credential config commit,
@@ -5581,6 +5652,7 @@ describe("harness HTTP API", () => {
           RELAY_STATIC_DIR: isolatedStatic,
           FAKE_CLAUDE_MODE: "hang",
           FAKE_CLAUDE_DUMP: isolatedDump,
+          RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
           RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
         },
         stdio: ["ignore", "pipe", "pipe"],
@@ -5658,11 +5730,11 @@ describe("harness HTTP API", () => {
       expect((await isolatedApi(
         "POST",
         `/api/bots/${direct.id}/messages`,
-        { text: "request a private key" },
+        { text: "request a private key", threadId: directOriginalThread },
       )).status).toBe(202);
       await readJsonFileWhenReady(isolatedDump);
       const directRequest = await requestCredential(direct.id, directOriginalThread);
-      expect((await isolatedApi("POST", `/api/bots/${direct.id}/interrupt`, {})).status).toBe(200);
+      expect((await isolatedApi("POST", `/api/bots/${direct.id}/interrupt`, { threadId: directOriginalThread })).status).toBe(200);
       await expect.poll(async () => {
         const state = (await isolatedApi("GET", "/api/bots?messages=0")).body;
         return state.bots.find((bot: { id: string }) => bot.id === direct.id)?.busy;
@@ -5788,9 +5860,11 @@ describe("harness HTTP API", () => {
       };
       await expectLocked(isolatedApi("POST", `/api/bots/${direct.id}/messages/${directUser.id}/edit`, {
         text: "rewind under the save",
+        threadId: directOriginalThread,
       }));
       await expectLocked(isolatedApi("POST", `/api/bots/${direct.id}/active-branch`, {
         messageId: directRequest.messageId,
+        threadId: directOriginalThread,
       }));
       await expectLocked(isolatedApi("POST", `/api/bots/${direct.id}/tasks`, { title: "Race" }));
       await expectLocked(isolatedApi(
@@ -5848,6 +5922,7 @@ describe("harness HTTP API", () => {
       writeFileSync(releaseFile, "release");
       await Promise.allSettled(provideRequests);
       await waitForExit(isolatedChild, { signal: "SIGTERM" });
+      unregisterOwnerFetch(isolatedBasePhone);
       await removeTempDir(isolatedHome);
     }
     expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
@@ -6004,15 +6079,18 @@ describe("harness HTTP API", () => {
       const instances = (await api("GET", "/api/instances")).body.instances;
       const claude = instances.find((instance: { instanceId: string }) => instance.instanceId === "claude");
       expect(claude.snapshot.state).toBe("available");
-      expect((await api("PATCH", `/api/bots/${bot.id}`, {
+      // Per-task model route: a plain bot PATCH can 409 once tasks diverge,
+      // so set the default thread's selection through its task.
+      expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, {
         modelSelection: { instanceId: "claude", model: claude.models.default },
+        updateBotDefault: true,
       })).status).toBe(200);
 
       const originalTask = bot.threadId;
       const created = await api("POST", `/api/bots/${bot.id}/tasks`, { title: "Running task" });
       expect(created.status).toBe(201);
       runningTask = created.body.task.threadId;
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running" })).status).toBe(202);
+      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "keep running", threadId: runningTask })).status).toBe(202);
 
       await expect.poll(async () => {
         const state = (await api("GET", "/api/bots?messages=0")).body.bots.find(
@@ -6044,7 +6122,7 @@ describe("harness HTTP API", () => {
     const claude = (await api("GET", "/api/instances")).body.instances.find(
       (instance: { instanceId: string }) => instance.instanceId === "claude",
     );
-    expect((await api("PATCH", `/api/bots/${bot.id}`, {
+    expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, {
       modelSelection: { instanceId: "claude", model: claude.models.default },
     })).status).toBe(200);
     const before = (await api("GET", "/api/bots")).body.bots.find(
@@ -6090,7 +6168,7 @@ describe("harness HTTP API", () => {
     const claude = (await api("GET", "/api/instances")).body.instances.find(
       (instance: { instanceId: string }) => instance.instanceId === "claude",
     );
-    expect((await api("PATCH", `/api/bots/${bot.id}`, {
+    expect((await api("PATCH", `/api/bots/${bot.id}/tasks/${bot.threadId}`, {
       modelSelection: { instanceId: "claude", model: claude.models.default },
     })).status).toBe(200);
     const room = (await api("POST", "/api/groups", {
@@ -6879,92 +6957,41 @@ describe("harness HTTP API", () => {
   });
 
   it("manages and probes custom MCP servers without returning secret values", async () => {
-    const secret = "mcp-secret-that-must-never-render";
-    const created = await api("POST", "/api/mcp/servers", {
-      name: "fixture",
-      command: process.execPath,
-      args: ["--experimental-strip-types", FAKE_MCP_SERVER],
-      env: { FIXTURE_TOKEN: secret, REMOVE_ME: "old" },
-    });
-    expect(created.status).toBe(201);
-    expect(created.body.servers).toEqual([expect.objectContaining({
-      name: "fixture",
-      enabled: false,
-      envKeys: ["FIXTURE_TOKEN", "REMOVE_ME"],
-    })]);
-    expect(JSON.stringify(created.body)).not.toContain(secret);
-
-    const tested = await api("POST", "/api/mcp/servers/fixture/test");
-    expect(tested).toEqual({
-      status: 200,
-      body: { ok: true, tools: [{ name: "read_notes", description: "Read saved notes" }] },
-    });
-
-    const updated = await api("PUT", "/api/mcp/servers/fixture", {
-      command: process.execPath,
-      args: ["--experimental-strip-types", FAKE_MCP_SERVER],
-      env: { FIXTURE_TOKEN: true, NEXT: "fresh" },
-      enabled: false,
-    });
-    expect(updated.status).toBe(200);
-    expect(updated.body.servers[0].envKeys).toEqual(["FIXTURE_TOKEN", "NEXT"]);
-    expect(JSON.stringify(updated.body)).not.toContain(secret);
-
-    const enabled = await api("PATCH", "/api/mcp/servers/fixture", { enabled: true });
-    expect(enabled.body.servers[0].enabled).toBe(true);
+    // Custom MCP servers were removed in per-user workspaces (#11): the only
+    // MCP route a bot mounts is the harness-owned Relay Tool Layer
+    // (server/index.ts engineMcpServers). The retired routes stay gone.
+    for (const [method, path] of [
+      ["POST", "/api/mcp/servers"],
+      ["GET", "/api/mcp/servers"],
+      ["POST", "/api/mcp/servers/fixture/test"],
+      ["PUT", "/api/mcp/servers/fixture"],
+      ["PATCH", "/api/mcp/servers/fixture"],
+      ["DELETE", "/api/mcp/servers/fixture"],
+    ] as const) {
+      expect((await api(method, path, method === "GET" ? undefined : {})).status).toBe(404);
+    }
     const disk = JSON.parse(readFileSync(join(home, ".relay", "config.json"), "utf8"));
-    expect(disk.mcpServers.fixture.env).toEqual({ FIXTURE_TOKEN: secret, NEXT: "fresh" });
-
-    const reserved = await api("POST", "/api/mcp/servers", { name: "computer", command: "evil" });
-    expect(reserved.status).toBe(400);
-
-    const removed = await api("DELETE", "/api/mcp/servers/fixture");
-    expect(removed).toEqual({ status: 200, body: { servers: [] } });
-    const after = await api("GET", "/api/mcp/servers");
-    expect(after).toEqual({ status: 200, body: { servers: [] } });
+    expect(disk.mcpServers ?? {}).toEqual({});
   });
 
   it("manages and probes a url MCP server, and the Claude Code servers switch", async () => {
-    const secret = "Bearer mcp-header-that-must-never-render";
-    const fake = await startFakeHttpMcp({ requireHeader: { name: "Authorization", value: secret } });
-    try {
-      const created = await api("POST", "/api/mcp/servers", { name: "docs", url: fake.url, headers: { Authorization: secret } });
-      expect(created.status).toBe(201);
-      expect(created.body.servers).toEqual([{ name: "docs", type: "http", url: fake.url, headerKeys: ["Authorization"], enabled: false }]);
-      expect(JSON.stringify(created.body)).not.toContain(secret);
+    // Same retirement as above: URL MCP servers are gone too. The Claude
+    // user-MCP switch still round-trips through /api/config.
+    for (const [method, path] of [
+      ["POST", "/api/mcp/servers"],
+      ["POST", "/api/mcp/servers/docs/test"],
+      ["PUT", "/api/mcp/servers/docs"],
+    ] as const) {
+      expect((await api(method, path, {})).status).toBe(404);
+    }
 
-      const tested = await api("POST", "/api/mcp/servers/docs/test");
-      expect(tested).toEqual({
-        status: 200,
-        body: { ok: true, tools: [{ name: "read_notes", description: "Read saved notes" }] },
-      });
-
-      const updated = await api("PUT", "/api/mcp/servers/docs", {
-        type: "sse",
-        url: fake.url,
-        headers: { Authorization: true, "X-Org": "acme" },
-        enabled: true,
-      });
-      expect(updated.status).toBe(200);
-      expect(updated.body.servers[0]).toMatchObject({ type: "sse", headerKeys: ["Authorization", "X-Org"], enabled: true });
-      expect(JSON.stringify(updated.body)).not.toContain(secret);
-      const disk = JSON.parse(readFileSync(join(home, ".relay", "config.json"), "utf8"));
-      expect(disk.mcpServers.docs).toEqual({ type: "sse", url: fake.url, headers: { Authorization: secret, "X-Org": "acme" }, enabled: true });
-
-      const bad = await api("POST", "/api/mcp/servers", { name: "nowhere", url: "docs.example/mcp" });
-      expect(bad.status).toBe(400);
-      expect(bad.body.error).toMatch(/full address/);
-
-      // the switch that lets Claude bots also see this machine's own servers
+      // the switch that let Claude bots see this machine's own servers is
+      // retired with custom MCP (server/index.ts reports claudeUserMcp:false).
       const on = await api("PUT", "/api/config", { features: { claudeUserMcp: true } });
       expect(on.status).toBe(200);
-      expect(on.body.features.claudeUserMcp).toBe(true);
+      expect(on.body.features.claudeUserMcp).toBe(false);
       const off = await api("PUT", "/api/config", { features: { claudeUserMcp: false } });
       expect(off.body.features.claudeUserMcp).toBe(false);
-    } finally {
-      await fake.close();
-      await api("DELETE", "/api/mcp/servers/docs").catch(() => undefined);
-    }
   });
 
   it("round-trips the UI language and clears it back to system", async () => {
@@ -9284,94 +9311,50 @@ describe("harness HTTP API", () => {
   });
 
   it("validates a Composio project key, creates a Session, and keeps externally stored secrets off disk", async () => {
+    // Connected Apps are retired in the shared workspace (#11): any non-empty
+    // project key is refused (server/index.ts 403), the inventory routes are
+    // gone (404), and new bots default composio:false.
     const oldKey = await api("PUT", "/api/config", { composio: { apiKey: "old_key" } });
-    expect(oldKey.status).toBe(400);
-    expect(oldKey.body.error).toMatch(/start with ak_/i);
+    expect(oldKey.status).toBe(403);
+    expect(oldKey.body.error).toMatch(/shared workspace/i);
 
     const rejected = await api("PUT", "/api/config", { composio: { apiKey: "ak_wrong" } });
-    expect(rejected.status).toBe(400);
-    expect(rejected.body.error).toMatch(/invalid project key/i);
+    expect(rejected.status).toBe(403);
 
-    const saved = await api("PUT", "/api/config?secretStorage=external", {
-      composio: { apiKey: "ak_good" },
-      opencodeGo: { apiKey: "opencode-external" },
-      profile: { name: "External Store" },
-    });
-    expect(saved.status).toBe(200);
-    expect(saved.body.composio).toEqual({ configured: true, mode: "self-hosted" });
-    expect(saved.body.opencodeGo).toEqual({ configured: true });
-    expect(saved.body.profile).toEqual({ name: "External Store", email: "", aboutMe: "" });
-    expect(JSON.stringify(saved.body)).not.toContain("ak_good");
+    const cleared = await api("PUT", "/api/config", { composio: { apiKey: "" } });
+    expect(cleared.status).toBe(200);
+    expect((await api("GET", "/api/config")).body.composio).toEqual({ configured: false, mode: "unavailable" });
 
-    const disk = JSON.parse(readFileSync(join(home, ".relay", "config.json"), "utf8"));
-    expect(disk.composio).toMatchObject({ apiKey: "", sessionId: "trs_config_test" });
-    expect(disk.opencodeGo).toEqual({ apiKey: "" });
-    expect(disk.profile).toEqual({ name: "External Store" });
-    expect(JSON.stringify(disk)).not.toContain("ak_good");
-    expect(JSON.stringify(disk)).not.toContain("opencode-external");
-
-    // A later ordinary setting save reloads config; the in-process secure-env
-    // override must keep Composio configured until the next app launch.
-    expect((await api("PUT", "/api/config", { profile: { name: "Grace" } })).status).toBe(200);
-    expect((await api("GET", "/api/config")).body.composio).toEqual({ configured: true, mode: "self-hosted" });
-
-    // With the connector configured, the overview route now reads the
-    // connected-apps inventory against the stub. It must answer 200 and
-    // never invent a connected app (the failing-read fallback itself is
-    // unit-tested in bot-overview.test.ts, since the stub answers every
-    // session path with a fake session rather than an error).
+    // With connectors retired, the overview never claims connected apps and
+    // new bots default to composio:false.
     const kiwi = (await api("POST", "/api/bots", { name: "Kiwi" })).body.bot;
     try {
+      expect(kiwi.composio).toBe(false);
       const overview = await api("GET", `/api/bots/${kiwi.id}/overview`);
       expect(overview.status).toBe(200);
       // Whatever the stub reports, the page never contradicts itself.
       const claimsApps = overview.body.reaches.some((line: string) => line.startsWith("Can use"));
       const deniesApps = overview.body.wont.includes("Has no connected apps.");
       expect(claimsApps && deniesApps).toBe(false);
+      expect(deniesApps).toBe(true);
     } finally {
       await api("DELETE", `/api/bots/${kiwi.id}`);
     }
   });
 
   it("keeps second-account cards separate and waits for the requested alias, not an existing account", async () => {
-    expect((await api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+    // Retired with Connected Apps: project keys are refused and the internal
+    // connector routes stay gone (404).
+    expect((await api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(403);
     const bot = (await api("POST", "/api/bots")).body.bot;
-    connectorAccounts = [{ id: "ca_personal", alias: "personal", status: "ACTIVE", toolkit: { slug: "gmail" } }];
     try {
       const token = await mintTestCapability(BASE, bot.id, bot.threadId, { kind: "connectors" });
-      const create = async (items: unknown[], resumeKey = "alias-fixture-123") => {
-        const response = await fetch(`${BASE}/api/internal/connectors/request`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-          body: JSON.stringify({ botId: bot.id, threadId: bot.threadId, resumeKey, items }),
-        });
-        return { status: response.status, body: await response.json() as any };
-      };
-      expect((await create([{ slug: "gmail", alias: "x".repeat(65) }])).status).toBe(400);
-      const requested = await create([
-        { slug: "gmail", alias: "work" }, { slug: "gmail", alias: "other" }, { slug: "gmail", alias: "WORK" },
-      ]);
-      expect(requested.status).toBe(200);
-      const [work, other, duplicate] = requested.body.messageIds;
-      expect(work).toBe(duplicate);
-      expect(other).not.toBe(work);
-      expect((await create([{ slug: "gmail", alias: "work" }])).body.messageIds).toEqual([work]);
-      const card = (id: string, action: string) => `/api/bots/${bot.id}/connector-cards/${id}/${action}`;
-      expect((await api("POST", card(work, "authorize"), { threadId: bot.threadId })).body.url).toBe("https://connect.composio.dev/fixture-only");
-      expect(connectorLinkRequests.at(-1)).toEqual({ toolkit: "gmail", alias: "work" });
-      const poll = () => api("GET", `${card(work, "status")}?threadId=${bot.threadId}`);
-      expect((await poll()).body.connected).toBe(false);
-      expect((await api("POST", card(work, "resume"), { threadId: bot.threadId })).status).toBe(409);
-      const pending = { id: "ca_work", alias: "Work", status: "INITIATED", toolkit: { slug: "gmail" } };
-      connectorAccounts.push(pending);
-      expect((await poll()).body).toMatchObject({ connected: false, pending: true });
-      pending.status = "FAILED";
-      expect((await poll()).body).toMatchObject({ connected: false, status: "FAILED" });
-      pending.status = "ACTIVE";
-      expect((await poll()).body.connected).toBe(true);
-      // The other requested alias is still missing, so no continuation yet.
-      expect((await api("POST", card(work, "resume"), { threadId: bot.threadId })).status).toBe(409);
-      expect((await api("GET", `${card(other, "status")}?threadId=${bot.threadId}`)).body.connected).toBe(false);
+      const response = await fetch(`${BASE}/api/internal/connectors/request`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ botId: bot.id, threadId: bot.threadId, resumeKey: "alias-fixture-123", items: [{ slug: "gmail", alias: "work" }] }),
+      });
+      expect(response.status).toBe(404);
     } finally {
       connectorAccounts = [];
       await api("DELETE", `/api/bots/${bot.id}`);
@@ -9379,237 +9362,76 @@ describe("harness HTTP API", () => {
   });
 
   it("does not relay a slow connector request after Connected Apps is disabled", async () => {
+    // Retired: enabling per-bot Connected Apps is refused and the relay route
+    // stays gone, so there is nothing to relay after disable.
     const bot = (await api("POST", "/api/bots")).body.bot;
-    let held: Awaited<ReturnType<typeof delayedJsonBody>> | undefined;
     try {
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(200);
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: true })).status).toBe(403);
       const token = await mintTestCapability(BASE, bot.id, bot.threadId, { kind: "connectors" });
-      held = await delayedJsonBody(
-        "POST",
-        "/api/internal/connectors/mcp",
-        { jsonrpc: "2.0", id: 1, method: "tools/list", params: {} },
-        { authorization: `Bearer ${token}` },
-      );
-
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { composio: false })).status).toBe(200);
-      const rejected = await held.finish();
-      expect(rejected.status).toBe(403);
-      expect(rejected.body.error).toMatch(/connected apps are not enabled/i);
+      const response = await fetch(`${BASE}/api/internal/connectors/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/list", params: {} }),
+      });
+      expect(response.status).toBe(404);
     } finally {
-      held?.close();
       await api("DELETE", `/api/bots/${bot.id}`);
     }
   });
 
-  /** Wait until the decision log carries a connector-scope row matching
-   * the predicate (rows are appended fire-and-forget). */
-  const waitForConnectorRows = async (pred: (row: any) => boolean, ms = 15_000) => {
-    const deadline = Date.now() + ms;
-    for (;;) {
-      const rows: any[] = (await api("GET", "/api/decisions?limit=500")).body.decisions ?? [];
-      if (rows.some(pred)) return rows;
-      if (Date.now() > deadline) return rows;
-      await new Promise((resolve) => setTimeout(resolve, 200));
-    }
-  };
-
   it("enforces per-bot connector tool grants on relayed tool calls", async () => {
-    // Clear any project key an earlier test left behind, so the relay uses
-    // the stubbed managed broker for the whole test.
+    // Retired with Connected Apps: per-bot grants are refused at the patch
+    // boundary and the relay route stays gone (404), so nothing relays.
     expect((await api("PUT", "/api/config", { composio: { apiKey: "" } })).status).toBe(200);
     const bot = (await api("POST", "/api/bots")).body.bot;
-    connectorRelayCalls.length = 0;
-    const relayed = () => connectorRelayCalls.map((entry) => entry.body);
     try {
       expect((await api("PATCH", `/api/bots/${bot.id}`, {
         composio: true,
         connectorTools: { gmail: { tools: ["GMAIL_SEND_EMAIL"] } },
-      })).status).toBe(200);
+      })).status).toBe(403);
       const token = await mintTestCapability(BASE, bot.id, bot.threadId, { kind: "connectors" });
-      const call = async (frame: unknown, bearer = token) => {
-        const response = await fetch(`${BASE}/api/internal/connectors/mcp`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${bearer}` },
-          body: JSON.stringify(frame),
-        });
-        return { status: response.status, body: await response.json() as any };
-      };
-      const direct = (name: string) => call({ jsonrpc: "2.0", id: 11, method: "tools/call", params: { name, arguments: {} } });
-      const multi = (tools: unknown[]) => call({
-        jsonrpc: "2.0",
-        id: 12,
-        method: "tools/call",
-        params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools, sync_response_to_workbench: false } },
+      const response = await fetch(`${BASE}/api/internal/connectors/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 11, method: "tools/call", params: { name: "GMAIL_SEND_EMAIL", arguments: {} } }),
       });
-
-      // The granted exact tool relays verbatim and the upstream answer passes through.
-      const allowed = await direct("GMAIL_SEND_EMAIL");
-      expect(allowed.status).toBe(200);
-      expect(allowed.body.result.content[0].text).toBe("relay-ok");
-      expect(relayed().at(-1)).toEqual({
-        jsonrpc: "2.0",
-        id: 11,
-        method: "tools/call",
-        params: { name: "GMAIL_SEND_EMAIL", arguments: {} },
-      });
-
-      // A MULTI_EXECUTE batch whose names are all granted relays as one call.
-      const batched = await multi([{ tool_slug: "GMAIL_SEND_EMAIL", arguments: {} }]);
-      expect(batched.body.result.content[0].text).toBe("relay-ok");
-
-      // An ungranted tool on the granted service is refused and never relayed.
-      const held = relayed().length;
-      const refused = await direct("GMAIL_FETCH_EMAILS");
-      expect(refused.status).toBe(200);
-      expect(refused.body.id).toBe(11);
-      expect(refused.body.result.isError).toBe(true);
-      expect(refused.body.result.content[0].text).toContain("GMAIL_FETCH_EMAILS");
-      expect(refused.body.result.content[0].text).toContain("Ask the person");
-      expect(relayed().length).toBe(held);
-
-      // An ungranted service is refused the same way.
-      const other = await direct("SLACK_POST_MESSAGE");
-      expect(other.body.result.isError).toBe(true);
-      expect(other.body.result.content[0].text).toContain("SLACK_POST_MESSAGE");
-
-      // One ungranted name refuses the whole batch.
-      const mixed = await multi([
-        { tool_slug: "GMAIL_SEND_EMAIL", arguments: {} },
-        { tool_slug: "SLACK_POST_MESSAGE", arguments: {} },
-      ]);
-      expect(mixed.body.result.isError).toBe(true);
-      expect(mixed.body.result.content[0].text).toContain("SLACK_POST_MESSAGE");
-      expect(relayed().length).toBe(held);
-
-      // Discovery and connection meta-tools keep their existing flows.
-      await direct("COMPOSIO_SEARCH_TOOLS");
-      await direct("GMAIL_MANAGE_CONNECTIONS");
-      expect(relayed().length).toBe(held + 2);
-
-      // The refusal never enumerates what the bot could have called instead.
-      expect(JSON.stringify(refused.body)).not.toContain("GMAIL_SEND_EMAIL");
-
-      // A legacy bot with no grants record keeps today's behavior: everything relays.
-      const legacy = (await api("POST", "/api/bots")).body.bot;
-      try {
-        expect((await api("PATCH", `/api/bots/${legacy.id}`, { composio: true })).status).toBe(200);
-        const legacyToken = await mintTestCapability(BASE, legacy.id, legacy.threadId, { kind: "connectors" });
-        const legacyCall = await call(
-          { jsonrpc: "2.0", id: 21, method: "tools/call", params: { name: "SLACK_POST_MESSAGE", arguments: {} } },
-          legacyToken,
-        );
-        expect(legacyCall.body.result.content[0].text).toBe("relay-ok");
-        // Legacy bots keep the pre-grants relay for unreadable frames too:
-        // a malformed MULTI_EXECUTE batch passes through untouched.
-        const legacyMalformed = await call(
-          { jsonrpc: "2.0", id: 22, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ arguments: {} }] } } },
-          legacyToken,
-        );
-        expect(legacyMalformed.body.result.content[0].text).toBe("relay-ok");
-      } finally {
-        await api("DELETE", `/api/bots/${legacy.id}`);
-      }
-
-      // Allow rows: one per call, naming the first target and the grant key.
-      const rows = await waitForConnectorRows(
-        (row) => row.botId === legacy.id && row.source === "connector-scope" && row.decision === "auto-approved",
-      );
-      const allowRows = rows.filter((row) => row.source === "connector-scope" && row.decision === "auto-approved");
-      expect(allowRows.some((row) => row.botId === bot.id && row.tool === "GMAIL_SEND_EMAIL" && row.rule === "connectorTools.gmail")).toBe(true);
-      expect(allowRows.some((row) => row.botId === legacy.id && row.tool === "SLACK_POST_MESSAGE" && row.rule === "composio")).toBe(true);
+      expect(response.status).toBe(404);
     } finally {
       await api("DELETE", `/api/bots/${bot.id}`);
     }
   });
 
   it("refuses MULTI_EXECUTE shapes it cannot read and writes connector-scope denial rows", async () => {
+    // Retired with Connected Apps: the relay route stays gone.
     expect((await api("PUT", "/api/config", { composio: { apiKey: "" } })).status).toBe(200);
     const bot = (await api("POST", "/api/bots")).body.bot;
-    connectorRelayCalls.length = 0;
     try {
       expect((await api("PATCH", `/api/bots/${bot.id}`, {
         composio: true,
         connectorTools: { gmail: { tools: "*" } },
-      })).status).toBe(200);
+      })).status).toBe(403);
       const token = await mintTestCapability(BASE, bot.id, bot.threadId, { kind: "connectors" });
-      const call = async (frame: unknown) => {
-        const response = await fetch(`${BASE}/api/internal/connectors/mcp`, {
-          method: "POST",
-          headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-          body: JSON.stringify(frame),
-        });
-        return { status: response.status, body: await response.json() as any };
-      };
-
-      // A batch entry that names no tool_slug cannot be checked, so the call is denied whole.
-      const malformed = await call({
-        jsonrpc: "2.0",
-        id: 31,
-        method: "tools/call",
-        params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ arguments: {} }], sync_response_to_workbench: false } },
+      const response = await fetch(`${BASE}/api/internal/connectors/mcp`, {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
+        body: JSON.stringify({ jsonrpc: "2.0", id: 31, method: "tools/call", params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { tools: [{ arguments: {} }] } } }),
       });
-      expect(malformed.status).toBe(200);
-      expect(malformed.body.result.isError).toBe(true);
-      expect(malformed.body.result.content[0].text).toContain("COMPOSIO_MULTI_EXECUTE_TOOL");
-
-      // No tools list at all, and a direct name that is not a Composio tool name.
-      const missing = await call({
-        jsonrpc: "2.0",
-        id: 32,
-        method: "tools/call",
-        params: { name: "COMPOSIO_MULTI_EXECUTE_TOOL", arguments: { sync_response_to_workbench: true } },
-      });
-      expect(missing.body.result.isError).toBe(true);
-      const lowercase = await call({ jsonrpc: "2.0", id: 33, method: "tools/call", params: { name: "gmail_send_email", arguments: {} } });
-      expect(lowercase.body.result.isError).toBe(true);
-
-      // None of the refused shapes reached the relay.
-      expect(connectorRelayCalls).toHaveLength(0);
-      // The refusal stays safe to hand to a model: it points at the person.
-      expect(malformed.body.result.content[0].text).toContain("Ask the person");
-
-      // Every refusal wrote a connector-scope denial row.
-      const rows = await waitForConnectorRows(
-        (row) => row.botId === bot.id && row.source === "connector-scope" && row.decision === "auto-denied" && row.tool === "gmail_send_email",
-      );
-      const denyRows = rows.filter((row) => row.botId === bot.id && row.source === "connector-scope" && row.decision === "auto-denied");
-      expect(denyRows.some((row) => row.tool === "COMPOSIO_MULTI_EXECUTE_TOOL" && (row.summary ?? "").includes("tool_slug"))).toBe(true);
-      expect(denyRows.some((row) => row.tool === "COMPOSIO_MULTI_EXECUTE_TOOL" && (row.summary ?? "").includes("no tools"))).toBe(true);
-      expect(denyRows.some((row) => row.tool === "gmail_send_email")).toBe(true);
+      expect(response.status).toBe(404);
     } finally {
       await api("DELETE", `/api/bots/${bot.id}`);
     }
   });
 
   it("validates connector grant patches against connected services and the catalog", async () => {
-    // Project mode: the stub serves gmail (session toolkits plus an active
-    // account), slack (active account) and a catalog of exactly those two.
-    expect((await api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(200);
+    // Retired: project keys are refused; shape validation still applies for
+    // stored grants, which stay absent from the wire in the shared workspace.
+    expect((await api("PUT", "/api/config", { composio: { apiKey: "ak_good" } })).status).toBe(403);
     const bot = (await api("POST", "/api/bots")).body.bot;
-    connectorAccounts = [
-      { id: "ca_gmail", status: "ACTIVE", toolkit: { slug: "gmail" } },
-      { id: "ca_slack", status: "ACTIVE", toolkit: { slug: "slack" } },
-      { id: "ca_customcrm", status: "ACTIVE", toolkit: { slug: "customcrm" } },
-    ];
-    connectorCatalogToolkits = [
-      { slug: "gmail", name: "Gmail" },
-      { slug: "slack", name: "Slack" },
-    ];
-    const patch = (connectorTools: unknown) => api("PATCH", "/api/bots/" + bot.id, { connectorTools });
     try {
-      expect((await patch({ gmail: { tools: ["GMAIL_SEND_EMAIL"] }, slack: { tools: "*" } })).status).toBe(200);
-      expect((await patch({ notion: { tools: ["NOTION_CREATE_PAGE"] } })).body.error).toMatch(/not connected: notion/);
-      expect((await patch({ gmail: { tools: ["SLACK_POST_MESSAGE"] } })).body.error).toMatch(
-        /another service: SLACK_POST_MESSAGE/,
-      );
-      // customcrm is connected but absent from the live catalog walk.
-      expect((await patch({ customcrm: { tools: ["CUSTOMCRM_LOG_CALL"] } })).body.error).toMatch(
-        /missing from the connected-apps catalog: customcrm/,
-      );
-      // An unreachable inventory never blocks the patch: with no project key
-      // and no managed broker the semantic checks step aside entirely.
+      // Shape errors still 400; semantic checks step aside with no backend.
+      expect((await api("PATCH", "/api/bots/" + bot.id, { connectorTools: { gmail: { tools: [] } } })).status).toBe(400);
+      expect((await api("PATCH", "/api/bots/" + bot.id, { connectorTools: { gmail: { tools: ["GMAIL_SEND_EMAIL"] } } })).status).toBe(200);
       expect((await api("PUT", "/api/config", { composio: { apiKey: "" } })).status).toBe(200);
-      expect((await patch({ linear: { tools: ["LINEAR_CREATE_TICKET"] } })).status).toBe(200);
     } finally {
       connectorAccounts = [];
       connectorCatalogToolkits = [];
@@ -9617,24 +9439,12 @@ describe("harness HTTP API", () => {
       await api("DELETE", "/api/bots/" + bot.id);
     }
   });
-
   it("serves the grant editor's tool inventory grouped by service", async () => {
-    // Broker mode: clear any project key an earlier test left behind so the
-    // inventory walks the same stubbed managed relay a bot without a project
-    // key mounts through.
+    // Retired with Connected Apps: the inventory routes stay gone (404).
+    // Clearing a project key is still accepted.
     expect((await api("PUT", "/api/config", { composio: { apiKey: "" } })).status).toBe(200);
     const response = await api("GET", "/api/connectors/tools");
-    expect(response.status).toBe(200);
-    expect(response.body).toEqual({
-      configured: true,
-      services: {
-        gmail: [
-          { name: "GMAIL_FETCH_EMAILS", description: "Fetch emails" },
-          { name: "GMAIL_SEND_EMAIL", description: "Send an email" },
-        ],
-        slack: [{ name: "SLACK_POST_MESSAGE", description: "a".repeat(240) }],
-      },
-    });
+    expect(response.status).toBe(404);
   });
 
   it.skipIf(process.platform === "win32")("stores the credentials file with owner-only permissions", () => {
@@ -9878,7 +9688,12 @@ describe("bot memory API", () => {
    * the traversal tests need the wire to carry exactly the bytes shown */
   const rawGet = (rawPath: string): Promise<{ status: number; text: string }> =>
     new Promise((resolve, reject) => {
-      const req = request({ hostname: "127.0.0.1", port: PORT, path: rawPath }, (res) => {
+      const req = request({
+        hostname: "127.0.0.1",
+        port: PORT,
+        path: rawPath,
+        headers: ownerToken ? { authorization: `Bearer ${ownerToken}` } : {},
+      }, (res) => {
         let text = "";
         res.on("data", (c) => (text += c));
         res.on("end", () => resolve({ status: res.statusCode ?? 0, text }));
@@ -10483,14 +10298,16 @@ describe("bot memory API", () => {
     const botsFile = join(home, ".relay", "bots.json");
     let saved: string | undefined;
     try {
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { soul: "old", composio: true })).status).toBe(200);
+      // Connected Apps are retired (composio:true is 403), so exercise the
+      // same mixed-write atomicity with soul + description instead.
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { soul: "old", description: "old desc" })).status).toBe(200);
       saved = readFileSync(botsFile, "utf8");
       rmSync(botsFile);
       mkdirSync(botsFile);
-      const failed = await api("PATCH", `/api/bots/${bot.id}`, { soul: "new", composio: false });
+      const failed = await api("PATCH", `/api/bots/${bot.id}`, { soul: "new", description: "new desc" });
       expect(failed.status).toBe(500);
       const current = (await api("GET", "/api/bots?messages=0")).body.bots.find((candidate: any) => candidate.id === bot.id);
-      expect(current.composio).toBe(true);
+      expect(current.description).toBe("old desc");
       expect(current.soul).toBe("old");
       expect(current.soulHash).toBe(createHash("sha256").update("old").digest("hex"));
       expect(readFileSync(soulFileOf(bot.id), "utf8")).toBe("old");
@@ -10670,7 +10487,7 @@ describe("bot memory API", () => {
         id: "persona",
         label: "Identity",
         text: "You are Kiwi, a personal bot in Relay. Role: Tracker. About: Files bugs.",
-        bytes: 78,
+        bytes: 72,
       });
       expect(before.body.sections.map((s: { id: string }) => s.id)).not.toContain("soul");
       expect(before.body.sections.map((s: { id: string }) => s.id)).toContain("memory");

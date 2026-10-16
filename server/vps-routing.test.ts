@@ -32,6 +32,7 @@ import {
 } from "./container-computer.ts";
 import { VPS_CONTAINER_LABEL, VPS_IMAGE, VPS_MANAGED_LABEL, VPS_VIEWER_LABEL, vpsContainerName } from "./vps-computer.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch, unregisterOwnerFetch, TEST_TOOL_ACTOR_SECRET } from "./testing/owner.ts";
 import type { RoutineSchedule } from "../shared/routines.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -212,6 +213,10 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
       }),
     );
 
+    // Per-user workspaces: a session-less loopback request sees nothing, so
+    // issue the fixture owner's session before boot and act as that account.
+    registerOwnerFetch(BASE, prepareOwnerSession(join(home, ".relay")));
+
     const env: NodeJS.ProcessEnv = {
       HOME: home,
       USERPROFILE: home,
@@ -219,6 +224,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
       RELAY_EXTRA_PATH: fakeBin,
       FAKE_DOCKER_DIR: fakeBin,
       FAKE_DOCKER_LOG: dockerLog,
+      RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
     };
     if (process.env.PATH) env.PATH = process.env.PATH;
     if (process.env.SystemRoot) env.SystemRoot = process.env.SystemRoot;
@@ -244,6 +250,7 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
 
   afterAll(async () => {
     await waitForExit(child, { signal: "SIGTERM" });
+    unregisterOwnerFetch(BASE);
     await removeTempDir(home);
   });
 

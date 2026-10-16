@@ -14,14 +14,13 @@ import { MASCOT_BODIES, MASCOT_BODY_IDS } from "../../shared/mascot-bodies.ts";
 // leading slash, which is not a usable cwd — spawnSync then fails ENOENT.
 const root = fileURLToPath(new URL("../../", import.meta.url));
 
-// P1 ruling: the Swift catalog is emitted to ios/Sources/CompanionCore (reachable
-// by `swift test`), not ios/App (the Xcode app target, which `swift test` never
-// builds) — see swift-catalog.test.mjs.
+// The TypeScript catalog is emitted to shared/mascot-bodies.ts. (The generator
+// used to also emit Swift and Kotlin copies for the native apps; those trees
+// are gone with the server-only product, so the drift guard covers the one
+// catalog that still ships.)
 const TS_PATH = "../../shared/mascot-bodies.ts";
-const SWIFT_PATH = "../../ios/Sources/CompanionCore/MausBodies.swift";
-const KOTLIN_PATH = "../../android/app/src/main/kotlin/com/relay/companion/ui/MausBodies.kt";
 
-// Normalised to LF. .gitattributes pins both catalogs to LF so this should be a
+// Normalised to LF. .gitattributes pins the catalog to LF so this should be a
 // no-op, but a clone whose git config disagrees would otherwise fail this guard
 // over line endings — which git owns — rather than over generated content, which
 // is what the guard is actually for.
@@ -48,13 +47,9 @@ function describeDrift(label, before, after) {
   return `${label} diverged from a fresh generator run at ${diffs.length}${diffs.length >= 8 ? "+" : ""} line(s):\n${diffs.join("\n")}${more}`;
 }
 
-describe("generated catalogs", () => {
-  it("match a fresh run of the generator", () => {
-    const before = {
-      ts: read(TS_PATH),
-      swift: read(SWIFT_PATH),
-      kotlin: read(KOTLIN_PATH),
-    };
+describe("generated catalog", () => {
+  it("matches a fresh run of the generator", () => {
+    const before = read(TS_PATH);
 
     try {
       // process.execPath, not "node": runs the same interpreter as the test and does
@@ -65,40 +60,30 @@ describe("generated catalogs", () => {
       });
     } catch (err) {
       throw new Error(
-        `Running \`pnpm gen:bodies\` failed while checking the catalogs for drift. ` +
+        `Running \`pnpm gen:bodies\` failed while checking the catalog for drift. ` +
           `The working tree may now hold a partially-written or reverted file — run ` +
-          `\`git status\` / \`git diff -- shared/mascot-bodies.ts ios/Sources/CompanionCore/MausBodies.swift android/app/src/main/kotlin/com/relay/companion/ui/MausBodies.kt\` ` +
+          `\`git status\` / \`git diff -- shared/mascot-bodies.ts\` ` +
           `before trusting either file. Original error:\n${err.stderr?.toString() ?? err.message}`
       );
     }
 
-    const after = {
-      ts: read(TS_PATH),
-      swift: read(SWIFT_PATH),
-      kotlin: read(KOTLIN_PATH),
-    };
+    const after = read(TS_PATH);
 
-    // The generator just rewrote both tracked files in place. Whether this assertion
+    // The generator just rewrote the tracked file in place. Whether this assertion
     // passes or fails, restore the checked-in bytes so a failing run never leaves the
     // working tree silently modified — the developer sees the diff below, not a
     // dirty `git status` they have to go discover on their own.
-    write(TS_PATH, before.ts);
-    write(SWIFT_PATH, before.swift);
-    write(KOTLIN_PATH, before.kotlin);
+    write(TS_PATH, before);
 
-    const drifts = [
-      describeDrift("shared/mascot-bodies.ts", before.ts, after.ts),
-      describeDrift("ios/Sources/CompanionCore/MausBodies.swift", before.swift, after.swift),
-      describeDrift("android/app/src/main/kotlin/com/relay/companion/ui/MausBodies.kt", before.kotlin, after.kotlin),
-    ].filter(Boolean);
+    const drift = describeDrift("shared/mascot-bodies.ts", before, after);
 
-    if (drifts.length > 0) {
+    if (drift) {
       throw new Error(
         `A fresh \`pnpm gen:bodies\` run produced output that does not match the ` +
-          `checked-in catalog(s). Either a catalog was hand-edited after it was ` +
+          `checked-in catalog. Either the catalog was hand-edited after it was ` +
           `generated, or the generator is non-deterministic — in either case, fix the ` +
           `cause, never this assertion. The working tree has been restored to the ` +
-          `checked-in bytes; the divergence was:\n\n${drifts.join("\n\n")}`
+          `checked-in bytes; the divergence was:\n\n${drift}`
       );
     }
   }, 120_000);

@@ -7,18 +7,17 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-const forced = process.env.OMB_UI_E2E === "1";
-const enabled = forced || Boolean(binary);
-const launchTimeout = forced && !binary ? 600_000 : 180_000;
-if (!enabled) console.log("skipping connection surfaces UI e2e: no agent-browser; set OMB_UI_E2E=1 to install the pinned release");
-const evidence = (name: string) => join(ROOT, ".omb-scratch", "verify-evidence", `connection-surfaces-${name}.png`);
+const chrome = resolveUiChrome(process.env);
+const forced = process.env.RELAY_UI_E2E === "1";
+const enabled = uiE2eEnabled();
+const launchTimeout = forced && !chrome ? 600_000 : 180_000;
+if (!enabled) console.log("skipping connection surfaces UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");
+const evidence = (name: string) => join(ROOT, ".relay-scratch", "verify-evidence", `connection-surfaces-${name}.png`);
 
 /** Answers the connections inventory from the page, recording every revoke.
  *  Plain objects, not Response: the revokes are the interesting evidence. */
@@ -85,7 +84,7 @@ describe("Connections marketplace and the Servers settings card", () => {
     let stdout = "";
     let stderr = "";
     let info: { ui: string; url: string; dataDir: string; logPath: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
@@ -187,5 +186,5 @@ describe("Connections marketplace and the Servers settings card", () => {
     await expect.poll(() => evaluate(`Array.from(document.querySelectorAll('[role=alert]')).map((n) => n.textContent)`), { timeout: 10_000 })
       .toEqual(["Saved servers could not be refreshed."]);
     expect(await evaluate("window.serversFixture.calls")).toContain("forget:srv_lab");
-  });
+  }, launchTimeout + 120_000);
 });

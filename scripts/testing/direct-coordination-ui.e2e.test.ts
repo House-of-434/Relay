@@ -5,11 +5,12 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = uiE2eEnabled();
 
 (enabled ? it : it.skip)("coordinates from the real composer and opens the exact child task from its existing inline receipt", async () => {
   const temporary = mkdtempSync(join(tmpdir(), "relay-direct-ui-plan-"));
@@ -23,12 +24,13 @@ const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(proc
   child.stdout.on("data", chunk => { output += String(chunk); });
   child.stderr.on("data", chunk => { error += String(chunk); });
   child.on("error", caught => { error += caught.message; });
-  let info: { ui: string; url: string; botId: string; logPath: string };
+  let info: { ui: string; url: string; botId: string; logPath: string; token: string };
   try {
     await expect.poll(() => {
       if (child.exitCode !== null || child.signalCode !== null) throw new Error(error);
       try { info = JSON.parse(output); return Boolean(info.ui); } catch { return false; }
     }, { timeout: 180_000, interval: 250 }).toBe(true);
+    registerOwnerFetch(info.url, info.token);
     const api = async (path: string, body?: unknown, method = "POST") => {
       const response = await fetch(info.url + path, body === undefined ? {} : {
         method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),

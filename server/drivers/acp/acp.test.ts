@@ -244,7 +244,6 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.CURSOR_API_KEY;
     delete process.env.CURSOR_AUTH_TOKEN;
     delete process.env.BOX_TOKEN;
-    delete process.env.RELAY_TTS_KEY;
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) delete process.env[name];
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
@@ -541,7 +540,6 @@ describe("ACP turns (fake CLI)", () => {
     // workspace credentials with no CLI consumer at all — held by the
     // harness (env-injected at boot by the desktop shell), used in-process
     process.env.BOX_TOKEN = "box-should-not-leak";
-    process.env.RELAY_TTS_KEY = "tts-should-not-leak";
     Object.assign(process.env, CONTROL_PLANE_FIXTURE);
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
@@ -556,7 +554,6 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.CURSOR_API_KEY).toBeUndefined();
     expect(seen.env.CURSOR_AUTH_TOKEN).toBeUndefined();
     expect(seen.env.BOX_TOKEN).toBeUndefined();
-    expect(seen.env.RELAY_TTS_KEY).toBeUndefined();
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) expect(seen.env[name]).toBeUndefined();
   });
 

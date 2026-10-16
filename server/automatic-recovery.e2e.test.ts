@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 const primary = { instanceId: "opencodeGo", model: "fixture/recovery" };
@@ -74,6 +75,11 @@ async function withRecoveryFixture(
     config.automaticRecovery = { enabled: options.enabled !== false, backup };
     writeFileSync(configPath, JSON.stringify(config));
     writeFileSync(failureFile, JSON.stringify(options.error ?? transient));
+    // Re-issue the owner session for the restarted server: Windows kill()
+    // terminates the first process without its graceful shutdown, so its boot
+    // marker can read the previous session as stale. A fresh session (and the
+    // matching fetch bearer) keeps the fixture owner signed in.
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     server = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),

@@ -85,12 +85,16 @@ describe("BotListItem", () => {
       expect(markup).not.toContain("Approval needed");
     });
 
-    it("says Denied once it was denied, or closed by Stop", () => {
-      for (const answered of ["deny", "unavailable"]) {
-        const markup = renderRow(approval({ answered, dismissed: answered === "unavailable" }));
-        expect(markup).toContain("Denied");
-        expect(markup).not.toContain("Approval needed");
-      }
+    it("says Denied once it was denied", () => {
+      const markup = renderRow(approval({ answered: "deny" }));
+      expect(markup).toContain("Denied");
+      expect(markup).not.toContain("Approval needed");
+    });
+
+    it("says the confirmation was already closed when the answer could not be delivered", () => {
+      const markup = renderRow(approval({ answered: "unavailable", dismissed: true }));
+      expect(markup).toContain("Couldn’t deliver — the confirmation was already closed");
+      expect(markup).not.toContain("Approval needed");
     });
 
     it("says Expired once nothing can answer it", () => {

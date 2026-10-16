@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
 import { request } from "../scripts/mcp-server.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 async function fixture(test: (f: Awaited<ReturnType<typeof setup>>) => Promise<void>, hang = false, fakeEnv: NodeJS.ProcessEnv = {}) {
@@ -50,6 +51,11 @@ async function setup(hang: boolean, fakeEnv: NodeJS.ProcessEnv) {
       restart: async (beforeLaunch?: () => void) => {
         await waitForExit(restarted ?? session.child, { signal: "SIGTERM" });
         beforeLaunch?.();
+        // Re-issue the owner session for the restarted server: Windows kill()
+        // terminates the first process without its graceful shutdown, so its
+        // boot marker can read the previous session as stale. A fresh session
+        // (and the matching fetch bearer) keeps the fixture owner signed in.
+        registerOwnerFetch(session.info.url, prepareOwnerSession(session.info.dataDir));
         const log = openSync(session.info.logPath, "a", 0o600);
         restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
           cwd: process.cwd(), env: verificationServerEnvironment(env, session.info.dataDir, Number(new URL(session.info.url).port)), stdio: ["ignore", log, log],

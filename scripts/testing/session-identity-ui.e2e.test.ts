@@ -5,19 +5,18 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
-import { resolveAgentBrowserBinary } from "../../server/browser-engine.ts";
 import { waitForExit } from "../../server/testing/cleanup.ts";
-import { runControlOmb } from "../control-omb.ts";
-import { UI_TOOLS_DIR } from "./control-omb-ui.ts";
+import { runControlOmb } from "../control-relay.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 import { mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const binary = resolveAgentBrowserBinary({ dataDir: UI_TOOLS_DIR, env: process.env });
-const forced = process.env.OMB_UI_E2E === "1";
-const enabled = forced || Boolean(binary);
-const launchTimeout = forced && !binary ? 600_000 : 180_000;
-if (!enabled) console.log("skipping session identity UI e2e: no agent-browser; set OMB_UI_E2E=1 to install the pinned release");
-const evidence = (name: string) => join(ROOT, ".omb-scratch", "verify-evidence", `session-identity-${name}.png`);
+const chrome = resolveUiChrome(process.env);
+const forced = process.env.RELAY_UI_E2E === "1";
+const enabled = uiE2eEnabled();
+const launchTimeout = forced && !chrome ? 600_000 : 180_000;
+if (!enabled) console.log("skipping session identity UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");
+const evidence = (name: string) => join(ROOT, ".relay-scratch", "verify-evidence", `session-identity-${name}.png`);
 
 describe("Google sign-in identity in the sidebar", () => {
   let child: ChildProcess | undefined;
@@ -31,7 +30,7 @@ describe("Google sign-in identity in the sidebar", () => {
     let stdout = "";
     let stderr = "";
     let info: { ui: string; url: string; dataDir: string; logPath: string };
-    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-omb.ts"), "ui", "launch"], {
+    child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "scripts/control-relay.ts"), "ui", "launch"], {
       cwd: ROOT, env: process.env, stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout!.on("data", (chunk: Buffer) => { stdout += String(chunk); });
@@ -45,7 +44,7 @@ describe("Google sign-in identity in the sidebar", () => {
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const go = async (scenario: string) => {
-      await evaluate(`(() => { localStorage.setItem("openmausbot.sidebarDensity", "comfortable"); location.href = ${JSON.stringify(`${preview!.previewUrl}?scenario=${scenario}`)}; return true; })()`);
+      await evaluate(`(() => { localStorage.setItem("relay.sidebarDensity", "comfortable"); location.href = ${JSON.stringify(`${preview!.previewUrl}?scenario=${scenario}`)}; return true; })()`);
       await expect.poll(snapshot, { timeout: 20_000 }).toContain("Ada Lovelace");
     };
     // The identity row: the login's photo is loaded, not a broken image, and the
@@ -54,10 +53,6 @@ describe("Google sign-in identity in the sidebar", () => {
       const row = Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada Lovelace'));
       const photo = row?.querySelector('img');
       return photo ? { src: photo.src.slice(0, 30), width: photo.naturalWidth, height: photo.naturalHeight } : null;
-    })()`);
-    const tileLabels = () => evaluate(`(() => {
-      const tile = Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').startsWith('App settings for'));
-      return tile ? { ariaLabel: tile.getAttribute('aria-label'), title: tile.getAttribute('title') } : null;
     })()`);
 
     preview = await mountPreview({ info: { url: info!.url } }, {
@@ -70,13 +65,13 @@ describe("Google sign-in identity in the sidebar", () => {
     expect(await snapshot()).not.toContain('button "You"');
     await ui("screenshot", "--out", evidence("comfortable"));
 
-    // The compact density hides the name, so the tile has to say who it is and
-    // what it opens — the case a typed Relay name would have covered before.
-    await evaluate(`(() => { localStorage.setItem("openmausbot.sidebarDensity", "icons"); location.reload(); return true; })()`);
-    await expect.poll(tileLabels, { timeout: 20_000 }).toMatchObject({
-      ariaLabel: "App settings for Ada Lovelace",
-      title: "Ada Lovelace — App settings",
-    });
+    // The compact density hides the name, so the row button itself has to
+    // say who it is — the case a typed Relay name would have covered before.
+    // (The old separate app-settings tile is gone; settings live in the
+    // profile menu now.)
+    await evaluate(`(() => { localStorage.setItem("relay.sidebarDensity", "icons"); location.reload(); return true; })()`);
+    await expect.poll(snapshot, { timeout: 20_000 }).toContain('button "Ada Lovelace"');
+    expect(await snapshot()).not.toContain('button "You"');
     expect(await rowPhoto()).toMatchObject({ width: 128, height: 128 });
     await ui("screenshot", "--out", evidence("icons-density"));
 
@@ -84,7 +79,9 @@ describe("Google sign-in identity in the sidebar", () => {
     // error loop: the row falls back to the same initials as before.
     await go("broken-photo");
     await expect.poll(() => evaluate("!!Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada Lovelace'))"), { timeout: 20_000 }).toBe(true);
-    expect(await evaluate("Array.from(document.querySelectorAll('aside img')).every((img) => img.complete && img.naturalWidth > 0)")).toBe(true);
+    // The broken photo fails asynchronously; poll until every aside image
+    // has resolved (the row falls back to initials, never a broken image).
+    await expect.poll(() => evaluate("Array.from(document.querySelectorAll('aside img')).every((img) => img.complete && img.naturalWidth > 0)"), { timeout: 20_000 }).toBe(true);
     await ui("screenshot", "--out", evidence("broken-photo-initials"));
-  });
+  }, launchTimeout + 120_000);
 });

@@ -9,8 +9,9 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
-import { LOCKOUT } from "./sessions.ts";
+import { LOCKOUT, SessionRegistry } from "./sessions.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
+import { TEST_OWNER_USER_ID } from "./testing/owner.ts";
 import { openSse } from "./testing/sse.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
@@ -24,6 +25,8 @@ const PUBLIC_URL = "https://mini.tail1234.ts.net";
 let home: string;
 let child: ChildProcess;
 let stderr = "";
+let ownerToken = "";
+let clientToken = "";
 
 /** Every request from "elsewhere": a non-loopback Host, and a distinct
  * forwarded source so the pairing lockout is exercised on purpose only. */
@@ -135,6 +138,16 @@ beforeAll(async () => {
     profile: { name: "Security fixture", email: "private@example.invalid" },
     vps: { sshAlias: "fixture-private-host" },
   }));
+  // Per-user workspaces: a pairing session carries no user id and sees no
+  // records. Seed the owner and the owner's own client-scope session (same
+  // account, no email) so the display-only allow-list below can run without
+  // lighting up the emailSignIn capability the descriptor test pins off.
+  {
+    const registry = new SessionRegistry({ file: join(home, ".relay", "sessions.json") });
+    ownerToken = registry.issue({ label: "Owner", userId: TEST_OWNER_USER_ID, scopes: ["admin", "client"] }).token;
+    clientToken = registry.issue({ label: "Owner's client", userId: TEST_OWNER_USER_ID, scopes: ["client"] }).token;
+    registry.close();
+  }
   child = spawn(process.execPath, [join(SERVER_DIR, "index.ts")], {
     cwd: ROOT,
     env: {
@@ -483,12 +496,16 @@ describe("pairing", () => {
       expect(r.status, `${method} ${path}`).toBe(403);
       expect(r.body.error, `${method} ${path}`).toContain("admin scope");
     }
-    const created = await call("/api/bots", { method: "POST", body: JSON.stringify({ name: "Scoped" }) });
+    // A pairing session has no user id and sees no bot, so the bot is made by
+    // the owner and edited by the owner's own client-scope session. These two
+    // assert the display-only allow-list, not the ownership gate.
+    const clientHeaders = remote("10.0.0.40", { authorization: `Bearer ${clientToken}` });
+    const created = await call("/api/bots", { method: "POST", headers: remote("10.0.0.40", { authorization: `Bearer ${ownerToken}` }), body: JSON.stringify({ name: "Scoped" }) });
     const botId = created.body?.id ?? created.body?.bot?.id;
     if (botId) {
-      const cosmetic = await call(`/api/bots/${botId}`, { method: "PATCH", headers: h(), body: JSON.stringify({ unread: true }) });
+      const cosmetic = await call(`/api/bots/${botId}`, { method: "PATCH", headers: clientHeaders, body: JSON.stringify({ unread: true }) });
       expect(cosmetic.status).toBe(200);
-      const smuggled = await call(`/api/bots/${botId}`, { method: "PATCH", headers: h(), body: JSON.stringify({ unread: true, autoApprove: true }) });
+      const smuggled = await call(`/api/bots/${botId}`, { method: "PATCH", headers: clientHeaders, body: JSON.stringify({ unread: true, autoApprove: true }) });
       expect(smuggled.status).toBe(403);
       expect(smuggled.body.error).toContain('"autoApprove"');
     }

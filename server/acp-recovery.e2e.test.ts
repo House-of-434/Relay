@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, verificationServerEnvironment } from "../scripts/control-relay.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 it.each([false, true])("recovers the same conversation after an ACP internal error without replay (output: %s)", async (afterOutput) => {
@@ -49,6 +50,9 @@ it.each([false, true])("recovers the same conversation after an ACP internal err
       },
     };
     writeFileSync(configPath, JSON.stringify(config));
+    // Windows kill(SIGTERM) skips graceful shutdown, so re-issue the owner
+    // session before the restarted server boots.
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     server = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),

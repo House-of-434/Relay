@@ -129,7 +129,9 @@ describe("Claude account configuration", () => {
     expect(provider.models.options.some(option => option.id === "existing-model")).toBe(true);
     expect(await provider.generateText?.("fixture review")).toBe("existing@example.test");
     expect(calls(dir)[0]?.env.ANTHROPIC_AUTH_TOKEN).toBe("fixture-parent-ANTHROPIC_AUTH_TOKEN");
-    expect(calls(dir)[0]?.env.ANTHROPIC_API_KEY).toBeUndefined();
+    // With no configDir there is no account to strip the operator's own
+    // pay-as-you-go key from: it funds the turn like prod (claude.ts).
+    expect(calls(dir)[0]?.env.ANTHROPIC_API_KEY).toBe("fixture-parent-ANTHROPIC_API_KEY");
   });
 
   it("preserves explicit custom endpoints and injected local models without inheriting subscription OAuth", async () => {

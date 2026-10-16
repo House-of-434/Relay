@@ -14,14 +14,15 @@ import { fileURLToPath } from "node:url";
 import { afterAll, describe, expect, it } from "vitest";
 
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
+import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "scripts", "control-relay.ts");
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 if (!enabled) {
   console.log(`skipping control-relay ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set RELAY_UI_E2E=1 to require it`);
 }
@@ -45,7 +46,7 @@ const ownsEvidenceDir = !process.env.RELAY_UI_EVIDENCE_DIR;
 
 interface Launched {
   child: ReturnType<typeof spawn>;
-  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string };
+  info: { ui: string; url: string; previewUrl: string; botId: string; dataDir: string; logPath: string; token: string };
   stderr: () => string;
 }
 
@@ -122,6 +123,7 @@ describe("control-relay ui drives the real renderer", () => {
   run("tests saved keys only from an untouched field and blocks erased drafts", async () => {
     launched = await launch([]);
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     await fixtureApi(info.url)("PUT", "/api/config", {
       openaiCompat: { key: "fixture-saved-key", url: "http://127.0.0.1:1/v1" },
     });
@@ -211,6 +213,7 @@ describe("control-relay ui drives the real renderer", () => {
   run("sends a turn from the composer and shows the reply and the scripted tool chip", async () => {
     launched = await launch(["--tool-calls", TOOL_CALLS]);
     const { info } = launched;
+    registerOwnerFetch(info.url, info.token);
     expect(info.ui).toBe(join(info.dataDir, "ui.json"));
     expect(existsSync(info.ui)).toBe(true);
     const handle = JSON.parse(readFileSync(info.ui, "utf8"));
@@ -228,31 +231,30 @@ describe("control-relay ui drives the real renderer", () => {
 
     // The header defaults to the conversation. Updating the bot default is
     // explicit, and same-provider model changes preserve permissions.
+    // The header model picker is hidden under sharedWorkspace (always on
+    // now), so the switch below drives the picker's own API directly:
+    // PATCH /api/bots/:id/tasks/:taskId with updateBotDefault true/false
+    // for the "Thread + bot default" / "Only this thread" scopes.
     const savedBot = async () => (await fetch(`${info.url}/api/bots`).then((response) => response.json())).bots.find((bot: any) => bot.id === info.botId);
+    const switchModel = async (model: string, updateBotDefault: boolean) => {
+      const response = await fetch(`${info.url}/api/bots/${info.botId}/tasks/${originalBot.threadId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ modelSelection: { instanceId: originalBot.modelSelection.instanceId, model }, updateBotDefault }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(JSON.stringify(result));
+      return result;
+    };
     const originalBot = await savedBot();
     const originalModel = originalBot.modelSelection.model;
     const models = await runControlOmb(["models", "--url", info.url]) as any;
     const options = models.instances.find((instance: any) => instance.instanceId === originalBot.modelSelection.instanceId).models.options;
-    const originalLabel = options.find((option: any) => option.id === originalModel).label;
     const nextModel = options.find((option: any) => option.id !== originalModel);
-    await ui("click", info.ui, "--name", originalLabel);
-    expect(await ui("eval", info.ui, "--js", "[...document.querySelectorAll('[aria-label=\"Apply model changes to\"] button')].find(b => b.textContent === 'Only this thread').getAttribute('aria-pressed')"))
-      .toMatchObject({ result: "true" });
-    await ui("click", info.ui, "--name", "Thread + bot default");
-    const scopeShot = join(evidenceDir, "model-scope.png");
-    mkdirSync(evidenceDir, { recursive: true });
-    await ui("screenshot", info.ui, "--out", scopeShot);
-    await ui("click", info.ui, "--name", nextModel.label);
+    await switchModel(nextModel.id, true);
     await expect.poll(async () => (await savedBot()).modelSelection.model, { timeout: 10_000 }).toBe(nextModel.id);
     expect((await savedBot()).tasks.find((task: any) => task.threadId === originalBot.threadId).modelSelection.model).toBe(nextModel.id);
-    await ui("click", info.ui, "--name", nextModel.label);
-    await ui("click", info.ui, "--name", "Only this thread");
-    // The provider-default badge is part of the accessible model-row name.
-    const modelSnapshot = await ui("snapshot", info.ui, "--interactive");
-    const originalRow = Object.entries(modelSnapshot.refs as Record<string, { name: string; role: string }>)
-      .find(([, value]) => value.role === "button" && value.name.startsWith(originalLabel));
-    expect(originalRow).toBeDefined();
-    await ui("click", info.ui, "--ref", `@${originalRow![0]}`);
+    await switchModel(originalModel, false);
     await expect.poll(async () => (await savedBot()).tasks.find((task: any) => task.threadId === originalBot.threadId).modelSelection.model,
       { timeout: 10_000 }).toBe(originalModel);
     expect((await savedBot()).modelSelection.model).toBe(nextModel.id);
@@ -289,8 +291,10 @@ describe("control-relay ui drives the real renderer", () => {
     expect(tree).not.toContain("Not logged in");
     expect(tree).not.toContain("Execution timeline");
     // The run card: the three scripted commands all go through the control
-    // CLI, so all three are verified; one failed and one was a dry run.
-    expect(tree).toContain("3 steps · 3 verified · 1 failed · 1 dry run");
+    // CLI, so all three are verified (one failed and one was a dry run, but
+    // the card reports verification, not outcome).
+    expect(tree).toContain("Did 3 tool calls");
+    expect(tree.match(/StaticText "verified"/g)).toHaveLength(3);
 
     // Hit-test the actual layout, not just the Tailwind class strings: the
     // blank band beside the floating card must reach the transcript while
@@ -372,27 +376,11 @@ describe("control-relay ui drives the real renderer", () => {
     expect(collapsed.snapshot).toContain("Expand the run");
     expect(collapsed.snapshot).not.toContain('list "Run steps"');
 
-    await ui("click", info.ui, "--name", "Inspector");
-    const inspected = await ui("snapshot", info.ui);
-    const runLog = (inspected.snapshot as string).slice((inspected.snapshot as string).indexOf('complementary "Inspector"'));
-    expect(runLog).toContain('tab "Run Log" [selected');
-    expect(runLog).toContain("pnpm control:relay doctor");
-    expect(runLog).toContain("pnpm control:relay ui click --name Missing");
-    expect(runLog).toContain('StaticText "Failed"');
-    expect(runLog).toContain("Copy redacted run log");
-    await ui("screenshot", info.ui, "--out", join(evidenceDir, "run-log.png"));
-
-    // Existing technical views remain reachable by accessible tab references.
-    const [eventsTab] = refsNamed(inspected, "Events", "tab");
-    expect(eventsTab).toBeDefined();
-    await ui("click", info.ui, "--ref", eventsTab);
-    const events = await ui("snapshot", info.ui);
-    expect(events.snapshot).toContain("turn.started");
-    const [rawTab] = refsNamed(events, "Raw", "tab");
-    await ui("click", info.ui, "--ref", rawTab);
-    expect((await ui("snapshot", info.ui)).snapshot).toContain('tab "Raw" [selected');
-    await ui("click", info.ui, "--name", "Close the Inspector");
-    expect((await ui("snapshot", info.ui)).snapshot).not.toContain('complementary "Inspector"');
+    // The in-chat inspector toggle was removed from the product UI and
+    // nothing opens InspectorPanel anymore, so the Run Log / Events / Raw
+    // tabs have no entry point to drive here. (If an entry point returns,
+    // re-cover them: Run Log lists the three commands with a Failed marker
+    // and redacted copy, Events carries turn.started, Raw selects its tab.)
 
     const logs = await ui("console", info.ui);
     expect(logs.ok).toBe(true);

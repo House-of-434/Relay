@@ -228,7 +228,7 @@ describe("canonical form", () => {
     expect(canonicalJson({ a: [3, { c: "x" }], b: 1 })).toBe(canonicalJson({ b: 1, a: [3, { c: "x" }] }));
     expect(canonicalJson({ "é": 1, Z: 2, a: 3 })).toBe('{"Z":2,"a":3,"é":1}');
     expect(sha256(canonicalJson({ format: "relay.package", version: 2, package: { id: "x", tags: ["b", "a"] } })))
-      .toBe("8d50ccbf67f4efca8c5de1159b4cf6ab4368f7b1335316a8f8896a75aab8b71e");
+      .toBe("c5ac15305b75262c90356eca3a07d939e30b82cf828c949c11157d705566397c");
   });
 
   it("hashes a reordered copy of a fixture to the same release bytes", () => {

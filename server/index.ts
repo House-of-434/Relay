@@ -5512,7 +5512,10 @@ bus.subscribe((event: RuntimeEvent) => {
     memoryUpkeep.noteTurn(bot.id, event.threadId, {
       person: extractTurnImages(asked.text ?? "").text,
       bot: path[replyAt]!.text ?? "",
-      owner: !asked.sender,
+      // A signed-in owner's own sends carry a sender (their account); only a
+      // sender that is some other account, a bot or the harness is not the
+      // person whose profile About me is.
+      owner: !asked.sender || (asked.sender.actorUserId !== undefined && asked.sender.actorUserId === bot.ownerUserId),
     });
   } catch (error) {
     console.warn(`memory upkeep: could not queue a turn for capture: ${(error as Error).message}`);

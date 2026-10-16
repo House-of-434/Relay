@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 it("retains empty teams, moves existing bots, and keeps legacy imports additive through restart", async () => {
@@ -91,6 +92,11 @@ it("retains empty teams, moves existing bots, and keeps legacy imports additive 
       PATH: dirname(process.execPath), FAKE_CLAUDE_MODE: "happy",
     });
     const restartFixture = async () => {
+      // Re-issue the owner session for the restarted server: Windows kill()
+      // terminates the first process without its graceful shutdown, so its
+      // boot marker can read the previous session as stale. A fresh session
+      // (and the matching fetch bearer) keeps the fixture owner signed in.
+      registerOwnerFetch(url, prepareOwnerSession(dataDir));
       const log = openSync(logPath, "a", 0o600);
       restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
         cwd: fileURLToPath(new URL("..", import.meta.url)), env, stdio: ["ignore", log, log],
