@@ -14,16 +14,10 @@ function toolError(error: unknown) {
   return { isError: true, content: [{ type: "text" as const, text: message }] };
 }
 
-/** Scout's discovery capability: fast web search returning URL, title,
- * and snippet per result. Which provider answers is Tool Layer
- * infrastructure the model never sees. Search finds candidates; the
- * browser (`browser_open` / `browser_read` / `browser_extract`) reads
- * them. Escalate whenever a result needs real reading — especially
- * JavaScript-heavy pages, live rankings, and full threads.
- *
- * Provider notes the planner should respect: domain filters are honored;
- * there is no freshness filter on the current provider, so recency is
- * judged from result dates and snippets instead. */
+/** Scout's web discovery: a query in, candidate sources out (URL, title,
+ * snippet). Which provider answers is Tool Layer infrastructure the model
+ * never sees. Domain filters are honored; freshness is judged from result
+ * dates. */
 export function registerSearchTools(server: McpServer, agent: Agent, context: SearchToolContext): void {
   const { provider } = context;
 
@@ -31,7 +25,7 @@ export function registerSearchTools(server: McpServer, agent: Agent, context: Se
     "web_search",
     {
       description:
-        "Search the web for candidate sources: official announcements, docs, repos, reporting. Returns URL, title, and snippet per result — open the promising ones with browser_open and read them with browser_read. Domain filters narrow to (or away from) named sites; freshness is judged from result dates.",
+        "Discover candidate sources. Find relevant web pages for a query. Returns URLs, titles, and snippets to guide further research. Use when the target source is unknown; use web_fetch to read a known URL.",
       inputSchema: {
         query: z.string().min(1).max(512),
         limit: z.number().int().min(1).max(20).optional(),

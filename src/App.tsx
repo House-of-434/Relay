@@ -12,7 +12,7 @@ import { GroupView } from "@/components/GroupView";
 import { BotSettingsDialog } from "@/components/BotSettingsDialog";
 import { RemoteAgentSettingsPanel } from "@/components/RemoteAgentSettingsPanel";
 import { NewBotDialog } from "@/components/NewBotDialog";
-import { PluginsPanel, type ConnectionAccount, type ConnectionService } from "@/components/PluginsPanel";
+import { PluginsPanel, type ConnectionAccount, type ConnectionService, type GithubConnection } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { DocPane } from "@/components/DocPane";
 import { InspectorPanel } from "@/components/InspectorPanel";
@@ -43,11 +43,32 @@ interface GoogleConnectionInventory {
   services: Partial<Record<ConnectionService["id"], boolean>>;
 }
 
+/** GitHub's connection as the BFF reports it: whether the workspace is set up
+ *  for it and the installations Disconnect must revoke. */
+interface GithubConnectorInventory {
+  github: GithubConnection;
+}
+
 function GoogleConnectionsDialog() {
   const { state } = useStore();
   const [inventory, setInventory] = useState<GoogleConnectionInventory>({ accounts: [], services: {} });
+  const [github, setGithub] = useState<GithubConnection | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const refreshGithub = useCallback(async (signal?: AbortSignal) => {
+    try {
+      const response = await fetch("/api/connectors", { credentials: "same-origin", signal });
+      if (!response.ok) {
+        setGithub(null);
+        return;
+      }
+      setGithub((await response.json() as GithubConnectorInventory).github ?? null);
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setGithub(null);
+    }
+  }, []);
 
   const refresh = useCallback(async (signal?: AbortSignal) => {
     setLoading(true);
@@ -76,8 +97,9 @@ function GoogleConnectionsDialog() {
     if (!state.pluginsOpen) return;
     const controller = new AbortController();
     void refresh(controller.signal);
+    void refreshGithub(controller.signal);
     return () => controller.abort();
-  }, [refresh, state.pluginsOpen]);
+  }, [refresh, refreshGithub, state.pluginsOpen]);
 
   const connect = async (service: ConnectionService["id"]) => {
     const response = await fetch(`/api/google/connections/${encodeURIComponent(service)}/connect`, {
@@ -114,6 +136,44 @@ function GoogleConnectionsDialog() {
     if (revoked.includes(false)) throw new Error("Could not disconnect every Google account for this service.");
   };
 
+  // Mirrors the Google connect: the BFF answers with a GitHub install URL and
+  // the browser leaves Relay for it, so success never returns here.
+  const connectGithub = async () => {
+    const response = await fetch("/api/github/connection/connect", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (response.status === 503) throw new Error("GitHub is not configured yet.");
+    if (!response.ok) throw new Error("Could not start GitHub authorization.");
+    const result = await response.json() as { authorizationUrl?: unknown };
+    if (typeof result.authorizationUrl !== "string") throw new Error("GitHub authorization did not return an install URL.");
+    const authorizationUrl = new URL(result.authorizationUrl);
+    if (authorizationUrl.origin !== "https://github.com") throw new Error("GitHub authorization returned an unexpected destination.");
+    window.location.assign(authorizationUrl.toString());
+  };
+
+  // Disconnect revokes every installation Relay holds for the teammate, then
+  // reads the state back so a partial failure cannot leave a surviving
+  // installation hidden behind a row the user believes is gone.
+  const disconnectGithub = async () => {
+    const connections = github?.connections ?? [];
+    const revoked = await Promise.all(connections.map(async (connection) => {
+      try {
+        const response = await fetch(`/api/github/connection/${encodeURIComponent(connection.id)}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        return response.ok || response.status === 404;
+      } catch {
+        return false;
+      }
+    }));
+    await refreshGithub();
+    if (revoked.includes(false)) throw new Error("Could not disconnect every GitHub installation.");
+  };
+
   return state.pluginsOpen ? (
     <PluginsPanel
       accounts={inventory.accounts}
@@ -122,6 +182,9 @@ function GoogleConnectionsDialog() {
       error={error}
       onConnect={connect}
       onDisconnect={disconnect}
+      github={github ?? undefined}
+      onConnectGithub={connectGithub}
+      onDisconnectGithub={disconnectGithub}
     />
   ) : null;
 }

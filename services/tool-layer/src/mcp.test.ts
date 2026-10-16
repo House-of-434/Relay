@@ -13,15 +13,15 @@ const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
 
 test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bound", async () => {
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
+  const assertionFor = (agent: "scout" | "mercury" | "curator") =>
+    signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent }, SECRET);
+  const assertion = assertionFor("scout");
   const calls: Array<{ method: string; args: unknown[] }> = [];
   let failRead = false;
   const database = {
     async verifyRelayProject() {},
     authenticateActorAssertion(value: string) {
-      assert.equal(value, assertion);
-      const actor = JSON.parse(value) as { userId: string; botId: string; threadId: string; issuedAt: number };
-      return actor;
+      return JSON.parse(value) as { userId: string; botId: string; threadId: string; agent: string; issuedAt: number };
     },
     async read(...args: unknown[]) {
       calls.push({ method: "read", args });
@@ -45,7 +45,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["browser_extract", "browser_open", "browser_read", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_search"]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["arxiv_get", "arxiv_search", "browser_extract", "browser_open", "browser_read", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_fetch", "web_search"]);
 
     const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
     assert.equal(read.isError, undefined);
@@ -71,7 +71,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
 
     const mercuryClient = new Client({ name: "relay-mercury-test", version: "0.1.0" });
     const mercuryTransport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/mercury`), {
-      requestInit: { headers: { "x-relay-actor-user": assertion } },
+      requestInit: { headers: { "x-relay-actor-user": assertionFor("mercury") } },
     });
     try {
       await mercuryClient.connect(mercuryTransport);
@@ -92,7 +92,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
 
 test("transcript tables are readable but never writable through agent tools", async () => {
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent: "curator" }, SECRET);
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const database = {
     async verifyRelayProject() {},
@@ -166,16 +166,15 @@ test("transcript tables are readable but never writable through agent tools", as
 
 test("only an agent with the capability is offered Gmail or calendar tools", async () => {
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
   const database = {
     async verifyRelayProject() {},
     authenticateActorAssertion(value: string) {
-      assert.equal(value, assertion);
       return JSON.parse(value);
     },
   } as unknown as RelayDatabase;
 
-  const names = async (agent: string) => {
+  const names = async (agent: "scout" | "mercury" | "curator") => {
+    const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent }, SECRET);
     const server = await createRelayToolServer(database, 0);
     const address = server.address();
     assert.ok(address && typeof address === "object");
@@ -202,6 +201,8 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
   // Scout additionally holds the research capabilities, visible only to an
   // authenticated caller; Curator holds none.
   assert.deepEqual(await names("scout"), [
+    "arxiv_get",
+    "arxiv_search",
     "browser_extract",
     "browser_open",
     "browser_read",
@@ -209,6 +210,7 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
     "relay_read",
     "relay_write",
     "search_meetings",
+    "web_fetch",
     "web_search",
   ]);
   assert.deepEqual(await names("curator"), ["get_meeting_transcript", "relay_read", "relay_write", "search_meetings"], "curator");

@@ -52,7 +52,7 @@ function accept(over: Partial<Parameters<typeof intents.acceptManualJoin>[0]> = 
     requestKey: "req-1",
     meetingUrl: MEET,
     platform: "google_meet",
-    actor: { userId: USER, botId: MERCURY, threadId: THREAD },
+    actor: { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" },
     now: 1_000,
     ...over,
   });
@@ -110,7 +110,7 @@ describe("acceptManualJoin idempotency", () => {
       requestKey: "req-race",
       meetingUrl: MEET,
       platform: "google_meet" as const,
-      actor: { userId: USER, botId: MERCURY, threadId: THREAD },
+      actor: { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" as const },
       now: 1_000,
     };
     const [a, b] = await Promise.all([
@@ -148,7 +148,7 @@ describe("acceptManualJoin idempotency", () => {
       requestKey: "req-1",
       meetingUrl: MEET,
       platform: "google_meet",
-      actor: { userId: USER, botId: MERCURY, threadId: THREAD },
+      actor: { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" },
       now: 9_999,
     });
     expect(retry.outcome).toBe("duplicate");
@@ -175,22 +175,22 @@ describe("authorizeScribeJoiner", () => {
 
   it("allows Mercury owned by the actor", () => {
     expect(intents.authorizeScribeJoiner(
-      { userId: USER, botId: MERCURY, threadId: THREAD },
+      { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" },
       storeFor({ relayAgent: "mercury", ownerUserId: USER }),
     )).toEqual({ ok: true });
   });
 
   it("denies unknown bots, non-Mercury roles, and cross-workspace actors", () => {
-    const actor = { userId: USER, botId: MERCURY, threadId: THREAD };
+    const actor = { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" as const };
     expect(intents.authorizeScribeJoiner(actor, storeFor(null))).toEqual({ ok: false, reason: "unknown bot" });
     expect(intents.authorizeScribeJoiner(actor, storeFor({ relayAgent: "scout", ownerUserId: USER })))
       .toEqual({ ok: false, reason: "scribe join requires Mercury" });
     expect(intents.authorizeScribeJoiner(
-      { userId: OTHER_USER, botId: MERCURY, threadId: THREAD },
+      { userId: OTHER_USER, botId: MERCURY, threadId: THREAD, agent: "mercury" as const },
       storeFor({ relayAgent: "mercury", ownerUserId: USER }),
     )).toEqual({ ok: false, reason: "bot is not owned by the actor" });
     expect(intents.authorizeScribeJoiner(
-      { userId: USER, botId: SCOUT, threadId: THREAD },
+      { userId: USER, botId: SCOUT, threadId: THREAD, agent: "mercury" as const },
       storeFor({ relayAgent: undefined, ownerUserId: USER }),
     )).toEqual({ ok: false, reason: "scribe join requires Mercury" });
   });
@@ -198,16 +198,16 @@ describe("authorizeScribeJoiner", () => {
 
 describe("verifyActorAssertion (harness)", () => {
   it("round-trips a harness-signed assertion", () => {
-    const assertion = signedActorContext({ userId: USER, botId: MERCURY, threadId: THREAD }, SECRET);
-    expect(verifyActorAssertion(assertion, SECRET)).toEqual({ userId: USER, botId: MERCURY, threadId: THREAD });
+    const assertion = signedActorContext({ userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" }, SECRET);
+    expect(verifyActorAssertion(assertion, SECRET)).toEqual({ userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" });
   });
 
   it("rejects tampered, expired, wrong-secret, and malformed assertions", () => {
-    const good = signedActorContext({ userId: USER, botId: MERCURY, threadId: THREAD }, SECRET);
+    const good = signedActorContext({ userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" }, SECRET);
     const tampered = JSON.stringify({ ...JSON.parse(good), threadId: THREAD.slice(0, -1) + "0" });
     expect(() => verifyActorAssertion(tampered, SECRET)).toThrow("signature is invalid");
     const old = signedActorContext(
-      { userId: USER, botId: MERCURY, threadId: THREAD }, SECRET,
+      { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" }, SECRET,
       Math.floor(Date.now() / 1000) - 601,
     );
     expect(() => verifyActorAssertion(old, SECRET)).toThrow("expired or outside allowed clock skew");
@@ -231,7 +231,7 @@ describe("isPermanentNoticeError", () => {
 });
 
 describe("resolveNoticeSender", () => {
-  const relay = { userId: USER, botId: MERCURY, threadId: THREAD };
+  const relay = { userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury" as const };
   const intentRow = {
     requestKey: "req-1",
     instanceId: "inst-1",
@@ -254,6 +254,7 @@ describe("resolveNoticeSender", () => {
       userId: OTHER_USER,
       botId: SCOUT,
       threadId: THREAD,
+      agent: "mercury",
     });
   });
 

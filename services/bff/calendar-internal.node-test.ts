@@ -39,9 +39,9 @@ const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
 
 function actorAssertion(userId: string, _email?: string, issuedAt = Math.floor(Date.now() / 1000)): string {
   const signature = createHmac("sha256", ACTOR_SECRET)
-    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID]))
+    .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID, "mercury"]))
     .digest("base64url");
-  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, signature });
+  return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent: "mercury", signature });
 }
 
 interface CalendarCall { userId: string; accountId: string; operation: string; params: Record<string, unknown> }

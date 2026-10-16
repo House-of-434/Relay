@@ -196,7 +196,7 @@ import {
 import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 import { recoveryCapabilityError } from "./automatic-recovery.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
-import { bindRelayMcpForBot, relayToolMcpServer, signedActorContext } from "./relay-mcp.ts";
+import { bindRelayMcpForBot, relaySigningOwner, relayToolMcpServer, relayToolProxySpec, signedActorContext } from "./relay-mcp.ts";
 import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
 import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
@@ -1865,7 +1865,7 @@ type InternalCapability = {
   threadId: string;
   generation: string;
   depth: number;
-  kind: "agents" | "connectors" | "computer" | "hooks" | "phone";
+  kind: "agents" | "connectors" | "computer" | "hooks" | "phone" | "relay-tool";
   skillAuthoring: boolean;
   createdBots: number;
   createdRooms?: number;
@@ -9753,7 +9753,7 @@ function relayMailboxActor(): MailboxActor | undefined {
   if (!RELAY_MAILBOX_ADDRESS || !RELAY_MAILBOX_USER_ID) return undefined;
   const mercury = store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === RELAY_MAILBOX_USER_ID);
   if (!mercury) return undefined;
-  return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId };
+  return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId, agent: "mercury" };
 }
 
 const mailboxPollMs = (() => {
@@ -13730,25 +13730,41 @@ function configForAccess(status: ReturnType<typeof configStatus>, admin: boolean
 }
 
 /** The only MCP route a bot ever mounts: the harness-owned Relay Tool Layer
- * route. Employees cannot plug in their own MCP servers. */
+ * route, reached through a stdio proxy that re-signs the actor assertion on
+ * every call. Employees cannot plug in their own MCP servers. */
 function engineMcpServers(bot: BotRecord, threadId?: string) {
-  // Employees cannot plug in their own MCP servers: the only MCP route a bot
-  // ever mounts is the harness-owned Relay Tool Layer route.
-  // The actor is signed from the bot's owner, and only when the thread really
-  // belongs to that owner: the bot's own chat or task, or a room this account
-  // owns. A thread resolving to another owner (or none) is never signed.
+  // The proxy's capability is minted from the bot's owner, and only when the
+  // thread really belongs to that owner: the bot's own chat or task, or a room
+  // this account owns. A thread resolving to another owner (or none) is never
+  // given a live token — the proxy then fails closed at the harness.
   const threadOwner = threadId
     ? store.botByThread(threadId)?.ownerUserId ?? store.groupByThread(threadId)?.ownerUserId
     : undefined;
-  const ownerUserId = bot.ownerUserId && threadOwner === bot.ownerUserId ? bot.ownerUserId : undefined;
-  return managedPolicy.filterMcp(bindRelayMcpForBot(
-    bot.id,
-    bot.relayAgent,
-    ownerUserId,
-    threadId,
-    {},
-    RELAY_TOOL_URL,
-  ));
+  const ownerUserId = relaySigningOwner(bot, threadOwner);
+  let relaySpec: ReturnType<typeof relayToolProxySpec> | undefined;
+  if (bot.relayAgent && RELAY_TOOL_URL) {
+    const generation = threadId ? activeInternalGenerationByThread.get(threadId) : undefined;
+    const token = ownerUserId && threadId && generation && process.env.RELAY_TOOL_ACTOR_SECRET
+      ? mintInternalCapability({
+        botId: bot.id,
+        threadId,
+        generation,
+        depth: 0,
+        kind: "relay-tool",
+        skillAuthoring: false,
+        createdBots: 0,
+        openedThreads: 0,
+      })
+      : "";
+    relaySpec = relayToolProxySpec({
+      agent: bot.relayAgent,
+      toolUrl: RELAY_TOOL_URL,
+      harnessUrl: `http://127.0.0.1:${PORT}`,
+      token,
+      proxyPath: SPAWNED_PROXIES.relayTool,
+    });
+  }
+  return managedPolicy.filterMcp(bindRelayMcpForBot(bot.relayAgent, {}, relaySpec));
 }
 
 async function describeInstances() {
@@ -14585,7 +14601,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const parsed = z.object({
         botId: z.string().regex(/^[\w-]{1,128}$/),
         threadId: z.string().regex(/^[\w-]{1,128}$/),
-        kind: z.enum(["agents", "connectors", "computer"]).default("agents"),
+        kind: z.enum(["agents", "connectors", "computer", "relay-tool"]).default("agents"),
         depth: z.number().int().min(0).max(MAX_COMMS_DEPTH).default(0),
         skillAuthoring: z.boolean().default(false),
       }).strict().safeParse(await readBody(req));
@@ -14616,7 +14632,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       if (internalCapability.generation === EXTERNAL_RUNTIME_GENERATION && !externalRuntimeMayCall(method, path)) {
         return json(res, 403, { error: "an external runtime can only list, ask and delegate to its peers and read its delegations" });
       }
-      const requiredCapabilityKind = path === "/api/internal/hook"
+      const requiredCapabilityKind: string = path === "/api/internal/hook"
         ? "hooks"
         : path === "/api/internal/browser/mcp"
         ? "browser"
@@ -14624,6 +14640,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         ? "phone"
         : path.startsWith("/api/internal/connectors/")
         ? "connectors"
+        : path === "/api/internal/sign-actor"
+        ? "relay-tool"
         : path === "/api/internal/computer-control"
           ? "computer"
           : "agents";
@@ -14673,6 +14691,30 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           throw Object.assign(new Error("the internal turn capability has expired"), { status: 401 });
         }
       };
+      if (method === "POST" && path === "/api/internal/sign-actor") {
+        // The Relay tool bridge asks for one fresh assertion per forwarded
+        // call, so a long turn never presents a stale one. The actor comes from
+        // the capability and the store — never from the request, so the bridge
+        // can only ever be signed as its own conversation's owner.
+        const threadOwner = store.botByThread(internalCapability.threadId)?.ownerUserId
+          ?? store.groupByThread(internalCapability.threadId)?.ownerUserId;
+        const ownerUserId = relaySigningOwner(internalSender, threadOwner);
+        const agent = internalSender.relayAgent;
+        if (!ownerUserId || !agent) {
+          return json(res, 403, { error: "this conversation has no signed owner for the Relay tools" });
+        }
+        requireActiveInternalCapability();
+        let assertion: string;
+        try {
+          assertion = signedActorContext(
+            { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent },
+            process.env.RELAY_TOOL_ACTOR_SECRET,
+          );
+        } catch {
+          return json(res, 500, { error: "the Relay tool call could not be signed" });
+        }
+        return json(res, 200, { assertion });
+      }
       // Where an entry came from, as the person will read it in MEMORY.md:
       // the room or the thread title, never a bare id unless nothing else
       // names the conversation.
@@ -20431,7 +20473,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           let assertion: string;
           try {
             assertion = signedActorContext(
-              { userId: proposedBy.ownerUserId, botId: proposedBy.id, threadId },
+              { userId: proposedBy.ownerUserId, botId: proposedBy.id, threadId, agent: role },
               process.env.RELAY_TOOL_ACTOR_SECRET,
             );
           } catch {

@@ -39,7 +39,7 @@ function respond(res: ServerResponse, status: number, body: unknown): void {
 }
 
 function assertion(over: Record<string, string> = {}, secret = ACTOR_SECRET): string {
-  return signedActorContext({ userId: USER, botId: MERCURY, threadId: THREAD, ...over }, secret);
+  return signedActorContext({ userId: USER, botId: MERCURY, threadId: THREAD, agent: "mercury", ...over }, secret);
 }
 
 function serve(req: IncomingMessage, res: ServerResponse): void {

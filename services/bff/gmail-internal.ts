@@ -1,8 +1,8 @@
-import { createHash, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 
-import { verifyActorAssertion, type RelayActor } from "./actor-assertion.ts";
+import type { RelayActor } from "./actor-assertion.ts";
+import { verifyInternalRequest } from "./internal-request.ts";
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
 import type { GoogleConnectionMetadata } from "./google-connections.ts";
 
@@ -16,7 +16,6 @@ const INTERNAL_GMAIL_PATHS = [
   INTERNAL_GMAIL_SEND,
 ] as const;
 
-const MAX_BODY_BYTES = 64 * 1024;
 const MAX_QUERY_LENGTH = 512;
 const MAX_MESSAGE_ID_LENGTH = 512;
 const MAX_SUBJECT_LENGTH = 250;
@@ -85,33 +84,6 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.setHeader("cache-control", "no-store");
   res.setHeader("content-type", "application/json; charset=utf-8");
   res.end(JSON.stringify(body));
-}
-
-function hash(value: string): Buffer {
-  return createHash("sha256").update(value).digest();
-}
-
-function capabilityMatches(req: IncomingMessage, expectedHash: Buffer): boolean {
-  const authorization = req.headers.authorization;
-  const match = typeof authorization === "string" ? /^Bearer\s+(\S+)$/i.exec(authorization.trim()) : null;
-  if (!match || Buffer.byteLength(match[1]!) > 4096) return false;
-  return timingSafeEqual(hash(match[1]!), expectedHash);
-}
-
-async function readJson(req: IncomingMessage): Promise<unknown> {
-  const chunks: Buffer[] = [];
-  let size = 0;
-  for await (const chunk of req) {
-    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    size += bytes.byteLength;
-    if (size > MAX_BODY_BYTES) throw new Error("request body is too large");
-    chunks.push(bytes);
-  }
-  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-}
-
-function headerString(value: string | string[] | undefined): string | undefined {
-  return typeof value === "string" ? value : undefined;
 }
 
 /**
@@ -240,41 +212,14 @@ export async function handleInternalGmail(
   pathname: string,
   options: InternalGmailOptions,
 ): Promise<void> {
-  const expectedHash = hash(options.capability);
-  req.resume();
-  if (!capabilityMatches(req, expectedHash)) {
-    json(res, 401, { error: "unauthorized" });
-    return;
-  }
-  if (req.method !== "POST") {
-    res.setHeader("allow", "POST");
-    json(res, 405, { error: "method not allowed" });
-    return;
-  }
-  if (!/^application\/json\b/i.test(headerString(req.headers["content-type"]) ?? "")) {
-    json(res, 415, { error: "send the request as JSON" });
-    return;
-  }
-
-  let actor: RelayActor;
-  try {
-    actor = verifyActorAssertion(
-      headerString(req.headers["x-relay-actor-user"]),
-      options.actorSecret,
-      options.now?.() ?? Date.now(),
-    );
-  } catch {
-    json(res, 401, { error: "unauthorized" });
-    return;
-  }
-
-  let raw: unknown;
-  try {
-    raw = await readJson(req);
-  } catch {
-    json(res, 400, { error: "invalid request body" });
-    return;
-  }
+  const verified = await verifyInternalRequest(req, res, pathname, {
+    capability: options.capability,
+    actorSecret: options.actorSecret,
+    now: options.now,
+  }, pathname);
+  if (!verified) return;
+  const actor: RelayActor = verified.actor;
+  const raw: unknown = verified.body;
 
   let resolved: ResolvedMailbox | undefined;
   try {

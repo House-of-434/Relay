@@ -18,6 +18,7 @@ import {
 import { platformForUrl } from "./scribe-monitor.ts";
 import type { JoinRequest } from "./scribe-monitor.ts";
 import type { BotRecord } from "./store.ts";
+import type { MailboxActor } from "./mailbox-bff.ts";
 
 export type ScribePlatform = "google_meet" | "zoom" | "teams";
 
@@ -25,18 +26,20 @@ export interface ScribeActor {
   userId: string;
   botId: string;
   threadId: string;
+  agent: "scout" | "mercury" | "curator";
 }
 
 /** Notice-sender selection for a terminal capture. The persisted intent
  * triple wins: it is the initiating user's identity, captured at request
  * time. Calendar captures have no intent row and keep the relay service
  * actor; with neither, the caller keeps its existing "unsent" warning
- * instead of inventing an identity. Pure and deterministic. */
+ * instead of inventing an identity. Pure and deterministic. Notices send
+ * through the relay@ mailbox transport, so the sender is always Mercury. */
 export function resolveNoticeSender(
   intent: { ownerUserId: string; botId: string; threadId: string } | null,
-  relayActor: ScribeActor | undefined,
-): ScribeActor | undefined {
-  if (intent) return { userId: intent.ownerUserId, botId: intent.botId, threadId: intent.threadId };
+  relayActor: MailboxActor | undefined,
+): MailboxActor | undefined {
+  if (intent) return { userId: intent.ownerUserId, botId: intent.botId, threadId: intent.threadId, agent: "mercury" };
   return relayActor;
 }
 

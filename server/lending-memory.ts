@@ -52,10 +52,10 @@ export const FOLDER_ENTRY_CAP = 200;
 const ROOT_ENTRY_CAP = 5_000;
 
 /** What one path is, for the fingerprint: absent (undefined), a link (by
- * target), a regular file (by content), or something else (by type). Cached
- * by identity, size and change time (which no process can set back), so
- * unchanged logs are not reread. */
-const contentCache = new Map<string, { key: string; hash: string }>();
+ *  target), a regular file (by content), or something else (by type). File
+ *  content is hashed on every look: size and modification time can both be
+ *  restored after a rewrite, and change time is creation time on Windows, so
+ *  stat metadata alone can never prove content is unchanged. */
 function describe(file: string): string | undefined {
   let stat;
   // No exception for the usual case, an absent file: it costs more than the look-up.
@@ -65,14 +65,7 @@ function describe(file: string): string | undefined {
     try { return `link:${readlinkSync(file)}`; } catch { return "link:"; }
   }
   if (!stat.isFile()) return `other:${stat.mode}`;
-  const key = `${stat.dev}:${stat.ino}:${stat.size}:${stat.mtimeNs}:${stat.ctimeNs}`;
-  const cached = contentCache.get(file);
-  if (cached?.key === key) return cached.hash;
-  let hash: string;
-  try { hash = `file:${createHash("sha256").update(readFileSync(file)).digest("hex")}`; } catch { hash = "file:unreadable"; }
-  if (contentCache.size > 50_000) contentCache.clear();
-  contentCache.set(file, { key, hash });
-  return hash;
+  try { return `file:${createHash("sha256").update(readFileSync(file)).digest("hex")}`; } catch { return "file:unreadable"; }
 }
 
 /** A folder's entry names, read at most once per change of the folder

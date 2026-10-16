@@ -88,7 +88,7 @@ test("Mercury alone lists scribe_join_meeting", async () => {
   const scribe = { client: {} as never, actorAssertion: ACTOR };
   type Listing = { _registeredTools: Record<string, unknown> };
   const toolsOf = (agent: "scout" | "mercury" | "curator") =>
-    Object.keys((createAgentMcpServer(agent, { userId: "u" }, {} as never, undefined, undefined, undefined, undefined, undefined, scribe) as unknown as Listing)._registeredTools);
+    Object.keys((createAgentMcpServer(agent, { userId: "u" }, {} as never, undefined, undefined, undefined, undefined, undefined, undefined, scribe) as unknown as Listing)._registeredTools);
 
   assert.ok(toolsOf("mercury").includes("scribe_join_meeting"));
   for (const agent of ["scout", "curator"] as const) {
@@ -104,7 +104,7 @@ test("the join tool never claims the bot joined", async () => {
     client: { joinMeeting: async () => ({ status: "accepted", instance_id: "inst-1" }) } as never,
     actorAssertion: ACTOR,
   };
-  const server = createAgentMcpServer("mercury", { userId: "u" }, {} as never, undefined, undefined, undefined, undefined, undefined, scribe);
+  const server = createAgentMcpServer("mercury", { userId: "u" }, {} as never, undefined, undefined, undefined, undefined, undefined, undefined, scribe);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: "scribe-join-note-test", version: "0.1.0" });
   await server.connect(serverTransport);

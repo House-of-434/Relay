@@ -1377,14 +1377,19 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // Bot-owned servers, gated below: they are the ones that answer for a
       // machine rather than for a context window.
       const botOwned = new Set<string>();
+      const relayRoutes = new Set<string>();
       for (const [name, server] of Object.entries(turn.integrations?.custom ?? {})) {
         if (Object.hasOwn(mcpServers, name)) continue;
         mcpServers[name] = { ...server };
         botOwned.add(name);
         // Relay's two MCP tools are shape- and permission-gated by the
         // localhost Tool Layer, so this exact first-party route is mounted
-        // without a per-call approval prompt.
-        if (isRelayMcpServer(name, server)) allowed.push(`mcp__${name}`);
+        // without a per-call approval prompt. Its stdio proxy is harness-owned
+        // and already bounded, so it is left ungated below.
+        if (isRelayMcpServer(name, server)) {
+          allowed.push(`mcp__${name}`);
+          relayRoutes.add(name);
+        }
       }
       // --strict-mcp-config (above) makes this config the CLI's only source
       // of MCP servers, so a server the bot's OWN project declares would
@@ -1406,6 +1411,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       // bounded and are deliberately left alone.
       const budget = resultBudget(turnEnvironment);
       for (const name of botOwned) {
+        if (relayRoutes.has(name)) continue;
         const gated = gateServer({ name, server: mcpServers[name], threadId, budget, nodeEnv: NODE_ENV_FLAG });
         if (gated) mcpServers[name] = gated;
       }

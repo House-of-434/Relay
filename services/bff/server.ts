@@ -11,6 +11,10 @@ import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
 import { handleInternalGmail, isInternalGmailPath } from "./gmail-internal.ts";
 import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-internal.ts";
 import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
+import { handleInternalGitHub, isInternalGitHubPath } from "./github-internal.ts";
+import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
+import { GitHubConnectionConflictError, GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
+import { GitHubAppGateway } from "./github-api.ts";
 import {
   GOOGLE_SERVICE_REGISTRY,
   GoogleConnectionStore,
@@ -30,6 +34,8 @@ import type {
 const COOKIE_NAME = "relay_bff";
 const OAUTH_STATE_COOKIE_NAME = "relay_bff_oauth_state";
 const GOOGLE_OAUTH_STATE_COOKIE_PREFIX = "relay_google_oauth_state_";
+const GITHUB_OAUTH_STATE_COOKIE = "relay_github_oauth_state";
+const GITHUB_INSTALL_BASE = "https://github.com/apps";
 const DEFAULT_BFF_PORT = 8798;
 const DEFAULT_RELAY_PORT = 8799;
 const DEFAULT_UI_PORT = 5199;
@@ -67,6 +73,10 @@ export interface RelayBffConfig {
   relayMailboxAddress?: string;
   relayMailboxUserId?: string;
   dataDir?: string;
+  /** GitHub App used for optional private-repository access. */
+  githubAppId?: string;
+  githubAppPrivateKey?: string;
+  githubAppSlug?: string;
 }
 
 export interface VerifiedSupabaseIdentity {
@@ -117,6 +127,9 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
   if (missing.length) throw new Error(`Missing required configuration: ${missing.join(", ")}`);
 
   const bffPort = parsePort(env.RELAY_BFF_PORT, DEFAULT_BFF_PORT, "RELAY_BFF_PORT");
+  const githubAppId = env.RELAY_CONN_GITHUB_APP_ID?.trim();
+  const githubAppPrivateKey = env.RELAY_CONN_GITHUB_APP_PRIVATE_KEY;
+  const githubAppSlug = env.RELAY_CONN_GITHUB_APP_SLUG?.trim();
   return validateConfig({
     supabaseProjectUrl: env.SUPABASE_PROJECT_URL!,
     supabaseAnonKey: env.SUPABASE_ANON_KEY!,
@@ -141,6 +154,9 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     googleRedirectUri: env.RELAY_GOOGLE_REDIRECT_URI?.trim(),
     googleTokenEncryptionKey: env.RELAY_TOKEN_ENCRYPTION_KEY,
     dataDir: env.RELAY_DATA_DIR?.trim() || join(homedir(), ".relay"),
+    ...(githubAppId ? { githubAppId } : {}),
+    ...(githubAppPrivateKey ? { githubAppPrivateKey } : {}),
+    ...(githubAppSlug ? { githubAppSlug } : {}),
   });
 }
 
@@ -857,6 +873,14 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     clients: googleRegistry,
     redirectUri: googleRedirectUri(config, publicUrl)?.toString(),
   });
+  const githubConnections = new GitHubConnectionStore({ dataDir: config.dataDir });
+  const githubApp = config.githubAppId && config.githubAppPrivateKey
+    ? new GitHubAppGateway({ appId: config.githubAppId, privateKey: config.githubAppPrivateKey, fetcher })
+    : undefined;
+  const githubInstallUrl = config.githubAppSlug
+    ? `${GITHUB_INSTALL_BASE}/${config.githubAppSlug}/installations/new`
+    : undefined;
+  const githubTransactions = new Map<string, { userId: string; sessionId: string; expiresAt: number }>();
   const verifySupabaseToken = createSupabaseJwtVerifier({
     projectUrl: config.supabaseProjectUrl,
     anonKey: config.supabaseAnonKey,
@@ -995,6 +1019,172 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     connectedLocation.searchParams.set("connections", "connected");
     res.setHeader("location", connectedLocation.toString());
     res.end();
+  };
+
+  const setGitHubStateCookie = (res: ServerResponse, state: string): void => {
+    const maxAge = Math.max(1, Math.floor(oauthStateTtlMs / 1000));
+    appendSetCookie(
+      res,
+      `${GITHUB_OAUTH_STATE_COOKIE}=${state}; Path=/api/github/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${cookieSecurity(publicUrl)}`,
+    );
+  };
+  const clearGitHubStateCookie = (res: ServerResponse): void => {
+    appendSetCookie(
+      res,
+      `${GITHUB_OAUTH_STATE_COOKIE}=; Path=/api/github/callback; HttpOnly; SameSite=Lax; Max-Age=0${cookieSecurity(publicUrl)}`,
+    );
+  };
+  const createGitHubState = (userId: string, sessionId: string): string => {
+    if (githubTransactions.size >= MAX_PENDING_LOGINS) {
+      const oldest = githubTransactions.keys().next().value;
+      if (oldest !== undefined) githubTransactions.delete(oldest);
+    }
+    const state = randomBytes(32).toString("base64url");
+    githubTransactions.set(state, { userId, sessionId, expiresAt: now() + oauthStateTtlMs });
+    return state;
+  };
+
+  /** GitHub App install callback. Mirrors the Google callback's binding: the
+   * state must match its HttpOnly cookie and the *live* session, so a stolen
+   * state cannot attach an installation to another account. */
+  const handleGitHubCallback = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
+    res.setHeader("cache-control", "no-store");
+    clearGitHubStateCookie(res);
+    const state = url.searchParams.get("state");
+    const cookieState = cookieValue(req, GITHUB_OAUTH_STATE_COOKIE);
+    const transaction = state && cookieState === state ? githubTransactions.get(state) : undefined;
+    if (state) githubTransactions.delete(state);
+    if (!transaction || transaction.expiresAt <= now() || !githubApp) {
+      reject(req, res, 400, "GitHub connection could not be completed");
+      return;
+    }
+    const activeId = cookieValue(req);
+    const activeSession = activeId ? sessions.get(activeId) : undefined;
+    if (activeId !== transaction.sessionId || !activeSession || activeSession.subject !== transaction.userId) {
+      reject(req, res, 401, "GitHub connection could not be completed");
+      return;
+    }
+    const installationRaw = url.searchParams.get("installation_id");
+    const installationId = installationRaw && /^\d{1,12}$/.test(installationRaw) ? Number(installationRaw) : undefined;
+    if (installationId === undefined) {
+      reject(req, res, 400, "GitHub connection could not be completed");
+      return;
+    }
+    try {
+      const info = await githubApp.installation(installationId);
+      await githubConnections.save({
+        id: githubConnectionId(installationId),
+        userId: transaction.userId,
+        installationId,
+        account: info.account,
+        permissions: info.permissions,
+        repositorySelection: info.repositorySelection,
+        createdAt: new Date(now()).toISOString(),
+      });
+    } catch (error) {
+      if (error instanceof GitHubConnectionConflictError) {
+        reject(req, res, 409, "this GitHub installation is already linked to another account");
+        return;
+      }
+      reject(req, res, 502, "GitHub connection could not be saved");
+      return;
+    }
+    res.statusCode = 303;
+    const connectedLocation = new URL(uiLocation);
+    connectedLocation.searchParams.set("connections", "connected");
+    res.setHeader("location", connectedLocation.toString());
+    res.end();
+  };
+
+  const handleConnectorRoutes = async (
+    req: IncomingMessage,
+    res: ServerResponse,
+    url: URL,
+    method: string,
+  ): Promise<void> => {
+    const sessionId = cookieValue(req);
+    const session = sessionId ? sessions.get(sessionId) : undefined;
+    if (!session) {
+      clearSessionCookie(res, publicUrl);
+      reject(req, res, 401, "sign-in required");
+      return;
+    }
+    if (!isAllowedRequestOrigin(req, publicUrl, config.uiPort)) {
+      reject(req, res, 403, "forbidden");
+      return;
+    }
+    req.resume();
+
+    if (url.pathname === "/api/connectors" && method === "GET") {
+      const connections = await githubConnections.list(session.subject);
+      json(res, 200, {
+        github: {
+          configured: Boolean(githubApp && githubInstallUrl),
+          connected: connections.length > 0,
+          account: connections.at(-1)?.account,
+          connections: connections.map((connection) => ({ id: connection.id, account: connection.account })),
+        },
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/github/connection/connect" && method === "POST") {
+      if (typeof req.headers.origin !== "string") {
+        reject(req, res, 403, "forbidden");
+        return;
+      }
+      if (!githubApp || !githubInstallUrl) {
+        json(res, 503, { error: "GitHub is not configured" });
+        return;
+      }
+      const state = createGitHubState(session.subject, sessionId!);
+      setGitHubStateCookie(res, state);
+      const install = new URL(githubInstallUrl);
+      install.searchParams.set("state", state);
+      json(res, 200, { authorizationUrl: install.toString() });
+      return;
+    }
+
+    if (url.pathname === "/api/github/callback" && method === "GET") {
+      await handleGitHubCallback(req, res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/github/connection" && method === "GET") {
+      const connections = await githubConnections.list(session.subject);
+      json(res, 200, {
+        configured: Boolean(githubApp && githubInstallUrl),
+        connections: connections.map((connection) => ({
+          id: connection.id,
+          account: connection.account,
+          permissions: connection.permissions,
+        })),
+      });
+      return;
+    }
+
+    const disconnectMatch = method === "DELETE" ? /^\/api\/github\/connection\/([a-f0-9]{64})$/.exec(url.pathname) : null;
+    if (disconnectMatch) {
+      const id = disconnectMatch[1]!;
+      const connection = await githubConnections.get(session.subject, id);
+      if (!connection) {
+        json(res, 404, { error: "GitHub connection not found" });
+        return;
+      }
+      // Best-effort remote uninstall; the local record is removed either way.
+      if (githubApp) {
+        try {
+          await githubApp.deleteInstallation(connection.installationId);
+        } catch {
+          // The user can also remove the app from GitHub; local removal stands.
+        }
+      }
+      await githubConnections.delete(session.subject, id);
+      json(res, 200, { ok: true, disconnected: true });
+      return;
+    }
+
+    reject(req, res, 404, "not found");
   };
 
   const handle = async (req: IncomingMessage, res: ServerResponse): Promise<void> => {
@@ -1395,6 +1585,17 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       }
     }
 
+    if (
+      url.pathname === "/api/connectors" ||
+      url.pathname === "/api/github/connection" ||
+      url.pathname === "/api/github/connection/connect" ||
+      url.pathname === "/api/github/callback" ||
+      url.pathname.startsWith("/api/github/connection/")
+    ) {
+      await handleConnectorRoutes(req, res, url, method);
+      return;
+    }
+
     if (url.pathname === "/.well-known/relay/environment" && method === "GET") {
       await proxyRequest({
         req,
@@ -1440,6 +1641,33 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         harnessBase,
         harnessCapability: config.relayBffCapability,
         fetcher,
+        now,
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/internal/connectors/state") {
+      const verified = await verifyInternalRequest(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        now,
+      }, "/api/internal/connectors/state");
+      if (!verified) return;
+      const connected = (await githubConnections.list(verified.actor.userId)).length > 0;
+      jsonResponse(res, 200, { github: { connected } });
+      return;
+    }
+
+    if (isInternalGitHubPath(url.pathname)) {
+      if (!githubApp) {
+        jsonResponse(res, 503, { error: "GitHub is not configured" });
+        return;
+      }
+      await handleInternalGitHub(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        connections: githubConnections,
+        app: githubApp,
         now,
       });
       return;

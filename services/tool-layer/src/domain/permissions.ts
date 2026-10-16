@@ -203,6 +203,73 @@ export function authorizeIngest(table: string, operation: IngestOperation): void
   }
 }
 
+/** Web-fetch capability: read one page as clean text. Same simple model as
+ * search — no per-user state, granted per agent. Only Scout researches. */
+export type FetchCapability = "fetch";
+
+export const FETCH_PERMISSIONS: Record<Agent, readonly FetchCapability[]> = {
+  scout: ["fetch"],
+  mercury: [],
+  curator: [],
+};
+
+export function authorizeFetch(agent: Agent, capability: FetchCapability): void {
+  if (!FETCH_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`${capability} access denied for ${agent}`);
+  }
+}
+
+/** arXiv research capability: public paper search and retrieval. Only Scout
+ * researches, and every connector capability is granted per agent, never per
+ * request or per user. */
+export type ArxivCapability = "search" | "get";
+
+export const ARXIV_PERMISSIONS: Record<Agent, readonly ArxivCapability[]> = {
+  scout: ["search", "get"],
+  mercury: [],
+  curator: [],
+};
+
+export function authorizeArxiv(agent: Agent, capability: ArxivCapability): void {
+  if (!ARXIV_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`arxiv ${capability} access denied for ${agent}`);
+  }
+}
+
+/** SEC EDGAR research capability: CIK resolution, filing search, company facts,
+ * full-text filing search, reading a filing document, XBRL frames, and
+ * cross-company fact comparison. */
+export type SecCapability = "resolve" | "filings" | "facts" | "text" | "filing" | "frames" | "compare";
+
+export const SEC_PERMISSIONS: Record<Agent, readonly SecCapability[]> = {
+  scout: ["resolve", "filings", "facts", "text", "filing", "frames", "compare"],
+  mercury: [],
+  curator: [],
+};
+
+export function authorizeSec(agent: Agent, capability: SecCapability): void {
+  if (!SEC_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`sec ${capability} access denied for ${agent}`);
+  }
+}
+
+/** GitHub research capability: repository, file, issue, and release reads.
+ * Public vs private is decided by the actor's own installation at the BFF,
+ * never by the tool arguments; there is one read capability per agent. */
+export type GithubCapability = "read";
+
+export const GITHUB_PERMISSIONS: Record<Agent, readonly GithubCapability[]> = {
+  scout: ["read"],
+  mercury: [],
+  curator: [],
+};
+
+export function authorizeGithub(agent: Agent, capability: GithubCapability): void {
+  if (!GITHUB_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`github ${capability} access denied for ${agent}`);
+  }
+}
+
 export function isAgent(value: string): value is Agent {
   return (AGENTS as readonly string[]).includes(value);
 }

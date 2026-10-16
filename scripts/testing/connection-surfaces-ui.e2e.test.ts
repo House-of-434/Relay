@@ -105,7 +105,9 @@ describe("Connections marketplace and the Servers settings card", () => {
     const closePanel = async () => evaluate(`(() => { document.querySelector('[data-tour="apps-close"]').click(); return true; })()`);
     const tab = (label: string) => evaluate(`(() => { Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.includes(${JSON.stringify(label)})).click(); return true; })()`);
     const panel = () => evaluate(`document.querySelector('[data-tour="apps-panel"]')?.innerText ?? null`);
-    const rows = () => evaluate(`Array.from(document.querySelectorAll('[data-tour="apps-panel"] button')).map((b) => b.getAttribute('aria-label') || b.textContent.trim()).filter(Boolean)`);
+    // Visible text, not the accessible name: the row actions carry aria-labels
+    // such as "Connect Gmail", while the offered action reads "Connect".
+    const rows = () => evaluate(`Array.from(document.querySelectorAll('[data-tour="apps-panel"] button')).map((b) => b.textContent.trim()).filter(Boolean)`);
 
     await expect.poll(snapshot, { timeout: 20_000 }).toContain("New or share");
 
