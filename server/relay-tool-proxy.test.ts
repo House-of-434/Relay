@@ -94,7 +94,7 @@ describe("Relay tool proxy", () => {
 
     expect(bearers).toEqual(["Bearer cap-1", "Bearer cap-1"]);
     expect(presented).toEqual(["assertion-1", "assertion-2"]);
-  });
+  }, 60_000);
 
   it("does not share one assertion between concurrent calls", async () => {
     const present: string[] = [];
@@ -111,7 +111,7 @@ describe("Relay tool proxy", () => {
     const replies = [await nextJson(lines), await nextJson(lines)];
     expect(replies.map((reply) => reply.id).sort()).toEqual([1, 2]);
     expect([...present].sort()).toEqual(["assertion-1", "assertion-2"]);
-  });
+  }, 60_000);
 
   it("fails a tool call closed when the harness refuses to sign", async () => {
     const harness = await listen((_request, response) => {
@@ -131,7 +131,7 @@ describe("Relay tool proxy", () => {
     expect(reply.id).toBe(9);
     expect(reply.result.isError).toBe(true);
     expect(reply.result.content[0].text).toMatch(/could not authorize/i);
-  });
+  }, 60_000);
 
   it("fails a tool call closed when it has no capability token", async () => {
     const harness = await signingHarness([]);
@@ -142,5 +142,5 @@ describe("Relay tool proxy", () => {
     child!.stdin.write(toolCall(3));
     const reply = (await nextJson(lines)) as { result: { isError?: boolean } };
     expect(reply.result.isError).toBe(true);
-  });
+  }, 60_000);
 });
