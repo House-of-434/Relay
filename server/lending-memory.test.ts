@@ -254,12 +254,14 @@ describe("a bot's memory and a lent Mac (server/lending-memory.ts)", () => {
     const cold = snapshot();
     expect(Object.keys(cold).filter((name) => name.endsWith("AGENTS.md"))).toHaveLength(10);
     // Warm, each conversation's folder costs one look (its entries are not
-    // listed again, nothing unchanged is read), a conversation that never ran
-    // costs nothing, and the rest is a handful of fixed look-ups.
+    // listed again), a conversation that never ran costs nothing, and the
+    // rest is a handful of fixed look-ups. Tracked files are hashed by
+    // content on every look (stat metadata cannot prove them unchanged), so
+    // reads stay bounded by the files that exist — never one per folder.
     Object.assign(fsCalls, { lstat: 0, opendir: 0, read: 0 });
     snapshot();
     expect(fsCalls.opendir).toBe(0);
-    expect(fsCalls.read).toBe(0);
+    expect(fsCalls.read).toBeLessThan(100);
     expect(fsCalls.lstat).toBeGreaterThanOrEqual(3_000);
     expect(fsCalls.lstat).toBeLessThan(3_000 + 10 + 100);
     // …which is milliseconds, even on a slow runner (about 9 ms on a laptop).
