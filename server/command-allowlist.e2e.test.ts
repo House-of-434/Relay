@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, verificationServerEnvironment } from "../scripts/control-relay.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
 it("remembers real permission requests, scopes and revokes grants, and preserves them across restart", async () => {
@@ -117,6 +118,11 @@ it("remembers real permission requests, scopes and revokes grants, and preserves
     await stop(bot, shared.threadId);
 
     await waitForExit(fixture.child, { signal: "SIGTERM" });
+    // Re-issue the owner session for the restarted server: Windows kill()
+    // terminates the first process without its graceful shutdown, so its boot
+    // marker can read the previous session as stale. A fresh session (and the
+    // matching fetch bearer) keeps the fixture owner signed in.
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)),

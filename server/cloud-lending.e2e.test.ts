@@ -15,7 +15,7 @@ import { afterAll, beforeAll, expect, it } from "vitest";
 import { createComputerSharing } from "../electron/computer-sharing.mjs";
 import { WATCHER_OPTIONS_CARD_BOT_ID } from "../shared/options-card.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
-import { prepareOwnerSession } from "./testing/owner.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 
 // Parked: specs that need a cloud *guest* identity fail-closed 404 on every
 // data route because a paired guest session carries no userId (viewerFor
@@ -97,7 +97,6 @@ await import(${JSON.stringify(pathToFileURL(join(SERVER_DIR, "testing", "fake-cl
   // Per-user workspaces: pairing sessions carry no user id and see nothing.
   // The owner's own session is seeded before boot (the Admin-signed pairing
   // flow itself stays covered by cloud-home-server.test.ts).
-  owner = prepareOwnerSession(dataDir);
   port = await freePortBlock([0, 1]);
   base = `http://127.0.0.1:${port}`;
   await boot();
@@ -111,6 +110,12 @@ let port = 0;
 /** Start (or restart) the Cloud home on its data directory. */
 async function boot() {
   const dataDir = join(home, ".relay");
+  // Every boot re-issues the owner session: Windows kill() terminates the
+  // previous process without its graceful shutdown, so its boot marker can
+  // read the prior session as stale. A fresh session (and the matching fetch
+  // bearer) keeps the owner signed in across restarts.
+  owner = prepareOwnerSession(dataDir);
+  registerOwnerFetch(base, owner);
   const offlinePrelude = `data:text/javascript,${encodeURIComponent('const real = globalThis.fetch; globalThis.fetch = async (url, init) => String(url).startsWith("http://127.0.0.1:") ? real(url, init) : new Response("offline fixture", { status: 503 });')}`;
   child = spawn(process.execPath, ["--import", offlinePrelude, join(SERVER_DIR, "index.ts")], {
     cwd: join(SERVER_DIR, ".."),
