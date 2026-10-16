@@ -138,14 +138,30 @@ describe("manual intent drain", () => {
     ]);
   });
 
-  it("does not announce a terminal capture that produced no segments", async () => {
+  it("announces a plain-language failure when the capture ends empty", async () => {
     const req = manualRequest();
     const { monitor, full } = build({ manual: [req] });
     await monitor.tick(NOW + 5_000);
-    full.statuses.set(req.descriptor.instance_id, { status: "failed", segment_count: 0 });
+    full.statuses.set(req.descriptor.instance_id, { status: "failed", segment_count: 0, error: "Bot admission was rejected by meeting admin" });
     await monitor.tick(NOW + 65_000);
-    expect(full.announces).toHaveLength(0);
+    expect(full.announces).toEqual([
+      { instance_id: "inst-manual-1", kind: "failed", reason: "the meeting host declined Scribe's request to join" },
+    ]);
     expect(full.notices).toHaveLength(1);
+  });
+
+  it("announces the waiting room once, then joined, then ready", async () => {
+    const req = manualRequest();
+    const { monitor, full } = build({ manual: [req] });
+    await monitor.tick(NOW + 5_000);
+    full.statuses.set(req.descriptor.instance_id, { status: "awaiting_admission", segment_count: 0 });
+    await monitor.tick(NOW + 65_000);
+    await monitor.tick(NOW + 125_000); // still waiting: no repeat
+    full.statuses.set(req.descriptor.instance_id, { status: "active", segment_count: 0 });
+    await monitor.tick(NOW + 185_000);
+    full.statuses.set(req.descriptor.instance_id, { status: "completed", segment_count: 4 });
+    await monitor.tick(NOW + 245_000);
+    expect(full.announces.map((a) => a.kind)).toEqual(["waiting", "joined", "ready"]);
   });
 
   it("retries next tick when the worker throws, recording nothing", async () => {

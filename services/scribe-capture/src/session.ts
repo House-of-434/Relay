@@ -77,6 +77,16 @@ async function loadVexaJoin(): Promise<VexaJoin> {
   return vexaJoinCache;
 }
 
+/** Live join-state signals from the vendored join layer, keyed by instance id.
+ *  That layer installs ONE global hook, so the handler here is stateless and
+ *  dispatches by the instance id carried in the callback detail — correct even
+ *  when two captures are joining at once. */
+const joinStateListeners = new Map<string, (state: string) => void>();
+function relayJoinState(state: string, detail?: { instanceId?: unknown }): void {
+  const id = detail?.instanceId;
+  if (typeof id === "string") joinStateListeners.get(id)?.(state);
+}
+
 const VEXA_SCREENSHOT_DIR = "/app/storage/screenshots";
 
 /** Per-channel Meet lane bundle (built by scripts/build-capture.mjs). */
@@ -291,18 +301,26 @@ class MeetSession {
       }
 
       this.status = "joining";
+      // Reflect the waiting room in /status the moment the join layer reports
+      // it, so the monitor can tell the requester to admit Scribe.
+      joinStateListeners.set(this.descriptor.instance_id, (state) => {
+        if (state === "awaiting_admission" && this.status === "joining") this.status = "awaiting_admission";
+      });
       const { joinMeeting } = await loadVexaJoin();
       const result = await joinMeeting(this.page, {
         meetingUrl: this.descriptor.meeting_url,
         platform: this.descriptor.platform,
         botName: "Relay Scribe",
         passcode: this.descriptor.passcode,
+        instanceId: this.descriptor.instance_id,
         // Join with the persistent (signed-in) profile. Meet needs it (relay@
         // Google session); Zoom is tried authenticated too — its anti-bot wall
         // asks a guest to "sign in to join", so a signed-in web client may pass.
         authenticated: this.descriptor.platform === "google_meet" || this.descriptor.platform === "zoom",
         waitingRoomTimeoutMs: 600_000,
+        hooks: { onState: relayJoinState },
       });
+      joinStateListeners.delete(this.descriptor.instance_id);
       if (!result.admitted) {
         this.status = "awaiting_admission";
         this.error = "not admitted within the waiting-room timeout";
@@ -373,6 +391,7 @@ class MeetSession {
       }
       await this.finalize(this.current === "skipped" ? "skipped" : endedIdle ? idleFinalStatus : this.stopped ? "partial" : "completed");
     } catch (e) {
+      joinStateListeners.delete(this.descriptor.instance_id);
       this.error = describeJoinFailure(e);
       // Never log full URLs: navigation errors can embed meeting ?pwd=.
       console.error(`scribe: ${this.descriptor.instance_id} failed: ${this.error.replace(/([?&]pwd=)[^&\s]*/gi, "$1<redacted>")}`);
