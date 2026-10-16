@@ -7,6 +7,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { launchVerificationServer, runControlOmb, type VerificationServer } from "./control-relay.ts";
 import { waitForExit } from "../server/testing/cleanup.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "../server/testing/owner.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,6 +38,10 @@ async function restartFixture(fixture: VerificationServer): Promise<ChildProcess
     FAKE_CLAUDE_MODE: "happy", FAKE_CLAUDE_DUMP: fixture.fixtureDumpPath,
     PATH: dirname(process.execPath),
   });
+  // Re-issue the owner session for the restarted server: Windows kill()
+  // terminates the first process without its graceful shutdown, so its boot
+  // marker can read the previous session as stale.
+  registerOwnerFetch(fixture.info.url, prepareOwnerSession(dataDir));
   const log = openSync(fixture.info.logPath, "a", 0o600);
   const child = spawn(process.execPath, ["--experimental-strip-types", join(ROOT, "server", "index.ts")], {
     cwd: ROOT, env, stdio: ["ignore", log, log],

@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
+import { prepareOwnerSession, registerOwnerFetch } from "./testing/owner.ts";
 import type { RoutineRun } from "./routines.ts";
 import { waitForExit } from "./testing/cleanup.ts";
 
@@ -59,6 +60,10 @@ it("does not run a delivery twice after a process dies between the queue and ing
     expect(crash.status, crash.stderr).toBe(86);
     const committed = JSON.parse(readFileSync(join(dataDir, "routines.json"), "utf8")).runs[0] as RoutineRun;
     expect(JSON.parse(readFileSync(join(dataDir, "webhooks.json"), "utf8")).deliveries).toEqual([]);
+    // Re-issue the owner session for the restarted server: Windows kill()
+    // terminates the first process without its graceful shutdown, so its boot
+    // marker can read the previous session as stale.
+    registerOwnerFetch(url, prepareOwnerSession(dataDir));
     const log = openSync(logPath, "a", 0o600);
     restarted = spawn(process.execPath, ["--experimental-strip-types", fileURLToPath(new URL("./index.ts", import.meta.url))], {
       cwd: fileURLToPath(new URL("..", import.meta.url)), env, stdio: ["ignore", log, log],
