@@ -119,7 +119,7 @@ export function ThreadSwitcher({
                     "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left",
                     // Hover never touches the selected row: dimming the
                     // highlight under the cursor reads as losing selection.
-                    current ? "bg-raised-hover" : "hover:bg-raised/70",
+                    current ? "bg-selected" : "hover:bg-raised/70",
                   )}
                 >
                   <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{entry.title}</span>
