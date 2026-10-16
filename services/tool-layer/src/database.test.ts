@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { signActorAssertion } from "./infra/actor-assertion.js";
-import { RelayDatabase } from "./infra/database.js";
+import { nativeIdFromMeetingRef, RelayDatabase } from "./infra/database.js";
 
 const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -36,4 +36,21 @@ test("an assertion signed with another secret is refused", () => {
     "different-relay-tool-actor-secret-over-32-bytes",
   );
   assert.throws(() => db.authenticateActorAssertion(assertion), /signature is invalid/);
+});
+
+test("nativeIdFromMeetingRef extracts the provider code from a URL or a bare code", () => {
+  // Meet: first path segment.
+  assert.equal(nativeIdFromMeetingRef("https://meet.google.com/abc-defg-hij?pli=1#frag"), "abc-defg-hij");
+  // Zoom: the id after /j, /wc, or /s.
+  assert.equal(nativeIdFromMeetingRef("https://us02web.zoom.us/j/1234567890?pwd=x"), "1234567890");
+  assert.equal(nativeIdFromMeetingRef("https://us02web.zoom.us/wc/1234567890"), "1234567890");
+  // Teams: the id after /meet (a /meetup-join link has no native id — null,
+  // matching the worker, so it can never match a stored row).
+  assert.equal(nativeIdFromMeetingRef("https://teams.live.com/meet/9385623070170"), "9385623070170");
+  assert.equal(nativeIdFromMeetingRef("https://teams.microsoft.com/l/meetup-join/19%3Aabc%40thread"), null);
+  // Bare room code: passed through unchanged.
+  assert.equal(nativeIdFromMeetingRef("  abc-defg-hij  "), "abc-defg-hij");
+  // Unparseable / empty: null.
+  assert.equal(nativeIdFromMeetingRef("not a url"), "not a url");
+  assert.equal(nativeIdFromMeetingRef(""), null);
 });
