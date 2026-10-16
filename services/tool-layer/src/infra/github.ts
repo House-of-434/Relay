@@ -187,10 +187,10 @@ export function releaseResult(release: GitHubReleaseSummary): ConnectorResult {
 }
 
 export function fileResult(repo: string, input: { path: string; url?: string; content?: string; truncated: boolean; ref?: string }): ConnectorResult {
-  const canonicalUrl = isHttpUrl(input.url) ? input.url : `https://github.com/${repo}/blob/HEAD/${input.path}`;
+  const ref = input.ref?.trim() ? input.ref.trim() : undefined;
+  const canonicalUrl = isHttpUrl(input.url) ? input.url : `https://github.com/${repo}/blob/${ref ?? "HEAD"}/${input.path}`;
   const collapsed = typeof input.content === "string" ? input.content.replace(/\s+/g, " ").trim() : "";
   const truncated = input.truncated || collapsed.length > BODY_MAX;
-  const ref = input.ref?.trim() ? input.ref.trim() : undefined;
   return {
     source: "github",
     sourceId: ref ? `${repo}:${input.path}@${ref}` : `${repo}:${input.path}`,
