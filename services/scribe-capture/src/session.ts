@@ -355,8 +355,13 @@ class MeetSession {
           try {
             const st = await this.page.evaluate(() => (window as any).__scribeGmeet?.state?.() ?? null) as {
               streams: number; pending: number; path: string; lit: string[];
+              ctxState: string | null; sampleRate: number | null;
+              peaks: Record<number, number>;
+              tracks: Array<{ i: number; id: string; muted: boolean | null; ready: string | null; enabled: boolean | null }>;
             } | null;
-            console.log(`scribe: ${this.descriptor.instance_id} tap streams=${st?.streams ?? "?"} pending=${st?.pending ?? "?"} path=${st?.path ?? "?"} lit=${(st?.lit ?? []).join("|") || "-"} firstVoice=${this.firstVoiceAt ? new Date(this.firstVoiceAt).toISOString().slice(11, 19) : "never"} lastVoice=${this.lastRemoteAudioAt ? new Date(this.lastRemoteAudioAt).toISOString().slice(11, 19) : "never"}`);
+            const peakStr = st?.peaks ? Object.entries(st.peaks).map(([i, p]) => `${i}:${p}`).join(",") || "-" : "?";
+            const trackStr = st?.tracks ? st.tracks.map((t) => `${t.i}:${t.id}${t.muted ? "/muted" : ""}${t.ready && t.ready !== "live" ? `/${t.ready}` : ""}${t.enabled === false ? "/disabled" : ""}`).join(",") || "-" : "?";
+            console.log(`scribe: ${this.descriptor.instance_id} tap streams=${st?.streams ?? "?"} pending=${st?.pending ?? "?"} path=${st?.path ?? "?"} lit=${(st?.lit ?? []).join("|") || "-"} ctx=${st?.ctxState ?? "?"}@${st?.sampleRate ?? "?"} peaks=[${peakStr}] tracks=[${trackStr}] firstVoice=${this.firstVoiceAt ? new Date(this.firstVoiceAt).toISOString().slice(11, 19) : "never"} lastVoice=${this.lastRemoteAudioAt ? new Date(this.lastRemoteAudioAt).toISOString().slice(11, 19) : "never"}`);
           } catch {
             /* page may be gone; the loop exits on its own */
           }
