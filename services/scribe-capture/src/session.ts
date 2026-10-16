@@ -649,10 +649,23 @@ export function selectRoomDuplicate(
 /** Owns one session per instance_id. join is idempotent by instance_id. */
 export class SessionController implements JoinController {
   private readonly sessions = new Map<string, MeetSession>();
+  /** One orphan sweep per worker generation, run before the first join: a fresh
+   *  process owns zero sessions, so any live row belongs to a dead generation
+   *  and holds its room's unique live slot. Reset on failure so a later join
+   *  retries once the tool layer is reachable. */
+  private reapOnce: Promise<void> | null = null;
 
-  constructor(private readonly config: WorkerConfig) {}
+  constructor(
+    private readonly config: WorkerConfig,
+    private readonly injectedIngest?: IngestClient,
+  ) {}
+
+  private ingest(): IngestClient {
+    return this.injectedIngest ?? new IngestClient({ url: this.config.ingestUrl, capability: this.config.ingestCapability });
+  }
 
   async join(descriptor: JoinDescriptor): Promise<JoinOutcome> {
+    await this.reapOrphans();
     const existing = this.sessions.get(descriptor.instance_id);
     if (existing) {
       const s = existing.outcome();
@@ -666,7 +679,7 @@ export class SessionController implements JoinController {
     if (!reject && live >= this.config.maxConcurrent) reject = "at capacity";
     if (!reject && !hostAllowed(descriptor.platform, descriptor.meeting_url)) reject = "meeting host is not an allowed provider domain";
     if (reject) {
-      const ingest = new IngestClient({ url: this.config.ingestUrl, capability: this.config.ingestCapability });
+      const ingest = this.ingest();
       const row: MeetingRow = {
         platform: descriptor.platform,
         instance_id: descriptor.instance_id,
@@ -705,6 +718,25 @@ export class SessionController implements JoinController {
     this.sessions.set(descriptor.instance_id, session);
     void session.run();
     return { instance_id: descriptor.instance_id, status: session.status };
+  }
+
+  /** Sweep orphaned live rows once per process, before the first capture. A
+   *  failure is non-fatal (logging only) and clears the memo so a later join
+   *  retries: the tool layer may not be reachable yet at container start. */
+  private reapOrphans(): Promise<void> {
+    if (!this.config.enabled) return Promise.resolve();
+    if (!this.reapOnce) {
+      this.reapOnce = this.sweepOrphans().catch((error) => {
+        this.reapOnce = null;
+        console.error(`[relay-scribe] orphan sweep failed: ${error instanceof Error ? error.message : "unknown"}`);
+      });
+    }
+    return this.reapOnce;
+  }
+
+  private async sweepOrphans(): Promise<void> {
+    const { swept } = await this.ingest().sweep("capture worker restarted; the recording session did not survive");
+    if (swept > 0) console.log(`[relay-scribe] reaped ${swept} orphaned live meeting(s) from a previous run`);
   }
 
   async status(instanceId: string): Promise<StatusOutcome> {

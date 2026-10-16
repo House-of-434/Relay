@@ -6,7 +6,39 @@ import test from "node:test";
 
 import { WORKER_BOOT_ID } from "./boot.js";
 import { workerConfig } from "./config.js";
+import type { IngestClient } from "./ingest-client.js";
 import { selectRoomDuplicate, SessionController, voiceIdleExpired } from "./session.js";
+
+const ENABLED = () => ({ ...workerConfig({ RELAY_SCRIBE_ENABLED: "1" } as NodeJS.ProcessEnv), workerCapability: "test-capability-that-is-long-enough-000000" });
+
+test("a booted controller sweeps orphaned live rows once, before the first join", async () => {
+  const reasons: string[] = [];
+  const ingest = {
+    async sweep(reason: string) { reasons.push(reason); return { swept: 2 }; },
+    async post() { return { meeting_id: "m", upserted: 0 }; },
+  } as unknown as IngestClient;
+  const controller = new SessionController(ENABLED(), ingest);
+  // Non-provider host: rejects without launching a browser.
+  const first = await controller.join({ instance_id: "i-1", platform: "google_meet", meeting_url: "https://example.com/x" });
+  assert.equal(first.status, "failed");
+  assert.equal(reasons.length, 1);
+  await controller.join({ instance_id: "i-2", platform: "google_meet", meeting_url: "https://example.com/y" });
+  assert.equal(reasons.length, 1, "the sweep runs once per worker generation");
+});
+
+test("a failed sweep is retried on a later join, not memoized", async () => {
+  let calls = 0;
+  const ingest = {
+    async sweep() { calls += 1; if (calls === 1) throw new Error("ECONNREFUSED"); return { swept: 0 }; },
+    async post() { return { meeting_id: "m", upserted: 0 }; },
+  } as unknown as IngestClient;
+  const controller = new SessionController(ENABLED(), ingest);
+  const descriptor = { instance_id: "i-1", platform: "google_meet" as const, meeting_url: "https://example.com/x" };
+  await controller.join(descriptor);
+  assert.equal(calls, 1);
+  await controller.join({ ...descriptor, instance_id: "i-2" });
+  assert.equal(calls, 2, "a failed sweep is retried");
+});
 
 test("voiceIdleExpired ends quiet rooms and silent waits", () => {
   const started = 1_000_000;

@@ -64,4 +64,32 @@ export class IngestClient {
     }
     return await response.json() as IngestResult;
   }
+
+  /** Finalize rows a dead worker generation left live, via the sibling sweep
+   *  route. Runs once per boot, before the first join, so an orphaned live row
+   *  cannot hold a room's unique live slot across a restart. */
+  async sweep(reason: string): Promise<{ swept: number }> {
+    if (typeof this.capability !== "string" || Buffer.byteLength(this.capability) < 32) {
+      throw new IngestClientError(503, "the transcript ingest capability is not configured");
+    }
+    const url = `${this.url.replace(/\/+$/, "")}/sweep`;
+    let response: Response;
+    try {
+      response = await this.fetcher(url, {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${this.capability}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ reason }),
+      });
+    } catch {
+      throw new IngestClientError(502, "the transcript ingest route is unreachable");
+    }
+    if (!response.ok) {
+      throw new IngestClientError(response.status, `sweep rejected with ${response.status}`);
+    }
+    return await response.json() as { swept: number };
+  }
 }

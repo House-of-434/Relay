@@ -40,3 +40,26 @@ test("an unreachable route is a 502", async () => {
   const client = new IngestClient({ url: "http://tool/x", capability: CAP, fetcher });
   await assert.rejects(() => client.post(row, []), (e: unknown) => e instanceof IngestClientError && e.status === 502);
 });
+
+test("sweep posts to the sibling sweep route with the reason", async () => {
+  let seen: { url: string; auth?: string; body?: unknown } = { url: "" };
+  const fetcher = (async (url: string, init: RequestInit) => {
+    seen = { url: String(url), auth: (init.headers as Record<string, string>).authorization, body: JSON.parse(String(init.body)) };
+    return new Response(JSON.stringify({ swept: 3, partial: 1, failed: 2 }), { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const client = new IngestClient({ url: "http://tool/internal/transcripts/", capability: CAP, fetcher });
+  const result = await client.sweep("worker restarted");
+  assert.deepEqual(result, { swept: 3, partial: 1, failed: 2 });
+  assert.equal(seen.url, "http://tool/internal/transcripts/sweep");
+  assert.equal(seen.auth, `Bearer ${CAP}`);
+  assert.deepEqual(seen.body, { reason: "worker restarted" });
+});
+
+test("sweep fails closed without a capability and surfaces a rejection", async () => {
+  const noCap = new IngestClient({ url: "http://tool/x", capability: undefined });
+  await assert.rejects(() => noCap.sweep("r"), (e: unknown) => e instanceof IngestClientError && e.status === 503);
+  const fetcher = (async () => new Response("{}", { status: 500 })) as unknown as typeof fetch;
+  const client = new IngestClient({ url: "http://tool/x", capability: CAP, fetcher });
+  await assert.rejects(() => client.sweep("r"), (e: unknown) => e instanceof IngestClientError && e.status === 500);
+});

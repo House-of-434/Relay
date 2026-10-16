@@ -136,6 +136,52 @@ async function handleIngest(
   }
 }
 
+/**
+ * Orphan-sweep route: a freshly-booted capture worker finalizes rows a
+ * previous, dead generation left live (it owns zero sessions at boot, so any
+ * live row is an orphan holding the room's meetings_live_once slot). Same
+ * ingest capability as the write route — it is the same writer — and no actor;
+ * there is no agent here.
+ */
+async function handleSweep(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: RelayDatabase,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    sendJson(response, 405, { error: "method not allowed" });
+    return;
+  }
+  const capability = ingestCapability();
+  if (!capability) {
+    sendJson(response, 503, { error: "transcript ingest is not configured" });
+    return;
+  }
+  if (!ingestCapabilityMatches(ingestBearerToken(request), capability)) {
+    sendJson(response, 401, { error: "unauthorized" });
+    return;
+  }
+  let reason = "capture worker restarted; the recording session did not survive";
+  if (/^application\/json\b/i.test(typeof request.headers["content-type"] === "string" ? request.headers["content-type"] : "")) {
+    try {
+      const raw = await readIngestBody(request);
+      if (raw && typeof raw === "object" && typeof (raw as { reason?: unknown }).reason === "string") {
+        reason = (raw as { reason: string }).reason.slice(0, 200);
+      }
+    } catch {
+      sendJson(response, 400, { error: "invalid sweep body" });
+      return;
+    }
+  }
+  try {
+    const result = await database.sweepOrphanedMeetings(reason);
+    sendJson(response, 200, { swept: result.partial + result.failed, ...result });
+  } catch {
+    sendJson(response, 500, { error: "sweep failed" });
+  }
+}
+
 let sharedBladePool: BladeBrowserPool | null = null;
 
 export async function createRelayToolServer(
@@ -171,6 +217,10 @@ export async function createRelayToolServer(
       const match = /^\/mcp\/(scout|mercury|curator)$/.exec(url.pathname);
       if (url.pathname === "/internal/transcripts") {
         await handleIngest(request, response, database);
+        return;
+      }
+      if (url.pathname === "/internal/transcripts/sweep") {
+        await handleSweep(request, response, database);
         return;
       }
       if (request.method !== "POST" || !match) {

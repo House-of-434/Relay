@@ -305,6 +305,33 @@ export class RelayDatabase {
   }
 
   /**
+   * Finalize every non-terminal meeting row. Called by a freshly-booted
+   * capture worker (the only writer, and it owns zero sessions at boot): a row
+   * still live at boot is a previous generation's orphan that would otherwise
+   * hold the meetings_live_once slot and block the room forever. Rows with any
+   * segment become `partial` (an interrupted capture), the rest `failed`;
+   * actual_end is left to the reaper's wall clock via the error reason rather
+   * than a fabricated end time.
+   */
+  async sweepOrphanedMeetings(reason: string): Promise<{ partial: number; failed: number }> {
+    const live = ["joining", "awaiting_admission", "active"];
+    const updatedAt = new Date().toISOString();
+    const client = this.client("relay");
+    const withSegments = await client.schema("transcripts").from("meetings")
+      .update({ status: "partial", error: reason, updated_at: updatedAt })
+      .in("status", live).gt("segment_count", 0).select("id");
+    supabaseError(withSegments.error);
+    const empty = await client.schema("transcripts").from("meetings")
+      .update({ status: "failed", error: reason, updated_at: updatedAt })
+      .in("status", live).eq("segment_count", 0).select("id");
+    supabaseError(empty.error);
+    return {
+      partial: Array.isArray(withSegments.data) ? withSegments.data.length : 0,
+      failed: Array.isArray(empty.data) ? empty.data.length : 0,
+    };
+  }
+
+  /**
    * Ordered, paged transcript read for agents. Segments come back ordered by
    * start_seconds; complete is false while the meeting is still live, so
    * readers can mark in-progress transcripts incomplete.
