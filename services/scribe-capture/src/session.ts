@@ -249,7 +249,13 @@ class MeetSession {
       this.context = await sharedBrowserContext({
         profileDir: this.config.profileDir,
         headless: this.config.headless,
-        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
+        args: [...args, "--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu",
+          // Headless Chrome has zero media engagement, so programmatic play()
+          // on the hook's mirrored <audio> elements is autoplay-blocked without
+          // this — the mirrors stay paused, findMedia skips them, and the tap
+          // hears digital silence while the room has audio. (Diagnosed live
+          // 2026-10-16: frames flowed, every window below the silence gate.)
+          "--autoplay-policy=no-user-gesture-required"],
         locale: "en-US",
       });
       // Fresh tab per capture; never reuse a stray about:blank page.
@@ -333,13 +339,28 @@ class MeetSession {
 
       const deadline = Date.now() + this.config.maxMeetingMs;
       let endedIdle = false;
+      let loopCount = 0;
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
+        loopCount += 1;
         if (isMeet) await this.gmeetFeedOnce();
         else await this.captureOnce();
         await this.flush(false, "active");
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
+        // Audio-tap health, every ~60s: streams refuge/pending/path/lit plus
+        // whether any remote voice has ever crossed the gate. Makes "deaf tap
+        // vs quiet room" answerable from worker logs alone.
+        if (isMeet && this.status === "active" && loopCount % 10 === 0 && this.page) {
+          try {
+            const st = await this.page.evaluate(() => (window as any).__scribeGmeet?.state?.() ?? null) as {
+              streams: number; pending: number; path: string; lit: string[];
+            } | null;
+            console.log(`scribe: ${this.descriptor.instance_id} tap streams=${st?.streams ?? "?"} pending=${st?.pending ?? "?"} path=${st?.path ?? "?"} lit=${(st?.lit ?? []).join("|") || "-"} firstVoice=${this.firstVoiceAt ? new Date(this.firstVoiceAt).toISOString().slice(11, 19) : "never"} lastVoice=${this.lastRemoteAudioAt ? new Date(this.lastRemoteAudioAt).toISOString().slice(11, 19) : "never"}`);
+          } catch {
+            /* page may be gone; the loop exits on its own */
+          }
+        }
         // Voice-idle end (Meet only): no remote voice for 3 minutes means
         // the meeting is over whether or not tiles agree; 10 minutes without
         // ever hearing any covers waiting for others who never arrive.
@@ -350,7 +371,7 @@ class MeetSession {
           lastVoiceAt: this.lastRemoteAudioAt,
           now: Date.now(),
         })) {
-          console.log(`scribe: ${this.descriptor.instance_id} no voice for 3m; leaving`);
+          console.log(`scribe: ${this.descriptor.instance_id} ${this.firstVoiceAt ? "no voice for 3m after last voice; leaving" : "never heard any voice for 10m; leaving"}`);
           endedIdle = true;
           break;
         }
