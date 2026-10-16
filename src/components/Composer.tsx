@@ -4,6 +4,7 @@ import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type M
 import { cn } from "@/lib/cn";
 import { useMenuMotion } from "./MenuMotion";
 import { activeLocale, t } from "@/lib/i18n";
+import { useOwnerOrAdmin } from "@/lib/use-owner-or-admin";
 import {
   draftRevision,
   appendDraftAttachments,
@@ -28,7 +29,9 @@ import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
 import { LocalComputerAutoWarning } from "./LocalComputerAutoWarning";
 import { PlaceChip } from "./PlaceChip";
 import { FullAccessWarning } from "./FullAccessWarning";
+import { ApprovalModeSelector } from "./ApprovalModeSelector";
 import { CommandAllowlistDialog } from "./CommandAllowlistDialog";
+import { approvalModeFor, type ApprovalMode } from "../../shared/approval-mode";
 import {
   appendPastedText,
   handoffAttachmentImagePreview,
@@ -113,6 +116,7 @@ export function Composer({
   const bot = profile ? currentTaskBot(profile) : undefined;
   const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
   const { state, dispatch } = useStore();
+  const ownerOrAdmin = useOwnerOrAdmin();
   const { threads, currentBotId } = useThreadRefs();
   const { capabilities } = useDesktopCapabilities();
   const remoteClient = window.ogb?.remoteClient?.active === true;
@@ -492,6 +496,9 @@ export function Composer({
   const [commandAllowlistTarget, setCommandAllowlistTarget] = useState<{ botId: string; botName: string; threadId: string } | null>(null);
   // Approval mode belongs to one bot; a room has several, each with its own.
   const modeBot = group ? undefined : bot;
+  const approvalEngine = modeBot
+    ? state.instances.find((instance) => instance.instanceId === modeBot.modelSelection.instanceId)
+    : undefined;
   const trustedThreadAccess = Boolean(!remoteClient && window.ogb?.approvals && capabilities.host.packaged);
   const uploadImage = useCallback(async (file: File): Promise<Attachment | null> => {
     const optimistic = optimisticImageAttachment(file);
@@ -536,6 +543,21 @@ export function Composer({
     // continue in the draft without another click
     refocusInput();
   };
+  const setApprovalMode = (mode: ApprovalMode) => {
+    if (!modeBot || modeBot.busy || mode === approvalModeFor(modeBot)) return;
+    if ((mode === "full" || mode === "custom") && !trustedThreadAccess) return;
+    if (mode === "full") {
+      setApprovalWarning({ mode, botId: modeBot.id, threadId: modeBot.threadId });
+      return;
+    }
+    // Safe Auto still needs its dedicated warning when it can drive the host.
+    if (mode === "auto" && modeBot.computer === "local") {
+      setApprovalWarning({ mode: "auto", botId: modeBot.id, threadId: modeBot.threadId });
+      return;
+    }
+    dispatch({ type: "updateTask", botId: modeBot.id, threadId: modeBot.threadId, patch: { approvalMode: mode } });
+  };
+
   const hasContent = Boolean(effectiveText.trim()) || attachments.length > 0;
   const retryFailedSend = (failed: FailedComposerSend) => {
     const failedMode = failed.channelMode ?? "chat";
@@ -933,8 +955,18 @@ export function Composer({
                   {effectiveChannelMode === "goal" ? "/goal" : t("composer.goal.chip")}
                 </button>
               )}
-              {/* Approval mode selector hidden for the minimal composer pass;
-                  tracked in plans/deferred.md for later. */}
+              {modeBot && approvalEngine && !remoteClient && (
+                <ApprovalModeSelector
+                  approvalMode={modeBot.approvalMode}
+                  autoApprove={modeBot.autoApprove}
+                  providerName={approvalEngine.displayName}
+                  driverKind={approvalEngine.driverKind}
+                  onSelect={setApprovalMode}
+                  disabled={Boolean(modeBot.busy)}
+                  trustedModesAvailable={trustedThreadAccess}
+                  onManageCommandAllowlist={ownerOrAdmin === true ? () => setCommandAllowlistTarget({ botId: modeBot.id, botName: modeBot.name, threadId: modeBot.threadId }) : undefined}
+                />
+              )}
               {modeBot && !remoteClient && (
                 <PlaceChip
                   bot={modeBot}
