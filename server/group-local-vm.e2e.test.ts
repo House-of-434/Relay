@@ -109,8 +109,10 @@ beforeAll(async () => {
   // Per-user workspaces: session-less loopback sees nothing, so issue the
   // fixture owner's session before boot and act as that account. The fetch
   // wrapper injects the bearer into the api() calls below.
-  registerOwnerFetch(base, prepareOwnerSession(data));
   startServer = async () => {
+    // Re-issue on every boot: a restart on Windows is unclean, which drops
+    // the prior account session.
+    registerOwnerFetch(base, prepareOwnerSession(data));
     child = spawn(process.execPath, ["--import", pathToFileURL(join(ROOT, "server/testing/group-local-vm-hooks.mjs")).href, join(ROOT, "server/index.ts")], {
       cwd: ROOT, env: {
         PATH: dirname(process.execPath), ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
