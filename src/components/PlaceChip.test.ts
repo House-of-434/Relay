@@ -67,6 +67,22 @@ describe("PlaceChip composer trigger", () => {
     expect(html).toContain("This computer — From this bot&#x27;s Works on setting");
     expect(html).not.toMatch(/<span class="truncate">This computer<\/span>/);
   });
+
+  it("renders nothing when the place is Off or the bot is mid-turn", () => {
+    const off = renderToStaticMarkup(createElement(PlaceChip, {
+      bot: { ...bot, computer: "off" },
+      live: false,
+      onPin: () => {},
+    } satisfies ComponentProps<typeof PlaceChip>));
+    expect(off).toBe("");
+    const busy = renderToStaticMarkup(createElement(PlaceChip, {
+      bot,
+      live: true,
+      disabled: true,
+      onPin: () => {},
+    } satisfies ComponentProps<typeof PlaceChip>));
+    expect(busy).toBe("");
+  });
 });
 
 describe("the places a conversation can be pinned to", () => {

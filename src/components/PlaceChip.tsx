@@ -68,6 +68,11 @@ export function PlaceChip({ bot, task, live, disabled = false, onPin }: {
   const choose = (surface: Exclude<Place, "browser"> | null) => { setOpen(false); if (surface !== (task?.surface ?? null)) onPin(surface); };
   const botDefault = bot.computer ?? "auto";
 
+  // Off or mid-turn the chip is non-actionable (it can't be clicked), so a
+  // disabled, washed-out icon would only be noise in the input bar — render
+  // nothing instead.
+  if (off || disabled) return null;
+
   return (
     <div className="relative flex items-center" ref={wrapperRef}>
       <button
