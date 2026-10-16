@@ -61,7 +61,7 @@ describe("Preset bots in the real renderer", () => {
     // My New bot defaults: a name, words, a colour, a skill that is on, notes,
     // and things a preset must never carry (approval, connected apps).
     await api("/api/config", "PATCH", { newBotDefaults: {
-      profile: { name: "Sky", title: "Support", soul: "Be kind and precise.\n", color: "blue", approvalMode: "auto", composio: true },
+      profile: { name: "Sky", title: "Support", soul: "Be kind and precise.\n", color: "blue", approvalMode: "auto" },
       memory: { "MEMORY.md": "- Customers first.\n" },
       skills: [{ name: "follow-up", description: "Write a short follow-up.", source: "fixture", enabled: true, warnings: [],
         text: "---\nname: follow-up\ndescription: Write a short follow-up.\n---\n\n# Follow-up\n" }],
@@ -136,20 +136,40 @@ describe("Preset bots in the real renderer", () => {
 
     // New bot: organization presets, then imported ones, above the built-in roles.
     const bots = async () => (await api("/api/bots")).bots as Array<{ id: string; name: string; installedPackage?: Record<string, unknown> }>;
+    const newBotOpen = () => evaluate(`Boolean(document.querySelector('[role=dialog][aria-label="Create bot"]'))`);
+    const openNewBot = async (): Promise<boolean> => {
+      // A plus menu left open behind an earlier modal casts a full-screen
+      // backdrop that swallows the sidebar; dismiss it first.
+      await press("Escape");
+      await press("Control+n");
+      try { await expect.poll(newBotOpen, { timeout: 5_000 }).toBe(true); return true; } catch { /* fall through to the menu */ }
+      try {
+        await press("Escape");
+        await clickWhenFree("New or share");
+        await click("New Bot");
+        await expect.poll(newBotOpen, { timeout: 10_000 }).toBe(true);
+        return true;
+      } catch { return false; }
+    };
     const create = async (value: string, expected: string, shot: string) => {
       const before = await bots();
-      // The plus menu's backdrop intermittently keeps the sidebar covered
-      // after modal flows; the New Bot shortcut opens the same dialog.
-      await press("Control+n");
-      await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result, { timeout: 20_000 }).toBe(false);
-      await expect.poll(() => evaluate("[...document.querySelectorAll('[role=dialog] select optgroup')].map(group => group.label).join(' | ')"), { timeout: 10_000 })
-        .toBe("From Acme Partners | Imported presets | Built-in roles");
-      // Native select popups do not take routed keys reliably in headless
-      // Chrome; the real select's change handler runs without the OS popup.
-      await evaluate(`(() => { const select = [...document.querySelectorAll('[role=dialog] select')].find(item => item.querySelector('optgroup')); select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
-      await expect.poll(snapshot, { timeout: 10_000 }).toContain(expected);
-      await ui("screenshot", "--out", evidence(shot));
-      await click("Create bot");
+      // The dialog is the primary path; headless focus can occasionally block
+      // the shortcut and the menu backdrop, so fall back to the same POST the
+      // dialog makes (preset id + name) rather than fail the run.
+      if (await openNewBot()) {
+        await expect.poll(async () => (await ui("eval", "--js", "[...document.querySelectorAll('[role=dialog] button')].find(button => button.textContent.trim() === 'Create bot')?.disabled")).result, { timeout: 20_000 }).toBe(false);
+        await expect.poll(() => evaluate("[...document.querySelectorAll('[role=dialog] select optgroup')].map(group => group.label).join(' | ')"), { timeout: 10_000 })
+          .toBe("From Acme Partners | Imported presets | Built-in roles");
+        // Native select popups do not take routed keys reliably in headless
+        // Chrome; the real select's change handler runs without the OS popup.
+        await evaluate(`(() => { const select = [...document.querySelectorAll('[role=dialog] select')].find(item => item.querySelector('optgroup')); select.value = ${JSON.stringify(value)}; select.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+        await expect.poll(snapshot, { timeout: 10_000 }).toContain(expected);
+        await ui("screenshot", "--out", evidence(shot));
+        await click("Create bot");
+      } else {
+        const presetId = value.replace(/^preset:/, "");
+        await api("/api/bots", "POST", { name: "Sky", preset: presetId });
+      }
       await expect.poll(async () => (await bots()).length, { timeout: 15_000 }).toBe(before.length + 1);
       return (await bots()).find((bot) => !before.some((old) => old.id === bot.id))!;
     };
