@@ -341,33 +341,13 @@ class MeetSession {
       const deadline = Date.now() + this.config.maxMeetingMs;
       let endedIdle = false;
       let idleFinalStatus: CaptureStatus = "completed";
-      let loopCount = 0;
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
-        loopCount += 1;
         if (isMeet) await this.gmeetFeedOnce();
         else await this.captureOnce();
         await this.flush(false, "active");
         if (isMeet && this.config.gmeetProbe) await this.probeTick();
-        // Audio-tap health, every ~60s: streams refuge/pending/path/lit plus
-        // whether any remote voice has ever crossed the gate. Makes "deaf tap
-        // vs quiet room" answerable from worker logs alone.
-        if (isMeet && this.status === "active" && loopCount % 10 === 0 && this.page) {
-          try {
-            const st = await this.page.evaluate(() => (window as any).__scribeGmeet?.state?.() ?? null) as {
-              streams: number; pending: number; path: string; lit: string[];
-              ctxState: string | null; sampleRate: number | null;
-              peaks: Record<number, number>;
-              tracks: Array<{ i: number; id: string; muted: boolean | null; ready: string | null; enabled: boolean | null }>;
-            } | null;
-            const peakStr = st?.peaks ? Object.entries(st.peaks).map(([i, p]) => `${i}:${p}`).join(",") || "-" : "?";
-            const trackStr = st?.tracks ? st.tracks.map((t) => `${t.i}:${t.id}${t.muted ? "/muted" : ""}${t.ready && t.ready !== "live" ? `/${t.ready}` : ""}${t.enabled === false ? "/disabled" : ""}`).join(",") || "-" : "?";
-            console.log(`scribe: ${this.descriptor.instance_id} tap streams=${st?.streams ?? "?"} pending=${st?.pending ?? "?"} path=${st?.path ?? "?"} lit=${(st?.lit ?? []).join("|") || "-"} ctx=${st?.ctxState ?? "?"}@${st?.sampleRate ?? "?"} peaks=[${peakStr}] tracks=[${trackStr}] firstVoice=${this.firstVoiceAt ? new Date(this.firstVoiceAt).toISOString().slice(11, 19) : "never"} lastVoice=${this.lastRemoteAudioAt ? new Date(this.lastRemoteAudioAt).toISOString().slice(11, 19) : "never"}`);
-          } catch {
-            /* page may be gone; the loop exits on its own */
-          }
-        }
         // Voice-idle end (Meet only): no remote voice for 3 minutes means
         // the meeting is over whether or not tiles agree; 5 minutes without
         // ever hearing any covers a room that never fills. maxMeetingMs

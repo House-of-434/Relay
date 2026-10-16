@@ -69,14 +69,10 @@ interface GmeetConfig {
   });
 
   let ctx: any = null;
-  const streams = new Map<string, { index: number; src: any; node: any; track: any }>();
+  const streams = new Map<string, { index: number; src: any; node: any }>();
   let nextIndex = 0;
   let frames: GmeetFrame[] = [];
   let sawDomElement = false;
-  // Per-stream peak-hold since last state() read: recorded BEFORE the silence
-  // gate so stone-silent streams are distinguishable from faint ones. Lets the
-  // worker log which tapped track carries what without flooding the drain.
-  const peakHold = new Map<number, number>();
 
   function ensureCtx(): any {
     if (ctx) return ctx;
@@ -110,7 +106,7 @@ interface GmeetConfig {
     try {
       const c = ensureCtx();
       const src = c.createMediaStreamSource(stream);
-      const rec = { index, src, node: null as any, track };
+      const rec = { index, src, node: null as any };
       streams.set(id, rec);
       createPcmCaptureNode(c, (pcm: Float32Array) => {
         const now = Date.now();
@@ -119,11 +115,6 @@ interface GmeetConfig {
           const a = Math.abs(pcm[i]);
           if (a > peak) peak = a;
         }
-        // Peak-hold BEFORE the silence gate: the worker's tap log reports the
-        // loudest 256ms window per stream per minute, so a silent room reads
-        // as the true noise floor instead of "no data".
-        const prev = peakHold.get(index) ?? 0;
-        if (peak > prev) peakHold.set(index, peak);
         if (peak <= SILENCE) return;
         const name = binder.nameForChannel(index, now, peak);
         if (frames.length < MAX_FRAMES) frames.push({ channel: index, name: name ?? null, energy: peak, ts: now, pcm });
@@ -226,25 +217,12 @@ interface GmeetConfig {
         ...(includePcm ? { pcm: Array.from(f.pcm) } : {}),
       }));
     },
-    state(): { streams: number; pending: number; path: string; lit: string[]; ctxState: string | null; sampleRate: number | null; peaks: Record<number, number>; tracks: Array<{ i: number; id: string; muted: boolean | null; ready: string | null; enabled: boolean | null }> } {
-      const peaks: Record<number, number> = {};
-      for (const [i, p] of peakHold) peaks[i] = Number(p.toFixed(5));
-      peakHold.clear();
+    state(): { streams: number; pending: number; path: string; lit: string[] } {
       return {
         streams: streams.size,
         pending: frames.length,
         path: sawDomElement ? "dom" : g.__vexaRemoteAudioHookInstalled ? "hook" : "none",
         lit: [...prevLit],
-        ctxState: ctx?.state ?? null,
-        sampleRate: ctx?.sampleRate ?? null,
-        peaks,
-        tracks: [...streams.entries()].map(([id, r]) => ({
-          i: r.index,
-          id: String(id).slice(0, 8),
-          muted: typeof r.track?.muted === "boolean" ? r.track.muted : null,
-          ready: typeof r.track?.readyState === "string" ? r.track.readyState : null,
-          enabled: typeof r.track?.enabled === "boolean" ? r.track.enabled : null,
-        })),
       };
     },
     probeDom(): unknown {
