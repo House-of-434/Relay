@@ -7,7 +7,7 @@
 // running. The entries arrive pre-sorted from the snapshot's tasks array, so
 // the panel is a plain scrollable list, not a virtualized one.
 import { useEffect, useRef, useState } from "react";
-import { Check, ChevronDown } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -96,7 +96,7 @@ export function ThreadSwitcher({
         <div
           role="menu"
           aria-label={t("thread.switcher.label")}
-          className={cn("absolute left-0 top-full z-40 mt-1 max-h-[min(20rem,50vh)] w-full min-w-[13rem] max-w-[80vw] overflow-y-auto rounded-xl border border-hairline/50 bg-card px-1.5 py-1.5 shadow-2xl shadow-black/50", motion.className)} {...motion.exitProps}
+          className={cn("absolute left-0 top-full z-40 mt-1 max-h-[min(20rem,50vh)] w-full min-w-[13rem] max-w-[80vw] overflow-y-auto rounded-2xl border border-hairline/50 bg-card px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
         >
           {visible.length === 0 ? (
             <div className="px-3 py-2 text-[12px] text-ink-secondary">
@@ -116,11 +116,12 @@ export function ThreadSwitcher({
                   aria-current={current || undefined}
                   onClick={() => choose(entry.threadId)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left hover:bg-raised/70",
-                    current && "bg-raised/50",
+                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left",
+                    // Hover never touches the selected row: dimming the
+                    // highlight under the cursor reads as losing selection.
+                    current ? "bg-raised-hover" : "hover:bg-raised/70",
                   )}
                 >
-                  {current && <Check size={14} className="shrink-0 text-accent" />}
                   <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{entry.title}</span>
                   <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-ink-tertiary">{meta}</span>
                   {entry.unread && !current && (

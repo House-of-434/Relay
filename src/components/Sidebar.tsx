@@ -13,8 +13,7 @@ import {
   Library,
   Loader2,
   MoreHorizontal,
-  PanelLeftClose,
-  PanelLeftOpen,
+  PanelLeft,
   Pencil,
   Pin,
   PinOff,
@@ -315,7 +314,7 @@ function RoomContextMenu({
       data-room-menu
       data-sidebar
       style={{ top, left }}
-      className={cn("fixed z-40 w-[228px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 w-[228px] overflow-hidden rounded-2xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
     >
       {!remoteClient && (renaming ? (
         <div className="flex items-center gap-1 px-2 py-1">
@@ -538,7 +537,7 @@ function SectionPicker({
     <div
       data-section-picker
       style={{ top, left }}
-      className={cn("fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-2 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-2 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
         {t("sidebar.section.moveToContext")}
@@ -662,8 +661,6 @@ export function BotContextMenu({
 
   if (!motion.shown || !bot || !shown) return null;
   const deleting = state.deletingBots[bot.id] === true;
-  const engine = state.instances.find((instance) => instance.instanceId === bot.modelSelection.instanceId);
-  const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const item = (
     icon: React.ReactNode,
     label: string,
@@ -681,7 +678,7 @@ export function BotContextMenu({
       }}
       title={opts?.hint}
       className={cn(
-        "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px]",
+        "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px]",
         opts?.danger ? "text-danger" : "text-ink",
         opts?.disabled ? "cursor-default opacity-40" : "rounded-lg hover:bg-raised/70",
       )}
@@ -701,42 +698,33 @@ export function BotContextMenu({
       aria-label={t("sidebar.bot.actions", { name: bot.name })}
       onKeyDown={navigateSidebarMenu}
       style={{ top: shown.y, left: shown.x }}
-      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[228px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[184px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-2xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
     >
       {remoteClient ? [
-        item(<FolderPlus size={16} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
+        item(<FolderPlus size={15} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
           onClose();
           onMoveToSection(bot.id);
         }),
-        item(<Pencil size={16} className="text-ink-secondary" />, t("sidebar.bot.editProfile"), () => {
+        item(<Pencil size={15} className="text-ink-secondary" />, t("sidebar.bot.editProfile"), () => {
           dispatch({ type: "select", id: bot.id });
           dispatch({ type: "toggleSettings", open: true });
         }),
       ] : [
         item(
-          bot.pinned ? <PinOff size={16} className="text-ink-secondary" /> : <Pin size={16} className="text-ink-secondary" />,
+          bot.pinned ? <PinOff size={15} className="text-ink-secondary" /> : <Pin size={15} className="text-ink-secondary" />,
           bot.pinned ? t("sidebar.bot.unpin") : t("sidebar.bot.pin"),
           () => dispatch({ type: "updateBot", botId: bot.id, patch: { pinned: !bot.pinned } }),
         ),
-        item(
-          <Crown size={16} className={bot.chiefOfStaff ? "text-accent" : "text-ink-secondary"} />,
-          bot.chiefOfStaff ? t("sidebar.bot.removeChief") : t("sidebar.bot.makeChief"),
-          () => dispatch({ type: "updateBot", botId: bot.id, patch: { chiefOfStaff: !bot.chiefOfStaff } }),
-          {
-            disabled: !bot.chiefOfStaff && !canCoordinate,
-            hint: !bot.chiefOfStaff && !canCoordinate ? t("sidebar.bot.chiefNeedsEngine") : undefined,
-          },
-        ),
-        item(<FolderPlus size={16} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
+        item(<FolderPlus size={15} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
           onClose();
           onMoveToSection(bot.id);
         }),
         divider("d1"),
-        item(<Pencil size={16} className="text-ink-secondary" />, t("sidebar.bot.editProfile"), () => {
+        item(<Pencil size={15} className="text-ink-secondary" />, t("sidebar.bot.editProfile"), () => {
           dispatch({ type: "select", id: bot.id });
           dispatch({ type: "toggleSettings", open: true, section: "identity" });
         }),
-        item(<Copy size={16} className="text-ink-secondary" />, t("sidebar.bot.duplicate"), () =>
+        item(<Copy size={15} className="text-ink-secondary" />, t("sidebar.bot.duplicate"), () =>
           dispatch({ type: "duplicateBot", botId: bot.id }),
         ),
         divider("d2"),
@@ -779,11 +767,11 @@ export function BotDeleteMenuItem({ deleting, onClick }: { deleting: boolean; on
       onClick={onClick}
       title={deleting ? t("sidebar.bot.deleteCheckingTitle") : undefined}
       className={cn(
-        "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] text-danger",
+        "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px] text-danger",
         deleting ? "cursor-default opacity-40" : "rounded-lg hover:bg-raised/70",
       )}
     >
-      {deleting ? <Loader2 size={16} className="animate-spin" /> : <Trash2 size={16} />}
+      {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
       {deleting ? t("sidebar.bot.deleteChecking") : t("common.delete")}
     </button>
   );
@@ -1330,7 +1318,10 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                   className="size-9 group-hover:hidden group-focus-visible:hidden"
                 />
                 <span className="hidden group-hover:block group-focus-visible:block">
-                  <PanelLeftOpen size={20} />
+                  {/* Group opacity, not the alpha ink token: PanelLeft's divider
+                      stroke overlaps the rect border, and two semi-transparent
+                      strokes composite brighter where they cross. */}
+                  <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
                 </span>
               </button>
             )}
@@ -1388,7 +1379,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
           admin-only (see canManage) and right-aligned beside the desktop
           collapse toggle. The toggle lives here, not in the chat header. */}
       <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-3">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 items-center gap-1.5">
           <img src="/app-mark.png" alt="" aria-hidden="true" className="size-8 shrink-0" />
           <span className="truncate text-[15px] font-semibold text-ink">Relay</span>
         </div>
@@ -1408,7 +1399,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             <>
               <div className={cn("fixed inset-0 z-30", plusMotion.closing && "pointer-events-none")} onMouseDown={() => setPlusOpen(false)} />
               <div className={cn(
-                "absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/60",
+                "absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30",
                 plusMotion.className,
               )} {...plusMotion.exitProps}>
                 <button
@@ -1462,9 +1453,9 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             onClick={onToggleDesktop}
             aria-label={t("sidebar.toggle.close")}
             title={t("sidebar.toggle.close")}
-            className="hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
+            className="group hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
           >
-            <PanelLeftClose size={20} />
+            <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
           </button>
         )}
         </div>
@@ -1659,7 +1650,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
       {renameTeam && <TeamDialog section={renameTeam} rename onRenamed={renamedTeam} onClose={() => setRenameTeam(null)} />}
       {teamMotion.shown && teamMotion.value && createPortal(<div className={cn("fixed inset-0 z-40", teamMotion.closing && "pointer-events-none")} onMouseDown={closeTeamMenu}>
         <div role="menu" aria-label={teamMotion.value.name} style={{ left: teamMotion.value.x, top: teamMotion.value.y }}
-          className={cn("absolute w-[220px] rounded-xl border border-hairline/50 bg-menu p-1.5 text-ink shadow-xl", teamMotion.className)} {...teamMotion.exitProps}
+          className={cn("absolute w-[220px] rounded-xl border border-hairline/50 bg-menu p-1.5 text-ink shadow-sm", teamMotion.className)} {...teamMotion.exitProps}
           onMouseDown={event => event.stopPropagation()} onKeyDown={event => {
             if (event.key === "Escape" || event.key === "Tab") { event.preventDefault(); event.stopPropagation(); closeTeamMenu(); return; }
             navigateSidebarMenu(event);
