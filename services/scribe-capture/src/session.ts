@@ -139,10 +139,10 @@ export function voiceIdleExpired(args: {
   return lastVoiceAt !== null && now - lastVoiceAt >= VOICE_IDLE_MS;
 }
 
-/** Leave after 3 minutes without remote voice; 10 minutes without ever
- * hearing any (waiting room that never fills). */
+/** Leave after 3 minutes without remote voice; 5 minutes without ever
+ * hearing any (a room that never produces a single frame never will). */
 const VOICE_IDLE_MS = 3 * 60_000;
-const FIRST_VOICE_TIMEOUT_MS = 10 * 60_000;
+const FIRST_VOICE_TIMEOUT_MS = 5 * 60_000;
 /** Remote-audio energy floor mirroring the capture bundle's silence gate:
  * frames above this prove someone is transmitting. */
 const REMOTE_AUDIO_ENERGY = 0.005;
@@ -198,6 +198,7 @@ class MeetSession {
       error: this.error,
       organizer_email: d.organizer_email ?? null,
       invited_by: d.invited_by ?? null,
+      organizer_user_id: d.organizer_user_id ?? null,
       invitees: d.invitees ?? [],
       segment_count: this.spool.added,
       duration_seconds: this.lastEnd > 0 ? this.lastEnd : null,
@@ -339,6 +340,7 @@ class MeetSession {
 
       const deadline = Date.now() + this.config.maxMeetingMs;
       let endedIdle = false;
+      let idleFinalStatus: CaptureStatus = "completed";
       let loopCount = 0;
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
@@ -367,21 +369,28 @@ class MeetSession {
           }
         }
         // Voice-idle end (Meet only): no remote voice for 3 minutes means
-        // the meeting is over whether or not tiles agree; 10 minutes without
-        // ever hearing any covers waiting for others who never arrive.
-        // maxMeetingMs remains the hard backstop.
+        // the meeting is over whether or not tiles agree; 5 minutes without
+        // ever hearing any covers a room that never fills. maxMeetingMs
+        // remains the hard backstop. The idle reason is written to error so
+        // the row explains why it ended; status stays completed when any
+        // segment landed, else partial.
         if (isMeet && this.status === "active" && voiceIdleExpired({
           captureStartMs: this.captureStartMs,
           firstVoiceAt: this.firstVoiceAt,
           lastVoiceAt: this.lastRemoteAudioAt,
           now: Date.now(),
         })) {
-          console.log(`scribe: ${this.descriptor.instance_id} ${this.firstVoiceAt ? "no voice for 3m after last voice; leaving" : "never heard any voice for 10m; leaving"}`);
+          const reason = this.firstVoiceAt
+            ? `voice-idle: no speech for 3m after last voice (${new Date(this.lastRemoteAudioAt!).toISOString()})`
+            : "voice-idle: no voice heard within 5m of joining";
+          console.log(`scribe: ${this.descriptor.instance_id} ${reason}; leaving`);
+          this.error = reason;
+          idleFinalStatus = this.spool.added > 0 ? "completed" : "partial";
           endedIdle = true;
           break;
         }
       }
-      await this.finalize(this.current === "skipped" ? "skipped" : this.stopped && !endedIdle ? "partial" : "completed");
+      await this.finalize(this.current === "skipped" ? "skipped" : endedIdle ? idleFinalStatus : this.stopped ? "partial" : "completed");
     } catch (e) {
       this.error = describeJoinFailure(e);
       // Never log full URLs: navigation errors can embed meeting ?pwd=.
@@ -666,6 +675,7 @@ export class SessionController implements JoinController {
         scheduled_end: descriptor.scheduled_end ?? null,
         organizer_email: descriptor.organizer_email ?? null,
         invited_by: descriptor.invited_by ?? null,
+        organizer_user_id: descriptor.organizer_user_id ?? null,
         invitees: descriptor.invitees ?? [],
         status: "failed",
         error: reject,

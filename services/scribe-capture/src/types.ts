@@ -24,6 +24,9 @@ export interface JoinDescriptor {
   invited_by?: string;
   invitees?: string[];
   calendar_event_id?: string;
+  /** Owner UUID carried on a manual join (the requesting member). Written to
+   *  transcripts.meetings.organizer_user_id unchanged. */
+  organizer_user_id?: string;
   /** Set when the monitor's own validation failed; the worker writes a failed
    * row without attempting a join (URL/host failure, at capacity). */
   reject_reason?: string;
@@ -60,6 +63,7 @@ export interface MeetingRow {
   error?: string | null;
   organizer_email?: string | null;
   invited_by?: string | null;
+  organizer_user_id?: string | null;
   invitees?: string[];
   segment_count?: number;
   duration_seconds?: number | null;

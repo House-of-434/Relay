@@ -139,6 +139,10 @@ export function joinRequestFromIntent(
       instance_id: intent.instanceId,
       platform,
       meeting_url: intent.meetingUrl,
+      // The requesting member owns the capture: their UUID lands on the row as
+      // organizer_user_id, so a later lookup is (owner, meeting code) — never
+      // guessed from a name or a content search.
+      organizer_user_id: intent.ownerUserId,
       ...(intent.title ? { title: intent.title } : {}),
     },
     dueAtMs: intent.createdAt,

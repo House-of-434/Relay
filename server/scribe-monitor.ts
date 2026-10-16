@@ -48,6 +48,11 @@ export interface ScribeDescriptor {
   invited_by?: string;
   invitees?: string[];
   calendar_event_id?: string;
+  /** Resolved owner for the row: the requesting member's UUID on a manual join,
+   *  carried straight through to transcripts.meetings.organizer_user_id. Set
+   *  only when known; calendar joins leave it unset and let ingest resolve
+   *  organizer_email → member. */
+  organizer_user_id?: string;
 }
 
 /** Idempotency store for arm/notify receipts. Real impl wraps message-db. */

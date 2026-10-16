@@ -261,6 +261,7 @@ describe("joinRequestFromIntent", () => {
       platform: "google_meet",
       meeting_url: MEET,
       title: "Investor sync",
+      organizer_user_id: USER,
     });
     expect(request.dueAtMs).toBe(intent.createdAt);
     expect(request.lateAtMs).toBe(intent.createdAt + 300_000);

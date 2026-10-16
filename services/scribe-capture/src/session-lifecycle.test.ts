@@ -16,9 +16,9 @@ test("voiceIdleExpired ends quiet rooms and silent waits", () => {
   assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: started + 10_000, lastVoiceAt: started + 10_000, now: started + 10_000 + 180_000 }), true);
   // Boundary: just under 3 minutes stays.
   assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: started + 10_000, lastVoiceAt: started + 10_000, now: started + 10_000 + 179_999 }), false);
-  // Never any voice: 10-minute grace for others to arrive, then leave.
-  assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: null, lastVoiceAt: null, now: started + 599_999 }), false);
-  assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: null, lastVoiceAt: null, now: started + 600_000 }), true);
+  // Never any voice: 5-minute grace for others to arrive, then leave.
+  assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: null, lastVoiceAt: null, now: started + 299_999 }), false);
+  assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: null, lastVoiceAt: null, now: started + 300_000 }), true);
 });
 
 test("worker boot id is a stable uuid", () => {
