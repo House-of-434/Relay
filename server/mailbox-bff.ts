@@ -17,6 +17,7 @@ export interface MailboxActor {
   userId: string;
   botId: string;
   threadId: string;
+  agent: "mercury";
 }
 
 export async function mailboxBffCall<T>(capability: string | undefined, path: string, payload: unknown, actor: MailboxActor): Promise<T> {

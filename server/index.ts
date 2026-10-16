@@ -9753,7 +9753,7 @@ function relayMailboxActor(): MailboxActor | undefined {
   if (!RELAY_MAILBOX_ADDRESS || !RELAY_MAILBOX_USER_ID) return undefined;
   const mercury = store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === RELAY_MAILBOX_USER_ID);
   if (!mercury) return undefined;
-  return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId };
+  return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId, agent: "mercury" };
 }
 
 const mailboxPollMs = (() => {
