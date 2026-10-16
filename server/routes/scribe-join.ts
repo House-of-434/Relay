@@ -94,7 +94,7 @@ export function createScribeJoinRoutes(options: {
     if (!capabilityReady) return reject(ctx, 503, { error: "scribe join service is unavailable" });
     if (!bearerCapabilityMatches(ctx.req, expectedHash)) return reject(ctx, 401, { error: "unauthorized" });
 
-    let actor: { userId: string; botId: string; threadId: string };
+    let actor: { userId: string; botId: string; threadId: string; agent: "scout" | "mercury" | "curator" };
     try {
       actor = verifyActorAssertion(header(ctx.req.headers["x-relay-actor-user"]), options.actorSecret);
     } catch {
