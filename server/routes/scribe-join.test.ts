@@ -117,6 +117,13 @@ beforeEach(async () => {
 
 afterEach(async () => {
   await new Promise<void>((resolve) => server.close(() => resolve()));
+  // SQLite keeps the database file open for the lifetime of its handle.
+  // Windows will not remove a directory containing an open database, and
+  // vi.resetModules() strands the global setup's handle on a stale module
+  // instance — so close this file's live instance before removing.
+  try {
+    (await import("../message-db.ts")).closeMessageDb();
+  } catch {}
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   delete process.env.RELAY_DATA_DIR;
 });

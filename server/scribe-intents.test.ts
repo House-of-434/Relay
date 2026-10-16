@@ -30,7 +30,19 @@ beforeEach(async () => {
   intents = await import("./scribe-intents.ts");
 });
 
-afterEach(() => {
+afterEach(async () => {
+  // SQLite keeps the database file open for the lifetime of its handle.
+  // Windows will not remove a directory containing an open database, and
+  // vi.resetModules() strands the global setup's handle on a stale module
+  // instance — so close this file's live instance(s) before removing.
+  // The restart test resets modules mid-test, leaving two instances open
+  // (dbmod plus the re-import); close both.
+  try {
+    dbmod?.closeMessageDb();
+  } catch {}
+  try {
+    (await import("./message-db.ts")).closeMessageDb();
+  } catch {}
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
   delete process.env.RELAY_DATA_DIR;
 });
