@@ -13,7 +13,7 @@ const options = (launch: (options: {
   headless: boolean;
   args: string[];
   locale: string;
-}) => Promise<never>) => ({
+}) => Promise<unknown>) => ({
   profileDir: "/tmp/scribe-test-profile",
   headless: true,
   args: [],

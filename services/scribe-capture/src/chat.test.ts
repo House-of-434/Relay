@@ -51,6 +51,9 @@ function fakePage(options: FakeOptions = {}) {
       calls.push("click:chat");
       if (options.buttonOpens ?? true) visible = true;
     },
+    // Never read back: readComposer only runs on the input locator.
+    inputValue: async (): Promise<string> => "",
+    textContent: async (): Promise<string | null> => "",
   };
   const page: any = {
     locator: (_selector: string) => inputLocator,

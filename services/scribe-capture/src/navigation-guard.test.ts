@@ -6,7 +6,7 @@ import test from "node:test";
 import {
   createNavigationGuard,
   isPublicIpAddress,
-} from "./navigation-guard.ts";
+} from "./navigation-guard.js";
 
 test("isPublicIpAddress rejects v4 special ranges", () => {
   for (const ip of [
@@ -125,6 +125,7 @@ test("install aborts blocked requests and continues allowed ones", async () => {
 test("install fails closed when the verdict throws", async () => {  const guard = await createNavigationGuard({ meetingUrl: MEET, resolve: resolvePublic });
   let handler: ((route: unknown) => void) | null = null;
   await guard.install({ route: async (_p: string, fn: (r: unknown) => void) => { handler = fn; } } as never);
+  assert.ok(handler, "route handler installed");
   const actions: string[] = [];
   await (handler as (r: unknown) => Promise<void>)({
     request: () => ({ url: () => { throw new Error("no url"); } }),
