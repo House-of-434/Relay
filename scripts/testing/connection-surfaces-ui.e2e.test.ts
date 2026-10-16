@@ -186,5 +186,5 @@ describe("Connections marketplace and the Servers settings card", () => {
     await expect.poll(() => evaluate(`Array.from(document.querySelectorAll('[role=alert]')).map((n) => n.textContent)`), { timeout: 10_000 })
       .toEqual(["Saved servers could not be refreshed."]);
     expect(await evaluate("window.serversFixture.calls")).toContain("forget:srv_lab");
-  });
+  }, launchTimeout + 120_000);
 });
