@@ -7,7 +7,7 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: { config: { sharedWorkspace: true } }, dispatch: vi.fn() }),
 }));
 
-import { CONNECTION_SERVICES, PluginsPanel, connectionViews, type ConnectionAccount, type PluginsPanelProps } from "./PluginsPanel";
+import { CONNECTION_SERVICES, GITHUB_SERVICE, PluginsPanel, connectionViews, type ConnectionAccount, type GithubConnection, type PluginsPanelProps } from "./PluginsPanel";
 
 const gmail: ConnectionAccount = { service: "gmail", id: "ca_1", email: "me@houseof434.com" };
 const calendar: ConnectionAccount = { service: "google-calendar", id: "ca_2", email: "me@houseof434.com" };
@@ -122,6 +122,51 @@ describe("Connections marketplace", () => {
   });
 });
 
+describe("github connection", () => {
+  const available: GithubConnection = { configured: true, connected: false, connections: [] };
+  const connected: GithubConnection = {
+    configured: true,
+    connected: true,
+    account: "pranam434",
+    connections: [{ id: "gh_1", account: "pranam434" }],
+  };
+
+  it("offers GitHub alongside the Google services once the workspace is configured for it", () => {
+    const { html } = render({ github: available });
+    expect(html).toContain("GitHub");
+    // GitHub is a user-managed connection, so it carries its own Connect.
+    expect(html).toContain('aria-label="Connect GitHub"');
+  });
+
+  it("hides GitHub entirely when the workspace is not configured for it", () => {
+    // A dead Connect would be worse than no row; not configured is distinct
+    // from configured-but-disconnected, which does show Connect.
+    expect(render({ github: { configured: false, connected: false, connections: [] } }).html).not.toContain("GitHub");
+    expect(render().html).not.toContain("GitHub");
+  });
+
+  it("starts GitHub authorization from its Connect action", () => {
+    const onConnectGithub = vi.fn();
+    const panel = render({ github: available, onConnectGithub });
+    panel.click("Connect GitHub");
+    expect(onConnectGithub).toHaveBeenCalledOnce();
+  });
+
+  it("shows the connected account and a Disconnect once GitHub is linked", () => {
+    const { html } = render({ github: connected }, "?connections=connected");
+    expect(html).toContain("Connected as pranam434");
+    expect(html).toContain('aria-label="Disconnect GitHub from Relay"');
+    expect(html).not.toContain('aria-label="Connect GitHub"');
+  });
+
+  it("revokes GitHub from its Disconnect action", () => {
+    const onDisconnectGithub = vi.fn();
+    const panel = render({ github: connected, onDisconnectGithub }, "?connections=connected");
+    panel.click("Disconnect GitHub from Relay");
+    expect(onDisconnectGithub).toHaveBeenCalledOnce();
+  });
+});
+
 describe("connectionViews", () => {
   it("offers every shipped service until one is authenticated", () => {
     const views = connectionViews(CONNECTION_SERVICES, []);
@@ -142,6 +187,14 @@ describe("connectionViews", () => {
     // One row per service, not per account.
     expect(views.accountsByService.get("gmail")?.map((account) => account.email))
       .toEqual(["me@houseof434.com", "other@houseof434.com"]);
+  });
+
+  it("treats a service in connectedExternally as connected without a Google account", () => {
+    // GitHub's connected state is reported by the BFF, not an account list, so
+    // it reaches the same rows through this set.
+    const views = connectionViews([...CONNECTION_SERVICES, GITHUB_SERVICE], [], "", new Set(["github"]));
+    expect(views.connected.map((service) => service.id)).toEqual(["github"]);
+    expect(views.available.map((service) => service.id)).toEqual(["gmail", "google-calendar"]);
   });
 
   it("narrows both views by the search text", () => {

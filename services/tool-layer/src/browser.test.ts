@@ -113,6 +113,8 @@ async function callTool(
 test("authenticated scout sees browser tools; others do not", async () => {
   useBladeEnv();
   assert.deepEqual(await toolNames("scout", assertionFor(ALICE, "scout")), [
+    "arxiv_get",
+    "arxiv_search",
     "browser_extract",
     "browser_open",
     "browser_read",

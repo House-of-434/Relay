@@ -3,7 +3,6 @@ import { z } from "zod";
 
 import type { RelayAgentRole } from "./actor-assertion.ts";
 import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
-import { ConnectorStateStore } from "./connector-state.ts";
 import { GitHubConnectionStore } from "./github-connections.ts";
 import { GitHubApiError, GitHubAppGateway } from "./github-api.ts";
 
@@ -46,7 +45,6 @@ const releasesSchema = z.object({ repo, limit }).strict();
 export interface InternalGitHubOptions {
   capability: string;
   actorSecret: string | undefined;
-  connectorState: ConnectorStateStore;
   connections: GitHubConnectionStore;
   app: GitHubAppGateway;
   now?: () => number;
@@ -105,9 +103,10 @@ async function resolveInstallation(options: InternalGitHubOptions, userId: strin
 
 /**
  * GitHub is reachable only for a verified actor, and only when that user has
- * enabled the connector and connected an installation. Installation tokens are
- * minted per request by the app gateway and never leave the BFF. A caller can
- * never name a user, installation, or token.
+ * connected an installation. The connection is the only gate: there is no
+ * separate enable flag. Installation tokens are minted per request by the app
+ * gateway and never leave the BFF. A caller can never name a user, installation,
+ * or token.
  */
 export async function handleInternalGitHub(
   req: IncomingMessage,
@@ -124,11 +123,6 @@ export async function handleInternalGitHub(
     return;
   }
 
-  const enablement = await options.connectorState.get(actor.userId);
-  if (!enablement.github) {
-    jsonResponse(res, 409, { error: "GitHub is disabled for this account" });
-    return;
-  }
   const installationId = await resolveInstallation(options, actor.userId);
   if (installationId === undefined) {
     jsonResponse(res, 409, { error: "GitHub is not connected for this user" });

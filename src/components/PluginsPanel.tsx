@@ -1,26 +1,28 @@
 // Relay's connections marketplace.
 //
-// The catalog is Relay's, not the user's: Gmail and Google Calendar ship
-// preconfigured, and a teammate's job is to authenticate their own Google
-// account against one of them. There is no connector marketplace to browse and
-// no teammate-managed MCP server list — Relay mounts its own agent routes from
-// the workspace, so reaching data beyond these services is a request to the
-// team who runs the workspace.
+// The catalog is Relay's, not the user's: Gmail, Google Calendar, and GitHub
+// ship preconfigured, and a teammate's job is to authenticate their own account
+// against one of them. There is no connector marketplace to browse and no
+// teammate-managed MCP server list — Relay mounts its own agent routes from the
+// workspace, so reaching data beyond these services is a request to the team
+// who runs the workspace.
 //
 // Two views, the pair this panel has always had: what you can connect
-// (Available) and what you have connected (Connected). Connectors are for a
-// single Google account: a connected service is one row whose action
-// disconnects it, never a list of accounts to choose between.
+// (Available) and what you have connected (Connected). A connected service is
+// one row whose action disconnects it, never a list of accounts to choose
+// between. GitHub differs only in where its connection state comes from: the
+// BFF reports it (there can be several installations), so its row is derived
+// from that authoritative response rather than from the Google account list.
 import { type ReactNode, useEffect, useState } from "react";
 import { Loader2, Search, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useStore } from "@/state/store";
-import { GmailMark, GoogleCalendarMark } from "./ProviderIcons";
+import { GithubMark, GmailMark, GoogleCalendarMark } from "./ProviderIcons";
 
 export interface ConnectionService {
-  id: "gmail" | "google-calendar";
+  id: "gmail" | "google-calendar" | "github";
   /** Product names, not copy: these are never translated. */
   label: string;
   detail: string;
@@ -46,6 +48,17 @@ export const CONNECTION_SERVICES: readonly ConnectionService[] = [
   },
 ];
 
+/** GitHub joins the catalog only once the workspace is configured for it, so an
+ *  unconfigured workspace shows no row at all rather than a dead Connect. It is
+ *  a user-managed connection like the Google services; the install flow decides
+ *  which repositories Relay may read. */
+export const GITHUB_SERVICE: ConnectionService = {
+  id: "github",
+  label: "GitHub",
+  detail: "Relay can read the repositories, issues, and releases you grant. Connecting authorizes the installation on GitHub first.",
+  icon: <GithubMark size={22} />,
+};
+
 /** One authenticated Google account on a service. Tokens never reach the
  *  client, so the account is identified by the address Google reports and
  *  nothing else. */
@@ -57,14 +70,18 @@ export interface ConnectionAccount {
 
 export type ConnectionView = "available" | "connected";
 
-/** Which services land in which view. A service is Available until the signed-in
- *  teammate has at least one authenticated account on it, and Connected
- *  afterwards — one service, one row, whichever side of the pair it belongs on.
- *  Pure so the split is testable without driving the tab state. */
+/** Which services land in which view. A service is Available until it is
+ *  connected and Connected afterwards — one service, one row, whichever side of
+ *  the pair it belongs on. Google services count as connected once the teammate
+ *  has an authenticated account; GitHub's connection state is not an account
+ *  list, so the BFF reports it and the caller passes those ids in
+ *  `connectedExternally`. Pure so the split is testable without driving the tab
+ *  state. */
 export function connectionViews(
   services: readonly ConnectionService[],
   accounts: readonly ConnectionAccount[],
   query = "",
+  connectedExternally: ReadonlySet<ConnectionService["id"]> = new Set(),
 ) {
   const needle = query.trim().toLowerCase();
   const matches = (service: ConnectionService) =>
@@ -74,12 +91,23 @@ export function connectionViews(
   for (const account of accounts) {
     accountsByService.set(account.service, [...(accountsByService.get(account.service) ?? []), account]);
   }
-  const connected = services.filter((service) => (accountsByService.get(service.id)?.length ?? 0) > 0);
+  const isConnected = (service: ConnectionService) =>
+    (accountsByService.get(service.id)?.length ?? 0) > 0 || connectedExternally.has(service.id);
   return {
     accountsByService,
-    connected: connected.filter(matches),
-    available: services.filter((service) => !accountsByService.get(service.id)?.length && matches(service)),
+    connected: services.filter(isConnected).filter(matches),
+    available: services.filter((service) => !isConnected(service) && matches(service)),
   };
+}
+
+/** GitHub's connection as the BFF reports it: whether the workspace is set up
+ *  for it, whether the teammate has linked an installation, and the
+ *  installations Disconnect must revoke. */
+export interface GithubConnection {
+  configured: boolean;
+  connected: boolean;
+  account?: string;
+  connections: readonly { id: string; account: string }[];
 }
 
 export interface PluginsPanelProps {
@@ -93,9 +121,17 @@ export interface PluginsPanelProps {
   /** Revokes every grant held on one service: the panel's rows are services,
    *  so its Disconnect is service-scoped too. */
   onDisconnect: (accounts: readonly ConnectionAccount[]) => void | Promise<void>;
+  /** GitHub's connection state from the BFF. Omitted until it is known, so the
+   *  panel renders exactly as before GitHub existed. */
+  github?: GithubConnection;
+  onConnectGithub?: () => void | Promise<void>;
+  onDisconnectGithub?: () => void | Promise<void>;
 }
 
-export function PluginsPanel({ accounts, configured, loading = false, error, onConnect, onDisconnect }: PluginsPanelProps) {
+export function PluginsPanel({
+  accounts, configured, loading = false, error, onConnect, onDisconnect,
+  github, onConnectGithub, onDisconnectGithub,
+}: PluginsPanelProps) {
   const { dispatch } = useStore();
   const [view, setView] = useState<ConnectionView>(() => {
     if (typeof window === "undefined") return "available";
@@ -115,37 +151,56 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  const { accountsByService, available, connected } = connectionViews(CONNECTION_SERVICES, accounts, query);
+  // GitHub joins the catalog only when the workspace is configured for it; an
+  // unconfigured workspace shows no row at all rather than a dead Connect.
+  const githubConfigured = Boolean(github?.configured);
+  const services: readonly ConnectionService[] = githubConfigured
+    ? [...CONNECTION_SERVICES, GITHUB_SERVICE]
+    : CONNECTION_SERVICES;
+  const externallyConnected = new Set<ConnectionService["id"]>(github?.connected ? ["github"] : []);
+  const { accountsByService, available, connected } = connectionViews(services, accounts, query, externallyConnected);
 
-  const connect = async (service: ConnectionService["id"]) => {
-    if (!configured[service] || pending) return;
-    setPending(service);
+  const isConfigured = (service: ConnectionService) =>
+    service.id === "github" ? githubConfigured : Boolean(configured[service.id]);
+
+  const connect = async (service: ConnectionService) => {
+    if (!isConfigured(service) || pending) return;
+    setPending(service.id);
     setActionError(null);
     try {
-      await onConnect(service);
+      // GitHub's Connect leaves Relay for GitHub, so like Google's it resolves
+      // only on failure; a success navigates the browser away.
+      await (service.id === "github" ? onConnectGithub?.() : onConnect(service.id));
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : t("connectors.action.failed"));
       setPending(null);
     }
   };
 
-  // Connectors are for one Google account per service, so a connected service
-  // is a single row whose Disconnect removes the service from Relay — every
-  // grant held on it, so a leftover second account cannot keep serving mail
-  // behind a confirmation that says access ends.
+  // A connected service is a single row whose Disconnect removes the service
+  // from Relay — every grant held on it, so a leftover second account or
+  // installation cannot keep serving data behind a confirmation that says
+  // access ends.
   const disconnect = async (service: ConnectionService, accounts: readonly ConnectionAccount[]) => {
     if (pending) return;
     if (!window.confirm(t("connectors.disconnectConfirm", { service: service.label }))) return;
     setPending(service.id);
     setActionError(null);
     try {
-      await onDisconnect(accounts);
+      await (service.id === "github" ? onDisconnectGithub?.() : onDisconnect(accounts));
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : t("connectors.action.failed"));
     } finally {
       setPending(null);
     }
   };
+
+  // GitHub is the one row that names its connected account: its identity comes
+  // from the installation the BFF reported, not from the Google account list.
+  const rowNote = (service: ConnectionService) =>
+    service.id === "github" && github?.account
+      ? t("connectors.github.connected", { account: github.account })
+      : undefined;
 
   return (
     <div
@@ -212,15 +267,16 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
             ? available.length === 0
               ? <EmptyState />
               : available.map((service) => (
-                <ServiceRow key={service.id} service={service} action={
+                <ServiceRow key={service.id} service={service} note={rowNote(service)} action={
                   <button
                     type="button"
-                    disabled={!configured[service.id] || pending !== null}
-                    title={configured[service.id] ? undefined : t("connectors.notConfiguredYet")}
-                    onClick={() => void connect(service.id)}
+                    disabled={!isConfigured(service) || pending !== null}
+                    title={isConfigured(service) ? undefined : t("connectors.notConfiguredYet")}
+                    aria-label={t("connectors.connectAria", { service: service.label })}
+                    onClick={() => void connect(service)}
                     className="flex min-w-[88px] shrink-0 items-center justify-center rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
                   >
-                    {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : configured[service.id] ? t("connectors.action.connect") : t("connectors.comingSoon")}
+                    {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : isConfigured(service) ? t("connectors.action.connect") : t("connectors.comingSoon")}
                   </button>
                 } />
               ))
@@ -230,7 +286,7 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
             : connected.map((service) => {
                 const accounts = accountsByService.get(service.id) ?? [];
                 return (
-                  <ServiceRow key={service.id} service={service} action={
+                  <ServiceRow key={service.id} service={service} note={rowNote(service)} action={
                     <button
                       type="button"
                       disabled={pending !== null}
@@ -249,9 +305,10 @@ export function PluginsPanel({ accounts, configured, loading = false, error, onC
   );
 }
 
-function ServiceRow({ service, action }: {
+function ServiceRow({ service, action, note }: {
   service: ConnectionService;
   action: ReactNode;
+  note?: string;
 }) {
   return (
     <section className="border-b border-hairline/35 py-4 last:border-b-0">
@@ -262,6 +319,7 @@ function ServiceRow({ service, action }: {
         <div className="min-w-0 flex-1">
           <div className="truncate text-[14px] font-medium text-ink">{service.label}</div>
           <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{service.detail}</div>
+          {note && <div className="mt-0.5 text-[12px] text-ink-secondary">{note}</div>}
         </div>
         {action}
       </div>

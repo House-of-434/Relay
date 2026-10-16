@@ -3,7 +3,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { Agent } from "../domain/permissions.js";
 import { authorizeArxiv } from "../domain/permissions.js";
-import type { ArxivProvider } from "../infra/arxiv.js";
+import { ARXIV_MAX_OFFSET, type ArxivProvider } from "../infra/arxiv.js";
 
 export interface ArxivToolContext {
   provider: ArxivProvider;
@@ -23,15 +23,18 @@ export function registerArxivTools(server: McpServer, agent: Agent, context: Arx
     "arxiv_search",
     {
       description:
-        "Search arXiv for research papers. Combine a free-text query with optional title, author, or category filters and a submission date range. Returns normalized results (source, canonical URL, authors, dates, abstract) for citation.",
+        "Search arXiv for research papers. Combine a free-text query with optional abstract, title, author, or category filters and a submission date range. Order and page results with sort, order, offset, and limit. Returns normalized results (source, canonical URL, authors, dates, abstract) plus a PDF link and journal reference where available, for citation.",
       inputSchema: {
         query: z.string().max(512).optional(),
+        abstract: z.string().max(512).optional(),
         title: z.string().max(256).optional(),
         author: z.string().max(256).optional(),
         category: z.string().max(64).optional(),
         from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
         sort: z.enum(["relevance", "submitted", "updated"]).optional(),
+        order: z.enum(["ascending", "descending"]).optional(),
+        offset: z.number().int().min(0).max(ARXIV_MAX_OFFSET).optional(),
         limit: z.number().int().min(1).max(50).optional(),
       },
       annotations: { readOnlyHint: true },

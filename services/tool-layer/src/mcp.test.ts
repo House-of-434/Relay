@@ -45,7 +45,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["browser_extract", "browser_open", "browser_read", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_search"]);
+<    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["arxiv_get", "arxiv_search", "browser_extract", "browser_open", "browser_read", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_search"]);
 
     const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
     assert.equal(read.isError, undefined);
@@ -201,6 +201,8 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
   // Scout additionally holds the research capabilities, visible only to an
   // authenticated caller; Curator holds none.
   assert.deepEqual(await names("scout"), [
+    "arxiv_get",
+    "arxiv_search",
     "browser_extract",
     "browser_open",
     "browser_read",

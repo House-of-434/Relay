@@ -109,7 +109,12 @@ test("scout gets the full research loop; others get no search or browser", async
   useResearchEnv();
   const scout = await session("scout", assertionFor(ALICE, "scout"));
   try {
+    // arXiv is a public built-in, so an authenticated Scout always sees it.
+    // SEC is absent only because RELAY_SEC_USER_AGENT is unset in this test;
+    // GitHub is absent because no installation is connected.
     assert.deepEqual(scout.tools, [
+      "arxiv_get",
+      "arxiv_search",
       "browser_extract",
       "browser_open",
       "browser_read",
@@ -202,3 +207,31 @@ test("provider failure is honest, never an empty success", async () => {
     await scout.close();
   }
 });
+
+test("a configured SEC user-agent advertises every EDGAR tool to scout", async () => {
+  useResearchEnv();
+  const saved = process.env.RELAY_SEC_USER_AGENT;
+  process.env.RELAY_SEC_USER_AGENT = "Relay Test (test@example.com)";
+  try {
+    const scout = await session("scout", assertionFor(ALICE, "scout"));
+    try {
+      for (const tool of [
+        "sec_resolve_company",
+        "sec_search_filings",
+        "sec_search_text",
+        "sec_get_filing",
+        "sec_company_facts",
+        "sec_compare_facts",
+        "sec_frames",
+      ]) {
+        assert.ok(scout.tools.includes(tool), tool);
+      }
+    } finally {
+      await scout.close();
+    }
+  } finally {
+    if (saved === undefined) delete process.env.RELAY_SEC_USER_AGENT;
+    else process.env.RELAY_SEC_USER_AGENT = saved;
+  }
+});
+

@@ -41,6 +41,7 @@ export const SPAWNED_PROXIES = {
   agents: resolveProxy("drivers/agents-proxy"),
   dweb: resolveProxy("drivers/dweb-proxy"),
   connectors: resolveProxy("connector-proxy"),
+  relayTool: resolveProxy("relay-tool-proxy"),
   mcpGate: resolveProxy("mcp-gate"),
   phone: resolveProxy("drivers/phone-proxy"),
   hook: resolveProxy("hooks/relay-hook"),

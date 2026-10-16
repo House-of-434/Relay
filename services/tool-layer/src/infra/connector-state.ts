@@ -1,22 +1,19 @@
-/** Per-actor connector enablement, resolved from the BFF.
+/** Per-actor GitHub connection state, resolved from the BFF.
  *
- * Enablement is a per-user setting, so it can only be read server-side from a
- * verified actor. The Tool Layer asks the BFF once per MCP request and uses the
- * answer to decide which connector tools to offer. A disabled connector is
- * therefore never registered, and the BFF refuses it again on the call. If the
- * BFF cannot be reached, every connector is treated as disabled: fail closed,
- * never expose a tool whose policy could not be checked. */
+ * GitHub is the one research connector behind a per-user connection, so its
+ * connected state can only be read server-side from a verified actor. The Tool
+ * Layer asks the BFF once per MCP request and offers GitHub tools only when an
+ * installation is linked; the BFF refuses the call again. If the BFF cannot be
+ * reached, GitHub is treated as not connected: fail closed. arXiv and SEC are
+ * public built-ins with no per-user state, so they are decided in-process and
+ * are unaffected by this call. */
 
 export interface ConnectorState {
-  arxiv: { enabled: boolean };
-  sec: { enabled: boolean };
-  github: { enabled: boolean; connected: boolean };
+  github: { connected: boolean };
 }
 
 export const NO_CONNECTORS: ConnectorState = {
-  arxiv: { enabled: false },
-  sec: { enabled: false },
-  github: { enabled: false, connected: false },
+  github: { connected: false },
 };
 
 export interface ConnectorStateClientOptions {
@@ -36,7 +33,7 @@ export class ConnectorStateClient {
     this.fetcher = options.fetcher ?? fetch;
   }
 
-  /** Returns the actor's enablement, or NO_CONNECTORS when it cannot be
+  /** Returns the actor's connection state, or NO_CONNECTORS when it cannot be
    * established. Never throws: a failure must not take down relay_read/write. */
   async state(actorAssertion: string): Promise<ConnectorState> {
     if (typeof this.capability !== "string" || Buffer.byteLength(this.capability) < 32) return NO_CONNECTORS;
@@ -54,7 +51,7 @@ export class ConnectorStateClient {
       if (!response.ok) return NO_CONNECTORS;
       return parseConnectorState(await response.json());
     } catch {
-      console.error("[relay-tools] connector state unavailable; exposing no connectors this request");
+      console.error("[relay-tools] GitHub connection state unavailable; offering no GitHub tools this request");
       return NO_CONNECTORS;
     }
   }
@@ -66,12 +63,5 @@ function bool(value: unknown, key: string): boolean {
 
 export function parseConnectorState(raw: unknown): ConnectorState {
   const value = (raw ?? {}) as Record<string, unknown>;
-  return {
-    arxiv: { enabled: bool(value.arxiv, "enabled") },
-    sec: { enabled: bool(value.sec, "enabled") },
-    github: {
-      enabled: bool(value.github, "enabled"),
-      connected: bool(value.github, "connected"),
-    },
-  };
+  return { github: { connected: bool(value.github, "connected") } };
 }

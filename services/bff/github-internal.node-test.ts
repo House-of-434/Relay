@@ -8,7 +8,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { ConnectorStateStore } from "./connector-state.ts";
 import { GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
 import type { GitHubAppGateway } from "./github-api.ts";
 import { handleInternalGitHub, INTERNAL_GITHUB_ISSUES_SEARCH, INTERNAL_GITHUB_RELEASES } from "./github-internal.ts";
@@ -36,8 +35,6 @@ function actorAssertion(): string {
 async function createFixture(items: Array<Record<string, unknown>>) {
   const dataDir = mkdtempSync(join(tmpdir(), "relay-github-internal-"));
   cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
-  const connectorState = new ConnectorStateStore({ dataDir });
-  await connectorState.set(USER_ID, "github", true);
   const connections = new GitHubConnectionStore({ dataDir });
   await connections.save({
     id: githubConnectionId(INSTALLATION_ID),
@@ -58,7 +55,6 @@ async function createFixture(items: Array<Record<string, unknown>>) {
     void handleInternalGitHub(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      connectorState,
       connections,
       app,
     });
@@ -111,8 +107,6 @@ test("issues without a usable repository are dropped instead of becoming ambiguo
 test("releases carry the requested repository so citations cannot collide across repos", async () => {
   const dataDir = mkdtempSync(join(tmpdir(), "relay-github-releases-"));
   cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
-  const connectorState = new ConnectorStateStore({ dataDir });
-  await connectorState.set(USER_ID, "github", true);
   const connections = new GitHubConnectionStore({ dataDir });
   await connections.save({
     id: githubConnectionId(INSTALLATION_ID),
@@ -132,7 +126,6 @@ test("releases carry the requested repository so citations cannot collide across
     void handleInternalGitHub(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      connectorState,
       connections,
       app,
     });

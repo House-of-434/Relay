@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 
 import type { RelayAgentRole } from "../packages/relay-shared/relay-agent.ts";
-import type { McpServerSpec, RemoteMcpSpec } from "./contracts.ts";
+import type { McpServerSpec, RemoteMcpSpec, StdioMcpSpec } from "./contracts.ts";
 
 export type RelayAgent = RelayAgentRole;
 
@@ -11,6 +11,11 @@ const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const ASSERTION_KEYS = "botId,issuedAt,signature,threadId,userId";
 /** Assertions older than this are rejected. Must match services/tool-layer. */
 const ASSERTION_MAX_SKEW_SECONDS = 5 * 60;
+
+/** Env marker on the stdio proxy that fronts the Tool Layer. It lets the
+ * drivers recognize the harness-owned Relay route — and pre-allow its tools —
+ * without trusting a name or a URL alone. */
+export const RELAY_TOOL_PROXY_MARKER = "RELAY_RELAY_TOOL_PROXY";
 
 /** Fixed HMAC input prefix. Must match services/tool-layer and services/bff. */
 const ACTOR_ASSERTION_PURPOSE = "relay-actor";
@@ -87,11 +92,10 @@ export function verifyActorAssertion(
   return { userId: assertion.userId, botId: assertion.botId, threadId: assertion.threadId };
 }
 
-/** Construct the private Tool Layer route; users do not configure Relay MCP
- * servers in the Plugins UI. The harness connects either to a loopback
- * child process or to the compose-network Tool Layer service; authentication
- * is the HMAC actor assertion, never the URL. */
-export function relayToolMcpServer(agent: RelayAgent, baseUrl: string): RemoteMcpSpec {
+/** Validate RELAY_TOOL_URL as a bare http(s) origin and return it, so both the
+ * proxy spec and the startup smoke check agree on what a valid Tool Layer
+ * address is. */
+function relayToolOrigin(baseUrl: string): string {
   let url: URL;
   try { url = new URL(baseUrl); }
   catch { throw new Error("RELAY_TOOL_URL must be an http origin"); }
@@ -99,7 +103,42 @@ export function relayToolMcpServer(agent: RelayAgent, baseUrl: string): RemoteMc
       (url.pathname !== "/" && url.pathname !== "") || url.username || url.password || url.search || url.hash) {
     throw new Error("RELAY_TOOL_URL must be an http(s) origin with no path, credentials, query, or hash");
   }
-  return { type: "http", url: `${url.origin}/mcp/${agent}`, headers: {} };
+  return url.origin;
+}
+
+/** The private Tool Layer transport; users do not configure Relay MCP servers
+ * in the Plugins UI. Kept as the URL validator and for compose-network smoke
+ * checks — the actor's own calls ride the signed stdio proxy below. */
+export function relayToolMcpServer(agent: RelayAgent, baseUrl: string): RemoteMcpSpec {
+  return { type: "http", url: `${relayToolOrigin(baseUrl)}/mcp/${agent}`, headers: {} };
+}
+
+/** Construct the harness-owned stdio proxy for the Tool Layer route. The
+ * engine holds only a turn-scoped capability token, never the actor secret:
+ * the proxy asks the harness to sign one short-lived assertion per forwarded
+ * call, so a turn that runs past the assertion window never presents a stale
+ * one. Authentication is that per-call HMAC assertion, never the URL. */
+export function relayToolProxySpec(input: {
+  agent: RelayAgent;
+  toolUrl: string;
+  harnessUrl: string;
+  token: string;
+  proxyPath: string;
+}): StdioMcpSpec {
+  const origin = relayToolOrigin(input.toolUrl);
+  return {
+    command: process.execPath,
+    args: [input.proxyPath],
+    env: {
+      // In the packaged app process.execPath is Electron — run the proxy as node.
+      ELECTRON_RUN_AS_NODE: "1",
+      [RELAY_TOOL_PROXY_MARKER]: "1",
+      RELAY_HARNESS_URL: input.harnessUrl,
+      RELAY_TOOL_URL: origin,
+      RELAY_TOOL_TOKEN: input.token,
+      RELAY_AGENT: input.agent,
+    },
+  };
 }
 
 function relayRoute(urlText: string): RelayAgent | "invalid" | null {
@@ -114,52 +153,46 @@ function relayRoute(urlText: string): RelayAgent | "invalid" | null {
   return route as RelayAgent;
 }
 
-export function isRelayMcpServer(name: string, server: McpServerSpec): boolean {
-  if (!("url" in server)) return false;
-  const route = relayRoute(server.url);
-  return route !== null && route !== "invalid" && name === `relay-${route}` && server.type !== "sse";
+/** The owner a Relay call may be signed for: the bot's own owner, and only when
+ * the thread really belongs to that owner — the bot's own chat or task, or a
+ * room this account owns. A thread resolving to another owner (or none) is
+ * never signed, so neither the harness nor the proxy can act across owners. */
+export function relaySigningOwner(
+  bot: { ownerUserId?: string },
+  threadOwnerUserId: string | undefined,
+): string | undefined {
+  return bot.ownerUserId && threadOwnerUserId === bot.ownerUserId ? bot.ownerUserId : undefined;
 }
 
-/** Keep the Relay endpoints in the harness-owned bot role, and attach the
- * bot's owner identity outside the model's tool arguments. The role comes from
- * the bot's own relayAgent tag, so every account's Scout binds /mcp/scout.
- * Other custom MCP servers pass through unchanged. */
+/** A server is the Relay route either because it is the signed stdio proxy the
+ * harness built, or — defensively — a configured entry that names a Relay
+ * route. Only the first is mounted; the second is dropped. */
+export function isRelayMcpServer(name: string, server: McpServerSpec): boolean {
+  if ("url" in server) {
+    const route = relayRoute(server.url);
+    return route !== null && route !== "invalid" && name === `relay-${route}` && server.type !== "sse";
+  }
+  const agent = server.env?.RELAY_AGENT;
+  return server.env?.[RELAY_TOOL_PROXY_MARKER] === "1" &&
+    typeof agent === "string" && AGENTS.has(agent as RelayAgent) && name === `relay-${agent}`;
+}
+
+/** Mount the harness-owned Relay route (the signed stdio proxy) in the bot's
+ * own role. The role comes from the bot's own relayAgent tag, so every
+ * account's Scout binds relay-scout. A configured entry that masquerades as a
+ * Relay route is refused; other custom MCP servers pass through unchanged. */
 export function bindRelayMcpForBot(
-  botId: string,
   role: RelayAgent | undefined,
-  ownerUserId: string | undefined,
-  threadId: string | undefined,
   configured: Record<string, McpServerSpec>,
-  toolUrl?: string,
+  relaySpec?: McpServerSpec,
 ): Record<string, McpServerSpec> {
   const result: Record<string, McpServerSpec> = {};
-  const serversForBot = role && toolUrl
-    ? { ...configured, [`relay-${role}`]: relayToolMcpServer(role, toolUrl) }
+  const serversForBot = role && relaySpec && isRelayMcpServer(`relay-${role}`, relaySpec)
+    ? { ...configured, [`relay-${role}`]: relaySpec }
     : configured;
   for (const [name, server] of Object.entries(serversForBot)) {
-    if (!("url" in server)) {
-      result[name] = server;
-      continue;
-    }
-    const route = relayRoute(server.url);
-    if (!route) {
-      result[name] = server;
-      continue;
-    }
-    if (route === "invalid" || role !== route || !isRelayMcpServer(name, server)) continue;
-
-    const headers = Object.fromEntries(
-      Object.entries(server.headers).filter(([key]) =>
-        key.toLowerCase() !== "x-relay-actor-user" && key.toLowerCase() !== "authorization"),
-    );
-    if (ownerUserId && threadId) {
-      headers["x-relay-actor-user"] = signedActorContext(
-        { userId: ownerUserId, botId, threadId, agent: role },
-        process.env.RELAY_TOOL_ACTOR_SECRET,
-      );
-    }
-    result[name] = { ...server, headers } as RemoteMcpSpec;
+    if ("url" in server && relayRoute(server.url) !== null) continue;
+    result[name] = server;
   }
-
   return result;
 }

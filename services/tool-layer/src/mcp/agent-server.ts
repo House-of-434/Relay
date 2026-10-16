@@ -35,13 +35,13 @@ export interface RelayScribeContext {
   actorAssertion: string;
 }
 
-/** Per-actor research connectors. Each entry carries both the provider and
- * whether that user enabled the connector; a disabled connector is never
- * registered. GitHub also requires a connected installation. */
+/** Per-actor research connectors. arXiv and SEC are public built-ins, so their
+ * presence is the provider alone. GitHub is a user-managed connection, so it is
+ * present only once the teammate has connected an installation. */
 export interface ConnectorToolContext {
-  arxiv?: { enabled: boolean; provider: ArxivProvider } | undefined;
-  sec?: { enabled: boolean; provider: SecProvider } | undefined;
-  github?: { enabled: boolean; connected: boolean; client: RelayGitHubClient; actorAssertion: string } | undefined;
+  arxiv?: { provider: ArxivProvider } | undefined;
+  sec?: { provider: SecProvider } | undefined;
+  github?: { client: RelayGitHubClient; actorAssertion: string } | undefined;
 }
 
 function toolError(error: unknown) {
@@ -150,17 +150,17 @@ export function createAgentMcpServer(
   // filters plus the readiness rule above) so one general tool covers it;
   // search/transcript tools stay separate — they read segment text, which
   // relay_read deliberately cannot.
-  // Research connectors: visibility matches authorization and per-user
-  // enablement. A connector disabled for this user, or (for GitHub) not
-  // connected, is never registered — so a disabled connector has no tool to
-  // call. Each handler authorizes again on the call itself.
-  if (connectors?.arxiv?.enabled && userId && ARXIV_PERMISSIONS[agent].length > 0) {
+  // Research connectors: visibility matches authorization. arXiv and SEC are
+  // public built-ins, so an authenticated Scout sees them whenever the operator
+  // configured them; only a connected installation makes GitHub visible. Each
+  // handler authorizes again on the call itself.
+  if (connectors?.arxiv && userId && ARXIV_PERMISSIONS[agent].length > 0) {
     registerArxivTools(server, agent, { provider: connectors.arxiv.provider });
   }
-  if (connectors?.sec?.enabled && userId && SEC_PERMISSIONS[agent].length > 0) {
+  if (connectors?.sec && userId && SEC_PERMISSIONS[agent].length > 0) {
     registerSecTools(server, agent, { provider: connectors.sec.provider });
   }
-  if (connectors?.github?.enabled && connectors.github.connected && userId && GITHUB_PERMISSIONS[agent].length > 0) {
+  if (connectors?.github && userId && GITHUB_PERMISSIONS[agent].length > 0) {
     registerGithubTools(server, agent, {
       client: connectors.github.client,
       actorAssertion: connectors.github.actorAssertion,

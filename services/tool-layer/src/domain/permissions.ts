@@ -220,11 +220,13 @@ export function authorizeArxiv(agent: Agent, capability: ArxivCapability): void 
   }
 }
 
-/** SEC EDGAR research capability: CIK resolution, filing search, company facts. */
-export type SecCapability = "resolve" | "filings" | "facts";
+/** SEC EDGAR research capability: CIK resolution, filing search, company facts,
+ * full-text filing search, reading a filing document, XBRL frames, and
+ * cross-company fact comparison. */
+export type SecCapability = "resolve" | "filings" | "facts" | "text" | "filing" | "frames" | "compare";
 
 export const SEC_PERMISSIONS: Record<Agent, readonly SecCapability[]> = {
-  scout: ["resolve", "filings", "facts"],
+  scout: ["resolve", "filings", "facts", "text", "filing", "frames", "compare"],
   mercury: [],
   curator: [],
 };

@@ -190,37 +190,37 @@ let sharedBladePool: BladeBrowserPool | null = null;
 let sharedArxiv: { userAgent: string; provider: ArxivProvider } | null = null;
 let sharedSec: { userAgent: string; provider: SecProvider } | null = null;
 
-/** Read the actor's per-user connector enablement and build the tool contexts.
- * A connector disabled for this user is omitted, so its tools are not offered.
- * SEC is omitted when its required fair-access User-Agent is unconfigured. */
+/** Build the research-connector tool contexts. arXiv and SEC are public
+ * built-ins, always offered to an authenticated Scout (SEC still fails closed
+ * when its required fair-access User-Agent is unconfigured). GitHub is a
+ * user-managed connection, so it is offered only when the BFF reports a linked
+ * installation for this actor. */
 async function buildConnectors(
   actorAssertion: string,
   bffInternalUrl: string,
   capability: string | undefined,
 ): Promise<ConnectorToolContext> {
-  const state = await new ConnectorStateClient({ bffInternalUrl, capability }).state(actorAssertion);
   const connectors: ConnectorToolContext = {};
-  if (state.arxiv.enabled) {
-    const { userAgent } = arxivConfig();
-    if (!sharedArxiv || sharedArxiv.userAgent !== userAgent) {
-      sharedArxiv = { userAgent, provider: new ArxivProvider({ userAgent }) };
-    }
-    connectors.arxiv = { enabled: true, provider: sharedArxiv.provider };
+
+  const { userAgent: arxivUserAgent } = arxivConfig();
+  if (!sharedArxiv || sharedArxiv.userAgent !== arxivUserAgent) {
+    sharedArxiv = { userAgent: arxivUserAgent, provider: new ArxivProvider({ userAgent: arxivUserAgent }) };
   }
-  if (state.sec.enabled) {
-    const { userAgent } = secConfig();
-    if (userAgent) {
-      if (!sharedSec || sharedSec.userAgent !== userAgent) {
-        sharedSec = { userAgent, provider: new SecProvider({ userAgent }) };
-      }
-      connectors.sec = { enabled: true, provider: sharedSec.provider };
+  connectors.arxiv = { provider: sharedArxiv.provider };
+
+  const { userAgent: secUserAgent } = secConfig();
+  if (secUserAgent) {
+    if (!sharedSec || sharedSec.userAgent !== secUserAgent) {
+      sharedSec = { userAgent: secUserAgent, provider: new SecProvider({ userAgent: secUserAgent }) };
     }
-    else console.error("[relay-tools] SEC is enabled but RELAY_SEC_USER_AGENT is unset; not offering SEC tools");
+    connectors.sec = { provider: sharedSec.provider };
+  } else {
+    console.error("[relay-tools] RELAY_SEC_USER_AGENT is unset; not offering SEC tools");
   }
-  if (state.github.enabled) {
+
+  const state = await new ConnectorStateClient({ bffInternalUrl, capability }).state(actorAssertion);
+  if (state.github.connected) {
     connectors.github = {
-      enabled: true,
-      connected: state.github.connected,
       client: new RelayGitHubClient({ bffInternalUrl, capability }),
       actorAssertion,
     };

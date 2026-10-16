@@ -11,12 +11,17 @@ import { SerialGate } from "./throttle.js";
 
 export const ARXIV_EXPORT_URL = "https://export.arxiv.org/api/query";
 export const ARXIV_MIN_INTERVAL_MS = 3_000;
+export const ARXIV_MAX_OFFSET = 10_000;
 const ARXIV_DEFAULT_LIMIT = 10;
 const ARXIV_MAX_LIMIT = 50;
 const ABSTRACT_MAX = 3_000;
+const COMMENT_MAX = 1_000;
+const JOURNAL_REF_MAX = 300;
 
 export interface ArxivSearchInput {
   query: string;
+  /** Free-text search restricted to the abstract (arXiv `abs:` field). */
+  abstract?: string;
   title?: string;
   author?: string;
   category?: string;
@@ -25,6 +30,9 @@ export interface ArxivSearchInput {
   /** Inclusive upper bound, YYYY-MM-DD. */
   to?: string;
   sort?: "relevance" | "submitted" | "updated";
+  order?: "ascending" | "descending";
+  /** Zero-based index of the first result, for paging through a result set. */
+  offset?: number;
   limit?: number;
 }
 
@@ -43,6 +51,9 @@ interface ArxivEntry {
   published?: string;
   updated?: string;
   authors: string[];
+  comment?: string;
+  journalRef?: string;
+  pdfUrl?: string;
 }
 
 function decodeXml(value: string): string {
@@ -65,6 +76,20 @@ function canonicalId(rawId: string): string {
   return withoutUrl.replace(/v\d+$/, "");
 }
 
+/** arXiv lists the PDF as a `<link title="pdf" ...>` alternate; attribute order
+ * is not guaranteed, so scan each link tag rather than pattern-matching one. */
+function pdfLink(block: string): string | undefined {
+  for (const match of block.matchAll(/<link\b[^>]*>/g)) {
+    const tag = match[0]!;
+    if (!/\btitle="pdf"/.test(tag)) continue;
+    const href = /\bhref="([^"]*)"/.exec(tag);
+    if (!href) continue;
+    const url = decodeXml(href[1]!);
+    if (isHttpUrl(url)) return url;
+  }
+  return undefined;
+}
+
 export function parseArxivFeed(xml: string): ArxivEntry[] {
   const entries: ArxivEntry[] = [];
   const blocks = xml.match(/<entry>[\s\S]*?<\/entry>/g) ?? [];
@@ -82,12 +107,21 @@ export function parseArxivFeed(xml: string): ArxivEntry[] {
       published: firstTag(block, "published"),
       updated: firstTag(block, "updated"),
       authors,
+      comment: firstTag(block, "arxiv:comment"),
+      journalRef: firstTag(block, "arxiv:journal_ref"),
+      pdfUrl: pdfLink(block),
     });
   }
   return entries;
 }
 
 function toResult(entry: ArxivEntry): ConnectorResult {
+  const metadata: Record<string, unknown> = { provider: "arxiv" };
+  if (entry.pdfUrl) metadata.pdfUrl = entry.pdfUrl;
+  const comment = boundedText(entry.comment, COMMENT_MAX);
+  if (comment) metadata.comment = comment;
+  const journalRef = boundedText(entry.journalRef, JOURNAL_REF_MAX);
+  if (journalRef) metadata.journalRef = journalRef;
   return {
     source: "arxiv",
     sourceId: entry.id,
@@ -97,7 +131,7 @@ function toResult(entry: ArxivEntry): ConnectorResult {
     updatedAt: entry.updated,
     authors: entry.authors.length > 0 ? entry.authors : undefined,
     content: boundedText(entry.summary, ABSTRACT_MAX),
-    metadata: { provider: "arxiv" },
+    metadata,
   };
 }
 
@@ -132,13 +166,14 @@ function buildSearchQuery(input: ArxivSearchInput): string {
   const terms: string[] = [];
   const query = input.query.trim();
   if (query.length > 0) terms.push(`all:${phraseTerm(query)}`);
+  if (input.abstract?.trim()) terms.push(`abs:${phraseTerm(input.abstract.trim())}`);
   if (input.title?.trim()) terms.push(`ti:${phraseTerm(input.title.trim())}`);
   if (input.author?.trim()) terms.push(`au:${phraseTerm(input.author.trim())}`);
   if (input.category?.trim()) terms.push(`cat:${fieldTerm(input.category.trim())}`);
   const from = daysToArxivDate(input.from, false);
   const to = daysToArxivDate(input.to, true);
   if (from || to) terms.push(`submittedDate:[${from ?? "000000000000"} TO ${to ?? "999912312359"}]`);
-  if (terms.length === 0) throw new Error("arxiv_search requires a query, title, author, category, or date range");
+  if (terms.length === 0) throw new Error("arxiv_search requires a query, abstract, title, author, category, or date range");
   return terms.join(" AND ");
 }
 
@@ -165,12 +200,13 @@ export class ArxivProvider {
 
   async search(input: ArxivSearchInput): Promise<ConnectorResult[]> {
     const limit = Math.min(Math.max(input.limit ?? ARXIV_DEFAULT_LIMIT, 1), ARXIV_MAX_LIMIT);
+    const offset = Math.min(Math.max(Math.trunc(input.offset ?? 0), 0), ARXIV_MAX_OFFSET);
     const params = new URLSearchParams({
       search_query: buildSearchQuery(input),
-      start: "0",
+      start: String(offset),
       max_results: String(limit),
       sortBy: SORT_BY[input.sort ?? "relevance"],
-      sortOrder: "descending",
+      sortOrder: input.order ?? "descending",
     });
     const xml = await this.request(`${this.baseUrl}?${params.toString()}`);
     return parseArxivFeed(xml).map(toResult);

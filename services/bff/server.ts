@@ -13,7 +13,6 @@ import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-inter
 import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
 import { handleInternalGitHub, isInternalGitHubPath } from "./github-internal.ts";
 import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
-import { ConnectorStateStore, type ConnectorSource } from "./connector-state.ts";
 import { GitHubConnectionConflictError, GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
 import { GitHubAppGateway } from "./github-api.ts";
 import {
@@ -874,7 +873,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     clients: googleRegistry,
     redirectUri: googleRedirectUri(config, publicUrl)?.toString(),
   });
-  const connectorState = new ConnectorStateStore({ dataDir: config.dataDir });
   const githubConnections = new GitHubConnectionStore({ dataDir: config.dataDir });
   const githubApp = config.githubAppId && config.githubAppPrivateKey
     ? new GitHubAppGateway({ appId: config.githubAppId, privateKey: config.githubAppPrivateKey, fetcher })
@@ -1046,22 +1044,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     return state;
   };
 
-  async function readJsonBody(req: IncomingMessage, maxBytes = 64 * 1024): Promise<Record<string, unknown> | undefined> {
-    const chunks: Buffer[] = [];
-    let size = 0;
-    for await (const chunk of req) {
-      const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-      size += bytes.byteLength;
-      if (size > maxBytes) throw new Error("request body is too large");
-      chunks.push(bytes);
-    }
-    const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : undefined;
-  }
-
-  const sourceForToggle = (slug: string): ConnectorSource | undefined =>
-    slug === "arxiv" ? "arxiv" : slug === "sec" ? "sec-edgar" : slug === "github" ? "github" : undefined;
-
   /** GitHub App install callback. Mirrors the Google callback's binding: the
    * state must match its HttpOnly cookie and the *live* session, so a stolen
    * state cannot attach an installation to another account. */
@@ -1134,42 +1116,15 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     req.resume();
 
     if (url.pathname === "/api/connectors" && method === "GET") {
-      const enablement = await connectorState.get(session.subject);
       const connections = await githubConnections.list(session.subject);
       json(res, 200, {
-        arxiv: { enabled: enablement.arxiv },
-        sec: { enabled: enablement.sec },
         github: {
-          enabled: enablement.github,
           configured: Boolean(githubApp && githubInstallUrl),
           connected: connections.length > 0,
           account: connections.at(-1)?.account,
           connections: connections.map((connection) => ({ id: connection.id, account: connection.account })),
         },
       });
-      return;
-    }
-
-    const toggle = method === "POST" ? /^\/api\/connectors\/(arxiv|sec|github)$/.exec(url.pathname) : null;
-    if (toggle) {
-      if (typeof req.headers.origin !== "string") {
-        reject(req, res, 403, "forbidden");
-        return;
-      }
-      let body: Record<string, unknown> | undefined;
-      try {
-        body = await readJsonBody(req);
-      } catch {
-        json(res, 400, { error: "invalid request body" });
-        return;
-      }
-      const source = sourceForToggle(toggle[1]!);
-      if (!source || typeof body?.enabled !== "boolean") {
-        json(res, 400, { error: "enabled must be a boolean" });
-        return;
-      }
-      const state = await connectorState.set(session.subject, source, body.enabled);
-      json(res, 200, { source: toggle[1], state });
       return;
     }
 
@@ -1197,10 +1152,8 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 
     if (url.pathname === "/api/github/connection" && method === "GET") {
       const connections = await githubConnections.list(session.subject);
-      const enablement = await connectorState.get(session.subject);
       json(res, 200, {
         configured: Boolean(githubApp && githubInstallUrl),
-        enabled: enablement.github,
         connections: connections.map((connection) => ({
           id: connection.id,
           account: connection.account,
@@ -1637,7 +1590,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       url.pathname === "/api/github/connection" ||
       url.pathname === "/api/github/connection/connect" ||
       url.pathname === "/api/github/callback" ||
-      url.pathname.startsWith("/api/connectors/") ||
       url.pathname.startsWith("/api/github/connection/")
     ) {
       await handleConnectorRoutes(req, res, url, method);
@@ -1701,13 +1653,8 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         now,
       }, "/api/internal/connectors/state");
       if (!verified) return;
-      const enablement = await connectorState.get(verified.actor.userId);
       const connected = (await githubConnections.list(verified.actor.userId)).length > 0;
-      jsonResponse(res, 200, {
-        arxiv: { enabled: enablement.arxiv },
-        sec: { enabled: enablement.sec },
-        github: { enabled: enablement.github, connected },
-      });
+      jsonResponse(res, 200, { github: { connected } });
       return;
     }
 
@@ -1719,7 +1666,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       await handleInternalGitHub(req, res, url.pathname, {
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
-        connectorState,
         connections: githubConnections,
         app: githubApp,
         now,
