@@ -57,7 +57,7 @@ and agent tool arguments cannot select actor identity. Direct bearer-user calls
 are verified with Supabase Auth and likewise resolve to the verified user's
 UUID.
 
-Model-controlled browser URLs are restricted to public `http(s)` hosts: the
+Model-controlled browser and web_fetch URLs are restricted to public `http(s)` hosts: the
 Tool Layer refuses loopback, private, link-local, and cloud-metadata targets
 (including numeric obfuscations). Redirect and DNS-rebinding containment inside
 the headful browser belongs to the egress proxy allowlist (`BLADE_PROXY`).

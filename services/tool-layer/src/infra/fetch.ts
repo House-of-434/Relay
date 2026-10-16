@@ -2,9 +2,10 @@
  *
  * Scout sees one capability (`web_fetch`) returning clean page text. Which
  * provider answers is Tool Layer infrastructure; the model never learns
- * provider names, credentials, or flags. This is the cheap path for quick,
- * mostly-static pages; the browser tools remain the path for pages that need
- * interaction or are walled. Provider-native fields that do not survive the
+ * provider names, credentials, or flags. This is the default path for ordinary
+ * page reads, including JavaScript-rendered pages; the browser tools remain
+ * the escalation path for pages that need interaction, persistent state, or
+ * structured extraction. Provider-native fields that do not survive the
  * boundary: latency, redirect chains, extraction diagnostics. */
 
 import { TinyFishCli, type SpawnFn } from "./tinyfish.js";

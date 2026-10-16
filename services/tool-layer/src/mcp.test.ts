@@ -92,7 +92,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
 
 test("transcript tables are readable but never writable through agent tools", async () => {
   const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
-  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID }, SECRET);
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent: "curator" }, SECRET);
   const calls: Array<{ method: string; args: unknown[] }> = [];
   const database = {
     async verifyRelayProject() {},
