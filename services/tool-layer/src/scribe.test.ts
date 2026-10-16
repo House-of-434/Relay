@@ -103,7 +103,7 @@ test("the join tool never claims the bot joined", async () => {
     _registeredTools: Record<string, { description?: string }>;
   })._registeredTools;
   const description = String(listing.scribe_join_meeting?.description ?? "");
-  assert.match(description, /queued/i);
-  assert.match(description, /transcripts\.meetings/);
+  assert.match(description, /queues the join/i);
+  assert.match(description, /confirm/i);
   assert.doesNotMatch(description, /should be joining|will be captured|has joined|scribe_capture_status/i);
 });

@@ -62,7 +62,7 @@ export function createAgentMcpServer(
   server.registerTool(
     "relay_read",
     {
-      description: "Read rows from a table explicitly permitted for this Relay agent: app.companies, app.people, app.events (shared workspace knowledge), history.conversations (your own conversations), transcripts.meetings (captured meeting records). Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. transcripts.meetings readiness: status is the capture lifecycle (terminal: completed, partial, failed, skipped); a transcript is readable only when segment_count > 0 — a terminal capture with 0 segments has none. Find a meeting from its link by filtering native_id eq the provider meeting code (Meet: the meet.google.com path code; Zoom: the /j|wc|s/ number; Teams: the /meet/ id), or look up a scribe_join_meeting call by filtering instance_id eq its returned id. No matching row means no capture exists: say so and never invent transcript content.",
+      description: "Read rows from a table explicitly permitted for this Relay agent: app.companies, app.people, app.events (shared workspace knowledge), history.conversations (your own conversations), transcripts.meetings (captured meeting records). Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.",
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
@@ -298,7 +298,7 @@ export function createAgentMcpServer(
     server.registerTool(
       "scribe_join_meeting",
       {
-        description: "Queue a request for Relay Scribe to join a live meeting and transcribe it. Pass the meeting URL the user gave you (Google Meet, Zoom, or Teams). Accepted means queued, NOT joined: Scribe typically appears within ~30 seconds and announces itself in the meeting chat, but admission cannot be confirmed from here — read transcripts.meetings (filter instance_id eq the returned id) to confirm it joined. already_accepted means a capture for this room is already queued or underway; do not resubmit. Scheduled meetings are picked up automatically and must not be submitted here.",
+        description: "Ask Relay Scribe to join a live meeting and transcribe it. Pass the meeting link the user gave you (Google Meet, Zoom, or Teams). This queues the join: Scribe usually appears within a couple of minutes and announces itself in the meeting chat, but admission varies — do not tell the user it is in the meeting until you have confirmed it. already_accepted means the room already has a capture queued or underway; do not resubmit. Scheduled meetings are picked up automatically — do not submit them here.",
         inputSchema: {
           meeting_url: z.string().min(1).max(2048),
           title: z.string().trim().min(1).max(200).optional(),
@@ -321,10 +321,10 @@ export function createAgentMcpServer(
             content: [{
               type: "text",
               text: JSON.stringify({
-                ...result,
+                status: result.status,
                 note: result.status === "accepted"
-                  ? "queued for joining; read transcripts.meetings by instance_id to confirm before telling the user it joined."
-                  : "this room already has a capture queued or underway; read transcripts.meetings by native_id to check it.",
+                  ? "queued. In your reply, name the meeting by its title or room code — never an internal id — and say you will confirm once Scribe has joined rather than claiming it is already in. Confirm later with get_meeting_transcript."
+                  : "this room already has a capture queued or underway; check it with get_meeting_transcript.",
               }),
             }],
           };

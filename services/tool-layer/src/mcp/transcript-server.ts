@@ -30,7 +30,7 @@ export function registerTranscriptTools(
   server.registerTool(
     "get_meeting_transcript",
     {
-      description: "Read one captured meeting's transcript in time order, paged. meeting_id accepts any meeting reference and is resolved for you: the meeting URL (e.g. https://meet.google.com/abc-defg-hij), the room code, the instance_id returned by scribe_join_meeting, or the meeting UUID. Use this to get notes for a meeting that was just joined or recorded; do NOT use search_meetings to find a specific recent meeting. Returns the meeting row, the ordered segments for the requested window, total_length, and complete. A single call is never the whole transcript when total_length exceeds the page — call it again with a higher offset until complete is true. complete is false while the meeting is still live; treat those rows as incomplete.",
+      description: "Read one captured meeting's transcript in time order, paged. `meeting_id` accepts the meeting link, the room code, or the meeting id and is resolved for you — use this, not search_meetings, to find a specific recent meeting. Name the meeting in your reply by its title, or by the room code when there is no title; never quote internal ids. Turn it into notes: who spoke and what was covered, led by the meeting's length and speakers rather than segment counts or capture internals. Page by calling again with a higher offset until complete is true; complete is false while the meeting is still live, so treat those rows as in-progress.",
       inputSchema: {
         meeting_id: z.string().min(1).max(64),
         offset: z.number().int().min(0).optional(),

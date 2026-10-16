@@ -6,6 +6,7 @@ import {
   buildDescriptor,
   createDegradedTracker,
   eventStartMs,
+  meetingCodeFor,
   meetingUrlFor,
   passcodeFor,
   platformForUrl,
@@ -209,6 +210,13 @@ describe("scribe monitor helpers", () => {
 
   it("reads a zoom passcode from the url query", () => {
     expect(passcodeFor({ id: "z" }, "https://us02web.zoom.us/j/123?pwd=abc123")).toBe("abc123");
+  });
+
+  it("reads the provider room code from a meeting URL", () => {
+    expect(meetingCodeFor("https://meet.google.com/bsr-etyd-afq?pli=1")).toBe("bsr-etyd-afq");
+    expect(meetingCodeFor("https://us02web.zoom.us/j/1234567890")).toBe("1234567890");
+    expect(meetingCodeFor("https://teams.live.com/meet/9385623070170")).toBe("9385623070170");
+    expect(meetingCodeFor("not a url")).toBeNull();
   });
 
   it("builds a descriptor from the event", () => {

@@ -483,7 +483,7 @@ import {
 } from "./mailbox-monitor.ts";
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
-import { ScribeMonitor, createDegradedTracker, scribeMonitorConfig } from "./scribe-monitor.ts";
+import { ScribeMonitor, createDegradedTracker, meetingCodeFor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
 import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
@@ -9980,6 +9980,19 @@ if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELA
             }
             throw error;
           }
+        },
+        // A manual capture posts its own chat update to the requesting thread:
+        // "joined" once it is live, "ready" once it ends with content. The
+        // thread and name come from the persisted intent; the monitor skips
+        // calendar captures, which have no thread.
+        announce: async (update) => {
+          const intent = getScribeJoinIntent(update.instance_id);
+          if (!intent) return;
+          const named = intent.title ? `"${intent.title}"` : (meetingCodeFor(intent.meetingUrl) ?? "your meeting");
+          const text = update.kind === "joined"
+            ? `Relay Scribe has joined ${named} and is transcribing.`
+            : `Relay Scribe finished ${named} — the notes are ready whenever you want them.`;
+          store.appendMessage(intent.threadId, { role: "bot", kind: "text", text });
         },
         log: (message) => console.log(message),
       },

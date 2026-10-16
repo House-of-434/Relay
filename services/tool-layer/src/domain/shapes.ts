@@ -91,12 +91,12 @@ export const SHAPES: Record<string, Shape> = {
       "scheduled_start", "scheduled_end", "actual_start", "actual_end",
       "status", "error", "organizer_email", "organizer_user_id",
       "creator_user_id", "invited_by", "invitees",
-      "audio_path", "segment_count", "duration_seconds", "ingested_at",
+      "audio_path", "segment_count", "duration_seconds",
       "created_at", "updated_at",
     ],
     filterable: [
       "id", "instance_id", "native_id", "platform", "status", "scheduled_start",
-      "organizer_email", "organizer_user_id", "calendar_event_id",
+      "organizer_user_id", "calendar_event_id",
     ],
     valueEnums: {
       platform: ["google_meet", "zoom", "teams"],

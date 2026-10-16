@@ -65,6 +65,24 @@ function supabaseError(error: { code?: string; message?: string } | null): never
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+/** Model-facing read projection for transcripts.meetings, used by relay_read.
+ * Emails, invitee lists, audio_path and internal timestamps stay out of agent
+ * reads: they are plumbing, not notes. `error` (the end reason) stays here so
+ * a debugging relay_read can see why a capture stopped, but the curated
+ * transcript read below omits it so it is never narrated as a finding. */
+export const MEETING_READ_COLUMNS =
+  "id, platform, instance_id, native_id, title, scheduled_start, scheduled_end, " +
+  "actual_start, actual_end, status, error, segment_count, duration_seconds, " +
+  "organizer_user_id, creator_user_id";
+
+/** Curated projection for get_meeting_transcript: what an agent needs to name
+ * the meeting (title, or the native room code) and read it, and nothing it
+ * would narrate as plumbing (no internal UUIDs, error/end-reason, emails, or
+ * internal timestamps). */
+export const MEETING_TRANSCRIPT_COLUMNS =
+  "platform, native_id, title, status, segment_count, duration_seconds, " +
+  "actual_start, actual_end";
+
 /** Provider meeting code (native_id) from a meeting reference that is a URL or
  * a bare code — null when neither parses. Mirrors the capture worker's
  * nativeIdFor so the URL an agent just joined resolves to the stored row:
@@ -174,7 +192,8 @@ export class RelayDatabase {
     }
 
     const [schema, relation] = table.split(".");
-    let query: any = client.schema(schema!).from(relation!).select("*").limit(limit);
+    const columns = table === "transcripts.meetings" ? MEETING_READ_COLUMNS : "*";
+    let query: any = client.schema(schema!).from(relation!).select(columns).limit(limit);
 
     // service_role bypasses Postgres RLS, so preserve the agent classification
     // ceiling explicitly in the Tool Layer.
@@ -348,7 +367,7 @@ export class RelayDatabase {
     const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 100);
     const client = this.client("relay");
     const { data: meeting, error: meetingError } = await client.schema("transcripts").from("meetings")
-      .select("*").eq("id", resolvedId).maybeSingle();
+      .select(MEETING_TRANSCRIPT_COLUMNS).eq("id", resolvedId).maybeSingle();
     supabaseError(meetingError);
     if (!meeting) throw new Error("meeting not found");
     // Project only what a reader needs. select("*") would also ship id,
@@ -363,7 +382,9 @@ export class RelayDatabase {
     const { count, error: countError } = await client.schema("transcripts").from("meeting_segments")
       .select("*", { count: "exact", head: true }).eq("meeting_id", resolvedId);
     supabaseError(countError);
-    const row = meeting as Record<string, unknown>;
+    // The projection is a runtime string, so PostgREST's generated types fall
+    // back to GenericStringError; the row is the selected columns at runtime.
+    const row = meeting as unknown as Record<string, unknown>;
     return {
       meeting: row,
       segments: (segments ?? []) as Record<string, unknown>[],

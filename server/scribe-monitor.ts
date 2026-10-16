@@ -89,6 +89,15 @@ export interface ScribeNotice {
   segment_count?: number;
 }
 
+/** A chat update posted back to the initiating thread: capturing started, or
+ * the notes are ready. Manual captures only — they carry the requesting
+ * thread; calendar captures have nowhere to post. */
+export interface ScribeAnnounce {
+  instance_id: string;
+  kind: "joined" | "ready";
+  segment_count?: number;
+}
+
 export interface ScribeMonitorDeps {
   listEvents: (timeMinIso: string, timeMaxIso: string) => Promise<CalendarEvent[]>;
   joinWorker: (descriptor: ScribeDescriptor) => Promise<{ status: string }>;
@@ -106,6 +115,10 @@ export interface ScribeMonitorDeps {
   /** Sent from the harness on a terminal meeting state (or a joinable meeting
    *  that never reached the worker). The harness owns the email wiring. */
   notify?: (notice: ScribeNotice) => void | Promise<void>;
+  /** Post a chat update to the initiating thread (manual captures only): a
+   *  "joined" note when the capture goes live, a "ready" note when it ends
+   *  with content. The harness owns the thread lookup and the post. */
+  announce?: (update: ScribeAnnounce) => void | Promise<void>;
   /** relay@'s own address; meetings it organizes are skipped quietly. */
   selfAddress?: string;
   now?: () => number;
@@ -176,6 +189,26 @@ export function platformForUrl(url: string): ScribeDescriptor["platform"] | null
   }
   for (const p of PROVIDER_HOSTS) if (p.test(host)) return p.platform;
   return null;
+}
+
+/** The provider room code from a meeting URL — the Meet path code, the Zoom
+ *  /j|/wc|/s number, the Teams /meet id, else the last path segment. Used only
+ *  to name a capture in a chat update, never for identity. Mirrors the capture
+ *  worker's nativeIdFor. */
+export function meetingCodeFor(url: string): string | null {
+  let url2: URL;
+  try {
+    url2 = new URL(url);
+  } catch {
+    return null;
+  }
+  const host = url2.hostname.toLowerCase();
+  const seg = url2.pathname.split("/").filter(Boolean);
+  if (host === "meet.google.com") return seg[0] ?? null;
+  const markers = host === "zoom.us" || host.endsWith(".zoom.us") ? ["j", "wc", "s"] : ["meet"];
+  const i = seg.findIndex((s) => markers.includes(s));
+  if (i >= 0 && seg[i + 1]) return seg[i + 1]!;
+  return seg.length > 0 ? seg[seg.length - 1]! : null;
 }
 
 /** The join URL from a calendar event: video entry point, then hangoutLink,
@@ -517,6 +550,10 @@ export class ScribeMonitor {
       this.lastWorkerBootId = status.worker_boot_id;
     }
     if (!(TERMINAL_SCRIBE_STATES as readonly string[]).includes(status.status)) {
+      // The capture is live: tell the requesting thread Scribe has joined, once.
+      if (status.status === "active") {
+        await this.announce(request, "joined", { segment_count: status.segment_count }, now);
+      }
       // Manual captures carry a synthesized end (acceptance + grace), not a
       // real schedule: expiring them by wall clock would kill long meetings
       // mid-recording. Expire a manual capture only when the worker has no
@@ -538,6 +575,10 @@ export class ScribeMonitor {
       return;
     }
     const signedOut = status.status === "failed" && isSignedOutReason(status.error);
+    // The capture ended: tell the requesting thread the notes are ready, once.
+    if ((status.status === "completed" || status.status === "partial") && (status.segment_count ?? 0) > 0) {
+      await this.announce(request, "ready", { segment_count: status.segment_count }, now);
+    }
     // Rate-limit the signed-out ADMIN alert; the organizer's plain failure notice
     // still sends. When suppressed, signedOut=false so only the organizer hears.
     const alertAdmins = signedOut && now - this.lastSignedOutAlertMs >= this.config.adminAlertIntervalMs;
@@ -569,6 +610,23 @@ export class ScribeMonitor {
 
   private recordNotify(event: ReconcilableMeeting, result: string, now: number): void {
     this.deps.receipts.record("scribe.notify", event.id, result, now);
+  }
+
+  /** One chat update per (instance, kind), at-least-once: the receipt is
+   *  recorded only after the post resolves, so a failed post retries next tick
+   *  and the manual intent is never retired out from under it. Calendar
+   *  captures have no thread to post to, so they are skipped. */
+  private async announce(
+    request: JoinRequest,
+    kind: ScribeAnnounce["kind"],
+    extra: { segment_count?: number },
+    now: number,
+  ): Promise<void> {
+    if (request.source !== "manual" || !this.deps.announce) return;
+    const key = `${request.event.id}|${kind}`;
+    if (this.deps.receipts.has("scribe.announce", key)) return;
+    await this.deps.announce({ instance_id: request.event.id, kind, ...extra });
+    this.deps.receipts.record("scribe.announce", key, kind, now);
   }
 
   private async emit(

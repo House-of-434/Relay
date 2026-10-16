@@ -15,6 +15,7 @@ import {
   type ReceiptStore,
   type ScribeDescriptor,
   type ScribeMonitorConfig,
+  type ScribeAnnounce,
   type ScribeNotice,
   type ScribeWorkerStatus,
 } from "./scribe-monitor.ts";
@@ -62,6 +63,7 @@ interface Harness {
   joined: ScribeDescriptor[];
   statuses: Map<string, ScribeWorkerStatus>;
   notices: ScribeNotice[];
+  announces: ScribeAnnounce[];
   armed: string[];
   terminal: string[];
   receipts: ReceiptStore & { keys: Set<string> };
@@ -70,7 +72,7 @@ interface Harness {
 
 function build(h: Partial<Harness> & { manual?: JoinRequest[]; failNotifyTimes?: number } = {}) {
   const full: Harness = {
-    joined: [], statuses: new Map(), notices: [], armed: [], terminal: [],
+    joined: [], statuses: new Map(), notices: [], announces: [], armed: [], terminal: [],
     receipts: fakeReceipts(), ...h,
   };
   let notifyFailures = h.failNotifyTimes ?? 0;
@@ -83,6 +85,7 @@ function build(h: Partial<Harness> & { manual?: JoinRequest[]; failNotifyTimes?:
       listManualRequests: async () => h.manual ?? [],
       noteManualArmed: (id) => { full.armed.push(id); },
       noteManualTerminal: (id) => { full.terminal.push(id); },
+      announce: (u) => { full.announces.push(u); },
       notify: (n) => {
         if (notifyFailures > 0) {
           notifyFailures -= 1;
@@ -117,6 +120,32 @@ describe("manual intent drain", () => {
     expect(full.notices).toHaveLength(1);
     expect(full.notices[0]).toMatchObject({ instance_id: "inst-manual-1", kind: "completed" });
     expect(full.terminal).toEqual(["inst-manual-1"]);
+  });
+
+  it("announces joined once while live, then ready once when it ends with content", async () => {
+    const req = manualRequest();
+    const { monitor, full } = build({ manual: [req] });
+    await monitor.tick(NOW + 5_000);
+    full.statuses.set(req.descriptor.instance_id, { status: "active", segment_count: 0 });
+    await monitor.tick(NOW + 65_000);
+    await monitor.tick(NOW + 125_000); // second active tick: no repeat
+    expect(full.announces).toEqual([{ instance_id: "inst-manual-1", kind: "joined", segment_count: 0 }]);
+    full.statuses.set(req.descriptor.instance_id, { status: "completed", segment_count: 7 });
+    await monitor.tick(NOW + 185_000);
+    expect(full.announces).toEqual([
+      { instance_id: "inst-manual-1", kind: "joined", segment_count: 0 },
+      { instance_id: "inst-manual-1", kind: "ready", segment_count: 7 },
+    ]);
+  });
+
+  it("does not announce a terminal capture that produced no segments", async () => {
+    const req = manualRequest();
+    const { monitor, full } = build({ manual: [req] });
+    await monitor.tick(NOW + 5_000);
+    full.statuses.set(req.descriptor.instance_id, { status: "failed", segment_count: 0 });
+    await monitor.tick(NOW + 65_000);
+    expect(full.announces).toHaveLength(0);
+    expect(full.notices).toHaveLength(1);
   });
 
   it("retries next tick when the worker throws, recording nothing", async () => {
