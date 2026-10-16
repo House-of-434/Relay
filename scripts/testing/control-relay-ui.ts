@@ -71,6 +71,16 @@ export function resolveUiChrome(parentEnv: NodeJS.ProcessEnv = process.env): str
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
+/** Whether a Chrome-driven UI e2e should run here. An explicit request
+ * (RELAY_UI_E2E=1, e.g. the renderer-smoke job) always runs. Otherwise it
+ * auto-runs only where a system Chrome resolves AND the platform's CI runner
+ * can launch it reliably in the vitest shards; the Windows runner cannot, so
+ * Windows opts in through the explicit env instead. */
+export function uiE2eEnabled(parentEnv: NodeJS.ProcessEnv = process.env): boolean {
+  if (parentEnv.RELAY_UI_E2E === "1") return true;
+  return process.platform !== "win32" && Boolean(resolveUiChrome(parentEnv));
+}
+
 /** Fail unless system Chrome resolves, with the fix attached. */
 export function ensureUiChrome(parentEnv: NodeJS.ProcessEnv = process.env): string {
   const chrome = resolveUiChrome(parentEnv);

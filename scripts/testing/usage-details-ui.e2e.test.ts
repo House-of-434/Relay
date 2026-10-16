@@ -6,10 +6,10 @@ import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = uiE2eEnabled();
 if (!enabled) console.log("skipping usage details UI: set RELAY_UI_E2E=1 to require system Chrome");
 
 (enabled ? it : it.skip)("renders separate cached input, uncached input and output after a real fixture turn", async () => {

@@ -7,10 +7,10 @@ import { waitForExit } from "../../server/testing/cleanup.ts";
 import type { Routine } from "../../src/lib/routines.ts";
 import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = uiE2eEnabled();
 let child: ChildProcess | undefined;
 afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
 

@@ -8,11 +8,11 @@ import { waitForExit } from "../../server/testing/cleanup.ts";
 import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { BOT_ROLES, roleProfilePatch } from "../../src/lib/bot-roles.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 if (!enabled) console.log("skipping bot tools UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");
 const chrome = resolveUiChrome(process.env);
 const LAUNCH_TIMEOUT_MS = forced && !chrome ? 600_000 : 180_000;

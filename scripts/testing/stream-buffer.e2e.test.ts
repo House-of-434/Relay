@@ -4,10 +4,10 @@ import { pathToFileURL } from "node:url";
 import { expect, it } from "vitest";
 import type { WireMessage } from "../../shared/wire.ts";
 import { launchVerificationServer, runControlOmb } from "../control-relay.ts";
-import { driverCall, ensureUiChrome, resolveUiChrome, startUiDriver } from "./control-relay-ui.ts";
+import { driverCall, ensureUiChrome, startUiDriver , uiE2eEnabled } from "./control-relay-ui.ts";
 import { fixtureApi, mountPreview, type MountedPreview } from "./preview-fixture.ts";
 
-const enabled = process.env.RELAY_UI_E2E === "1" || Boolean(resolveUiChrome(process.env));
+const enabled = uiE2eEnabled();
 if (!enabled) console.info("skipping stream-buffer e2e: no system Chrome resolves; set RELAY_UI_E2E=1 to require it");
 
 it.skipIf(!enabled)("drains pending text and reasoning with rAF paused, then settles without duplicated output", async () => {

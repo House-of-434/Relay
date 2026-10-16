@@ -8,11 +8,11 @@ import { afterAll, describe, expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 const chrome = resolveUiChrome(process.env);
 const launchTimeout = forced && !chrome ? 600_000 : 180_000;
 if (!enabled) console.log("skipping Slack settings UI e2e: no system Chrome; set RELAY_UI_E2E=1 to require it");

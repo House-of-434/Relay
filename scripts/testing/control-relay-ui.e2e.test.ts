@@ -16,13 +16,13 @@ import { afterAll, describe, expect, it } from "vitest";
 import { removeTempDir, waitForExit } from "../../server/testing/cleanup.ts";
 import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { uiE2eEnabled } from "./control-relay-ui.ts";
 import { fixtureApi } from "./preview-fixture.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CLI = join(ROOT, "scripts", "control-relay.ts");
 const forced = process.env.RELAY_UI_E2E === "1";
-const enabled = forced || Boolean(resolveUiChrome(process.env));
+const enabled = forced || uiE2eEnabled();
 if (!enabled) {
   console.log(`skipping control-relay ui e2e: no system Chrome resolves (CHROME_PATH or a well-known install); set RELAY_UI_E2E=1 to require it`);
 }

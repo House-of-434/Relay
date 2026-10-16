@@ -5,11 +5,11 @@ import { expect, it } from "vitest";
 import { waitForExit } from "../../server/testing/cleanup.ts";
 import { registerOwnerFetch } from "../../server/testing/owner.ts";
 import { runControlOmb } from "../control-relay.ts";
-import { resolveUiChrome } from "./control-relay-ui.ts";
+import { resolveUiChrome , uiE2eEnabled } from "./control-relay-ui.ts";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const chrome = resolveUiChrome(process.env);
-const enabled = Boolean(chrome) || process.env.RELAY_UI_E2E === "1";
+const enabled = uiE2eEnabled();
 if (!enabled) console.log("skipping draft visibility UI: set RELAY_UI_E2E=1 to require system Chrome");
 
 (enabled ? it : it.skip)("creates a restricted bot from the full draft dialog without widening its audience", async () => {
