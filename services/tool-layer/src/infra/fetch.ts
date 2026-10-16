@@ -87,6 +87,7 @@ export function normalizeFetchResult(value: unknown, requestedUrl: string, forma
   const url = isHttpUrl(row.final_url) ? (row.final_url as string) : isHttpUrl(row.url) ? (row.url as string) : requestedUrl;
   const title = typeof row.title === "string" && row.title.length > 0 ? row.title : url;
   const rawText = toText(row.text) ?? "";
+  if (rawText.length === 0) throw new Error("web fetch returned no content");
   const truncated = rawText.length > FETCH_MAX_CHARS;
   const links = Array.isArray(row.links)
     ? row.links.filter((link): link is string => isHttpUrl(link)).slice(0, FETCH_MAX_LINKS)

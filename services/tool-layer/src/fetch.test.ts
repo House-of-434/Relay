@@ -65,6 +65,21 @@ test("empty results fail clearly with the provider error", () => {
   assert.throws(() => normalizeFetchResult(null, "https://x.test", "markdown"), /unreadable/);
 });
 
+test("rows without usable text fail instead of returning empty success", () => {
+  assert.throws(
+    () => normalizeFetchResult({ results: [{ url: "https://x.test", title: "T" }] }, "https://x.test", "markdown"),
+    /no content/,
+  );
+  assert.throws(
+    () => normalizeFetchResult({ results: [{ url: "https://x.test", title: "T", text: "" }] }, "https://x.test", "markdown"),
+    /no content/,
+  );
+  assert.throws(
+    () => normalizeFetchResult({ results: [{ url: "https://x.test", title: "T", text: 42 }] }, "https://x.test", "markdown"),
+    /no content/,
+  );
+});
+
 test("long text is truncated and flagged", () => {
   const normalized = normalizeFetchResult(
     { results: [{ url: "https://x.test", title: "T", text: "a".repeat(FETCH_MAX_CHARS + 10) }] },
