@@ -109,13 +109,13 @@ test("urls are validated before any spawn", async () => {
 
 test("provider failures are honest, never empty success", async () => {
   const failing = new TinyFishFetchProvider({ spawn: withProbe(() => ({ exitCode: 1, stdout: "", stderr: "quota exhausted" })) });
-  await assert.rejects(failing.fetch("https://x.test"), /quota exhausted/);
+  await assert.rejects(failing.fetch("https://example.com/a"), /quota exhausted/);
 
   const garbage = new TinyFishFetchProvider({ spawn: withProbe(() => ({ exitCode: 0, stdout: "not json", stderr: "" })) });
-  await assert.rejects(garbage.fetch("https://x.test"), /unreadable/);
+  await assert.rejects(garbage.fetch("https://example.com/a"), /unreadable/);
 
   const offline = new TinyFishFetchProvider({ spawn: makeSpawn(() => ({ exitCode: 1, stdout: "", stderr: "no auth" })) });
-  await assert.rejects(offline.fetch("https://x.test"), /unavailable on this host/);
+  await assert.rejects(offline.fetch("https://example.com/a"), /unavailable on this host/);
 });
 
 test("the CLI environment never carries telemetry", () => {

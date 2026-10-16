@@ -8,6 +8,7 @@
  * boundary: latency, redirect chains, extraction diagnostics. */
 
 import { TinyFishCli, type SpawnFn } from "./tinyfish.js";
+import { assertHttpUrl } from "./bladebro.js";
 import { isHttpUrl } from "./search.js";
 
 export type FetchFormat = "markdown" | "html" | "json";
@@ -87,7 +88,7 @@ export function normalizeFetchResult(value: unknown, requestedUrl: string, forma
   const url = isHttpUrl(row.final_url) ? (row.final_url as string) : isHttpUrl(row.url) ? (row.url as string) : requestedUrl;
   const title = typeof row.title === "string" && row.title.length > 0 ? row.title : url;
   const rawText = toText(row.text) ?? "";
-  if (rawText.length === 0) throw new Error("web fetch returned no content");
+  if (rawText.trim().length === 0) throw new Error("web fetch returned no content");
   const truncated = rawText.length > FETCH_MAX_CHARS;
   const links = Array.isArray(row.links)
     ? row.links.filter((link): link is string => isHttpUrl(link)).slice(0, FETCH_MAX_LINKS)
@@ -132,6 +133,7 @@ export class TinyFishFetchProvider implements FetchProvider {
     if (url.length > FETCH_URL_MAX_LENGTH) {
       throw new Error(`web_fetch URL must be under ${FETCH_URL_MAX_LENGTH} characters`);
     }
+    assertHttpUrl(url);
     if (!(await this.probe())) {
       this.lastError = "tinyfish CLI unavailable or unauthenticated on this host";
       throw new Error("web fetch is unavailable on this host");
