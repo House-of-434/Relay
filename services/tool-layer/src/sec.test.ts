@@ -308,3 +308,37 @@ test("companyFacts period selects only values ending on that date", async () => 
   await assert.rejects(provider.companyFacts({ company: "TST", period: "2024-13-01" }), /YYYY-MM-DD/);
 });
 
+test("frames skips entries without a numeric val", async () => {
+  const payload = {
+    data: [
+      { cik: 320193, entityName: "Apple Inc.", end: "2019-03-30" },
+      { cik: 320193, entityName: "Apple Inc.", end: "2019-03-30", val: 100, accn: "0000320193-19-000001" },
+    ],
+  };
+  const provider = new SecProvider({
+    userAgent: UA,
+    fetcher: (async () => json(payload)) as typeof fetch,
+  });
+  const results = await provider.frames({ tag: "Assets", unit: "USD", year: 2019, quarter: 1, instant: true });
+  assert.equal(results.length, 1);
+  assert.equal((results[0]!.metadata as Record<string, unknown>).value, 100);
+});
+
+test("companyFacts skips values without a numeric val", async () => {
+  const facts = {
+    facts: {
+      "us-gaap": {
+        Revenues: {
+          units: { USD: [{ end: "2024-12-31", form: "10-K" }] },
+        },
+      },
+    },
+  };
+  const fetcher = routed([
+    [SEC_TICKERS_URL, () => json(GOOD_TICKERS)],
+    [`${SEC_COMPANY_FACTS_URL}/CIK0000000123.json`, () => json(facts)],
+  ]);
+  const provider = new SecProvider({ userAgent: UA, fetcher });
+  assert.deepEqual(await provider.companyFacts({ company: "TST", tag: "Revenues" }), []);
+});
+

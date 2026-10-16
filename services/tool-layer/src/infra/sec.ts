@@ -504,7 +504,9 @@ export class SecProvider {
           ? unitNames.find((name) => name.toLowerCase() === unitNeedle)
           : unitNames[0];
         if (!selectedUnit) continue;
-        const values = filterValues(units[selectedUnit] ?? [], filters.period);
+        const values = filterValues(units[selectedUnit] ?? [], filters.period).filter(
+          (value) => typeof (value as { val?: unknown })?.val === "number",
+        );
         if (values.length === 0) continue;
         out.push(factResult(cik, taxonomyName, tagName, selectedUnit, values));
         if (out.length - started >= filters.limit) return;
@@ -608,6 +610,7 @@ function frameResult(
   if (cik === undefined) return undefined;
   const entityName = safeString(entry.entityName);
   const value = typeof entry.val === "number" ? entry.val : undefined;
+  if (value === undefined) return undefined;
   const end = safeString(entry.end);
   return {
     source: "sec-edgar",
@@ -615,7 +618,7 @@ function frameResult(
     canonicalUrl: `${SEC_COMPANY_FACTS_URL}/CIK${padCik(cik)}.json`,
     title: entityName ? `${entityName} — ${tag}` : `${tag} (${period})`,
     publishedAt: end,
-    content: boundedText(`${entityName ?? `CIK ${padCik(cik)}`} ${tag} ${value ?? ""} ${unit}`.trim(), SUMMARY_MAX),
+    content: boundedText(`${entityName ?? `CIK ${padCik(cik)}`} ${tag} ${value} ${unit}`.trim(), SUMMARY_MAX),
     metadata: { cik, taxonomy, tag, unit, value, frame: period, end, accessionNumber: safeString(entry.accn) },
   };
 }
