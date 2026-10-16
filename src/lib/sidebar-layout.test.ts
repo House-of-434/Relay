@@ -45,14 +45,16 @@ describe("sidebar virtual sections", () => {
 
   it("shows pinned bots once without erasing their saved context", () => {
     const bot = { id: "writer", section: "Work", pinned: true };
+    const legacyHidden = { id: "hidden", hidden: true, pinned: true };
     const parts = partitionSidebarBots([
       { id: "chief", chiefOfStaff: true },
       bot,
       { id: "plain" },
-      { id: "hidden", hidden: true, pinned: true },
+      legacyHidden,
     ]);
     expect(parts.unsectionedChief?.id).toBe("chief");
-    expect(parts.pinnedBots).toEqual([bot]);
+    // No archive feature: a legacy hidden flag no longer hides the bot.
+    expect(parts.pinnedBots).toEqual([bot, legacyHidden]);
     expect(parts.sectionedBots).toEqual([]);
     expect(parts.unsectionedBots.map((candidate) => candidate.id)).toEqual(["plain"]);
     expect(bot.section).toBe("Work");
