@@ -486,7 +486,7 @@ import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, createDegradedTracker, meetingCodeFor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
-import { createWorkerJoinClient, createWorkerStatusClient } from "./scribe-worker-client.ts";
+import { createWorkerJoinClient, createWorkerStatusClient, createWorkerStopClient } from "./scribe-worker-client.ts";
 import { commandReceipts } from "./scribe-receipts.ts";
 import { parseAdminEmails, scribeAdminEmail, scribeOrganizerEmail, sendScribeEmail } from "./scribe-notice.ts";
 import { createGracefulShutdown } from "./graceful-shutdown.ts";
@@ -574,6 +574,7 @@ import { ROUTES, dispatchRoutes } from "./routes/table.ts";
 import { createHostedSlackRoutes } from "./routes/hosted-slack.ts";
 import { createPortalSessionRoutes } from "./routes/portal-session.ts";
 import { createScribeJoinRoutes } from "./routes/scribe-join.ts";
+import { createScribeStopRoutes } from "./routes/scribe-stop.ts";
 import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
@@ -14073,6 +14074,21 @@ ROUTES.push(createPortalSessionRoutes({
     capability: relayBffCapability,
     actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
     scribeReady: () => scribeMonitor !== null,
+  }));
+  // Abort a live capture the actor requested, and retire its intent so the
+  // room can be captured again ("abort that and start a new one").
+  ROUTES.push(createScribeStopRoutes({
+    store,
+    capability: relayBffCapability,
+    actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
+    scribeReady: () => scribeMonitor !== null,
+    listActive: () => listActiveScribeJoinIntents().map((i) => ({ instanceId: i.instanceId, ownerUserId: i.ownerUserId, urlKey: i.urlKey, status: i.status })),
+    getIntent: (id) => {
+      const i = getScribeJoinIntent(id);
+      return i ? { instanceId: i.instanceId, ownerUserId: i.ownerUserId, urlKey: i.urlKey, status: i.status } : null;
+    },
+    stopWorker: createWorkerStopClient({ url: RELAY_SCRIBE_WORKER_URL, capability: scribeWorkerCapability }),
+    retire: (id) => setScribeJoinIntentStatus(id, "terminal", Date.now()),
   }));
 // The BFF capability is captured at the top of this module and kept there
 // for the process lifetime: the shared-mailbox monitor and Scribe call the
