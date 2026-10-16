@@ -164,8 +164,9 @@ class MeetSession {
   private gmeet: GmeetPipeline | null = null;
   private captureStartMs = 0;
   /** First and last time a remote frame carried above-silence energy. Drives
-   * voice-idle end: the clock starts at first voice; 10 quiet minutes with
-   * no voice at all also ends (waiting room that never fills). */
+   * voice-idle end: the clock starts at first voice; 3 quiet minutes after
+   * the last voice ends, and 5 minutes with no voice at all also ends
+   * (waiting room that never fills). */
   private firstVoiceAt: number | null = null;
   private lastRemoteAudioAt: number | null = null;
   private probeFrames: ProbeFrame[] = [];

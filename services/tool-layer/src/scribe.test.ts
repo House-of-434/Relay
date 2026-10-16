@@ -98,12 +98,25 @@ test("Mercury alone lists scribe_join_meeting", async () => {
 
 test("the join tool never claims the bot joined", async () => {
   const { createAgentMcpServer } = await import("./mcp/agent-server.js");
-  const scribe = { client: {} as never, actorAssertion: ACTOR };
-  const listing = (createAgentMcpServer("mercury", { userId: "u" }, {} as never, undefined, undefined, undefined, undefined, undefined, scribe) as unknown as {
-    _registeredTools: Record<string, { description?: string }>;
-  })._registeredTools;
-  const description = String(listing.scribe_join_meeting?.description ?? "");
-  assert.match(description, /queues the join/i);
-  assert.match(description, /confirm/i);
-  assert.doesNotMatch(description, /should be joining|will be captured|has joined|scribe_capture_status/i);
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { InMemoryTransport } = await import("@modelcontextprotocol/sdk/inMemory.js");
+  const scribe = {
+    client: { joinMeeting: async () => ({ status: "accepted", instance_id: "inst-1" }) } as never,
+    actorAssertion: ACTOR,
+  };
+  const server = createAgentMcpServer("mercury", { userId: "u" }, {} as never, undefined, undefined, undefined, undefined, undefined, scribe);
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "scribe-join-note-test", version: "0.1.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({ name: "scribe_join_meeting", arguments: { meeting_url: MEET } });
+    const text = JSON.stringify(result);
+    assert.match(text, /confirm/i);
+    assert.match(text, /rather than claiming/i);
+    assert.doesNotMatch(text, /already in the meeting|has joined the meeting|successfully joined/i);
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
