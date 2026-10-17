@@ -378,7 +378,7 @@ export function createAgentMcpServer(
     server.registerTool(
       "scribe_stop_capture",
       {
-        description: "Stop a live Relay Scribe capture and free its room. Give the meeting link or room code (or the capture instance id). Use this when the user wants to abort a recording, or to restart one — stop the current capture, then call scribe_join_meeting to start again. Returns \"stopped\" or \"not_recording\".",
+        description: "Stop a live Relay Scribe capture and free its room. Give the meeting link (or the capture instance id). Use this when the user wants to abort a recording, or to restart one — stop the current capture, then call scribe_join_meeting to start again. Returns \"stopped\" or \"not_recording\".",
         inputSchema: {
           meeting_url: z.string().min(1).max(2048).optional(),
           instance_id: z.string().min(1).max(64).optional(),
@@ -388,7 +388,7 @@ export function createAgentMcpServer(
       async ({ meeting_url, instance_id }) => {
         try {
           authorizeScribe(agent, "stop");
-          if (!meeting_url && !instance_id) throw new Error("provide the meeting link/code or the capture instance id");
+          if (!meeting_url && !instance_id) throw new Error("provide the meeting link or the capture instance id");
           const result = await scribeContext.client.stopMeeting(scribeContext.actorAssertion, {
             ...(meeting_url ? { meetingUrl: meeting_url } : {}),
             ...(instance_id ? { instanceId: instance_id } : {}),
