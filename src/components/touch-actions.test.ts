@@ -70,7 +70,7 @@ function missingTouchCounterparts(literal: Literal): string[] {
 }
 
 function revealsOnFocus(text: string): boolean {
-  return /(^|\s)(focus-visible|focus-within|group-focus-within(?:\/[\w-]+)?):opacity-100(\s|$)/.test(text);
+  return /(^|\s)(focus-visible|focus-within|group-focus-visible|group-focus-within(?:\/[\w-]+)?):opacity-100(\s|$)/.test(text);
 }
 
 function isNotAction(literal: Literal): boolean {

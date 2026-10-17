@@ -81,7 +81,7 @@ export function sidebarSectionCollapsed(
 /** Pinned bots are a virtual view. Their saved section is left untouched so
  * unpinning returns them to the context they came from. */
 export function partitionSidebarBots<T extends SidebarBot>(bots: T[]) {
-  const visible = bots.filter((bot) => !bot.hidden);
+  const visible = bots;
   const unsectionedChief = visible.find((bot) => bot.chiefOfStaff && !bot.section) ?? null;
   const pinnedBots = visible.filter((bot) => !bot.chiefOfStaff && Boolean(bot.pinned));
   const pinnedIds = new Set(pinnedBots.map((bot) => bot.id));

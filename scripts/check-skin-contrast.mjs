@@ -90,7 +90,7 @@ function contrast(fgHex, bgHex) {
 // Pairs taken from what the components render, not from what looks plausible:
 // body copy sits on all five surfaces, the filled accent/danger buttons carry
 // their own ink token, and the status colours are used as text on cards.
-const SURFACES = ["--color-app", "--color-panel", "--color-raised", "--color-raised-hover", "--color-card", "--color-inset", "--color-composer", "--color-menu"];
+const SURFACES = ["--color-app", "--color-panel", "--color-raised", "--color-raised-hover", "--color-selected", "--color-card", "--color-inset", "--color-composer", "--color-menu"];
 const PAIRS = [
   ...SURFACES.map((s) => ["--color-ink", s, 4.5]),
   ...SURFACES.map((s) => ["--color-ink-secondary", s, 4.5]),
@@ -142,6 +142,7 @@ const PAIRS = [
   ["--color-control", "--color-inset", 1.04],
   ["--color-control", "--color-raised-hover", 1.04],
   ["--color-raised-hover", "--color-card", 1.04],
+  ["--color-selected", "--color-card", 1.04],
   ["--color-inset", "--color-card", 1.04],
   ["--color-card", "--color-app", 1.04],
   ["--color-panel", "--color-app", 1.03],
