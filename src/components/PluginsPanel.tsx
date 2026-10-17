@@ -240,7 +240,7 @@ export function PluginsPanel({
       return t("connectors.github.connected", { account: github.account });
     }
     if (service.id === "notion" && notion?.workspace) {
-      return t("connectors.notion.connected", { workspace: notion.workspace });
+      return t("connectors.notion.connected", { name: notion.workspace });
     }
     return undefined;
   };
