@@ -42,7 +42,16 @@ const TEXT_KINDS = new Set(["text", "csv", "tsv", "json", "markdown", "rtf"]);
 
 /** Formats whose text we cannot extract in v1 (legacy binary Office and ODF).
  * They are still accepted and stored; only reading is unsupported. */
-const UNREADABLE_KINDS = new Set(["doc", "ppt", "xls", "odt", "ods", "odp"]);
+const UNREADABLE_KINDS = new Set(["doc", "ppt", "xls", "xlsx", "odt", "ods", "odp"]);
+
+function decodeCodePoint(code: number): string {
+  if (!Number.isInteger(code) || code < 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return "�";
+  try {
+    return String.fromCodePoint(code);
+  } catch {
+    return "�";
+  }
+}
 
 function decodeXmlEntities(value: string): string {
   return value
@@ -50,8 +59,8 @@ function decodeXmlEntities(value: string): string {
     .replace(/&gt;/g, ">")
     .replace(/&quot;/g, "\"")
     .replace(/&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, code: string) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&#(\d+);/g, (_, code: string) => decodeCodePoint(Number(code)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code: string) => decodeCodePoint(parseInt(code, 16)))
     .replace(/&amp;/g, "&");
 }
 
