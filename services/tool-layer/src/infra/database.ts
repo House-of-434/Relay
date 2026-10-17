@@ -170,6 +170,21 @@ export class RelayDatabase {
     supabaseError(error);
   }
 
+  /** The authoritative mapping from a verified email to the canonical Supabase
+   * user id: auth-table lookup, confirmed and non-deleted users only, with the
+   * sign-in domain allowlist applied for defense in depth. Service-role only.
+   * The single resolver the shared-mailbox flow uses to authenticate a
+   * sender; an unknown email resolves to null, never a guess. */
+  async memberByEmail(candidate: string, allowedDomains?: readonly string[]): Promise<string | null> {
+    const client = this.client("relay");
+    const { data, error } = await client.schema("app").rpc("member_by_email", {
+      candidate,
+      allowed_domains: allowedDomains && allowedDomains.length > 0 ? [...allowedDomains] : null,
+    });
+    supabaseError(error);
+    return typeof data === "string" && data.length > 0 ? data : null;
+  }
+
   client(project: Project): Client {
     const client = this.clients.get(project);
     if (!client) {

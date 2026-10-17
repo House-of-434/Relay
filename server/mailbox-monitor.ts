@@ -51,7 +51,7 @@ export interface MailboxMonitorDeps {
   pollMs?: number;
   list: () => Promise<MailboxMessageSummary[]>;
   read: (messageId: string) => Promise<MailboxMessage | undefined>;
-  lookupPerson: (email: string) => MailboxPerson | undefined;
+  lookupPerson: (email: string) => MailboxPerson | undefined | Promise<MailboxPerson | undefined>;
   hasReceipt: (kind: string, key: string) => boolean;
   recordReceipt: (kind: string, key: string, detail: unknown) => Promise<void>;
   deliver: (message: MailboxMessage, person: MailboxPerson) => Promise<void>;
@@ -262,7 +262,7 @@ export class MailboxMonitor {
         continue;
       }
       const sender = senderAddress(message?.from);
-      const person = sender && sender !== self ? this.deps.lookupPerson(sender) : undefined;
+      const person = sender && sender !== self ? await this.deps.lookupPerson(sender) : undefined;
       if (!message || !person) {
         // Ignored mail is receipted so the window stays cheap, and counted so
         // a missing directory entry can never fail invisibly.

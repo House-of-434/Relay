@@ -9839,6 +9839,43 @@ function relayMailboxActor(): MailboxActor | undefined {
   return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId, agent: "mercury" };
 }
 
+/** The bot that carries an inbound email: the sender's own Mercury, so the
+ * thread lands in their workspace and their connected apps answer. The shared
+ * mailbox only receives the mail — it does not own the work. Missing per-owner
+ * roles are seeded on demand, exactly as a first sign-in would seed them. */
+function ensureOwnerMercury(ownerUserId: string | undefined): string | undefined {
+  if (!ownerUserId) return undefined;
+  store.seedRelayAgentsForOwner(ownerUserId, RELAY_AGENT_SEEDS);
+  return store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === ownerUserId)?.id;
+}
+
+const allowedEmailDomains = (): string[] =>
+  (process.env.RELAY_ALLOWED_EMAIL_DOMAINS ?? "").split(",").map((domain) => domain.trim().toLowerCase()).filter(Boolean);
+
+/** Resolve a sender's email to the canonical user id through the auth table,
+ * via the Tool Layer (which holds the service-role client). The sign-in domain
+ * allowlist is applied server-side. Undefined when unresolved or the Tool
+ * Layer is unreachable — the caller then treats the mail as unknown rather
+ * than guessing an identity. */
+async function lookupMemberByEmail(email: string): Promise<{ userId: string } | undefined> {
+  if (!RELAY_TOOL_URL || !relayBffCapability) return undefined;
+  const domains = allowedEmailDomains();
+  try {
+    const response = await fetch(new URL("/internal/member-by-email", RELAY_TOOL_URL), {
+      method: "POST",
+      redirect: "error",
+      headers: { authorization: `Bearer ${relayBffCapability}`, "content-type": "application/json" },
+      body: JSON.stringify({ email, ...(domains.length ? { allowedDomains: domains } : {}) }),
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!response.ok) return undefined;
+    const body = await response.json() as { userId?: unknown };
+    return typeof body.userId === "string" && body.userId ? { userId: body.userId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const mailboxPollMs = (() => {
   const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
   const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
@@ -9873,10 +9910,15 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         return result.message;
       },
       // Live sessions first, then the durable thread-owner directory: an
-      // expired session must not turn a known teammate into a stranger.
-      lookupPerson: (email) => {
+      // expired session must not turn a known teammate into a stranger. When
+      // neither knows the sender, fall back to the auth table (the one
+      // authoritative mapping) so a confirmed, domain-allowed member is
+      // resolved even before they have ever signed in.
+      lookupPerson: async (email) => {
         const known = sessions.personByEmail(email) ?? ownerByEmail(DATA_DIR, email);
-        return known ? { userId: known.userId, email: known.email, name: known.email.split("@")[0] } : undefined;
+        if (known) return { userId: known.userId, email: known.email, name: known.email.split("@")[0] };
+        const resolved = await lookupMemberByEmail(email);
+        return resolved ? { userId: resolved.userId, email, name: email.split("@")[0] } : undefined;
       },
       hasReceipt: (kind, key) => commandReceipt(kind, key) !== null,
       recordReceipt: async (kind, key, detail) => {
@@ -9906,29 +9948,34 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
             console.warn(`[mailbox] acknowledgement email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
           });
         }
+        // The sender's own bot does the work when they have (or can be seeded
+        // with) one; the mailbox account's Mercury is only a fallback for a
+        // sender with no resolvable account. Ownership follows the bot, so the
+        // thread is visible to the sender and tools run as them.
+        const workBotId = ensureOwnerMercury(person.userId) ?? mercuryId;
         await deliverRoutedMail({
-          botId: mercuryId,
+          botId: workBotId,
           // Reservation by message id: a retry lands in the same conversation.
           threadFor: async (messageId) => {
             const reserved = commandReceipt<{ threadId?: string }>("gmail.thread", messageId);
             if (reserved?.result?.threadId) return reserved.result.threadId;
-            const task = store.createTask(mercuryId, title, false);
+            const task = store.createTask(workBotId, title, false);
             if (!task) throw new Error("could not open the routed conversation");
             if (personKey) threadStarters.set(task.threadId, personKey);
-            store.patchTask(mercuryId, task.threadId, {
+            store.patchTask(workBotId, task.threadId, {
               mailRouted: { userId: person.userId, email: person.email, messageId, ...(routedSubject ? { subject: routedSubject } : {}) },
             });
             runCommand({ kind: "gmail.thread", key: messageId }, () => ({ threadId: task.threadId }));
             return task.threadId;
           },
-          isBlocked: () => botAtThreadCapacity(mercuryId) || Boolean(activeGroupTurnForBot(mercuryId)),
+          isBlocked: () => botAtThreadCapacity(workBotId) || Boolean(activeGroupTurnForBot(workBotId)),
           queue: (delivery) => {
             // The queue is keyed by the routed thread and carries the
             // teammate's sender stamp, so the wait can never move their mail
             // onto another person's running conversation.
-            queueSteeredMessage(mercuryId, delivery.threadId, delivery.text, {
+            queueSteeredMessage(workBotId, delivery.threadId, delivery.text, {
               prompt: delivery.prompt,
-              reason: activeGroupTurnForBot(mercuryId) ? "group-turn" : "capacity",
+              reason: activeGroupTurnForBot(workBotId) ? "group-turn" : "capacity",
               sender: delivery.sender,
               unattended: true,
               silentCompletion: true,
@@ -9945,7 +9992,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
               text: delivery.text,
               sender: delivery.sender,
             });
-            await startTurn(mercuryId, delivery.prompt, {
+            await startTurn(workBotId, delivery.prompt, {
               threadId: delivery.threadId,
               userMessage: message,
               sender: delivery.sender,
@@ -13832,18 +13879,6 @@ function configForAccess(status: ReturnType<typeof configStatus>, admin: boolean
   };
 }
 
-/** The account Relay tools act as for a conversation. A routed-mail thread
- * acts as the teammate who sent the mail — the request is theirs and so are
- * their connected apps (Notion, their own mail and calendar) — while the
- * shared inbox is still read through mailbox "relay". Every other thread acts
- * as the bot's owner. */
-function relayToolActorUserId(sender: { id: string; ownerUserId?: string }, threadId: string): string | undefined {
-  const routedUserId = store.taskByThread(sender.id, threadId)?.mailRouted?.userId;
-  if (routedUserId) return routedUserId;
-  const threadOwner = store.botByThread(threadId)?.ownerUserId ?? store.groupByThread(threadId)?.ownerUserId;
-  return relaySigningOwner(sender, threadOwner);
-}
-
 /** The only MCP route a bot ever mounts: the harness-owned Relay Tool Layer
  * route, reached through a stdio proxy that re-signs the actor assertion on
  * every call. Employees cannot plug in their own MCP servers. */
@@ -14810,9 +14845,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // The Relay tool bridge asks for one fresh assertion per forwarded
         // call, so a long turn never presents a stale one. The actor comes from
         // the capability and the store — never from the request, so the bridge
-        // can only ever be signed as its own conversation's owner (or, for a
-        // routed-mail thread, the teammate whose mail it is).
-        const ownerUserId = relayToolActorUserId(internalSender, internalCapability.threadId);
+        // can only ever be signed as its own conversation's owner. A routed
+        // email's thread is owned by the sender's bot, so the tools run as the
+        // sender with no special case.
+        const threadOwner = store.botByThread(internalCapability.threadId)?.ownerUserId
+          ?? store.groupByThread(internalCapability.threadId)?.ownerUserId;
+        const ownerUserId = relaySigningOwner(internalSender, threadOwner);
         const agent = internalSender.relayAgent;
         if (!ownerUserId || !agent) {
           return json(res, 403, { error: "this conversation has no signed owner for the Relay tools" });
