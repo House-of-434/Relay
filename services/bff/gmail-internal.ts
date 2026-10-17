@@ -113,6 +113,18 @@ function headerValue(value: string): string {
   return value.replace(/[\r\n]+/g, " ").trim();
 }
 
+function mimeParamValue(value: string): string {
+  return headerValue(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function safeMimeType(value: string): string {
+  const clean = headerValue(value);
+  if (!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(clean)) {
+    throw new AttachmentRequestError(400, "invalid email attachment type");
+  }
+  return clean;
+}
+
 /** Wrap base64 at 76 characters, the MIME convention Gmail expects. */
 function wrapBase64(value: string): string {
   return value.replace(/.{1,76}/g, "$&\r\n").trimEnd();
@@ -155,10 +167,11 @@ function buildRawEmail(input: {
     if (total > MAX_OUTBOUND_TOTAL_BYTES) {
       throw new AttachmentRequestError(413, "the email attachments are too large");
     }
-    const name = headerValue(attachment.filename);
+    const name = mimeParamValue(attachment.filename);
+    const mimeType = safeMimeType(attachment.mimeType);
     parts.push(
       `--${boundary}`,
-      `Content-Type: ${headerValue(attachment.mimeType)}; name="${name}"`,
+      `Content-Type: ${mimeType}; name="${name}"`,
       `Content-Disposition: attachment; filename="${name}"`,
       "Content-Transfer-Encoding: base64",
       "",

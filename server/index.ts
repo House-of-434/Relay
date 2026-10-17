@@ -9937,14 +9937,17 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         // so the sender is never left wondering whether Relay got it. The
         // result follows in its own email when the turn that answers settles.
         // Keyed by message id so a delivery retry cannot send twice.
-        if (!mailAckSentMessages.has(message.id)) {
+        if (!mailAckSentMessages.has(message.id) && !commandReceipt("gmail.ack", message.id)) {
           mailAckSentMessages.add(message.id);
           void sendMailboxAcknowledgement({
             capability: relayBffCapability,
             actor: mailboxActor,
             email: person.email,
             ...(routedSubject ? { subject: routedSubject } : {}),
+          }).then(() => {
+            runCommand({ kind: "gmail.ack", key: message.id }, () => true);
           }).catch((error) => {
+            mailAckSentMessages.delete(message.id);
             console.warn(`[mailbox] acknowledgement email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
           });
         }

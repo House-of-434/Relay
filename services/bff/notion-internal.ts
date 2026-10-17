@@ -320,6 +320,34 @@ async function dispatch(
       data: file.data,
       fetcher,
     });
+    const existingProp = current.properties?.[parsed.data.property];
+    const existingFiles: Array<Record<string, unknown>> = [];
+    if (existingProp && typeof existingProp === "object") {
+      const filesValue = (existingProp as Record<string, unknown>).files;
+      if (Array.isArray(filesValue)) {
+        for (const entry of filesValue) {
+          if (!entry || typeof entry !== "object") continue;
+          const record = entry as Record<string, unknown>;
+          const name = typeof record.name === "string" ? record.name : file.filename;
+          if (record.type === "external") {
+            const external = record.external as Record<string, unknown> | undefined;
+            if (external && typeof external.url === "string" && external.url) {
+              existingFiles.push({ name, type: "external", external: { url: external.url } });
+            }
+          } else if (record.type === "file_upload") {
+            const upload = record.file_upload as Record<string, unknown> | undefined;
+            if (upload && typeof upload.id === "string" && upload.id) {
+              existingFiles.push({ name, type: "file_upload", file_upload: { id: upload.id } });
+            }
+          } else if (record.type === "file") {
+            const hosted = record.file as Record<string, unknown> | undefined;
+            if (hosted && typeof hosted.url === "string" && hosted.url) {
+              existingFiles.push({ name, type: "external", external: { url: hosted.url } });
+            }
+          }
+        }
+      }
+    }
     const patched = await notionRequest<NotionPage>({
       accessToken,
       path: `/pages/${parsed.data.pageId}`,
@@ -328,7 +356,7 @@ async function dispatch(
       body: {
         properties: {
           [parsed.data.property]: {
-            files: [{ name: file.filename, type: "file_upload", file_upload: { id: uploadId } }],
+            files: [...existingFiles, { name: file.filename, type: "file_upload", file_upload: { id: uploadId } }],
           },
         },
       },
