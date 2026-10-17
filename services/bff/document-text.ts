@@ -147,7 +147,11 @@ function extractDocx(bytes: Buffer): ExtractedDocument {
   if (!document) {
     return { text: "", unreadable: true, warnings: [...warnings, "the document body was not found in the archive"] };
   }
-  return { text: ooxmlPartText(Buffer.from(document).toString("utf8"), "w:t"), warnings };
+  const text = ooxmlPartText(Buffer.from(document).toString("utf8"), "w:t");
+  if (text.trim().length === 0) {
+    return { text, noText: true, warnings: [...warnings, "no extractable text (image)"] };
+  }
+  return { text, warnings };
 }
 
 function extractPptx(bytes: Buffer): ExtractedDocument {
@@ -163,6 +167,9 @@ function extractPptx(bytes: Buffer): ExtractedDocument {
     .map(({ name, number }) => `--- slide ${number} ---\n${ooxmlPartText(Buffer.from(files[name]!).toString("utf8"), "a:t")}`)
     .join("\n\n")
     .trim();
+  if (body.replace(/--- slide \d+ ---/g, "").trim().length === 0) {
+    return { text: body, noText: true, warnings: [...warnings, "no extractable text (image)"] };
+  }
   return { text: body, warnings };
 }
 
