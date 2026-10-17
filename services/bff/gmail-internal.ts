@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import type { RelayActor } from "./actor-assertion.ts";
 import { verifyInternalRequest } from "./internal-request.ts";
+import { extractDocumentText } from "./document-text.ts";
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
 import type { GoogleConnectionMetadata } from "./google-connections.ts";
 
@@ -363,6 +364,9 @@ function bytesMagicClass(bytes: Buffer): MagicClass | undefined {
  * mislabeled or spoofed file is rejected rather than parsed as the wrong
  * type. Gmail commonly reports documents as application/octet-stream, which
  * the extension covers. */
+/** Kinds handed back as image bytes for native vision, not extracted as text. */
+const IMAGE_KINDS = new Set(["png", "jpeg", "gif", "webp"]);
+
 function classifyAttachment(mimeType: string, filename: string, bytes: Buffer): string | undefined {
   const magic = bytesMagicClass(bytes);
   if (!magic) return undefined;
@@ -621,7 +625,35 @@ export async function handleInternalGmail(
           attachmentId: parsed.data.attachmentId,
           mailbox: parsed.data.mailbox,
         });
-        json(res, 200, { account: { email }, attachment });
+        const meta = {
+          id: attachment.id,
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          kind: attachment.kind,
+          size: attachment.size,
+        };
+        // An image is handed back as image bytes, so the tool can present it
+        // to a vision-capable model rather than as unreadable text.
+        if (IMAGE_KINDS.has(attachment.kind)) {
+          json(res, 200, {
+            account: { email },
+            attachment: { ...meta, image: { mimeType: attachment.mimeType, data: attachment.data } },
+          });
+          return;
+        }
+        // A document is read here, server-side, so the model receives text it
+        // can actually use instead of base64 it cannot.
+        const extracted = await extractDocumentText(attachment.kind, Buffer.from(attachment.data, "base64"));
+        json(res, 200, {
+          account: { email },
+          attachment: {
+            ...meta,
+            text: extracted.text,
+            warnings: extracted.warnings,
+            ...(extracted.unreadable ? { unreadable: true } : {}),
+            ...(extracted.noText ? { noText: true } : {}),
+          },
+        });
         return;
       } catch (error) {
         if (error instanceof AttachmentRequestError) {
