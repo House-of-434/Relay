@@ -1,6 +1,14 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { mailboxReplyNeedsNoEmail } from "./mailbox-notify.ts";
+import { deriveMailSubject, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import type { MailboxActor } from "./mailbox-bff.ts";
+
+const ACTOR: MailboxActor = {
+  userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
+  botId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  threadId: "9c858901-8a57-4791-81fe-4c455b099bc9",
+  agent: "mercury",
+};
 
 describe("shared-mailbox completion notices", () => {
   it("skips the completion email for NO_ACTION replies, Markdown or not", () => {
@@ -10,5 +18,243 @@ describe("shared-mailbox completion notices", () => {
     expect(mailboxReplyNeedsNoEmail("no_action")).toBe(true);
     expect(mailboxReplyNeedsNoEmail("I scheduled the reminder.")).toBe(false);
     expect(mailboxReplyNeedsNoEmail(undefined)).toBe(false);
+  });
+});
+
+describe("receipt subject from the request", () => {
+  it("prefers the sender's subject and falls back to the request's first line", () => {
+    expect(deriveMailSubject("Find the Anthropic post", "body")).toBe("Find the Anthropic post");
+    expect(deriveMailSubject("   ", "What is the CEO of Nvidia?\nmore")).toBe("What is the CEO of Nvidia?");
+    // A leading "Subject:" typed by the sender does not leak into the subject.
+    expect(deriveMailSubject(undefined, "Subject: Quarterly numbers")).toBe("Quarterly numbers");
+    expect(deriveMailSubject(undefined, "   \n\n  ")).toBeUndefined();
+    expect(deriveMailSubject(undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("reply subject", () => {
+  it("answers the sender's own line rather than claiming a finished task", () => {
+    expect(mailboxReplySubject("Can you find the Anthropic post?")).toBe("Re: Can you find the Anthropic post?");
+    // Already a reply: never stack prefixes.
+    expect(mailboxReplySubject("Re: deck for Thursday")).toBe("Re: deck for Thursday");
+    // No subject to answer: a plain line, not a status claim.
+    expect(mailboxReplySubject(undefined)).toBe("Your Relay request");
+    expect(mailboxReplySubject("   ")).toBe("Your Relay request");
+    expect(mailboxReplySubject("x".repeat(400)).length).toBe(250);
+  });
+});
+
+describe("receipt acknowledgement", () => {
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    saved.address = process.env.RELAY_MAILBOX_ADDRESS;
+    saved.userId = process.env.RELAY_MAILBOX_USER_ID;
+    saved.secret = process.env.RELAY_TOOL_ACTOR_SECRET;
+    process.env.RELAY_MAILBOX_ADDRESS = "relay@houseof434.com";
+    process.env.RELAY_MAILBOX_USER_ID = ACTOR.userId;
+    process.env.RELAY_TOOL_ACTOR_SECRET = "actor-secret-that-is-at-least-thirty-two-bytes";
+  });
+  afterEach(() => {
+    for (const [key, value] of Object.entries({
+      RELAY_MAILBOX_ADDRESS: saved.address,
+      RELAY_MAILBOX_USER_ID: saved.userId,
+      RELAY_TOOL_ACTOR_SECRET: saved.secret,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("answers as a reply and says only that the mail arrived", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await sendMailboxAcknowledgement({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Find the post",
+    });
+
+    const payload = JSON.parse(bodies[0]!) as { subject: string; body: string; mailbox?: string };
+    expect(payload.mailbox).toBe("relay");
+    expect(payload.subject).toBe("Re: Find the post");
+    expect(payload.body).toContain("received your email");
+    // The receipt is not the result and must not claim one.
+    expect(payload.body).not.toContain("finished");
+  });
+});
+
+describe("when to send the completion email", () => {
+  const base = { routed: true, ok: true, alreadySent: false, awaitingTeammates: false, reply: "Here is the answer." };
+
+  it("sends once the work truly finishes, citing the answer", () => {
+    expect(shouldSendMailboxCompletion(base)).toBe(true);
+  });
+
+  it("skips the turn that delegated and is still waiting on a teammate", () => {
+    // The bug this guards: the handoff turn settled first and mailed a
+    // premature "delegated" note; the resumed turn then had nothing left.
+    expect(shouldSendMailboxCompletion({ ...base, awaitingTeammates: true })).toBe(false);
+  });
+
+  it("never sends twice for one routed thread", () => {
+    expect(shouldSendMailboxCompletion({ ...base, alreadySent: true })).toBe(false);
+  });
+
+  it("stays silent for non-routed turns, failures, and no-op replies", () => {
+    expect(shouldSendMailboxCompletion({ ...base, routed: false })).toBe(false);
+    expect(shouldSendMailboxCompletion({ ...base, ok: false })).toBe(false);
+    expect(shouldSendMailboxCompletion({ ...base, reply: "NO_ACTION" })).toBe(false);
+    expect(shouldSendMailboxCompletion({ ...base, reply: "  " })).toBe(false);
+    expect(shouldSendMailboxCompletion({ ...base, reply: undefined })).toBe(false);
+  });
+});
+
+describe("completion email structure", () => {
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    saved.address = process.env.RELAY_MAILBOX_ADDRESS;
+    saved.userId = process.env.RELAY_MAILBOX_USER_ID;
+    saved.secret = process.env.RELAY_TOOL_ACTOR_SECRET;
+    process.env.RELAY_MAILBOX_ADDRESS = "relay@houseof434.com";
+    process.env.RELAY_MAILBOX_USER_ID = ACTOR.userId;
+    process.env.RELAY_TOOL_ACTOR_SECRET = "actor-secret-that-is-at-least-thirty-two-bytes";
+  });
+  afterEach(() => {
+    for (const [key, value] of Object.entries({
+      RELAY_MAILBOX_ADDRESS: saved.address,
+      RELAY_MAILBOX_USER_ID: saved.userId,
+      RELAY_TOOL_ACTOR_SECRET: saved.secret,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    vi.restoreAllMocks();
+  });
+
+  const capture = () => {
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+    return bodies;
+  };
+
+  it("receipt and result share one subject so the two emails thread", async () => {
+    const bodies = capture();
+    // One subject, derived once from the sender's request, used by both sends.
+    const derived = deriveMailSubject("", "Find the latest Anthropic post");
+    await sendMailboxAcknowledgement({ capability: "x".repeat(40), actor: ACTOR, email: "friend@example.test", subject: derived });
+    await sendMailboxCompletionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: derived,
+      detail: "Here it is.",
+    });
+    const ack = (JSON.parse(bodies[0]!) as { subject: string }).subject;
+    const result = (JSON.parse(bodies[1]!) as { subject: string }).subject;
+    expect(ack).toBe("Re: Find the latest Anthropic post");
+    expect(result).toBe(ack);
+  });
+
+  it("sends the reply as the body, with the link only when a URL exists", async () => {
+    const bodies = capture();
+    await sendMailboxCompletionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Find the post",
+      detail: "Here is the link: https://example.test/post",
+      relayUrl: "https://relay.example.test",
+    });
+    const payload = JSON.parse(bodies[0]!) as { subject: string; body: string };
+    expect(payload.subject).toBe("Re: Find the post");
+    expect(payload.body).toContain("Here is the link: https://example.test/post");
+    expect(payload.body).toContain("https://relay.example.test");
+    expect(payload.body).not.toContain("finished");
+  });
+
+  it("drops the Relay footer when the server has no public URL", async () => {
+    const bodies = capture();
+    await sendMailboxCompletionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Question",
+      detail: "The answer.",
+    });
+    const payload = JSON.parse(bodies[0]!) as { body: string };
+    expect(payload.body).toBe("The answer.");
+    expect(payload.body).not.toContain("Open Relay");
+  });
+});
+
+describe("completion email attachments", () => {
+  const saved: Record<string, string | undefined> = {};
+  beforeEach(() => {
+    saved.address = process.env.RELAY_MAILBOX_ADDRESS;
+    saved.userId = process.env.RELAY_MAILBOX_USER_ID;
+    saved.secret = process.env.RELAY_TOOL_ACTOR_SECRET;
+    process.env.RELAY_MAILBOX_ADDRESS = "relay@houseof434.com";
+    process.env.RELAY_MAILBOX_USER_ID = ACTOR.userId;
+    process.env.RELAY_TOOL_ACTOR_SECRET = "actor-secret-that-is-at-least-thirty-two-bytes";
+  });
+  afterEach(() => {
+    for (const [key, value] of Object.entries({
+      RELAY_MAILBOX_ADDRESS: saved.address,
+      RELAY_MAILBOX_USER_ID: saved.userId,
+      RELAY_TOOL_ACTOR_SECRET: saved.secret,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    vi.restoreAllMocks();
+  });
+
+  it("carries the turn's produced files so a report rides the reply", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await sendMailboxCompletionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Research",
+      detail: "Your deep research has finished.",
+      attachments: [{ filename: "report.md", mimeType: "text/markdown", data: "cmVwb3J0" }],
+    });
+
+    const payload = JSON.parse(bodies[0]!) as { mailbox?: string; attachments?: unknown };
+    expect(payload.mailbox).toBe("relay");
+    expect(payload.attachments).toEqual([{ filename: "report.md", mimeType: "text/markdown", data: "cmVwb3J0" }]);
+  });
+
+  it("omits the attachments field entirely when the turn produced no files", async () => {
+    const bodies: string[] = [];
+    vi.stubGlobal("fetch", async (_url: string | URL, init?: RequestInit) => {
+      bodies.push(String(init?.body));
+      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+    });
+
+    await sendMailboxCompletionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Question",
+      detail: "Here is the answer.",
+    });
+
+    const payload = JSON.parse(bodies[0]!) as Record<string, unknown>;
+    expect("attachments" in payload).toBe(false);
   });
 });

@@ -266,12 +266,19 @@ describe("routed mail prompt", () => {
     expect(off).not.toContain("Scribe attends");
   });
 
-  it("tells the bot not to guess at attachments until the fetch route ships", () => {
+  it("lists attachments so the reader can identify them, without a type-specific rule", () => {
     const prompt = routedMailPrompt(message({
       attachments: [{ filename: "deck.pdf", mimeType: "application/pdf", size: 12_345 }],
     }), BOB, { scribeEnabled: false });
     expect(prompt).toContain("- deck.pdf (application/pdf, 12345 bytes)");
-    expect(prompt).toContain("I can't open attachments yet, please send a link");
+    // No claim that attachments are unreadable, and no hardcoded workflow.
+    expect(prompt).not.toContain("I can't open attachments yet");
+    expect(prompt).not.toContain("Dealflow");
+  });
+
+  it("leaves a message without attachments free of attachment talk", () => {
+    const prompt = routedMailPrompt(message(), BOB, { scribeEnabled: false });
+    expect(prompt).not.toContain("Attachments:");
   });
 
   it("titles threads from the subject, bounded to one line", () => {

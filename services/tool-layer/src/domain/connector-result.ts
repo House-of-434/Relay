@@ -5,7 +5,7 @@
  * where the item came from, how to cite it, when it was published, and the
  * bounded content. Provider-native fields that do not survive the boundary
  * stay on the provider side. */
-export type ConnectorSource = "arxiv" | "sec-edgar" | "github";
+export type ConnectorSource = "arxiv" | "sec-edgar" | "github" | "notion";
 
 export interface ConnectorResult {
   /** Which connector produced this item. */

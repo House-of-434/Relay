@@ -135,11 +135,11 @@ export function routedMailPrompt(
     body,
   ];
   if (attachments.length) {
-    lines.push("", "Attachments (contents not available yet):", attachmentLine(attachments));
+    lines.push("", "Attachments:", attachmentLine(attachments));
   }
   lines.push(
     "",
-    "Carry out the teammate's request using their own connected Google mail and calendar. Reminders and events go on their calendar. For research, delegate to Scout with the peer tools. Follow the normal confirmation rules for anything outward, such as sending mail or inviting guests. If the request depends on an attachment, say \"I can't open attachments yet, please send a link\" rather than guessing at its contents.",
+    "Carry out the teammate's request using their own connected Google mail and calendar. Reminders and events go on their calendar. For research, delegate to Scout with the peer tools. Follow the normal confirmation rules for anything outward, such as sending mail or inviting guests.",
     INVITE_GUIDANCE.trim(),
   );
   if (options.scribeEnabled) lines.push(SCRIBE_GUIDANCE.trim());

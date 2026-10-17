@@ -12,7 +12,7 @@ import { GroupView } from "@/components/GroupView";
 import { BotSettingsDialog } from "@/components/BotSettingsDialog";
 import { RemoteAgentSettingsPanel } from "@/components/RemoteAgentSettingsPanel";
 import { NewBotDialog } from "@/components/NewBotDialog";
-import { PluginsPanel, type ConnectionAccount, type ConnectionService, type GithubConnection } from "@/components/PluginsPanel";
+import { PluginsPanel, type ConnectionAccount, type ConnectionService, type GithubConnection, type NotionConnection } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { DocPane } from "@/components/DocPane";
 import { InspectorPanel } from "@/components/InspectorPanel";
@@ -43,16 +43,20 @@ interface GoogleConnectionInventory {
   services: Partial<Record<ConnectionService["id"], boolean>>;
 }
 
-/** GitHub's connection as the BFF reports it: whether the workspace is set up
- *  for it and the installations Disconnect must revoke. */
+/** GitHub's and Notion's connections as the BFF reports them. */
 interface GithubConnectorInventory {
   github: GithubConnection;
+}
+
+interface NotionConnectorInventory {
+  notion: NotionConnection;
 }
 
 function GoogleConnectionsDialog() {
   const { state } = useStore();
   const [inventory, setInventory] = useState<GoogleConnectionInventory>({ accounts: [], services: {} });
   const [github, setGithub] = useState<GithubConnection | null>(null);
+  const [notion, setNotion] = useState<NotionConnection | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -61,12 +65,16 @@ function GoogleConnectionsDialog() {
       const response = await fetch("/api/connectors", { credentials: "same-origin", signal });
       if (!response.ok) {
         setGithub(null);
+        setNotion(null);
         return;
       }
-      setGithub((await response.json() as GithubConnectorInventory).github ?? null);
+      const body = await response.json() as Partial<GithubConnectorInventory & NotionConnectorInventory>;
+      setGithub(body.github ?? null);
+      setNotion(body.notion ?? null);
     } catch (cause) {
       if (cause instanceof DOMException && cause.name === "AbortError") return;
       setGithub(null);
+      setNotion(null);
     }
   }, []);
 
@@ -174,6 +182,44 @@ function GoogleConnectionsDialog() {
     if (revoked.includes(false)) throw new Error("Could not disconnect every GitHub installation.");
   };
 
+  // Mirrors the GitHub connect: the BFF answers with a Notion authorization URL
+  // and the browser leaves Relay for it, so success never returns here.
+  const connectNotion = async () => {
+    const response = await fetch("/api/notion/connection/connect", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    });
+    if (response.status === 503) throw new Error("Notion is not configured yet.");
+    if (!response.ok) throw new Error("Could not start Notion authorization.");
+    const result = await response.json() as { authorizationUrl?: unknown };
+    if (typeof result.authorizationUrl !== "string") throw new Error("Notion authorization did not return a sign-in URL.");
+    const authorizationUrl = new URL(result.authorizationUrl);
+    if (authorizationUrl.origin !== "https://api.notion.com") throw new Error("Notion authorization returned an unexpected destination.");
+    window.location.assign(authorizationUrl.toString());
+  };
+
+  // Disconnect revokes every workspace Relay holds for the teammate, then
+  // reads the state back so a partial failure cannot leave a surviving
+  // workspace hidden behind a row the user believes is gone.
+  const disconnectNotion = async () => {
+    const connections = notion?.connections ?? [];
+    const revoked = await Promise.all(connections.map(async (connection) => {
+      try {
+        const response = await fetch(`/api/notion/connection/${encodeURIComponent(connection.id)}`, {
+          method: "DELETE",
+          credentials: "same-origin",
+        });
+        return response.ok || response.status === 404;
+      } catch {
+        return false;
+      }
+    }));
+    await refreshGithub();
+    if (revoked.includes(false)) throw new Error("Could not disconnect every Notion workspace.");
+  };
+
   return state.pluginsOpen ? (
     <PluginsPanel
       accounts={inventory.accounts}
@@ -185,6 +231,9 @@ function GoogleConnectionsDialog() {
       github={github ?? undefined}
       onConnectGithub={connectGithub}
       onDisconnectGithub={disconnectGithub}
+      notion={notion ?? undefined}
+      onConnectNotion={connectNotion}
+      onDisconnectNotion={disconnectNotion}
     />
   ) : null;
 }

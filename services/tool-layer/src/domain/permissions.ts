@@ -270,6 +270,23 @@ export function authorizeGithub(agent: Agent, capability: GithubCapability): voi
   }
 }
 
+/** Notion workspace capability: reads are shared research, writes stay with
+ * the agent that owns inbox-driven dealflow. Private vs shared is decided by
+ * the actor's own workspace connection at the BFF, never by tool arguments. */
+export type NotionCapability = "read" | "write";
+
+export const NOTION_PERMISSIONS: Record<Agent, readonly NotionCapability[]> = {
+  scout: ["read"],
+  mercury: ["read", "write"],
+  curator: ["read"],
+};
+
+export function authorizeNotion(agent: Agent, capability: NotionCapability): void {
+  if (!NOTION_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`notion ${capability} access denied for ${agent}`);
+  }
+}
+
 export function isAgent(value: string): value is Agent {
   return (AGENTS as readonly string[]).includes(value);
 }

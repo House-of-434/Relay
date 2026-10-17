@@ -312,7 +312,7 @@ test("the send route dispatches exactly the confirmed content to messages.send",
   const send = calls.find((call) => call.operation === "messages.send");
   assert.equal(
     send?.raw ? Buffer.from(send.raw, "base64url").toString("utf8") : undefined,
-    "To: friend@example.test\r\nSubject: Launch\r\n\r\nShipping Friday.",
+    'To: friend@example.test\r\nSubject: Launch\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset="UTF-8"\r\n\r\nShipping Friday.',
   );
 });
 
@@ -345,8 +345,62 @@ test("cc and bcc travel as RFC2822 headers and echo back in the response", async
   const send = calls.find((call) => call.operation === "messages.send");
   assert.equal(
     send?.raw ? Buffer.from(send.raw, "base64url").toString("utf8") : undefined,
-    "To: friend@example.test\r\nCc: teammate@example.test\r\nBcc: observer@example.test\r\nSubject: Launch\r\n\r\nShipping Friday.",
+    'To: friend@example.test\r\nCc: teammate@example.test\r\nBcc: observer@example.test\r\nSubject: Launch\r\nMIME-Version: 1.0\r\nContent-Type: text/plain; charset="UTF-8"\r\n\r\nShipping Friday.',
   );
+});
+
+test("attachments ride the completion email as base64 MIME parts", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const data = Buffer.from("report bytes").toString("base64");
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Research done",
+      body: "Your deep research has finished.",
+      attachments: [{ filename: "report.md", mimeType: "text/markdown", data }],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const raw = Buffer.from(calls.find((call) => call.operation === "messages.send")!.raw!, "base64url").toString("utf8");
+  assert.match(raw, /Content-Type: multipart\/mixed; boundary="relay_/);
+  assert.match(raw, /Content-Disposition: attachment; filename="report\.md"/);
+  assert.match(raw, /Content-Transfer-Encoding: base64/);
+  assert.ok(raw.includes(data), "the base64 bytes are embedded in the part");
+});
+
+test("a header-injecting filename cannot break out of its MIME part", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Hi",
+      body: "There",
+      attachments: [{ filename: "a\r\nX-Evil: 1.md", mimeType: "text/markdown", data: Buffer.from("x").toString("base64") }],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const raw = Buffer.from(calls.find((call) => call.operation === "messages.send")!.raw!, "base64url").toString("utf8");
+  // The CRLF is flattened into the quoted filename, so no injected header line
+  // ever begins on its own line.
+  assert.equal(/\r\nX-Evil:/.test(raw), false);
 });
 
 test("a non-address in cc is refused before anything is sent", async () => {

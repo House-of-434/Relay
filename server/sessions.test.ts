@@ -672,4 +672,21 @@ describe("sessionless identity for the shared-mailbox monitor", () => {
       email: "ada@houseof434.com",
     });
   });
+
+  it("resolves an email to its newest live session, not an older duplicate", () => {
+    // Two live sessions for one address: the newer sign-in is the account in
+    // use, so the older one must not shadow it — routed mail then acts as the
+    // identity that actually holds the teammate's connected apps.
+    const scoped = new SessionRegistry({
+      file: join(dir, "sessions-duplicate.json"),
+      now: () => clock,
+      emailScopes: () => ["client"],
+    });
+    scoped.issue({ label: "old", scopes: ["client"], userId: "11111111-1111-4111-8111-111111111111", email: "ada@houseof434.com" });
+    scoped.issue({ label: "new", scopes: ["client"], userId: "22222222-2222-4222-8222-222222222222", email: "ada@houseof434.com" });
+    expect(scoped.personByEmail("ada@houseof434.com")).toEqual({
+      userId: "22222222-2222-4222-8222-222222222222",
+      email: "ada@houseof434.com",
+    });
+  });
 });

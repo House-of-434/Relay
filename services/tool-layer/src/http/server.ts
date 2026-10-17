@@ -14,6 +14,7 @@ import { TinyFishFetchProvider } from "../infra/fetch.js";
 import { ArxivProvider } from "../infra/arxiv.js";
 import { SecProvider } from "../infra/sec.js";
 import { RelayGitHubClient } from "../infra/github.js";
+import { RelayNotionClient } from "../infra/notion.js";
 import { ConnectorStateClient } from "../infra/connector-state.js";
 import { createAgentMcpServer, type ConnectorToolContext } from "../mcp/agent-server.js";
 import { databaseToolCallLogger } from "../mcp/tool-log.js";
@@ -223,6 +224,12 @@ async function buildConnectors(
   if (state.github.connected) {
     connectors.github = {
       client: new RelayGitHubClient({ bffInternalUrl, capability }),
+      actorAssertion,
+    };
+  }
+  if (state.notion.connected) {
+    connectors.notion = {
+      client: new RelayNotionClient({ bffInternalUrl, capability }),
       actorAssertion,
     };
   }

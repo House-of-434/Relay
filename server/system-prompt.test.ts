@@ -17,6 +17,7 @@ import {
   customMcpPrompt,
   mailboxSystemPrompt,
   CREDENTIAL_PROMPT,
+  CLARIFICATION_PROMPT,
   LEARN_PROMPT,
   PROFILE_PROMPT,
   ROUTINE_PROMPT,
@@ -208,10 +209,21 @@ describe("computerPrompt", () => {
 
 describe("shared sentences", () => {
   it("each begins with one space so they concatenate onto the persona line", () => {
-    for (const sentence of [COMPOSIO_PROMPT, CREDENTIAL_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
+    for (const sentence of [COMPOSIO_PROMPT, CREDENTIAL_PROMPT, CLARIFICATION_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
       expect(sentence.startsWith(" ")).toBe(true);
       expect(sentence.startsWith("  ")).toBe(false);
     }
+  });
+
+  it("states the global incompleteness rule without naming any workflow", () => {
+    // The rule is generic: ask, or state the gaps and reasoning — never
+    // invent a value or leave it silently blank. It must not encode a
+    // specific task, service, or field.
+    expect(CLARIFICATION_PROMPT).toContain("cannot be completed as asked");
+    expect(CLARIFICATION_PROMPT).toContain("never invent it or leave it silently unaddressed");
+    expect(CLARIFICATION_PROMPT).toContain("whether you may use additional tools");
+    expect(CLARIFICATION_PROMPT).toContain("the specific gaps, why you left each one, and your reasoning");
+    expect(CLARIFICATION_PROMPT).not.toMatch(/Dealflow|Notion|deck|pitch/i);
   });
 
   it("customMcpPrompt names the mounted servers and is empty for none", () => {

@@ -7,7 +7,7 @@ vi.mock("@/state/store", () => ({
   useStore: () => ({ state: { config: { sharedWorkspace: true } }, dispatch: vi.fn() }),
 }));
 
-import { CONNECTION_SERVICES, GITHUB_SERVICE, PluginsPanel, connectionViews, type ConnectionAccount, type GithubConnection, type PluginsPanelProps } from "./PluginsPanel";
+import { CONNECTION_SERVICES, GITHUB_SERVICE, NOTION_SERVICE, PluginsPanel, connectionViews, type ConnectionAccount, type GithubConnection, type NotionConnection, type PluginsPanelProps } from "./PluginsPanel";
 
 const gmail: ConnectionAccount = { service: "gmail", id: "ca_1", email: "me@houseof434.com" };
 const calendar: ConnectionAccount = { service: "google-calendar", id: "ca_2", email: "me@houseof434.com" };
@@ -167,6 +167,59 @@ describe("github connection", () => {
   });
 });
 
+describe("notion connection", () => {
+  const available: NotionConnection = { configured: true, connected: false, connections: [] };
+  const connected: NotionConnection = {
+    configured: true,
+    connected: true,
+    workspace: "House of 434",
+    connections: [{ id: "no_1", workspace: "House of 434" }],
+  };
+
+  it("offers Notion alongside the other services once the workspace is configured for it", () => {
+    const { html } = render({ notion: available });
+    expect(html).toContain("Notion");
+    expect(html).toContain('aria-label="Connect Notion"');
+  });
+
+  it("hides Notion entirely when the workspace is not configured for it", () => {
+    expect(render({ notion: { configured: false, connected: false, connections: [] } }).html).not.toContain("Notion");
+    expect(render().html).not.toContain("Notion");
+  });
+
+  it("starts Notion authorization from its Connect action", () => {
+    const onConnectNotion = vi.fn();
+    const panel = render({ notion: available, onConnectNotion });
+    panel.click("Connect Notion");
+    expect(onConnectNotion).toHaveBeenCalledOnce();
+  });
+
+  it("names the connected workspace with a Disconnect once Notion is linked", () => {
+    const { html } = render({ notion: connected }, "?connections=connected");
+    expect(html).toContain("Connected to House of 434");
+    expect(html).toContain('aria-label="Disconnect Notion from Relay"');
+    expect(html).not.toContain('aria-label="Connect Notion"');
+  });
+
+  it("revokes Notion from its Disconnect action", () => {
+    const onDisconnectNotion = vi.fn();
+    const panel = render({ notion: connected, onDisconnectNotion }, "?connections=connected");
+    panel.click("Disconnect Notion from Relay");
+    expect(onDisconnectNotion).toHaveBeenCalledOnce();
+  });
+
+  it("does not borrow one provider's identity for the other's row", () => {
+    // GitHub reports an account, Notion a workspace: a mis-wired row would show
+    // the wrong label, so assert each note only on its own row.
+    const { html } = render({
+      github: { configured: true, connected: true, account: "pranam434", connections: [] },
+      notion: connected,
+    }, "?connections=connected");
+    expect(html).toContain("Connected as pranam434");
+    expect(html).toContain("Connected to House of 434");
+  });
+});
+
 describe("connectionViews", () => {
   it("offers every shipped service until one is authenticated", () => {
     const views = connectionViews(CONNECTION_SERVICES, []);
@@ -190,10 +243,10 @@ describe("connectionViews", () => {
   });
 
   it("treats a service in connectedExternally as connected without a Google account", () => {
-    // GitHub's connected state is reported by the BFF, not an account list, so
-    // it reaches the same rows through this set.
-    const views = connectionViews([...CONNECTION_SERVICES, GITHUB_SERVICE], [], "", new Set(["github"]));
-    expect(views.connected.map((service) => service.id)).toEqual(["github"]);
+    // GitHub's and Notion's connected state is reported by the BFF, not an
+    // account list, so they reach the same rows through this set.
+    const views = connectionViews([...CONNECTION_SERVICES, GITHUB_SERVICE, NOTION_SERVICE], [], "", new Set(["github", "notion"]));
+    expect(views.connected.map((service) => service.id)).toEqual(["github", "notion"]);
     expect(views.available.map((service) => service.id)).toEqual(["gmail", "google-calendar"]);
   });
 
