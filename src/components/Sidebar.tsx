@@ -1321,7 +1321,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                   {/* Group opacity, not the alpha ink token: PanelLeft's divider
                       stroke overlaps the rect border, and two semi-transparent
                       strokes composite brighter where they cross. */}
-                  <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+                  <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" />
                 </span>
               </button>
             )}
@@ -1455,7 +1455,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             title={t("sidebar.toggle.close")}
             className="group hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
           >
-            <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100" />
+            <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" />
           </button>
         )}
         </div>
