@@ -8,10 +8,13 @@ import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { createRemoteJWKSet, customFetch, jwtVerify, type JWTPayload } from "jose";
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
-import { handleInternalGmail, isInternalGmailPath } from "./gmail-internal.ts";
+import { handleInternalGmail, isInternalGmailPath, fetchGmailAttachment } from "./gmail-internal.ts";
 import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-internal.ts";
 import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
 import { handleInternalGitHub, isInternalGitHubPath } from "./github-internal.ts";
+import { handleInternalNotion, isInternalNotionPath } from "./notion-internal.ts";
+import { exchangeNotionToken, normalizeNotionId, NOTION_OAUTH_AUTHORIZE_URL } from "./notion-api.ts";
+import { NotionConnectionStore } from "./notion-connections.ts";
 import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
 import { GitHubConnectionConflictError, GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
 import { GitHubAppGateway } from "./github-api.ts";
@@ -35,6 +38,7 @@ const COOKIE_NAME = "relay_bff";
 const OAUTH_STATE_COOKIE_NAME = "relay_bff_oauth_state";
 const GOOGLE_OAUTH_STATE_COOKIE_PREFIX = "relay_google_oauth_state_";
 const GITHUB_OAUTH_STATE_COOKIE = "relay_github_oauth_state";
+const NOTION_OAUTH_STATE_COOKIE = "relay_notion_oauth_state";
 const GITHUB_INSTALL_BASE = "https://github.com/apps";
 const DEFAULT_BFF_PORT = 8798;
 const DEFAULT_RELAY_PORT = 8799;
@@ -77,6 +81,14 @@ export interface RelayBffConfig {
   githubAppId?: string;
   githubAppPrivateKey?: string;
   githubAppSlug?: string;
+  /** Public Notion OAuth integration for per-user workspace connections. */
+  notionClientId?: string;
+  notionClientSecret?: string;
+  notionTokenEncryptionKey?: string;
+  notionRedirectUri?: string;
+  /** Normalized (32-hex) database ids Notion writes are permitted to target.
+   * During evaluation this holds only the Dealflow copy. */
+  notionAllowedDatabaseIds?: string[];
 }
 
 export interface VerifiedSupabaseIdentity {
@@ -130,6 +142,14 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
   const githubAppId = env.RELAY_CONN_GITHUB_APP_ID?.trim();
   const githubAppPrivateKey = env.RELAY_CONN_GITHUB_APP_PRIVATE_KEY;
   const githubAppSlug = env.RELAY_CONN_GITHUB_APP_SLUG?.trim();
+  const notionClientId = env.RELAY_CONN_NOTION_CLIENT_ID?.trim();
+  const notionClientSecret = env.RELAY_CONN_NOTION_CLIENT_SECRET?.trim();
+  const notionTokenEncryptionKey = env.RELAY_CONN_NOTION_TOKEN_KEY?.trim() || env.RELAY_TOKEN_ENCRYPTION_KEY?.trim();
+  const notionRedirectUri = env.RELAY_NOTION_REDIRECT_URI?.trim();
+  const notionAllowedDatabaseIds = (env.RELAY_CONN_NOTION_ALLOWED_DATABASE_IDS ?? "")
+    .split(",")
+    .map((entry) => normalizeNotionId(entry))
+    .filter((entry): entry is string => entry !== undefined);
   return validateConfig({
     supabaseProjectUrl: env.SUPABASE_PROJECT_URL!,
     supabaseAnonKey: env.SUPABASE_ANON_KEY!,
@@ -157,6 +177,11 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     ...(githubAppId ? { githubAppId } : {}),
     ...(githubAppPrivateKey ? { githubAppPrivateKey } : {}),
     ...(githubAppSlug ? { githubAppSlug } : {}),
+    ...(notionClientId ? { notionClientId } : {}),
+    ...(notionClientSecret ? { notionClientSecret } : {}),
+    ...(notionTokenEncryptionKey ? { notionTokenEncryptionKey } : {}),
+    ...(notionRedirectUri ? { notionRedirectUri } : {}),
+    ...(notionAllowedDatabaseIds.length ? { notionAllowedDatabaseIds } : {}),
   });
 }
 
@@ -881,6 +906,14 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     ? `${GITHUB_INSTALL_BASE}/${config.githubAppSlug}/installations/new`
     : undefined;
   const githubTransactions = new Map<string, { userId: string; sessionId: string; expiresAt: number }>();
+  const notionConnections = new NotionConnectionStore({
+    dataDir: config.dataDir,
+    encryptionKey: config.notionTokenEncryptionKey,
+  });
+  const notionConfigured = Boolean(
+    config.notionClientId && config.notionClientSecret && config.notionTokenEncryptionKey,
+  );
+  const notionTransactions = new Map<string, { userId: string; sessionId: string; redirectUri: string; expiresAt: number }>();
   const verifySupabaseToken = createSupabaseJwtVerifier({
     projectUrl: config.supabaseProjectUrl,
     anonKey: config.supabaseAnonKey,
@@ -1044,6 +1077,84 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     return state;
   };
 
+  const notionCallbackUri = (): URL => new URL(
+    config.notionRedirectUri ?? `${publicUrl.origin}/api/notion/callback`,
+  );
+  const setNotionStateCookie = (res: ServerResponse, state: string): void => {
+    const maxAge = Math.floor(oauthStateTtlMs / 1000);
+    appendSetCookie(
+      res,
+      `${NOTION_OAUTH_STATE_COOKIE}=${state}; Path=/api/notion/callback; HttpOnly; SameSite=Lax; Max-Age=${maxAge}${cookieSecurity(publicUrl)}`,
+    );
+  };
+  const clearNotionStateCookie = (res: ServerResponse): void => {
+    appendSetCookie(
+      res,
+      `${NOTION_OAUTH_STATE_COOKIE}=; Path=/api/notion/callback; HttpOnly; SameSite=Lax; Max-Age=0${cookieSecurity(publicUrl)}`,
+    );
+  };
+  const createNotionState = (userId: string, sessionId: string, redirectUri: string): string => {
+    if (notionTransactions.size >= MAX_PENDING_LOGINS) {
+      const oldest = notionTransactions.keys().next().value;
+      if (oldest !== undefined) notionTransactions.delete(oldest);
+    }
+    const state = randomBytes(32).toString("base64url");
+    notionTransactions.set(state, { userId, sessionId, redirectUri, expiresAt: now() + oauthStateTtlMs });
+    return state;
+  };
+
+  /** Notion OAuth callback. Mirrors the GitHub callback's binding: the state
+   * must match its HttpOnly cookie and the *live* session, so a stolen state
+   * cannot attach a workspace to another account. */
+  const handleNotionCallback = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
+    res.setHeader("cache-control", "no-store");
+    clearNotionStateCookie(res);
+    const state = url.searchParams.get("state");
+    const cookieState = cookieValue(req, NOTION_OAUTH_STATE_COOKIE);
+    const transaction = state && cookieState === state ? notionTransactions.get(state) : undefined;
+    if (state) notionTransactions.delete(state);
+    if (!transaction || transaction.expiresAt <= now() || !notionConfigured) {
+      reject(req, res, 400, "Notion connection could not be completed");
+      return;
+    }
+    const activeId = cookieValue(req);
+    const activeSession = activeId ? sessions.get(activeId) : undefined;
+    if (activeId !== transaction.sessionId || !activeSession || activeSession.subject !== transaction.userId) {
+      reject(req, res, 401, "Notion connection could not be completed");
+      return;
+    }
+    const code = singleQueryValue(url, "code", OAUTH_CODE_PATTERN);
+    if (url.searchParams.has("error") || !code) {
+      reject(req, res, 400, "Notion connection could not be completed");
+      return;
+    }
+    try {
+      const exchanged = await exchangeNotionToken({
+        code,
+        redirectUri: transaction.redirectUri,
+        clientId: config.notionClientId!,
+        clientSecret: config.notionClientSecret!,
+        fetcher,
+      });
+      await notionConnections.save({
+        userId: transaction.userId,
+        workspaceId: exchanged.workspaceId,
+        ...(exchanged.workspaceName ? { workspaceName: exchanged.workspaceName } : {}),
+        ...(exchanged.notionUserId ? { notionUserId: exchanged.notionUserId } : {}),
+        accessToken: exchanged.accessToken,
+        now: now(),
+      });
+    } catch {
+      reject(req, res, 502, "Notion connection could not be saved");
+      return;
+    }
+    res.statusCode = 303;
+    const connectedLocation = new URL(uiLocation);
+    connectedLocation.searchParams.set("connections", "connected");
+    res.setHeader("location", connectedLocation.toString());
+    res.end();
+  };
+
   /** GitHub App install callback. Mirrors the Google callback's binding: the
    * state must match its HttpOnly cookie and the *live* session, so a stolen
    * state cannot attach an installation to another account. */
@@ -1117,12 +1228,22 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 
     if (url.pathname === "/api/connectors" && method === "GET") {
       const connections = await githubConnections.list(session.subject);
+      const notionList = await notionConnections.list(session.subject);
       json(res, 200, {
         github: {
           configured: Boolean(githubApp && githubInstallUrl),
           connected: connections.length > 0,
           account: connections.at(-1)?.account,
           connections: connections.map((connection) => ({ id: connection.id, account: connection.account })),
+        },
+        notion: {
+          configured: notionConfigured,
+          connected: notionList.length > 0,
+          workspace: notionList.at(-1)?.workspaceName,
+          connections: notionList.map((connection) => ({
+            id: connection.id,
+            workspace: connection.workspaceName ?? connection.workspaceId,
+          })),
         },
       });
       return;
@@ -1147,6 +1268,45 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 
     if (url.pathname === "/api/github/callback" && method === "GET") {
       await handleGitHubCallback(req, res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/notion/connection/connect" && method === "POST") {
+      if (typeof req.headers.origin !== "string") {
+        reject(req, res, 403, "forbidden");
+        return;
+      }
+      if (!notionConfigured) {
+        json(res, 503, { error: "Notion is not configured" });
+        return;
+      }
+      const redirectUri = notionCallbackUri().toString();
+      const state = createNotionState(session.subject, sessionId!, redirectUri);
+      setNotionStateCookie(res, state);
+      const authorize = new URL(NOTION_OAUTH_AUTHORIZE_URL);
+      authorize.searchParams.set("client_id", config.notionClientId!);
+      authorize.searchParams.set("redirect_uri", redirectUri);
+      authorize.searchParams.set("response_type", "code");
+      authorize.searchParams.set("owner", "user");
+      authorize.searchParams.set("state", state);
+      json(res, 200, { authorizationUrl: authorize.toString() });
+      return;
+    }
+
+    if (url.pathname === "/api/notion/callback" && method === "GET") {
+      await handleNotionCallback(req, res, url);
+      return;
+    }
+
+    if (url.pathname === "/api/notion/connection" && method === "GET") {
+      const notionList = await notionConnections.list(session.subject);
+      json(res, 200, {
+        configured: notionConfigured,
+        connections: notionList.map((connection) => ({
+          id: connection.id,
+          workspace: connection.workspaceName ?? connection.workspaceId,
+        })),
+      });
       return;
     }
 
@@ -1180,6 +1340,21 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         }
       }
       await githubConnections.delete(session.subject, id);
+      json(res, 200, { ok: true, disconnected: true });
+      return;
+    }
+
+    // Local removal only: the token is deleted from Relay either way. Until
+    // the token-revocation call is verified against the live API, revoke the
+    // integration from the Notion workspace settings after disconnecting.
+    const notionDisconnectMatch = method === "DELETE" ? /^\/api\/notion\/connection\/([a-f0-9]{64})$/.exec(url.pathname) : null;
+    if (notionDisconnectMatch) {
+      const id = notionDisconnectMatch[1]!;
+      const removed = await notionConnections.delete(session.subject, id);
+      if (removed === "not-found") {
+        json(res, 404, { error: "Notion connection not found" });
+        return;
+      }
       json(res, 200, { ok: true, disconnected: true });
       return;
     }
@@ -1590,7 +1765,11 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       url.pathname === "/api/github/connection" ||
       url.pathname === "/api/github/connection/connect" ||
       url.pathname === "/api/github/callback" ||
-      url.pathname.startsWith("/api/github/connection/")
+      url.pathname.startsWith("/api/github/connection/") ||
+      url.pathname === "/api/notion/connection" ||
+      url.pathname === "/api/notion/connection/connect" ||
+      url.pathname === "/api/notion/callback" ||
+      url.pathname.startsWith("/api/notion/connection/")
     ) {
       await handleConnectorRoutes(req, res, url, method);
       return;
@@ -1653,8 +1832,9 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         now,
       }, "/api/internal/connectors/state");
       if (!verified) return;
-      const connected = (await githubConnections.list(verified.actor.userId)).length > 0;
-      jsonResponse(res, 200, { github: { connected } });
+      const githubConnected = (await githubConnections.list(verified.actor.userId)).length > 0;
+      const notionConnected = (await notionConnections.list(verified.actor.userId)).length > 0;
+      jsonResponse(res, 200, { github: { connected: githubConnected }, notion: { connected: notionConnected } });
       return;
     }
 
@@ -1669,6 +1849,37 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         connections: githubConnections,
         app: githubApp,
         now,
+      });
+      return;
+    }
+
+    if (isInternalNotionPath(url.pathname)) {
+      if (!config.notionTokenEncryptionKey) {
+        jsonResponse(res, 503, { error: "Notion is not configured" });
+        return;
+      }
+      await handleInternalNotion(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        connections: notionConnections,
+        allowedDatabaseIds: config.notionAllowedDatabaseIds ?? [],
+        fetcher,
+        now,
+        // The BFF owns both gateways, so it pairs them here: the actor's
+        // Gmail attachment bytes are fetched server-side and uploaded to
+        // Notion, never travelling through the model.
+        fetchAttachment: async (actor, input) => {
+          const { attachment } = await fetchGmailAttachment({
+            googleApi,
+            listAccounts: (userId) => googleStore.list(userId),
+            capability: config.relayBffCapability,
+            actorSecret: config.relayToolActorSecret,
+            mailboxAddress: config.relayMailboxAddress,
+            mailboxUserId: config.relayMailboxUserId,
+            now,
+          }, actor, input);
+          return { filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data };
+        },
       });
       return;
     }

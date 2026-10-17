@@ -2405,6 +2405,7 @@
   "connectors.comingSoon": "Coming soon",
   "connectors.notConfiguredYet": "Direct Google authorization is not configured on this workspace yet.",
   "connectors.github.connected": "Connected as {account}",
+  "connectors.notion.connected": "Connected to {name}",
   "connectors.refreshTitle": "Refresh connection status",
   "connectors.closeAria": "Close plugins",
   "connectors.typeAria": "Plugin type",

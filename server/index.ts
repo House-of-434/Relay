@@ -8,7 +8,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { rm as removeDirectory } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { extname, join } from "node:path";
+import { extname, join, resolve, sep } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
 
 import { z } from "zod";
@@ -398,6 +398,7 @@ import {
   composioSystemPrompt,
   customMcpPrompt,
   mailboxSystemPrompt,
+  CLARIFICATION_PROMPT,
   CREDENTIAL_PROMPT,
   mentionPrompt,
   THREADS_PROMPT,
@@ -499,7 +500,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { mailboxReplyNeedsNoEmail, sendMailboxCompletionEmail } from "./mailbox-notify.ts";
+import { deriveMailSubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -2648,6 +2649,39 @@ function purgeTurnAttachmentsForThread(threadId: string): void {
   }
 }
 
+// Files a routed turn produced with attach_file ride the completion email, so
+// a long deliverable reaches the teammate as an attachment instead of pasted
+// text. Bounded so one turn cannot mail an unbounded payload; the routed
+// thread is opened per email, so every file in it belongs to this run.
+const MAX_MAIL_ATTACHMENTS = 10;
+const MAX_MAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_MAIL_TOTAL_BYTES = 25 * 1024 * 1024;
+
+function routedMailAttachments(threadId: string): Array<{ filename: string; mimeType: string; data: string }> {
+  const out: Array<{ filename: string; mimeType: string; data: string }> = [];
+  const attachmentsRoot = `${resolve(ATTACHMENTS_DIR)}${sep}`;
+  let total = 0;
+  for (const message of store.messagesFor(threadId)) {
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.kind !== "file" || out.length >= MAX_MAIL_ATTACHMENTS) continue;
+      // The store wrote this path inside ATTACHMENTS_DIR; refuse anything else.
+      const resolved = resolve(attachment.path);
+      if (!resolved.startsWith(attachmentsRoot)) continue;
+      let bytes: Buffer;
+      try {
+        bytes = readFileSync(resolved);
+      } catch {
+        continue;
+      }
+      if (bytes.length === 0 || bytes.length > MAX_MAIL_ATTACHMENT_BYTES) continue;
+      total += bytes.length;
+      if (total > MAX_MAIL_TOTAL_BYTES) return out;
+      out.push({ filename: attachment.name, mimeType: attachment.mime, data: bytes.toString("base64") });
+    }
+  }
+  return out;
+}
+
 function markCancelledProviderHandshake(threadId: string, ownerId: string): void {
   pendingCancelledProviderHandshakes.mark(threadId, ownerId);
 }
@@ -3322,6 +3356,9 @@ function previewSystemPrompt(bot: BotRecord) {
         cwd: bot.cwd,
       }),
     },
+    // After the setup block, which stays first after the soul: an incomplete
+    // task comes back as a question, never as an invented value or silent gap.
+    { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
     { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(RELAY_COMPUTER_DISABLED ? undefined : teamComputer ?? undefined) },
     // Auto cannot know its place until dispatch, so the preview stays silent
@@ -5786,6 +5823,16 @@ function isInternalTurn(threadId: string): boolean {
 // the internal flag, so a dead turn cannot silence the next one.
 const silentCompletionThreads = new Set<string>();
 
+/** Routed-mail threads whose result email has already gone out. The thread is
+ * not the end of the work when a turn delegates and waits, so the send is
+ * keyed to the turn that truly finishes and guarded here against a second
+ * settle (a late peer result) mailing the same person twice. */
+const mailCompletionSentThreads = new Set<string>();
+
+/** Routed messages whose receipt acknowledgement has already gone out, so a
+ * delivery retry cannot acknowledge the same mail twice. */
+const mailAckSentMessages = new Set<string>();
+
 function markSilentCompletion(threadId: string) {
   silentCompletionThreads.add(threadId);
 }
@@ -7132,6 +7179,11 @@ bus.subscribe((event: RuntimeEvent) => {
         // and write the same figures to the month's ledger, which outlives
         // the task and answers "what did we spend, by whom" for a period
         const settledTask = store.taskByThread(bot.id, event.threadId);
+        // The durable "this is routed mail" marker. Unlike the one-shot
+        // silent-completion flag (rewritten every dispatch), a task keeps it
+        // across the delegation handoff, so the resume turn still knows to
+        // answer the sender.
+        const routedMail = settledTask?.mailRouted;
         const selection = settledTask?.modelSelection ?? bot.modelSelection;
         // A provider that omitted a context measurement must not reuse a
         // stale reading from a different model or a pre-compaction session.
@@ -7179,10 +7231,18 @@ bus.subscribe((event: RuntimeEvent) => {
         // pair channel and chipped into both threads, which is the whole of
         // what the person needs to be able to find it.
         if (!routineReportThread && !internal) store.patchTask(bot.id, event.threadId, { unread: true });
+        // One completion gate for every thread origin: a turn that handed work
+        // to a teammate and settled waiting on it has not finished, so only the
+        // turn that truly answers is the final one. This decides *when* a
+        // completion notice fires; each channel separately decides *whether* it
+        // has already been delivered (mailCompletedAt / sent-set for mail).
+        // Work this conversation handed out — not its own root node, which
+        // stays open for the whole exchange.
+        const awaitingTeammates = roomHandoffs.outstandingDirect(event.threadId).length > 0;
         // A failed peer turn stays a chip too. The bot that delegated is woken
         // with the failure and answers the person in its own thread — buzzing
         // here as well would ring twice for one piece of news.
-        if ((!routineRun || routineRun.status === "completed") && !internal && !silentCompletion && !computerSelectionTurns.get(event.threadId)?.selected) {
+        if ((!routineRun || routineRun.status === "completed") && !internal && !silentCompletion && !routedMail && !awaitingTeammates && !computerSelectionTurns.get(event.threadId)?.selected) {
           // the frame carries the bot's avatar so every desktop client can
           // show the notification under that bot's own face
           const completionDetail = routineRun
@@ -7192,24 +7252,46 @@ bus.subscribe((event: RuntimeEvent) => {
           notify(buildNotification("done", notificationBot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: notificationBot.avatarUrl }));
         }
         // Routed mail that finished quietly still reaches its person: the
-        // shared account emails a short result. Invitations and no-op replies
-        // (NO_ACTION) are not worth an email, and failures keep the normal
-        // turn-failed alert instead.
-        if (silentCompletion && event.ok !== false) {
-          const routed = settledTask?.mailRouted;
+        // shared account emails a short result. The send keys off the task's
+        // durable marker, not the one-shot quiet flag: a turn that handed work
+        // to a teammate and settled waiting on it has not finished, so the
+        // handoff is skipped and the resumed turn — the one that truly answers
+        // — mails the sender. The sent-set keeps a late second settle from
+        // mailing twice.
+        {
           const detail = routineRun ? reply || routineRun.output || "" : reply;
-          if (routed && detail.trim() && !mailboxReplyNeedsNoEmail(detail)) {
+          const shouldSend = shouldSendMailboxCompletion({
+            routed: Boolean(routedMail),
+            ok: event.ok !== false,
+            alreadySent: mailCompletionSentThreads.has(event.threadId) || Boolean(settledTask?.mailCompletedAt),
+            // The shared gate above: only the turn that truly finished sends.
+            awaitingTeammates,
+            reply: detail,
+          });
+          if (shouldSend && routedMail) {
             const mailboxActor = relayMailboxActor();
             if (!mailboxActor) {
               console.warn("[mailbox] completion email skipped: no Mercury bot is registered for Relay's account");
             } else {
+              mailCompletionSentThreads.add(event.threadId);
+              const attachments = routedMailAttachments(event.threadId);
+              const base = publicUrl();
               void sendMailboxCompletionEmail({
                 capability: relayBffCapability,
                 actor: mailboxActor,
-                email: routed.email,
-                title: settledTask?.title ?? "Your request",
+                email: routedMail.email,
+                // The same subject the receipt used: one email thread, one
+                // subject, whether it comes from the sender or their request.
+                subject: routedMail.subject,
                 detail,
+                ...(base ? { relayUrl: base } : {}),
+                ...(attachments.length ? { attachments } : {}),
+              }).then(() => {
+                // Mark only on success, so a transient failure retries instead
+                // of being recorded as delivered.
+                store.patchTask(bot.id, event.threadId, { mailCompletedAt: new Date().toISOString() });
               }).catch((error) => {
+                mailCompletionSentThreads.delete(event.threadId);
                 console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
               });
             }
@@ -9154,6 +9236,7 @@ async function startTurn(
         // to a turn whose engine actually mounted them (setupMode is already
         // false when they are not — see agentsMounted above)
         { id: "setup", label: "Setup", text: setupSystemPrompt(setupMode, { skills: skillAuthoring, cwd: liveBot?.cwd ?? bot.cwd }) },
+        { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
         { id: "files", label: "File locations", text: worksInWorkspace && opts?.runOn !== "cloud" ? workspaceLocationsPrompt(bot.id, cwd, liveBot?.cwd ?? bot.cwd) : "" },
         { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
         { id: "team-computer", label: "Team computer", text: teamComputerPrompt(RELAY_COMPUTER_DISABLED ? undefined : teamComputer ?? undefined) },
@@ -9756,6 +9839,43 @@ function relayMailboxActor(): MailboxActor | undefined {
   return { userId: RELAY_MAILBOX_USER_ID, botId: mercury.id, threadId: mercury.threadId, agent: "mercury" };
 }
 
+/** The bot that carries an inbound email: the sender's own Mercury, so the
+ * thread lands in their workspace and their connected apps answer. The shared
+ * mailbox only receives the mail — it does not own the work. Missing per-owner
+ * roles are seeded on demand, exactly as a first sign-in would seed them. */
+function ensureOwnerMercury(ownerUserId: string | undefined): string | undefined {
+  if (!ownerUserId) return undefined;
+  store.seedRelayAgentsForOwner(ownerUserId, RELAY_AGENT_SEEDS);
+  return store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === ownerUserId)?.id;
+}
+
+const allowedEmailDomains = (): string[] =>
+  (process.env.RELAY_ALLOWED_EMAIL_DOMAINS ?? "").split(",").map((domain) => domain.trim().toLowerCase()).filter(Boolean);
+
+/** Resolve a sender's email to the canonical user id through the auth table,
+ * via the Tool Layer (which holds the service-role client). The sign-in domain
+ * allowlist is applied server-side. Undefined when unresolved or the Tool
+ * Layer is unreachable — the caller then treats the mail as unknown rather
+ * than guessing an identity. */
+async function lookupMemberByEmail(email: string): Promise<{ userId: string } | undefined> {
+  if (!RELAY_TOOL_URL || !relayBffCapability) return undefined;
+  const domains = allowedEmailDomains();
+  try {
+    const response = await fetch(new URL("/internal/member-by-email", RELAY_TOOL_URL), {
+      method: "POST",
+      redirect: "error",
+      headers: { authorization: `Bearer ${relayBffCapability}`, "content-type": "application/json" },
+      body: JSON.stringify({ email, ...(domains.length ? { allowedDomains: domains } : {}) }),
+      signal: AbortSignal.timeout(3_000),
+    });
+    if (!response.ok) return undefined;
+    const body = await response.json() as { userId?: unknown };
+    return typeof body.userId === "string" && body.userId ? { userId: body.userId } : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 const mailboxPollMs = (() => {
   const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
   const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
@@ -9790,10 +9910,15 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         return result.message;
       },
       // Live sessions first, then the durable thread-owner directory: an
-      // expired session must not turn a known teammate into a stranger.
-      lookupPerson: (email) => {
+      // expired session must not turn a known teammate into a stranger. When
+      // neither knows the sender, fall back to the auth table (the one
+      // authoritative mapping) so a confirmed, domain-allowed member is
+      // resolved even before they have ever signed in.
+      lookupPerson: async (email) => {
         const known = sessions.personByEmail(email) ?? ownerByEmail(DATA_DIR, email);
-        return known ? { userId: known.userId, email: known.email, name: known.email.split("@")[0] } : undefined;
+        if (known) return { userId: known.userId, email: known.email, name: known.email.split("@")[0] };
+        const resolved = await lookupMemberByEmail(email);
+        return resolved ? { userId: resolved.userId, email, name: email.split("@")[0] } : undefined;
       },
       hasReceipt: (kind, key) => commandReceipt(kind, key) !== null,
       recordReceipt: async (kind, key, detail) => {
@@ -9803,30 +9928,57 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         const personKey = personKeyForIdentity(person.userId, person.email);
         const title = routedMailTitle(message, person);
         const prompt = routedMailPrompt(message, person, { scribeEnabled: RELAY_SCRIBE_ENABLED });
-        const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s); contents not available yet]` : ""}`;
+        const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s): ${message.attachments.map((attachment) => attachment.filename || "(unnamed)").join(", ")}]` : ""}`;
+        // The sender's subject when they gave one, else the first line of the
+        // request: the receipt replies under it, and it is the fallback when
+        // the answering turn does not name its own subject.
+        const routedSubject = deriveMailSubject(message.subject, message.body);
+        // Acknowledge receipt as Mercury reaches the mail, before the work runs,
+        // so the sender is never left wondering whether Relay got it. The
+        // result follows in its own email when the turn that answers settles.
+        // Keyed by message id so a delivery retry cannot send twice.
+        if (!mailAckSentMessages.has(message.id) && !commandReceipt("gmail.ack", message.id)) {
+          mailAckSentMessages.add(message.id);
+          void sendMailboxAcknowledgement({
+            capability: relayBffCapability,
+            actor: mailboxActor,
+            email: person.email,
+            ...(routedSubject ? { subject: routedSubject } : {}),
+          }).then(() => {
+            runCommand({ kind: "gmail.ack", key: message.id }, () => true);
+          }).catch((error) => {
+            mailAckSentMessages.delete(message.id);
+            console.warn(`[mailbox] acknowledgement email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+          });
+        }
+        // The sender's own bot does the work when they have (or can be seeded
+        // with) one; the mailbox account's Mercury is only a fallback for a
+        // sender with no resolvable account. Ownership follows the bot, so the
+        // thread is visible to the sender and tools run as them.
+        const workBotId = ensureOwnerMercury(person.userId) ?? mercuryId;
         await deliverRoutedMail({
-          botId: mercuryId,
+          botId: workBotId,
           // Reservation by message id: a retry lands in the same conversation.
           threadFor: async (messageId) => {
             const reserved = commandReceipt<{ threadId?: string }>("gmail.thread", messageId);
             if (reserved?.result?.threadId) return reserved.result.threadId;
-            const task = store.createTask(mercuryId, title, false);
+            const task = store.createTask(workBotId, title, false);
             if (!task) throw new Error("could not open the routed conversation");
             if (personKey) threadStarters.set(task.threadId, personKey);
-            store.patchTask(mercuryId, task.threadId, {
-              mailRouted: { userId: person.userId, email: person.email, messageId },
+            store.patchTask(workBotId, task.threadId, {
+              mailRouted: { userId: person.userId, email: person.email, messageId, ...(routedSubject ? { subject: routedSubject } : {}) },
             });
             runCommand({ kind: "gmail.thread", key: messageId }, () => ({ threadId: task.threadId }));
             return task.threadId;
           },
-          isBlocked: () => botAtThreadCapacity(mercuryId) || Boolean(activeGroupTurnForBot(mercuryId)),
+          isBlocked: () => botAtThreadCapacity(workBotId) || Boolean(activeGroupTurnForBot(workBotId)),
           queue: (delivery) => {
             // The queue is keyed by the routed thread and carries the
             // teammate's sender stamp, so the wait can never move their mail
             // onto another person's running conversation.
-            queueSteeredMessage(mercuryId, delivery.threadId, delivery.text, {
+            queueSteeredMessage(workBotId, delivery.threadId, delivery.text, {
               prompt: delivery.prompt,
-              reason: activeGroupTurnForBot(mercuryId) ? "group-turn" : "capacity",
+              reason: activeGroupTurnForBot(workBotId) ? "group-turn" : "capacity",
               sender: delivery.sender,
               unattended: true,
               silentCompletion: true,
@@ -9843,7 +9995,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
               text: delivery.text,
               sender: delivery.sender,
             });
-            await startTurn(mercuryId, delivery.prompt, {
+            await startTurn(workBotId, delivery.prompt, {
               threadId: delivery.threadId,
               userMessage: message,
               sender: delivery.sender,
@@ -11489,6 +11641,7 @@ async function runGroupMemberTurn(
   }
   const roomSystem = buildSystemPrompt(system, store.bot(bot.id)?.soul ?? bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
+    { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
     { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
     { id: "computer", label: "Computer", text: computerPrompt(roomComputerPromptKind) },
@@ -14695,7 +14848,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // The Relay tool bridge asks for one fresh assertion per forwarded
         // call, so a long turn never presents a stale one. The actor comes from
         // the capability and the store — never from the request, so the bridge
-        // can only ever be signed as its own conversation's owner.
+        // can only ever be signed as its own conversation's owner. A routed
+        // email's thread is owned by the sender's bot, so the tools run as the
+        // sender with no special case.
         const threadOwner = store.botByThread(internalCapability.threadId)?.ownerUserId
           ?? store.groupByThread(internalCapability.threadId)?.ownerUserId;
         const ownerUserId = relaySigningOwner(internalSender, threadOwner);

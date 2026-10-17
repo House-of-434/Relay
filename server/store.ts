@@ -100,15 +100,19 @@ export interface TaskRecord extends WireTask {
    * so only positively identified auto pins yield to Works on changes. */
   surfaceSource?: "user" | "auto";
   /** Set on conversations the shared-mailbox monitor opened: whose mail this
-   * is and which message opened it. The settle path emails that person when
-   * the work finishes while they were away. */
-  mailRouted?: { userId: string; email: string; messageId: string };
+   * is, which message opened it, and that message's subject (the reply's
+   * subject is derived from it). The settle path emails that person once the
+   * work truly finishes — not while a teammate is still working on it. */
+  mailRouted?: { userId: string; email: string; messageId: string; subject?: string };
+  /** When the routed-mail result email was sent, so a restart or a late
+   * second settle cannot mail the same sender twice. */
+  mailCompletedAt?: string;
 }
 
 /** TaskRecord fields no client may see. Everything else must be on WireTask:
  * the exactness assertion below fails to compile when either side drifts,
  * so a new server field forces a decision — wire-visible or private here. */
-export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource" | "mailRouted";
+export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource" | "mailRouted" | "mailCompletedAt";
 export type TaskWireProjection = Pick<TaskRecord, Exclude<keyof TaskRecord, TaskWirePrivateKeys>>;
 type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 type AssertSameKeys<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : never) : never;
@@ -130,7 +134,7 @@ const TASK_PATCH_FIELDS = [
   "title", "projectId", "modelSelection", "approvalMode", "autoApprove", "alwaysAllow",
   "unread", "rewound", "archivedAt", "pinned", "pinnedMessageId", "resumeCursors", "lastInstanceId", "cwd",
   "routineRunId", "surface", "surfaceSource", "snoozedUntil", "appliedCompactionId", "contextFloor", "lastContextModel",
-  "mailRouted",
+  "mailRouted", "mailCompletedAt",
 ] as const satisfies readonly (keyof TaskRecord)[];
 export type TaskPatch = Partial<Pick<TaskRecord, typeof TASK_PATCH_FIELDS[number]>>;
 

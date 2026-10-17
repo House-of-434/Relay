@@ -14,6 +14,7 @@ import { TinyFishFetchProvider } from "../infra/fetch.js";
 import { ArxivProvider } from "../infra/arxiv.js";
 import { SecProvider } from "../infra/sec.js";
 import { RelayGitHubClient } from "../infra/github.js";
+import { RelayNotionClient } from "../infra/notion.js";
 import { ConnectorStateClient } from "../infra/connector-state.js";
 import { createAgentMcpServer, type ConnectorToolContext } from "../mcp/agent-server.js";
 import { databaseToolCallLogger } from "../mcp/tool-log.js";
@@ -187,6 +188,54 @@ async function handleSweep(
   }
 }
 
+/**
+ * Shared-mailbox sender resolution: the harness turns a sender's email into
+ * the canonical user id through the auth table (confirmed, non-deleted,
+ * domain-allowed). Service-to-service only, bound to the internal capability
+ * the harness and Tool Layer already share. There is no agent and no actor
+ * here; the harness passes only an email it extracted from the mail header.
+ */
+async function handleMemberLookup(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: RelayDatabase,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    sendJson(response, 405, { error: "method not allowed" });
+    return;
+  }
+  const capability = bffConfig().capability;
+  if (!capability) {
+    sendJson(response, 503, { error: "member lookup is not configured" });
+    return;
+  }
+  if (!ingestCapabilityMatches(ingestBearerToken(request), capability)) {
+    sendJson(response, 401, { error: "unauthorized" });
+    return;
+  }
+  let body: unknown;
+  try {
+    body = await readIngestBody(request);
+  } catch {
+    sendJson(response, 400, { error: "invalid member lookup body" });
+    return;
+  }
+  const email = body && typeof body === "object" ? (body as { email?: unknown }).email : undefined;
+  const domains = body && typeof body === "object" ? (body as { allowedDomains?: unknown }).allowedDomains : undefined;
+  if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
+    sendJson(response, 400, { error: "invalid email" });
+    return;
+  }
+  const allowed = Array.isArray(domains) ? domains.filter((entry): entry is string => typeof entry === "string") : undefined;
+  try {
+    const userId = await database.memberByEmail(email.trim().toLowerCase(), allowed);
+    sendJson(response, 200, { userId });
+  } catch {
+    sendJson(response, 502, { error: "member lookup failed" });
+  }
+}
+
 let sharedBladePool: BladeBrowserPool | null = null;
 let sharedArxiv: { userAgent: string; provider: ArxivProvider } | null = null;
 let sharedSec: { userAgent: string; provider: SecProvider } | null = null;
@@ -223,6 +272,12 @@ async function buildConnectors(
   if (state.github.connected) {
     connectors.github = {
       client: new RelayGitHubClient({ bffInternalUrl, capability }),
+      actorAssertion,
+    };
+  }
+  if (state.notion.connected) {
+    connectors.notion = {
+      client: new RelayNotionClient({ bffInternalUrl, capability }),
       actorAssertion,
     };
   }
@@ -266,6 +321,10 @@ export async function createRelayToolServer(
       }
       if (url.pathname === "/internal/transcripts/sweep") {
         await handleSweep(request, response, database);
+        return;
+      }
+      if (url.pathname === "/internal/member-by-email") {
+        await handleMemberLookup(request, response, database);
         return;
       }
       if (request.method !== "POST" || !match) {

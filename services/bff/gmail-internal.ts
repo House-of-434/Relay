@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import type { RelayActor } from "./actor-assertion.ts";
@@ -9,11 +10,13 @@ import type { GoogleConnectionMetadata } from "./google-connections.ts";
 export const INTERNAL_GMAIL_MESSAGES_LIST = "/api/internal/gmail/messages/list";
 export const INTERNAL_GMAIL_MESSAGES_GET = "/api/internal/gmail/messages/get";
 export const INTERNAL_GMAIL_SEND = "/api/internal/gmail/send";
+export const INTERNAL_GMAIL_ATTACHMENT_GET = "/api/internal/gmail/attachments/get";
 
 const INTERNAL_GMAIL_PATHS = [
   INTERNAL_GMAIL_MESSAGES_LIST,
   INTERNAL_GMAIL_MESSAGES_GET,
   INTERNAL_GMAIL_SEND,
+  INTERNAL_GMAIL_ATTACHMENT_GET,
 ] as const;
 
 const MAX_QUERY_LENGTH = 512;
@@ -28,6 +31,13 @@ const MAX_EXTRACTED_BODY_LENGTH = 16_000;
 const MAX_ATTACHMENTS = 50;
 const MAX_FILENAME_LENGTH = 255;
 const MAX_MIME_LENGTH = 255;
+/** Outbound email attachments (a bot's finished report, a document it made).
+ * Per-file and total caps are separate so one message cannot exhaust the
+ * request; the base64 cap mirrors the 20 MB decoded cap with expansion room. */
+const MAX_OUTBOUND_ATTACHMENTS = 10;
+const MAX_OUTBOUND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+const MAX_OUTBOUND_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_OUTBOUND_ATTACHMENT_BYTES / 3) * 4;
 
 /** Which connected mailbox a request means: the actor's own account, or
  * Relay's shared mailbox (read/search, plus server-sent notifications). */
@@ -44,12 +54,23 @@ const messagesGetSchema = z.object({
   mailbox: MAILBOX_INPUT,
 }).strict();
 
+const attachmentGetSchema = z.object({
+  messageId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH),
+  attachmentId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH),
+  mailbox: MAILBOX_INPUT,
+}).strict();
+
 const sendSchema = z.object({
   to: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).min(1).max(20),
   cc: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).max(20).optional(),
   bcc: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).max(20).optional(),
   subject: z.string().max(MAX_SUBJECT_LENGTH),
   body: z.string().max(MAX_BODY_LENGTH),
+  attachments: z.array(z.object({
+    filename: z.string().min(1).max(MAX_FILENAME_LENGTH),
+    mimeType: z.string().min(1).max(MAX_MIME_LENGTH),
+    data: z.string().min(1).max(MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH),
+  }).strict()).max(MAX_OUTBOUND_ATTACHMENTS).optional(),
   mailbox: MAILBOX_INPUT,
 }).strict();
 
@@ -84,6 +105,90 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.setHeader("cache-control", "no-store");
   res.setHeader("content-type", "application/json; charset=utf-8");
   res.end(JSON.stringify(body));
+}
+
+/** Header values must never carry a line break: a CRLF inside a filename or
+ * subject could inject a header or a new part. */
+function headerValue(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim();
+}
+
+function mimeParamValue(value: string): string {
+  return headerValue(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function safeMimeType(value: string): string {
+  const clean = headerValue(value);
+  if (!/^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/.test(clean)) {
+    throw new AttachmentRequestError(400, "invalid email attachment type");
+  }
+  return clean;
+}
+
+/** Wrap base64 at 76 characters, the MIME convention Gmail expects. */
+function wrapBase64(value: string): string {
+  return value.replace(/.{1,76}/g, "$&\r\n").trimEnd();
+}
+
+/** Build the RFC822 message Gmail sends. Text-only messages keep the simple
+ * shape they always had; attachments switch it to multipart/mixed with the
+ * text body first and one base64 part per file. */
+function buildRawEmail(input: {
+  to: string[];
+  cc: string[];
+  bcc: string[];
+  subject: string;
+  body: string;
+  attachments: Array<{ filename: string; mimeType: string; data: string }>;
+}): string {
+  const headers = [
+    `To: ${input.to.join(", ")}`,
+    ...(input.cc.length ? [`Cc: ${input.cc.join(", ")}`] : []),
+    ...(input.bcc.length ? [`Bcc: ${input.bcc.join(", ")}`] : []),
+    `Subject: ${headerValue(input.subject)}`,
+    "MIME-Version: 1.0",
+  ];
+  if (input.attachments.length === 0) {
+    return [...headers, 'Content-Type: text/plain; charset="UTF-8"', "", input.body].join("\r\n");
+  }
+  let total = 0;
+  const parts: string[] = [];
+  const boundary = `relay_${randomUUID()}`;
+  for (const attachment of input.attachments) {
+    // Accept standard base64 only; validate before it becomes a part.
+    if (!/^[A-Za-z0-9+/]+={0,2}$/.test(attachment.data.replace(/\s+/g, ""))) {
+      throw new AttachmentRequestError(400, "invalid email attachment encoding");
+    }
+    const bytes = Buffer.from(attachment.data, "base64");
+    if (bytes.length === 0 || bytes.length > MAX_OUTBOUND_ATTACHMENT_BYTES) {
+      throw new AttachmentRequestError(bytes.length === 0 ? 400 : 413, "email attachment is too large");
+    }
+    total += bytes.length;
+    if (total > MAX_OUTBOUND_TOTAL_BYTES) {
+      throw new AttachmentRequestError(413, "the email attachments are too large");
+    }
+    const name = mimeParamValue(attachment.filename);
+    const mimeType = safeMimeType(attachment.mimeType);
+    parts.push(
+      `--${boundary}`,
+      `Content-Type: ${mimeType}; name="${name}"`,
+      `Content-Disposition: attachment; filename="${name}"`,
+      "Content-Transfer-Encoding: base64",
+      "",
+      wrapBase64(attachment.data),
+    );
+  }
+  parts.push(`--${boundary}--`, "");
+  return [
+    ...headers,
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    "",
+    `--${boundary}`,
+    'Content-Type: text/plain; charset="UTF-8"',
+    "",
+    input.body,
+    ...parts,
+  ].join("\r\n");
 }
 
 /**
@@ -174,6 +279,118 @@ function attachmentMetadata(payload: GmailPayloadPart | undefined): Array<{ id: 
   return out;
 }
 
+/** Attachment bytes cap: parity with chat uploads. The agent checks the
+ * metadata size first; anything larger is refused rather than truncated. */
+const ATTACHMENT_MAX_BYTES = 25 * 1024 * 1024;
+
+/** Binary signatures we can verify. Documents that share a container (OOXML
+ * is a ZIP, legacy Office is an OLE compound file) share a class; the
+ * declared MIME or the filename extension then picks the exact format. */
+type MagicClass = "pdf" | "zip" | "ole" | "png" | "jpeg" | "gif" | "webp" | "text";
+
+interface DocumentFormat {
+  kind: string;
+  mime: readonly string[];
+  extensions: readonly string[];
+  magic: MagicClass;
+}
+
+/** Formats Relay can hand to the model. Broad on purpose: a request may bring
+ * any document, not only a deck, and the same reader serves all of them. */
+const DOCUMENT_FORMATS: readonly DocumentFormat[] = [
+  { kind: "pdf", mime: ["application/pdf"], extensions: ["pdf"], magic: "pdf" },
+  { kind: "docx", mime: ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"], extensions: ["docx"], magic: "zip" },
+  { kind: "xlsx", mime: ["application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"], extensions: ["xlsx"], magic: "zip" },
+  { kind: "pptx", mime: ["application/vnd.openxmlformats-officedocument.presentationml.presentation"], extensions: ["pptx"], magic: "zip" },
+  { kind: "odt", mime: ["application/vnd.oasis.opendocument.text"], extensions: ["odt"], magic: "zip" },
+  { kind: "ods", mime: ["application/vnd.oasis.opendocument.spreadsheet"], extensions: ["ods"], magic: "zip" },
+  { kind: "odp", mime: ["application/vnd.oasis.opendocument.presentation"], extensions: ["odp"], magic: "zip" },
+  { kind: "doc", mime: ["application/msword"], extensions: ["doc", "dot"], magic: "ole" },
+  { kind: "xls", mime: ["application/vnd.ms-excel"], extensions: ["xls", "xlt"], magic: "ole" },
+  { kind: "ppt", mime: ["application/vnd.ms-powerpoint"], extensions: ["ppt", "pps"], magic: "ole" },
+  { kind: "rtf", mime: ["application/rtf", "text/rtf"], extensions: ["rtf"], magic: "text" },
+  { kind: "png", mime: ["image/png"], extensions: ["png"], magic: "png" },
+  { kind: "jpeg", mime: ["image/jpeg"], extensions: ["jpg", "jpeg"], magic: "jpeg" },
+  { kind: "gif", mime: ["image/gif"], extensions: ["gif"], magic: "gif" },
+  { kind: "webp", mime: ["image/webp"], extensions: ["webp"], magic: "webp" },
+  { kind: "csv", mime: ["text/csv"], extensions: ["csv"], magic: "text" },
+  { kind: "tsv", mime: ["text/tab-separated-values"], extensions: ["tsv"], magic: "text" },
+  { kind: "json", mime: ["application/json"], extensions: ["json"], magic: "text" },
+  { kind: "markdown", mime: ["text/markdown"], extensions: ["md", "markdown"], magic: "text" },
+  { kind: "text", mime: ["text/plain"], extensions: ["txt", "log", "text"], magic: "text" },
+];
+
+class AttachmentRequestError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "AttachmentRequestError";
+    this.status = status;
+  }
+}
+
+function startsWithBytes(bytes: Buffer, prefix: number[]): boolean {
+  return prefix.every((byte, index) => bytes[index] === byte);
+}
+
+/** A byte that carries no signature is text only when it decodes cleanly and
+ * holds no binary control characters; otherwise it is an unsupported blob. */
+function isTextual(bytes: Buffer): boolean {
+  const text = bytes.toString("utf8");
+  if (text.includes("\uFFFD")) return false;
+  for (let index = 0; index < text.length; index += 1) {
+    const code = text.charCodeAt(index);
+    // Tab, newline, and carriage return are fine; other C0 controls are binary.
+    if (code < 0x20 && code !== 0x09 && code !== 0x0A && code !== 0x0D) return false;
+  }
+  return true;
+}
+
+function bytesMagicClass(bytes: Buffer): MagicClass | undefined {
+  if (startsWithBytes(bytes, [0x25, 0x50, 0x44, 0x46])) return "pdf";
+  if (startsWithBytes(bytes, [0x50, 0x4b, 0x03, 0x04])) return "zip";
+  if (startsWithBytes(bytes, [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1])) return "ole";
+  if (startsWithBytes(bytes, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return "png";
+  if (startsWithBytes(bytes, [0xff, 0xd8, 0xff])) return "jpeg";
+  if (startsWithBytes(bytes, [0x47, 0x49, 0x46, 0x38])) return "gif";
+  if (startsWithBytes(bytes, [0x52, 0x49, 0x46, 0x46]) && bytes.subarray(8, 12).toString("ascii") === "WEBP") return "webp";
+  return bytes.includes(0) ? undefined : (isTextual(bytes) ? "text" : undefined);
+}
+
+/** Identify an attachment from its bytes, corroborated by the declared MIME or
+ * the filename extension. The magic class must match the format, so a
+ * mislabeled or spoofed file is rejected rather than parsed as the wrong
+ * type. Gmail commonly reports documents as application/octet-stream, which
+ * the extension covers. */
+function classifyAttachment(mimeType: string, filename: string, bytes: Buffer): string | undefined {
+  const magic = bytesMagicClass(bytes);
+  if (!magic) return undefined;
+  const mime = mimeType.trim().toLowerCase();
+  const extension = filename.toLowerCase().split(".").pop() ?? "";
+  const candidates = DOCUMENT_FORMATS.filter((format) => format.magic === magic);
+  const byMime = candidates.find((format) => format.mime.includes(mime));
+  if (byMime) return byMime.kind;
+  return candidates.find((format) => format.extensions.includes(extension))?.kind;
+}
+
+function findAttachmentPart(
+  payload: GmailPayloadPart | undefined,
+  attachmentId: string,
+): GmailPayloadPart | undefined {
+  let found: GmailPayloadPart | undefined;
+  const walk = (part: GmailPayloadPart | null | undefined): void => {
+    if (!part || found) return;
+    if (part.body?.attachmentId === attachmentId) {
+      found = part;
+      return;
+    }
+    for (const child of part.parts ?? []) walk(child);
+  };
+  walk(payload);
+  return found;
+}
+
 interface ResolvedMailbox {
   account: GoogleConnectionMetadata;
   /** The user id whose stored credential opens this mailbox: the actor for
@@ -206,6 +423,80 @@ async function resolveAccount(
   return { account: gmailAccounts[0]!, ownerUserId: actor.userId };
 }
 
+export interface FetchedGmailAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  kind: string;
+  size: number;
+  data: string;
+}
+
+/** Fetch one attachment's bytes for a verified actor, from the actor's own or
+ * the shared mailbox. Shared by the attachment route and the Notion
+ * deck-attach route, so both honor the same message-scoped check, size cap,
+ * and content-type validation. Throws AttachmentRequestError on refusal. */
+export async function fetchGmailAttachment(
+  options: InternalGmailOptions,
+  actor: RelayActor,
+  input: { messageId: string; attachmentId: string; mailbox?: "own" | "relay" },
+): Promise<{ email: string; attachment: FetchedGmailAttachment }> {
+  const resolved = await resolveAccount(options, actor, input.mailbox === "relay" ? "relay" : "own");
+  if (!resolved) throw new AttachmentRequestError(404, "Gmail is not connected for this user");
+  const { account, ownerUserId } = resolved;
+  const attachment = await options.googleApi.withClient(
+    ownerUserId,
+    "gmail",
+    account.id,
+    [GOOGLE_API_SCOPE_CATALOG.gmail.read],
+    async (client) => {
+      const full = await client.users.messages.get({
+        userId: "me",
+        id: input.messageId,
+        format: "full",
+      });
+      // The attachment id is honored only when it names a part of this
+      // message: an id from another message can never be smuggled in.
+      const part = findAttachmentPart(full.data.payload as GmailPayloadPart | undefined, input.attachmentId);
+      if (!part) throw new AttachmentRequestError(404, "attachment not found");
+      const declaredSize = part.body?.size;
+      if (typeof declaredSize === "number" && declaredSize > ATTACHMENT_MAX_BYTES) {
+        throw new AttachmentRequestError(413, "attachment is too large to open");
+      }
+      const fetched = await client.users.messages.attachments.get({
+        userId: "me",
+        messageId: input.messageId,
+        id: input.attachmentId,
+      });
+      const encoded = fetched.data?.data;
+      if (typeof encoded !== "string" || !encoded) {
+        throw new AttachmentRequestError(502, "Gmail request failed");
+      }
+      let bytes: Buffer;
+      try {
+        bytes = Buffer.from(encoded, "base64url");
+      } catch {
+        throw new AttachmentRequestError(502, "Gmail request failed");
+      }
+      if (bytes.length === 0 || bytes.length > ATTACHMENT_MAX_BYTES) {
+        throw new AttachmentRequestError(
+          bytes.length === 0 ? 400 : 413,
+          bytes.length === 0 ? "attachment is empty" : "attachment is too large to open",
+        );
+      }
+      const filename = bounded(typeof part.filename === "string" ? part.filename : "", MAX_FILENAME_LENGTH);
+      const mimeType = bounded(
+        typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "application/octet-stream",
+        MAX_MIME_LENGTH,
+      );
+      const kind = classifyAttachment(mimeType, filename, bytes);
+      if (!kind) throw new AttachmentRequestError(400, "unsupported attachment type");
+      return { id: input.attachmentId, filename, mimeType, kind, size: bytes.length, data: bytes.toString("base64") };
+    },
+  );
+  return { email: account.email, attachment };
+}
+
 export async function handleInternalGmail(
   req: IncomingMessage,
   res: ServerResponse,
@@ -216,6 +507,12 @@ export async function handleInternalGmail(
     capability: options.capability,
     actorSecret: options.actorSecret,
     now: options.now,
+    // A send may carry base64 attachments; every other route stays at the
+    // small default so a body cannot grow unbounded. Allow for base64
+    // expansion plus JSON overhead on top of the decoded total cap.
+    ...(pathname === INTERNAL_GMAIL_SEND
+      ? { maxBodyBytes: Math.ceil(MAX_OUTBOUND_TOTAL_BYTES * 4 / 3) + 1024 * 1024 }
+      : {}),
   }, pathname);
   if (!verified) return;
   const actor: RelayActor = verified.actor;
@@ -312,6 +609,29 @@ export async function handleInternalGmail(
       return;
     }
 
+    if (pathname === INTERNAL_GMAIL_ATTACHMENT_GET) {
+      const parsed = attachmentGetSchema.safeParse(raw);
+      if (!parsed.success) {
+        json(res, 400, { error: "invalid Gmail attachment request" });
+        return;
+      }
+      try {
+        const { email, attachment } = await fetchGmailAttachment(options, actor, {
+          messageId: parsed.data.messageId,
+          attachmentId: parsed.data.attachmentId,
+          mailbox: parsed.data.mailbox,
+        });
+        json(res, 200, { account: { email }, attachment });
+        return;
+      } catch (error) {
+        if (error instanceof AttachmentRequestError) {
+          json(res, error.status, { error: error.message });
+          return;
+        }
+        throw error;
+      }
+    }
+
     const parsed = sendSchema.safeParse(raw);
     if (pathname !== INTERNAL_GMAIL_SEND || !parsed.success) {
       json(res, pathname === INTERNAL_GMAIL_SEND ? 400 : 404, {
@@ -324,6 +644,23 @@ export async function handleInternalGmail(
     // the model might have changed since.
     const cc = parsed.data.cc ?? [];
     const bcc = parsed.data.bcc ?? [];
+    const attachments = parsed.data.attachments ?? [];
+    let rawMessage: string;
+    try {
+      rawMessage = buildRawEmail({
+        to: parsed.data.to,
+        cc,
+        bcc,
+        subject: parsed.data.subject,
+        body: parsed.data.body,
+        attachments,
+      });
+    } catch (error) {
+      json(res, error instanceof AttachmentRequestError ? error.status : 400, {
+        error: error instanceof Error ? error.message : "invalid Gmail message",
+      });
+      return;
+    }
     const sent = await options.googleApi.withClient(
       ownerUserId,
       "gmail",
@@ -332,15 +669,7 @@ export async function handleInternalGmail(
       async (client) => {
         const response = await client.users.messages.send({
           userId: "me",
-          requestBody: {
-            raw: Buffer.from(
-              `To: ${parsed.data.to.join(", ")}\r\n` +
-                (cc.length ? `Cc: ${cc.join(", ")}\r\n` : "") +
-                (bcc.length ? `Bcc: ${bcc.join(", ")}\r\n` : "") +
-                `Subject: ${parsed.data.subject}\r\n\r\n${parsed.data.body}`,
-              "utf8",
-            ).toString("base64url"),
-          },
+          requestBody: { raw: Buffer.from(rawMessage, "utf8").toString("base64url") },
         });
         return { id: response.data.id, threadId: response.data.threadId };
       },

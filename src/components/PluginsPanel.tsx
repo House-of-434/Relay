@@ -10,19 +10,20 @@
 // Two views, the pair this panel has always had: what you can connect
 // (Available) and what you have connected (Connected). A connected service is
 // one row whose action disconnects it, never a list of accounts to choose
-// between. GitHub differs only in where its connection state comes from: the
-// BFF reports it (there can be several installations), so its row is derived
-// from that authoritative response rather than from the Google account list.
+// between. GitHub and Notion differ only in where their connection state comes
+// from: the BFF reports it (there can be several installations or workspaces),
+// so their rows are derived from that authoritative response rather than from
+// the Google account list.
 import { type ReactNode, useEffect, useState } from "react";
 import { Loader2, Search, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useStore } from "@/state/store";
-import { GithubMark, GmailMark, GoogleCalendarMark } from "./ProviderIcons";
+import { GithubMark, GmailMark, GoogleCalendarMark, NotionMark } from "./ProviderIcons";
 
 export interface ConnectionService {
-  id: "gmail" | "google-calendar" | "github";
+  id: "gmail" | "google-calendar" | "github" | "notion";
   /** Product names, not copy: these are never translated. */
   label: string;
   detail: string;
@@ -57,6 +58,16 @@ export const GITHUB_SERVICE: ConnectionService = {
   label: "GitHub",
   detail: "Relay can read the repositories, issues, and releases you grant. Connecting authorizes the installation on GitHub first.",
   icon: <GithubMark size={22} />,
+};
+
+/** Notion joins the catalog only once the workspace is configured for it, like
+ *  GitHub. Connecting authorizes the teammate's own workspace through Notion's
+ *  OAuth screen, where they choose which pages Relay may read and update. */
+export const NOTION_SERVICE: ConnectionService = {
+  id: "notion",
+  label: "Notion",
+  detail: "Relay can search, read, and update pages in the workspaces you connect — including the Dealflow database. Connecting authorizes through Notion first.",
+  icon: <NotionMark size={22} />,
 };
 
 /** One authenticated Google account on a service. Tokens never reach the
@@ -110,6 +121,16 @@ export interface GithubConnection {
   connections: readonly { id: string; account: string }[];
 }
 
+/** Notion's connection as the BFF reports it: whether the workspace is set up
+ *  for it, whether the teammate has linked a workspace, and the workspaces
+ *  Disconnect must revoke. */
+export interface NotionConnection {
+  configured: boolean;
+  connected: boolean;
+  workspace?: string;
+  connections: readonly { id: string; workspace: string }[];
+}
+
 export interface PluginsPanelProps {
   /** What the signed-in teammate has already authorized. */
   accounts: readonly ConnectionAccount[];
@@ -126,11 +147,17 @@ export interface PluginsPanelProps {
   github?: GithubConnection;
   onConnectGithub?: () => void | Promise<void>;
   onDisconnectGithub?: () => void | Promise<void>;
+  /** Notion's connection state from the BFF. Omitted until it is known, so
+   *  unconfigured workspaces show no row at all rather than a dead Connect. */
+  notion?: NotionConnection;
+  onConnectNotion?: () => void | Promise<void>;
+  onDisconnectNotion?: () => void | Promise<void>;
 }
 
 export function PluginsPanel({
   accounts, configured, loading = false, error, onConnect, onDisconnect,
   github, onConnectGithub, onDisconnectGithub,
+  notion, onConnectNotion, onDisconnectNotion,
 }: PluginsPanelProps) {
   const { dispatch } = useStore();
   const [view, setView] = useState<ConnectionView>(() => {
@@ -151,26 +178,35 @@ export function PluginsPanel({
     window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
   }, []);
 
-  // GitHub joins the catalog only when the workspace is configured for it; an
-  // unconfigured workspace shows no row at all rather than a dead Connect.
+  // GitHub and Notion join the catalog only when the workspace is configured
+  // for them; an unconfigured workspace shows no row at all rather than a
+  // dead Connect.
   const githubConfigured = Boolean(github?.configured);
-  const services: readonly ConnectionService[] = githubConfigured
-    ? [...CONNECTION_SERVICES, GITHUB_SERVICE]
-    : CONNECTION_SERVICES;
-  const externallyConnected = new Set<ConnectionService["id"]>(github?.connected ? ["github"] : []);
+  const notionConfigured = Boolean(notion?.configured);
+  const services: readonly ConnectionService[] = [
+    ...CONNECTION_SERVICES,
+    ...(githubConfigured ? [GITHUB_SERVICE] : []),
+    ...(notionConfigured ? [NOTION_SERVICE] : []),
+  ];
+  const externallyConnected = new Set<ConnectionService["id"]>([
+    ...(github?.connected ? ["github" as const] : []),
+    ...(notion?.connected ? ["notion" as const] : []),
+  ]);
   const { accountsByService, available, connected } = connectionViews(services, accounts, query, externallyConnected);
 
   const isConfigured = (service: ConnectionService) =>
-    service.id === "github" ? githubConfigured : Boolean(configured[service.id]);
+    service.id === "github" ? githubConfigured : service.id === "notion" ? notionConfigured : Boolean(configured[service.id]);
 
   const connect = async (service: ConnectionService) => {
     if (!isConfigured(service) || pending) return;
     setPending(service.id);
     setActionError(null);
     try {
-      // GitHub's Connect leaves Relay for GitHub, so like Google's it resolves
-      // only on failure; a success navigates the browser away.
-      await (service.id === "github" ? onConnectGithub?.() : onConnect(service.id));
+      // GitHub's and Notion's Connect leave Relay for the provider, so like
+      // Google's they resolve only on failure; a success navigates away.
+      if (service.id === "github") await onConnectGithub?.();
+      else if (service.id === "notion") await onConnectNotion?.();
+      else await onConnect(service.id);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : t("connectors.action.failed"));
       setPending(null);
@@ -187,7 +223,9 @@ export function PluginsPanel({
     setPending(service.id);
     setActionError(null);
     try {
-      await (service.id === "github" ? onDisconnectGithub?.() : onDisconnect(accounts));
+      if (service.id === "github") await onDisconnectGithub?.();
+      else if (service.id === "notion") await onDisconnectNotion?.();
+      else await onDisconnect(accounts);
     } catch (cause) {
       setActionError(cause instanceof Error ? cause.message : t("connectors.action.failed"));
     } finally {
@@ -195,12 +233,17 @@ export function PluginsPanel({
     }
   };
 
-  // GitHub is the one row that names its connected account: its identity comes
-  // from the installation the BFF reported, not from the Google account list.
-  const rowNote = (service: ConnectionService) =>
-    service.id === "github" && github?.account
-      ? t("connectors.github.connected", { account: github.account })
-      : undefined;
+  // GitHub and Notion are the rows that name what is connected: their identity
+  // comes from the BFF report, not from the Google account list.
+  const rowNote = (service: ConnectionService) => {
+    if (service.id === "github" && github?.account) {
+      return t("connectors.github.connected", { account: github.account });
+    }
+    if (service.id === "notion" && notion?.workspace) {
+      return t("connectors.notion.connected", { name: notion.workspace });
+    }
+    return undefined;
+  };
 
   return (
     <div

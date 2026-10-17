@@ -116,10 +116,31 @@ test("an unreachable BFF is reported as such rather than silently succeeding", a
   );
 });
 
-test("only the three Gmail paths are ever called", () => {
+test("only the four Gmail paths are ever called", () => {
   assert.deepEqual(Object.values(GMAIL_INTERNAL_PATHS).sort(), [
+    "/api/internal/gmail/attachments/get",
     "/api/internal/gmail/messages/get",
     "/api/internal/gmail/messages/list",
     "/api/internal/gmail/send",
   ]);
+});
+
+test("getAttachment calls the attachment route with message and attachment ids", async () => {
+  const seen: Array<{ url: string; init: RequestInit }> = [];
+  const client = new RelayGmailClient({
+    bffInternalUrl: "http://127.0.0.1:8798/",
+    capability: CAPABILITY,
+    fetcher: (async (input: string | URL, init: RequestInit = {}) => {
+      seen.push({ url: String(input), init });
+      return Response.json({
+        account: { email: "one@example.com" },
+        attachment: { id: "att-1", filename: "deck.pdf", mimeType: "application/pdf", kind: "pdf", size: 8, data: "JVBERi0x" },
+      });
+    }) as typeof fetch,
+  });
+
+  const result = await client.getAttachment(ACTOR, { messageId: "msg-1", attachmentId: "att-1" });
+  assert.equal(seen[0]!.url, `http://127.0.0.1:8798${GMAIL_INTERNAL_PATHS.attachmentGet}`);
+  assert.deepEqual(JSON.parse(String(seen[0]!.init.body)), { messageId: "msg-1", attachmentId: "att-1" });
+  assert.equal(result.attachment.kind, "pdf");
 });

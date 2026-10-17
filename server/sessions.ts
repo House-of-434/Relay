@@ -641,7 +641,12 @@ export class SessionRegistry {
     this.prune();
     const target = email.trim().toLowerCase();
     if (!target) return undefined;
-    for (const record of this.sessions) {
+    // The newest live session for an address wins. A newer sign-in is the
+    // account actually in use; an older duplicate session for the same email
+    // must not shadow it, or routed mail acts as an identity that no longer
+    // holds the teammate's connected apps.
+    for (let index = this.sessions.length - 1; index >= 0; index -= 1) {
+      const record = this.sessions[index]!;
       const address = record.email?.trim();
       if (isUuidUserId(record.userId) && address && address.toLowerCase() === target) {
         return { userId: record.userId, email: address };

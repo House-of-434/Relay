@@ -10,10 +10,12 @@
 
 export interface ConnectorState {
   github: { connected: boolean };
+  notion: { connected: boolean };
 }
 
 export const NO_CONNECTORS: ConnectorState = {
   github: { connected: false },
+  notion: { connected: false },
 };
 
 export interface ConnectorStateClientOptions {
@@ -63,5 +65,8 @@ function bool(value: unknown, key: string): boolean {
 
 export function parseConnectorState(raw: unknown): ConnectorState {
   const value = (raw ?? {}) as Record<string, unknown>;
-  return { github: { connected: bool(value.github, "connected") } };
+  return {
+    github: { connected: bool(value.github, "connected") },
+    notion: { connected: bool(value.notion, "connected") },
+  };
 }
