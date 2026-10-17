@@ -47,3 +47,26 @@ export function createWorkerStatusClient(options: {
     return await response.json() as ScribeWorkerStatus;
   };
 }
+
+/** Stops the worker's capture for one instance. Same capability, held in memory. */
+export function createWorkerStopClient(options: {
+  url: string;
+  capability: string | undefined;
+  fetcher?: typeof fetch;
+}): (instanceId: string) => Promise<{ status: string }> {
+  const fetcher = options.fetcher ?? fetch;
+  const stopUrl = new URL("/stop", options.url).toString();
+  return async (instanceId: string) => {
+    if (typeof options.capability !== "string" || options.capability.length === 0) {
+      throw new Error("the scribe worker capability is not configured");
+    }
+    const response = await fetcher(stopUrl, {
+      method: "POST",
+      redirect: "error",
+      headers: { authorization: `Bearer ${options.capability}`, "content-type": "application/json" },
+      body: JSON.stringify({ instance_id: instanceId }),
+    });
+    if (!response.ok) throw new Error(`worker stop failed (${response.status})`);
+    return await response.json() as { status: string };
+  };
+}

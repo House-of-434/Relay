@@ -6,6 +6,7 @@ import {
   buildDescriptor,
   createDegradedTracker,
   eventStartMs,
+  humanizeCaptureEnd,
   meetingCodeFor,
   meetingUrlFor,
   passcodeFor,
@@ -217,6 +218,15 @@ describe("scribe monitor helpers", () => {
     expect(meetingCodeFor("https://us02web.zoom.us/j/1234567890")).toBe("1234567890");
     expect(meetingCodeFor("https://teams.live.com/meet/9385623070170")).toBe("9385623070170");
     expect(meetingCodeFor("not a url")).toBeNull();
+  });
+
+  it("humanizes an end state into one plain sentence", () => {
+    expect(humanizeCaptureEnd("failed", "Bot admission was rejected by meeting admin")).toMatch(/declined/);
+    expect(humanizeCaptureEnd("failed", "not admitted within the waiting-room timeout")).toMatch(/waited 10 minutes/);
+    expect(humanizeCaptureEnd("failed", "relay@ browser profile is signed out")).toMatch(/signed out/);
+    expect(humanizeCaptureEnd("failed", "at capacity")).toMatch(/maximum number of meetings/);
+    expect(humanizeCaptureEnd("completed", undefined)).toMatch(/without capturing any speech/);
+    expect(humanizeCaptureEnd("failed", "weird vendor error")).toBe("weird vendor error");
   });
 
   it("builds a descriptor from the event", () => {
