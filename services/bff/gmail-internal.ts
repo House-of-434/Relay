@@ -410,6 +410,80 @@ async function resolveAccount(
   return { account: gmailAccounts[0]!, ownerUserId: actor.userId };
 }
 
+export interface FetchedGmailAttachment {
+  id: string;
+  filename: string;
+  mimeType: string;
+  kind: string;
+  size: number;
+  data: string;
+}
+
+/** Fetch one attachment's bytes for a verified actor, from the actor's own or
+ * the shared mailbox. Shared by the attachment route and the Notion
+ * deck-attach route, so both honor the same message-scoped check, size cap,
+ * and content-type validation. Throws AttachmentRequestError on refusal. */
+export async function fetchGmailAttachment(
+  options: InternalGmailOptions,
+  actor: RelayActor,
+  input: { messageId: string; attachmentId: string; mailbox?: "own" | "relay" },
+): Promise<{ email: string; attachment: FetchedGmailAttachment }> {
+  const resolved = await resolveAccount(options, actor, input.mailbox === "relay" ? "relay" : "own");
+  if (!resolved) throw new AttachmentRequestError(404, "Gmail is not connected for this user");
+  const { account, ownerUserId } = resolved;
+  const attachment = await options.googleApi.withClient(
+    ownerUserId,
+    "gmail",
+    account.id,
+    [GOOGLE_API_SCOPE_CATALOG.gmail.read],
+    async (client) => {
+      const full = await client.users.messages.get({
+        userId: "me",
+        id: input.messageId,
+        format: "full",
+      });
+      // The attachment id is honored only when it names a part of this
+      // message: an id from another message can never be smuggled in.
+      const part = findAttachmentPart(full.data.payload as GmailPayloadPart | undefined, input.attachmentId);
+      if (!part) throw new AttachmentRequestError(404, "attachment not found");
+      const declaredSize = part.body?.size;
+      if (typeof declaredSize === "number" && declaredSize > ATTACHMENT_MAX_BYTES) {
+        throw new AttachmentRequestError(413, "attachment is too large to open");
+      }
+      const fetched = await client.users.messages.attachments.get({
+        userId: "me",
+        messageId: input.messageId,
+        id: input.attachmentId,
+      });
+      const encoded = fetched.data?.data;
+      if (typeof encoded !== "string" || !encoded) {
+        throw new AttachmentRequestError(502, "Gmail request failed");
+      }
+      let bytes: Buffer;
+      try {
+        bytes = Buffer.from(encoded, "base64url");
+      } catch {
+        throw new AttachmentRequestError(502, "Gmail request failed");
+      }
+      if (bytes.length === 0 || bytes.length > ATTACHMENT_MAX_BYTES) {
+        throw new AttachmentRequestError(
+          bytes.length === 0 ? 400 : 413,
+          bytes.length === 0 ? "attachment is empty" : "attachment is too large to open",
+        );
+      }
+      const filename = bounded(typeof part.filename === "string" ? part.filename : "", MAX_FILENAME_LENGTH);
+      const mimeType = bounded(
+        typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "application/octet-stream",
+        MAX_MIME_LENGTH,
+      );
+      const kind = classifyAttachment(mimeType, filename, bytes);
+      if (!kind) throw new AttachmentRequestError(400, "unsupported attachment type");
+      return { id: input.attachmentId, filename, mimeType, kind, size: bytes.length, data: bytes.toString("base64") };
+    },
+  );
+  return { email: account.email, attachment };
+}
+
 export async function handleInternalGmail(
   req: IncomingMessage,
   res: ServerResponse,
@@ -529,70 +603,12 @@ export async function handleInternalGmail(
         return;
       }
       try {
-        const attachment = await options.googleApi.withClient(
-          ownerUserId,
-          "gmail",
-          account.id,
-          [GOOGLE_API_SCOPE_CATALOG.gmail.read],
-          async (client) => {
-            const full = await client.users.messages.get({
-              userId: "me",
-              id: parsed.data.messageId,
-              format: "full",
-            });
-            // The attachment id is honored only when it names a part of this
-            // message: an id from another message can never be smuggled in.
-            const part = findAttachmentPart(
-              full.data.payload as GmailPayloadPart | undefined,
-              parsed.data.attachmentId,
-            );
-            if (!part) throw new AttachmentRequestError(404, "attachment not found");
-            const declaredSize = part.body?.size;
-            if (typeof declaredSize === "number" && declaredSize > ATTACHMENT_MAX_BYTES) {
-              throw new AttachmentRequestError(413, "attachment is too large to open");
-            }
-            const fetched = await client.users.messages.attachments.get({
-              userId: "me",
-              messageId: parsed.data.messageId,
-              id: parsed.data.attachmentId,
-            });
-            const encoded = fetched.data?.data;
-            if (typeof encoded !== "string" || !encoded) {
-              throw new AttachmentRequestError(502, "Gmail request failed");
-            }
-            let bytes: Buffer;
-            try {
-              bytes = Buffer.from(encoded, "base64url");
-            } catch {
-              throw new AttachmentRequestError(502, "Gmail request failed");
-            }
-            if (bytes.length === 0 || bytes.length > ATTACHMENT_MAX_BYTES) {
-              throw new AttachmentRequestError(
-                bytes.length === 0 ? 400 : 413,
-                bytes.length === 0 ? "attachment is empty" : "attachment is too large to open",
-              );
-            }
-            const filename = bounded(
-              typeof part.filename === "string" ? part.filename : "",
-              MAX_FILENAME_LENGTH,
-            );
-            const mimeType = bounded(
-              typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "application/octet-stream",
-              MAX_MIME_LENGTH,
-            );
-            const kind = classifyAttachment(mimeType, filename, bytes);
-            if (!kind) throw new AttachmentRequestError(400, "unsupported attachment type");
-            return {
-              id: parsed.data.attachmentId,
-              filename,
-              mimeType,
-              kind,
-              size: bytes.length,
-              data: bytes.toString("base64"),
-            };
-          },
-        );
-        json(res, 200, { account: { email: account.email }, attachment });
+        const { email, attachment } = await fetchGmailAttachment(options, actor, {
+          messageId: parsed.data.messageId,
+          attachmentId: parsed.data.attachmentId,
+          mailbox: parsed.data.mailbox,
+        });
+        json(res, 200, { account: { email }, attachment });
         return;
       } catch (error) {
         if (error instanceof AttachmentRequestError) {

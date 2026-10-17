@@ -12,6 +12,7 @@ export const NOTION_INTERNAL_PATHS = {
   query: "/api/internal/notion/query",
   create: "/api/internal/notion/create",
   update: "/api/internal/notion/update",
+  attach: "/api/internal/notion/attach",
 } as const;
 
 export class NotionRequestError extends Error {
@@ -105,6 +106,22 @@ export class RelayNotionClient {
 
   updatePage(actorAssertion: string, input: { pageId: string; properties: Record<string, unknown> }) {
     return this.call<{ page: { id: string; url?: string } }>(NOTION_INTERNAL_PATHS.update, actorAssertion, input);
+  }
+
+  /** Upload an email attachment into a page's files property. Only ids cross
+   * the wire; the BFF fetches the bytes and uploads them to Notion. */
+  attachAttachment(actorAssertion: string, input: {
+    pageId: string;
+    property: string;
+    messageId: string;
+    attachmentId: string;
+    mailbox?: "own" | "relay";
+  }) {
+    return this.call<{ page: { id: string; url?: string }; property: string; file: { name: string; mimeType: string } }>(
+      NOTION_INTERNAL_PATHS.attach,
+      actorAssertion,
+      input,
+    );
   }
 }
 

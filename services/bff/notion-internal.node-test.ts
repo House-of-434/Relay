@@ -11,6 +11,7 @@ import { afterEach, test } from "node:test";
 import { NotionConnectionStore } from "./notion-connections.ts";
 import {
   handleInternalNotion,
+  INTERNAL_NOTION_ATTACH,
   INTERNAL_NOTION_CREATE,
   INTERNAL_NOTION_GET,
   INTERNAL_NOTION_QUERY,
@@ -78,6 +79,10 @@ function notionFetcher(seen: string[]) {
     if (method === "GET" && path === `/v1/pages/${ALLOWED_PAGE}`) return json(200, notionPage(ALLOWED_PAGE, ALLOWED_DB));
     if (method === "GET" && path === `/v1/pages/${OTHER_PAGE}`) return json(200, notionPage(OTHER_PAGE, OTHER_DB));
     if (method === "POST" && path === "/v1/pages") return json(200, { id: "cccccccccccccccccccccccccccccccc", url: "https://notion.so/new" });
+    if (method === "POST" && path === "/v1/file_uploads") {
+      return json(200, { id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", upload_url: "https://upload.notion.test/part-1", status: "pending" });
+    }
+    if (method === "POST" && path === "/part-1") return json(200, { status: "uploaded" });
     if (method === "PATCH" && (path === `/v1/pages/${ALLOWED_PAGE}` || path === `/v1/pages/${OTHER_PAGE}`)) {
       return json(200, { id: path.split("/").at(-1), url: "https://notion.so/updated" });
     }
@@ -103,6 +108,7 @@ async function createFixture() {
       connections,
       allowedDatabaseIds: [ALLOWED_DB],
       fetcher: notionFetcher(seen) as typeof fetch,
+      fetchAttachment: async () => ({ filename: "deck.pdf", mimeType: "application/pdf", data: Buffer.from("%PDF-deck").toString("base64") }),
     });
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -210,4 +216,42 @@ test("update inside the allowlist patches the page", async () => {
   });
   assert.equal(status, 200);
   assert.equal((body as { page: { id: string } }).page.id, ALLOWED_PAGE);
+});
+
+test("attach uploads an email attachment into an allowlisted page's files property", async () => {
+  const { port, seen } = await createFixture();
+  const { status, body } = await post(port, INTERNAL_NOTION_ATTACH, USER_ID, "mercury", {
+    pageId: ALLOWED_PAGE,
+    property: "Deck",
+    messageId: "msg-1",
+    attachmentId: "att-1",
+  });
+  assert.equal(status, 200);
+  assert.equal((body as { file: { name: string } }).file.name, "deck.pdf");
+  assert.ok(seen.includes("POST /v1/file_uploads"));
+  assert.ok(seen.some((entry) => entry.startsWith("PATCH /v1/pages/")));
+});
+
+test("attach refuses a page outside the writable allowlist before uploading anything", async () => {
+  const { port, seen } = await createFixture();
+  const { status } = await post(port, INTERNAL_NOTION_ATTACH, USER_ID, "mercury", {
+    pageId: OTHER_PAGE,
+    property: "Deck",
+    messageId: "msg-1",
+    attachmentId: "att-1",
+  });
+  assert.equal(status, 403);
+  assert.ok(!seen.includes("POST /v1/file_uploads"));
+});
+
+test("a read-only agent cannot attach files", async () => {
+  const { port, seen } = await createFixture();
+  const { status } = await post(port, INTERNAL_NOTION_ATTACH, USER_ID, "scout", {
+    pageId: ALLOWED_PAGE,
+    property: "Deck",
+    messageId: "msg-1",
+    attachmentId: "att-1",
+  });
+  assert.equal(status, 403);
+  assert.ok(!seen.includes("POST /v1/file_uploads"));
 });

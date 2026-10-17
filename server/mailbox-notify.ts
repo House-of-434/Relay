@@ -4,8 +4,99 @@
 // with a bounded excerpt; the full thread lives in Relay. Server-only: this
 // is never a model-callable tool, and it is addressed only to the verified
 // sender already recorded on the conversation.
+import { fromMarkdown } from "mdast-util-from-markdown";
+
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { redactSecretsInText } from "./redact.ts";
+
+interface MdNode {
+  type: string;
+  value?: string;
+  url?: string;
+  alt?: string;
+  children?: MdNode[];
+}
+
+/** Render markdown to readable plain text for the notification email. Email
+ * bodies are plain text, so emphasis markers and link syntax must not leak
+ * through as literal `*`. Uses the mdast parser already in the tree — no new
+ * dependency: emphasis is flattened, a link keeps its text and URL, lists keep
+ * their bullets, code keeps its content, and raw HTML is dropped. */
+export function markdownToPlainText(markdown: string): string {
+  const tree = fromMarkdown(markdown) as unknown as MdNode;
+  const out: string[] = [];
+
+  const textOf = (node: MdNode): string => {
+    let value = "";
+    const collect = (current: MdNode): void => {
+      if (current.type === "text" && current.value) value += current.value;
+      for (const child of current.children ?? []) collect(child);
+    };
+    collect(node);
+    return value;
+  };
+
+  const walk = (node: MdNode, listDepth: number): void => {
+    switch (node.type) {
+      case "text":
+      case "inlineCode":
+      case "code":
+        out.push(node.value ?? "");
+        return;
+      case "break":
+        out.push("\n");
+        return;
+      case "emphasis":
+      case "strong":
+      case "delete":
+      case "linkReference":
+        for (const child of node.children ?? []) walk(child, listDepth);
+        return;
+      case "link": {
+        const label = textOf(node);
+        for (const child of node.children ?? []) walk(child, listDepth);
+        // Keep the target when it is not already the visible text.
+        if (node.url && node.url !== label.trim()) out.push(` (${node.url})`);
+        return;
+      }
+      case "image":
+        out.push(node.alt ? `[image: ${node.alt}]` : "[image]");
+        return;
+      case "listItem": {
+        // Gather the item's own text, then prefix it with one bullet so items
+        // stay on consecutive lines instead of gaining a blank line each.
+        const start = out.length;
+        for (const child of node.children ?? []) walk(child, listDepth + 1);
+        const body = out.splice(start).join("").trim();
+        out.push(`\n${"  ".repeat(listDepth)}- ${body}`);
+        return;
+      }
+      case "paragraph":
+      case "heading":
+        for (const child of node.children ?? []) walk(child, listDepth);
+        out.push("\n\n");
+        return;
+      case "list":
+      case "blockquote":
+        for (const child of node.children ?? []) walk(child, listDepth);
+        out.push("\n");
+        return;
+      case "thematicBreak":
+        out.push("---\n");
+        return;
+      case "html":
+        return; // no raw HTML in a plain-text email
+      default:
+        for (const child of node.children ?? []) walk(child, listDepth);
+    }
+  };
+
+  walk(tree, 0);
+  return out.join("")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
 
 /** A reply that asks for nothing (an invitation's NO_ACTION, possibly wrapped
  * in Markdown emphasis) must not trigger a completion email. */
@@ -91,7 +182,7 @@ export async function sendMailboxCompletionEmail(input: {
 }): Promise<void> {
   if (!mailboxNotifyEnabled()) return;
   if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return;
-  const excerpt = redactSecretsInText(input.detail.trim()).trim().slice(0, 4_000);
+  const excerpt = markdownToPlainText(redactSecretsInText(input.detail.trim())).trim().slice(0, 4_000);
   const body = [
     excerpt || "Open Relay to see the result.",
     ...(input.relayUrl ? ["", `Open Relay to see the full thread: ${input.relayUrl}`] : []),

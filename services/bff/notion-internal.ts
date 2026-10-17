@@ -1,9 +1,9 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 
-import type { RelayAgentRole } from "./actor-assertion.ts";
+import type { RelayActor, RelayAgentRole } from "./actor-assertion.ts";
 import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
-import { normalizeNotionId, notionRequest, NotionApiError } from "./notion-api.ts";
+import { normalizeNotionId, notionRequest, uploadNotionFile, NOTION_FILE_API_VERSION, NotionApiError } from "./notion-api.ts";
 import type { NotionConnectionStore } from "./notion-connections.ts";
 
 export const INTERNAL_NOTION_SEARCH = "/api/internal/notion/search";
@@ -11,6 +11,7 @@ export const INTERNAL_NOTION_GET = "/api/internal/notion/get";
 export const INTERNAL_NOTION_QUERY = "/api/internal/notion/query";
 export const INTERNAL_NOTION_CREATE = "/api/internal/notion/create";
 export const INTERNAL_NOTION_UPDATE = "/api/internal/notion/update";
+export const INTERNAL_NOTION_ATTACH = "/api/internal/notion/attach";
 
 const INTERNAL_NOTION_PATHS = [
   INTERNAL_NOTION_SEARCH,
@@ -18,6 +19,7 @@ const INTERNAL_NOTION_PATHS = [
   INTERNAL_NOTION_QUERY,
   INTERNAL_NOTION_CREATE,
   INTERNAL_NOTION_UPDATE,
+  INTERNAL_NOTION_ATTACH,
 ] as const;
 
 /** Reads are shared research; writes stay with the agent that owns the
@@ -57,6 +59,24 @@ const updateSchema = z.object({
   properties: z.record(z.string(), z.unknown()),
 }).strict();
 
+/** Attach a file the actor already holds (an email attachment) to a page's
+ * files property. The bytes never travel through the model: the BFF fetches
+ * the Gmail attachment server-side and uploads it to Notion. */
+const attachSchema = z.object({
+  pageId: z.string().min(1).max(MAX_ID_LENGTH),
+  property: z.string().min(1).max(200),
+  messageId: z.string().min(1).max(512),
+  attachmentId: z.string().min(1).max(512),
+  mailbox: z.enum(["own", "relay"]).optional(),
+}).strict();
+
+export interface FetchedAttachment {
+  filename: string;
+  mimeType: string;
+  /** Standard base64 bytes. */
+  data: string;
+}
+
 export interface InternalNotionOptions {
   capability: string;
   actorSecret: string | undefined;
@@ -64,6 +84,13 @@ export interface InternalNotionOptions {
   /** Normalized (32-hex, lowercase) database ids the server may write to.
    * Empty fails writes closed; reads are unaffected. */
   allowedDatabaseIds: string[];
+  /** Resolve one Gmail attachment's bytes for the verified actor. Supplied by
+   * the BFF, which owns the Gmail gateway; absent disables attach. */
+  fetchAttachment?: (actor: RelayActor, input: {
+    messageId: string;
+    attachmentId: string;
+    mailbox?: "own" | "relay";
+  }) => Promise<FetchedAttachment>;
   fetcher?: typeof fetch;
   now?: () => number;
 }
@@ -165,7 +192,7 @@ export async function handleInternalNotion(
   }
 
   try {
-    await dispatch(req, res, pathname, options, actor.agent, accessToken, body);
+    await dispatch(req, res, pathname, options, actor, accessToken, body);
   } catch (error) {
     if (error instanceof NotionApiError) {
       jsonResponse(res, error.status >= 400 && error.status < 500 ? error.status : 502, { error: error.message });
@@ -180,11 +207,12 @@ async function dispatch(
   res: ServerResponse,
   pathname: string,
   options: InternalNotionOptions,
-  agent: RelayAgentRole,
+  actor: RelayActor,
   accessToken: string,
   body: unknown,
 ): Promise<void> {
   const fetcher = options.fetcher;
+  const agent = actor.agent;
 
   if (pathname === INTERNAL_NOTION_SEARCH) {
     const parsed = searchSchema.safeParse(body);
@@ -258,6 +286,63 @@ async function dispatch(
 
   if (!NOTION_WRITE_AGENTS.has(agent)) {
     jsonResponse(res, 403, { error: "this agent may not write to Notion" });
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_ATTACH) {
+    const parsed = attachSchema.safeParse(body);
+    const pageId = parsed.success ? normalizeNotionId(parsed.data.pageId) : undefined;
+    if (!parsed.success || !pageId) {
+      jsonResponse(res, 400, { error: "invalid Notion attachment request" });
+      return;
+    }
+    if (!options.fetchAttachment) {
+      jsonResponse(res, 503, { error: "attachment upload is not configured" });
+      return;
+    }
+    // Bind the write to the allowlisted parent database, exactly as update
+    // does, so an attachment cannot land outside the eval copy.
+    const current = await notionRequest<NotionPage>({ accessToken, path: `/pages/${parsed.data.pageId}`, fetcher });
+    const parentId = typeof current.parent?.database_id === "string" ? normalizeNotionId(current.parent.database_id) : undefined;
+    if (!parentId || !options.allowedDatabaseIds.includes(parentId)) {
+      jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
+      return;
+    }
+    const file = await options.fetchAttachment(actor, {
+      messageId: parsed.data.messageId,
+      attachmentId: parsed.data.attachmentId,
+      mailbox: parsed.data.mailbox,
+    });
+    const uploadId = await uploadNotionFile({
+      accessToken,
+      filename: file.filename,
+      mimeType: file.mimeType,
+      data: file.data,
+      fetcher,
+    });
+    const patched = await notionRequest<NotionPage>({
+      accessToken,
+      path: `/pages/${parsed.data.pageId}`,
+      method: "PATCH",
+      version: NOTION_FILE_API_VERSION,
+      body: {
+        properties: {
+          [parsed.data.property]: {
+            files: [{ name: file.filename, type: "file_upload", file_upload: { id: uploadId } }],
+          },
+        },
+      },
+      fetcher,
+    });
+    if (typeof patched.id !== "string") {
+      jsonResponse(res, 502, { error: "the Notion request was refused" });
+      return;
+    }
+    jsonResponse(res, 200, {
+      page: { id: patched.id, ...(typeof patched.url === "string" ? { url: patched.url } : {}) },
+      property: parsed.data.property,
+      file: { name: file.filename, mimeType: file.mimeType },
+    });
     return;
   }
 

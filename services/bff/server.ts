@@ -8,7 +8,7 @@ import { pipeline } from "node:stream/promises";
 import { pathToFileURL } from "node:url";
 import { createRemoteJWKSet, customFetch, jwtVerify, type JWTPayload } from "jose";
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
-import { handleInternalGmail, isInternalGmailPath } from "./gmail-internal.ts";
+import { handleInternalGmail, isInternalGmailPath, fetchGmailAttachment } from "./gmail-internal.ts";
 import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-internal.ts";
 import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
 import { handleInternalGitHub, isInternalGitHubPath } from "./github-internal.ts";
@@ -1865,6 +1865,21 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         allowedDatabaseIds: config.notionAllowedDatabaseIds ?? [],
         fetcher,
         now,
+        // The BFF owns both gateways, so it pairs them here: the actor's
+        // Gmail attachment bytes are fetched server-side and uploaded to
+        // Notion, never travelling through the model.
+        fetchAttachment: async (actor, input) => {
+          const { attachment } = await fetchGmailAttachment({
+            googleApi,
+            listAccounts: (userId) => googleStore.list(userId),
+            capability: config.relayBffCapability,
+            actorSecret: config.relayToolActorSecret,
+            mailboxAddress: config.relayMailboxAddress,
+            mailboxUserId: config.relayMailboxUserId,
+            now,
+          }, actor, input);
+          return { filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data };
+        },
       });
       return;
     }

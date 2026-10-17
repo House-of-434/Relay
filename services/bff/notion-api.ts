@@ -101,12 +101,20 @@ export async function exchangeNotionToken(input: {
   };
 }
 
+/** File uploads and the `file_upload` file type need a newer API version than
+ * the data endpoints. Pin it separately so bumping uploads never shifts the
+ * page/database behavior the rest of the connector relies on. */
+export const NOTION_FILE_API_VERSION = "2025-09-03";
+
 /** One authenticated Notion REST call. */
 export async function notionRequest<T>(input: {
   accessToken: string;
   path: string;
   method?: "GET" | "POST" | "PATCH";
   body?: unknown;
+  /** Overrides the pinned data API version for endpoints that need a newer
+   * one (file uploads). */
+  version?: string;
   fetcher?: typeof fetch;
 }): Promise<T> {
   const fetcher = input.fetcher ?? fetch;
@@ -119,7 +127,7 @@ export async function notionRequest<T>(input: {
       redirect: "error",
       headers: {
         authorization: `Bearer ${input.accessToken}`,
-        "Notion-Version": NOTION_API_VERSION,
+        "Notion-Version": input.version ?? NOTION_API_VERSION,
         ...(input.body !== undefined ? { "content-type": "application/json" } : {}),
       },
       ...(input.body !== undefined ? { body: JSON.stringify(input.body) } : {}),
@@ -130,6 +138,56 @@ export async function notionRequest<T>(input: {
   const body = await readJson(response);
   if (!response.ok) throw new NotionApiError(response.status, errorMessage(response.status, body));
   return body as T;
+}
+
+/** Upload one file's bytes to Notion and return the file-upload id, ready to
+ * reference as `{ type: "file_upload", file_upload: { id } }` on a files
+ * property. Three calls, exactly as the API requires: create the request, send
+ * the bytes to the signed upload URL, then reference the id. */
+export async function uploadNotionFile(input: {
+  accessToken: string;
+  filename: string;
+  mimeType: string;
+  /** Standard base64 file bytes. */
+  data: string;
+  fetcher?: typeof fetch;
+}): Promise<string> {
+  const fetcher = input.fetcher ?? fetch;
+  const created = await notionRequest<{ id?: unknown; upload_url?: unknown; complete_url?: unknown }>({
+    accessToken: input.accessToken,
+    path: "/file_uploads",
+    method: "POST",
+    version: NOTION_FILE_API_VERSION,
+    body: { filename: input.filename, content_type: input.mimeType },
+    fetcher,
+  });
+  const id = typeof created.id === "string" ? created.id : undefined;
+  const uploadUrl = typeof created.upload_url === "string" ? created.upload_url : undefined;
+  if (!id || !uploadUrl) throw new NotionApiError(502, "the Notion file upload could not be created");
+
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(input.data, "base64");
+  } catch {
+    throw new NotionApiError(400, "invalid file bytes");
+  }
+  if (bytes.length === 0) throw new NotionApiError(400, "empty file");
+
+  const form = new FormData();
+  form.append("file", new Blob([bytes], { type: input.mimeType }), input.filename);
+  let sent: Response;
+  try {
+    sent = await fetcher(new URL(uploadUrl), {
+      method: "POST",
+      redirect: "error",
+      headers: { authorization: `Bearer ${input.accessToken}`, "Notion-Version": NOTION_FILE_API_VERSION },
+      body: form,
+    });
+  } catch {
+    throw new NotionApiError(502, "the Notion file upload failed");
+  }
+  if (!sent.ok) throw new NotionApiError(sent.status, errorMessage(sent.status, await readJson(sent)));
+  return id;
 }
 
 /** Normalize a database/page id for comparison: Notion accepts dashed or

@@ -61,8 +61,9 @@ async function toolNames(agent: "scout" | "mercury" | "curator"): Promise<string
   }
 }
 
-test("mercury sees all five notion tools", async () => {
+test("mercury sees every notion tool, including the attachment uploader", async () => {
   assert.deepEqual(await toolNames("mercury"), [
+    "notion_attach_attachment",
     "notion_create_page",
     "notion_get_page",
     "notion_query_db",

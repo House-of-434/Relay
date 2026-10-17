@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deriveMailSubject, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { deriveMailSubject, mailboxReplyNeedsNoEmail, mailboxReplySubject, markdownToPlainText, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
 import type { MailboxActor } from "./mailbox-bff.ts";
 
 const ACTOR: MailboxActor = {
@@ -18,6 +18,21 @@ describe("shared-mailbox completion notices", () => {
     expect(mailboxReplyNeedsNoEmail("no_action")).toBe(true);
     expect(mailboxReplyNeedsNoEmail("I scheduled the reminder.")).toBe(false);
     expect(mailboxReplyNeedsNoEmail(undefined)).toBe(false);
+  });
+});
+
+describe("markdown to plain text for the email body", () => {
+  it("flattens emphasis so literal asterisks never leak", () => {
+    expect(markdownToPlainText("**Top 5** trending and *fast*")).toBe("Top 5 trending and fast");
+  });
+
+  it("keeps link text with its target, and bullets for lists", () => {
+    expect(markdownToPlainText("See [the doc](https://example.test/doc)")).toBe("See the doc (https://example.test/doc)");
+    expect(markdownToPlainText("- one\n- two")).toBe("- one\n- two");
+  });
+
+  it("keeps code content, drops headings markers, and trims blank runs", () => {
+    expect(markdownToPlainText("# Title\n\n`npm run x`")).toBe("Title\n\nnpm run x");
   });
 });
 

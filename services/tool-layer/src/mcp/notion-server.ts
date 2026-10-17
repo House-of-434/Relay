@@ -130,4 +130,34 @@ export function registerNotionTools(server: McpServer, agent: Agent, context: No
       }
     },
   );
+
+  server.registerTool(
+    "notion_attach_attachment",
+    {
+      description: "Attach an email attachment (for example a pitch deck) to a files property of a Notion page, uploading the file into Notion. Pass the page id, the property name (for example \"Deck\"), and the message id and attachment id from gmail_read. Use this when the deck arrived as an email attachment rather than a link; when the sender gave a link, set the files property to that external URL with notion_update_page instead.",
+      inputSchema: {
+        pageId: z.string().min(1).max(64),
+        property: z.string().min(1).max(200),
+        messageId: z.string().min(1).max(512),
+        attachmentId: z.string().min(1).max(512),
+        mailbox: z.enum(["own", "relay"]).optional(),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async ({ pageId, property, messageId, attachmentId, mailbox }) => {
+      try {
+        authorizeNotion(agent, "write");
+        const result = await client.attachAttachment(actorAssertion, {
+          pageId,
+          property,
+          messageId,
+          attachmentId,
+          ...(mailbox ? { mailbox } : {}),
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
 }
