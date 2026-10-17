@@ -366,6 +366,12 @@ function bytesMagicClass(bytes: Buffer): MagicClass | undefined {
  * the extension covers. */
 /** Kinds handed back as image bytes for native vision, not extracted as text. */
 const IMAGE_KINDS = new Set(["png", "jpeg", "gif", "webp"]);
+const CANONICAL_IMAGE_MIME: Record<string, string> = {
+  png: "image/png",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
 
 function classifyAttachment(mimeType: string, filename: string, bytes: Buffer): string | undefined {
   const magic = bytesMagicClass(bytes);
@@ -637,7 +643,7 @@ export async function handleInternalGmail(
         if (IMAGE_KINDS.has(attachment.kind)) {
           json(res, 200, {
             account: { email },
-            attachment: { ...meta, image: { mimeType: attachment.mimeType, data: attachment.data } },
+            attachment: { ...meta, image: { mimeType: CANONICAL_IMAGE_MIME[attachment.kind]!, data: attachment.data } },
           });
           return;
         }

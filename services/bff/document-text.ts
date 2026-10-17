@@ -82,7 +82,10 @@ function cleanText(value: string): string {
 function ooxmlPartText(xml: string, runTag: "w:t" | "a:t"): string {
   const paragraphs = xml.split(runTag === "w:t" ? /<\/w:p>/ : /<\/a:p>/);
   const lines = paragraphs.map((paragraph) => {
-    const runs = paragraph.match(new RegExp(`<${runTag}(?:\\s[^>]*)?>([\\s\\S]*?)</${runTag}>`, "g")) ?? [];
+    const withBreaks = paragraph
+      .replace(/<\/?(?:w:br|w:cr|a:br)(?:\s[^>]*)?\/?>/g, `<${runTag}>\n</${runTag}>`)
+      .replace(/<\/?(?:w:tab|a:tab)(?:\s[^>]*)?\/?>/g, `<${runTag}> </${runTag}>`);
+    const runs = withBreaks.match(new RegExp(`<${runTag}(?:\\s[^>]*)?>([\\s\\S]*?)</${runTag}>`, "g")) ?? [];
     return runs
       .map((run) => decodeXmlEntities(run.replace(new RegExp(`</?${runTag}(?:\\s[^>]*)?>`, "g"), "")))
       .join("");
