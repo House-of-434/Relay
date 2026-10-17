@@ -6,9 +6,10 @@
 //
 // Pure JavaScript (unpdf for PDF, fflate for OOXML zips): no LibreOffice, no
 // renderer, no OCR. A document whose text cannot be produced is reported
-// honestly (`unreadable`) rather than passed on as empty content. A PDF with
-// no text layer (a scan) yields `noText` so the caller can fall back to vision
-// or ask the sender, instead of treating the extraction as a success.
+// honestly (`unreadable`) rather than passed on as empty content. A document
+// with no usable text at all (a scanned PDF, an image-only or empty
+// DOCX/PPTX) yields `noText` so the caller can fall back to vision or ask
+// the sender, instead of treating the extraction as a success.
 //
 // Safety here is operational, not editorial: the caps below bound resources
 // (archive entry count, per-part and total decompressed bytes) against a
@@ -25,7 +26,8 @@ export interface ExtractedDocument {
    * binary Office, or an archive that could not be parsed). */
   unreadable?: boolean;
   /** True when extraction ran but the document carries no usable text at all
-   * (a scanned/image-only PDF). The caller can look at the image instead. */
+   * (a scanned/image-only PDF, or an image-only/empty DOCX/PPTX). The caller
+   * can look at the image instead. */
   noText?: boolean;
   /** Non-fatal notes, e.g. an archive part that was skipped. */
   warnings: string[];

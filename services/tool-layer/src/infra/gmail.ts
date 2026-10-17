@@ -48,7 +48,7 @@ export interface GmailAttachment {
   text?: string;
   /** Non-fatal extraction notes. */
   warnings?: string[];
-  /** The format is known but its text cannot be extracted (legacy Office). */
+  /** The format is known but its text cannot be extracted (legacy Office, xlsx, and ODF). */
   unreadable?: boolean;
   /** Extraction ran but found no usable text (for example a scanned PDF). */
   noText?: boolean;
