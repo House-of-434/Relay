@@ -38,16 +38,27 @@ test("an assertion signed with another secret is refused", () => {
   assert.throws(() => db.authenticateActorAssertion(assertion), /signature is invalid/);
 });
 
-test("chooseMeetingCapture falls back to the room's readable capture when the exact one is empty", () => {
-  const empty = { id: "denied", segment_count: 0, native_id: "hco-afyb-cwn" };
-  const readable = { id: "good", segment_count: 691, native_id: "hco-afyb-cwn" };
+test("chooseMeetingCapture falls back to the room's readable capture when the exact one is terminal and empty", () => {
+  const emptyFailed = { id: "denied", segment_count: 0, native_id: "hco-afyb-cwn", status: "failed" };
+  const readable = { id: "good", segment_count: 691, native_id: "hco-afyb-cwn", status: "completed" };
   // A denied/never-admitted attempt must not mask the room's recording.
-  assert.equal(chooseMeetingCapture(empty, { id: "sibling" }), "sibling");
+  assert.equal(chooseMeetingCapture(emptyFailed, { id: "sibling" }), "sibling");
   // With content, the exact capture wins even if a sibling exists.
   assert.equal(chooseMeetingCapture(readable, { id: "sibling" }), "good");
   // No room to fall back to (null native_id), or no sibling: keep the exact row.
-  assert.equal(chooseMeetingCapture({ id: "x", segment_count: 0, native_id: null }, { id: "sibling" }), "x");
-  assert.equal(chooseMeetingCapture(empty, null), "denied");
+  assert.equal(chooseMeetingCapture({ id: "x", segment_count: 0, native_id: null, status: "failed" }, { id: "sibling" }), "x");
+  assert.equal(chooseMeetingCapture(emptyFailed, null), "denied");
+});
+
+test("chooseMeetingCapture never falls back while the exact capture is still live", () => {
+  // A live capture has zero segments until its first flush: resolving its own
+  // id must return it, never an older sibling's transcript.
+  for (const status of ["joining", "awaiting_admission", "active"]) {
+    assert.equal(
+      chooseMeetingCapture({ id: "live", segment_count: 0, native_id: "hco-afyb-cwn", status }, { id: "sibling" }),
+      "live",
+    );
+  }
 });
 
 test("nativeIdFromMeetingRef extracts the provider code from a URL or a bare code", () => {
