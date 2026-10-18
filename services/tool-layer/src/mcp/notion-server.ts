@@ -109,9 +109,135 @@ export function registerNotionTools(server: McpServer, agent: Agent, context: No
     },
   );
 
+  server.registerTool(
+    "notion_get_page_content",
+    {
+      description: "Read a page's body: its child blocks (paragraphs, headings, lists, tables, sub-pages), bounded and paginated. Returns block ids, types, and the text of text-bearing blocks, with hasMore/nextCursor to page. Read-only; pass a returned block id as blockId to read that subtree.",
+      inputSchema: { blockId: z.string().min(1).max(64), pageSize, startCursor: z.string().min(1).max(64).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ blockId, pageSize: limit, startCursor }) => {
+      try {
+        authorizeNotion(agent, "read");
+        const result = await client.getPageContent(actorAssertion, {
+          blockId,
+          ...(limit ? { pageSize: limit } : {}),
+          ...(startCursor ? { startCursor } : {}),
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "notion_list_users",
+    {
+      description: "List the workspace's users (id, name, type, and email when available), bounded and paginated. Use it to resolve a person for a people property or mention. Read-only; if the connection lacks the user-information capability it returns no users with a warning rather than failing.",
+      inputSchema: { pageSize, startCursor: z.string().min(1).max(64).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ pageSize: limit, startCursor }) => {
+      try {
+        authorizeNotion(agent, "read");
+        const result = await client.listUsers(actorAssertion, {
+          ...(limit ? { pageSize: limit } : {}),
+          ...(startCursor ? { startCursor } : {}),
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "notion_get_comments",
+    {
+      description: "List the comments on a page or block, bounded and paginated. Read-only.",
+      inputSchema: { blockId: z.string().min(1).max(64), pageSize, startCursor: z.string().min(1).max(64).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ blockId, pageSize: limit, startCursor }) => {
+      try {
+        authorizeNotion(agent, "read");
+        const result = await client.getComments(actorAssertion, {
+          blockId,
+          ...(limit ? { pageSize: limit } : {}),
+          ...(startCursor ? { startCursor } : {}),
+        });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
   // Write tools are registered only for agents with the write grant, so tool
   // visibility matches authorization (the BFF enforces it again on the call).
   if (!NOTION_PERMISSIONS[agent].includes("write")) return;
+
+  server.registerTool(
+    "notion_append_page_content",
+    {
+      description: "Append content blocks to a page's body (paragraph, heading, list, quote, to-do, code, and other supported block types). Pass the page id as blockId and an array of block objects (max 50). The page must be in a writable database.",
+      inputSchema: {
+        blockId: z.string().min(1).max(64),
+        children: z.array(z.record(z.string(), z.unknown())).min(1).max(50),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async ({ blockId, children }) => {
+      try {
+        authorizeNotion(agent, "write");
+        const result = await client.appendPageContent(actorAssertion, { blockId, children });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "notion_archive_page",
+    {
+      description: "Archive a page (move it to Notion's trash). The page must be in a writable database. This is reversible in Notion but removes the row from views; confirm with the user before archiving.",
+      inputSchema: { pageId: z.string().min(1).max(64) },
+      annotations: { readOnlyHint: false, destructiveHint: true },
+    },
+    async ({ pageId }) => {
+      try {
+        authorizeNotion(agent, "write");
+        const result = await client.archivePage(actorAssertion, { pageId });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "notion_add_comment",
+    {
+      description: "Add a comment to a page (or reply in an existing discussion). The page must be in a writable database. Pass the page id and the comment text; pass discussionId to reply to a thread instead of starting a new one.",
+      inputSchema: {
+        pageId: z.string().min(1).max(64),
+        discussionId: z.string().min(1).max(64).optional(),
+        richText: z.string().min(1).max(2000),
+      },
+      annotations: { readOnlyHint: false, destructiveHint: false },
+    },
+    async ({ pageId, discussionId, richText }) => {
+      try {
+        authorizeNotion(agent, "write");
+        const result = await client.addComment(actorAssertion, { pageId, ...(discussionId ? { discussionId } : {}), richText });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
 
   server.registerTool(
     "notion_create_page",

@@ -13,6 +13,12 @@ export const INTERNAL_NOTION_CREATE = "/api/internal/notion/create";
 export const INTERNAL_NOTION_UPDATE = "/api/internal/notion/update";
 export const INTERNAL_NOTION_ATTACH = "/api/internal/notion/attach";
 export const INTERNAL_NOTION_DATABASE_GET = "/api/internal/notion/database";
+export const INTERNAL_NOTION_PAGE_CONTENT = "/api/internal/notion/blocks/children";
+export const INTERNAL_NOTION_APPEND_CONTENT = "/api/internal/notion/blocks/append";
+export const INTERNAL_NOTION_ARCHIVE = "/api/internal/notion/pages/archive";
+export const INTERNAL_NOTION_USERS = "/api/internal/notion/users";
+export const INTERNAL_NOTION_COMMENTS = "/api/internal/notion/comments";
+export const INTERNAL_NOTION_COMMENT_ADD = "/api/internal/notion/comments/add";
 
 const INTERNAL_NOTION_PATHS = [
   INTERNAL_NOTION_SEARCH,
@@ -22,6 +28,12 @@ const INTERNAL_NOTION_PATHS = [
   INTERNAL_NOTION_UPDATE,
   INTERNAL_NOTION_ATTACH,
   INTERNAL_NOTION_DATABASE_GET,
+  INTERNAL_NOTION_PAGE_CONTENT,
+  INTERNAL_NOTION_APPEND_CONTENT,
+  INTERNAL_NOTION_ARCHIVE,
+  INTERNAL_NOTION_USERS,
+  INTERNAL_NOTION_COMMENTS,
+  INTERNAL_NOTION_COMMENT_ADD,
 ] as const;
 
 /** Reads are shared research; writes stay with the agent that owns the
@@ -35,6 +47,13 @@ const MAX_PAGE_SIZE = 100;
 const MAX_PROPERTIES_BYTES = 64 * 1024;
 const MAX_FILTER_BYTES = 8 * 1024;
 const MAX_PAGE_BYTES = 200 * 1024;
+/** Block reads and writes stay bounded: a page body can be large, so a read
+ * returns one bounded page of block summaries with a cursor, and an append is
+ * capped in both block count and payload size. */
+const MAX_BLOCK_TEXT = 2_000;
+const MAX_APPEND_BLOCKS = 50;
+const MAX_APPEND_BYTES = 128 * 1024;
+const MAX_COMMENT_LENGTH = 2_000;
 
 const searchSchema = z.object({
   query: z.string().min(1).max(MAX_QUERY_LENGTH),
@@ -44,6 +63,36 @@ const searchSchema = z.object({
 const getSchema = z.object({ pageId: z.string().min(1).max(MAX_ID_LENGTH) }).strict();
 
 const databaseSchema = z.object({ databaseId: z.string().min(1).max(MAX_ID_LENGTH) }).strict();
+
+const pageContentSchema = z.object({
+  blockId: z.string().min(1).max(MAX_ID_LENGTH),
+  pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+  startCursor: z.string().min(1).max(MAX_ID_LENGTH).optional(),
+}).strict();
+
+const appendContentSchema = z.object({
+  blockId: z.string().min(1).max(MAX_ID_LENGTH),
+  children: z.array(z.record(z.string(), z.unknown())).min(1).max(MAX_APPEND_BLOCKS),
+}).strict();
+
+const archiveSchema = z.object({ pageId: z.string().min(1).max(MAX_ID_LENGTH) }).strict();
+
+const usersSchema = z.object({
+  pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+  startCursor: z.string().min(1).max(MAX_ID_LENGTH).optional(),
+}).strict();
+
+const commentsSchema = z.object({
+  blockId: z.string().min(1).max(MAX_ID_LENGTH),
+  pageSize: z.number().int().min(1).max(MAX_PAGE_SIZE).optional(),
+  startCursor: z.string().min(1).max(MAX_ID_LENGTH).optional(),
+}).strict();
+
+const commentAddSchema = z.object({
+  pageId: z.string().min(1).max(MAX_ID_LENGTH),
+  discussionId: z.string().min(1).max(MAX_ID_LENGTH).optional(),
+  richText: z.string().min(1).max(MAX_COMMENT_LENGTH),
+}).strict();
 
 const querySchema = z.object({
   databaseId: z.string().min(1).max(MAX_ID_LENGTH),
@@ -103,6 +152,20 @@ export function isInternalNotionPath(pathname: string): boolean {
   return (INTERNAL_NOTION_PATHS as readonly string[]).includes(pathname);
 }
 
+/** The allowlisted database a page currently sits in, re-read from the page so
+ * a stale read can never authorize a write. Undefined means the page's parent
+ * is not an allowlisted database (or is a page), so the write is refused. */
+async function allowedParentDatabaseId(
+  accessToken: string,
+  pageId: string,
+  allowed: readonly string[],
+  fetcher: typeof fetch | undefined,
+): Promise<string | undefined> {
+  const page = await notionRequest<NotionPage>({ accessToken, path: `/pages/${pageId}`, fetcher });
+  const parentId = typeof page.parent?.database_id === "string" ? normalizeNotionId(page.parent.database_id) : undefined;
+  return parentId && allowed.includes(parentId) ? parentId : undefined;
+}
+
 interface NotionParent {
   type?: unknown;
   database_id?: unknown;
@@ -158,6 +221,57 @@ function databaseSummary(database: { id?: unknown; title?: unknown; properties?:
     properties[name] = { id: typeof prop.id === "string" ? prop.id : undefined, type, ...(options ? { options } : {}) };
   }
   return { id: database.id, title: richTextToPlain(database.title).slice(0, 200), properties };
+}
+
+function bounded(value: string, max: number): string {
+  return value.length > max ? value.slice(0, max) : value;
+}
+
+/** Plain text of one block, for the common text-bearing types. */
+function blockText(block: Record<string, unknown>): string | undefined {
+  if (typeof block.type !== "string") return undefined;
+  const detail = block[block.type] as Record<string, unknown> | undefined;
+  if (!detail) return undefined;
+  if (Array.isArray(detail.rich_text)) {
+    const text = richTextToPlain(detail.rich_text).trim();
+    if (text) return bounded(text, MAX_BLOCK_TEXT);
+  }
+  if (typeof detail.title === "string" && detail.title) return bounded(detail.title, MAX_BLOCK_TEXT);
+  if (typeof detail.url === "string" && detail.url) return bounded(detail.url, MAX_BLOCK_TEXT);
+  return undefined;
+}
+
+function blockSummary(block: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (typeof block.id !== "string" || typeof block.type !== "string") return undefined;
+  const text = blockText(block);
+  return {
+    id: block.id,
+    type: block.type,
+    ...(text ? { text } : {}),
+    ...(block.has_children === true ? { hasChildren: true } : {}),
+  };
+}
+
+function userSummary(user: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (typeof user.id !== "string") return undefined;
+  const person = user.person as Record<string, unknown> | undefined;
+  return {
+    id: user.id,
+    type: typeof user.type === "string" ? user.type : "unknown",
+    ...(typeof user.name === "string" && user.name ? { name: bounded(user.name, 200) } : {}),
+    ...(person && typeof person.email === "string" ? { email: bounded(person.email, 320) } : {}),
+  };
+}
+
+function commentSummary(comment: Record<string, unknown>): Record<string, unknown> | undefined {
+  if (typeof comment.id !== "string") return undefined;
+  const by = comment.created_by as Record<string, unknown> | undefined;
+  return {
+    id: comment.id,
+    ...(typeof comment.discussion_id === "string" ? { discussionId: comment.discussion_id } : {}),
+    text: bounded(Array.isArray(comment.rich_text) ? richTextToPlain(comment.rich_text).trim() : "", MAX_COMMENT_LENGTH),
+    ...(by && typeof by.id === "string" ? { createdBy: by.id } : {}),
+  };
 }
 
 function searchSummary(item: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -329,8 +443,181 @@ async function dispatch(
     return;
   }
 
+  if (pathname === INTERNAL_NOTION_PAGE_CONTENT) {
+    const parsed = pageContentSchema.safeParse(body);
+    if (!parsed.success || !normalizeNotionId(parsed.data.blockId)) {
+      jsonResponse(res, 400, { error: "invalid Notion block id" });
+      return;
+    }
+    const params = new URLSearchParams();
+    if (parsed.data.pageSize) params.set("page_size", String(parsed.data.pageSize));
+    if (parsed.data.startCursor) params.set("start_cursor", parsed.data.startCursor);
+    const raw = await notionRequest<{ results?: unknown[]; has_more?: unknown; next_cursor?: unknown }>({
+      accessToken,
+      path: `/blocks/${parsed.data.blockId}/children${params.size ? `?${params.toString()}` : ""}`,
+      fetcher,
+    });
+    const blocks = (raw.results ?? [])
+      .map((item) => (item && typeof item === "object" ? blockSummary(item as Record<string, unknown>) : undefined))
+      .filter((item): item is Record<string, unknown> => item !== undefined);
+    jsonResponse(res, 200, {
+      blocks,
+      hasMore: raw.has_more === true,
+      ...(typeof raw.next_cursor === "string" ? { nextCursor: raw.next_cursor } : {}),
+    });
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_USERS) {
+    const parsed = usersSchema.safeParse(body);
+    if (!parsed.success) {
+      jsonResponse(res, 400, { error: "invalid Notion users request" });
+      return;
+    }
+    const params = new URLSearchParams();
+    if (parsed.data.pageSize) params.set("page_size", String(parsed.data.pageSize));
+    if (parsed.data.startCursor) params.set("start_cursor", parsed.data.startCursor);
+    try {
+      const raw = await notionRequest<{ results?: unknown[]; has_more?: unknown; next_cursor?: unknown }>({
+        accessToken,
+        path: `/users${params.size ? `?${params.toString()}` : ""}`,
+        fetcher,
+      });
+      const users = (raw.results ?? [])
+        .map((item) => (item && typeof item === "object" ? userSummary(item as Record<string, unknown>) : undefined))
+        .filter((item): item is Record<string, unknown> => item !== undefined);
+      jsonResponse(res, 200, {
+        users,
+        hasMore: raw.has_more === true,
+        ...(typeof raw.next_cursor === "string" ? { nextCursor: raw.next_cursor } : {}),
+      });
+    } catch (error) {
+      // Listing users needs the integration's user-information capability,
+      // which an operator may not have granted. That is not fatal: report it
+      // honestly and let the caller continue without user data.
+      if (error instanceof NotionApiError && error.status >= 400 && error.status < 500) {
+        jsonResponse(res, 200, { users: [], warning: "the Notion connection cannot list users" });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_COMMENTS) {
+    const parsed = commentsSchema.safeParse(body);
+    if (!parsed.success || !normalizeNotionId(parsed.data.blockId)) {
+      jsonResponse(res, 400, { error: "invalid Notion comments request" });
+      return;
+    }
+    const params = new URLSearchParams({ block_id: parsed.data.blockId });
+    if (parsed.data.pageSize) params.set("page_size", String(parsed.data.pageSize));
+    if (parsed.data.startCursor) params.set("start_cursor", parsed.data.startCursor);
+    try {
+      const raw = await notionRequest<{ results?: unknown[]; has_more?: unknown; next_cursor?: unknown }>({
+        accessToken,
+        path: `/comments?${params.toString()}`,
+        fetcher,
+      });
+      const comments = (raw.results ?? [])
+        .map((item) => (item && typeof item === "object" ? commentSummary(item as Record<string, unknown>) : undefined))
+        .filter((item): item is Record<string, unknown> => item !== undefined);
+      jsonResponse(res, 200, {
+        comments,
+        hasMore: raw.has_more === true,
+        ...(typeof raw.next_cursor === "string" ? { nextCursor: raw.next_cursor } : {}),
+      });
+    } catch (error) {
+      // Reading comments needs the integration's comment capability, which an
+      // operator may not have granted. Not fatal: report it and continue.
+      if (error instanceof NotionApiError && error.status >= 400 && error.status < 500) {
+        jsonResponse(res, 200, { comments: [], warning: "the Notion connection cannot read comments" });
+        return;
+      }
+      throw error;
+    }
+    return;
+  }
+
   if (!NOTION_WRITE_AGENTS.has(agent)) {
     jsonResponse(res, 403, { error: "this agent may not write to Notion" });
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_APPEND_CONTENT) {
+    const parsed = appendContentSchema.safeParse(body);
+    if (!parsed.success || !normalizeNotionId(parsed.data.blockId) || !boundedJsonSize(parsed.data.children, MAX_APPEND_BYTES)) {
+      jsonResponse(res, 400, { error: "invalid Notion content append" });
+      return;
+    }
+    if (!(await allowedParentDatabaseId(accessToken, parsed.data.blockId, options.allowedDatabaseIds, fetcher))) {
+      jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
+      return;
+    }
+    const raw = await notionRequest<{ results?: unknown[] }>({
+      accessToken,
+      path: `/blocks/${parsed.data.blockId}/children`,
+      method: "PATCH",
+      body: { children: parsed.data.children },
+      fetcher,
+    });
+    const blocks = (raw.results ?? [])
+      .map((item) => (item && typeof item === "object" ? blockSummary(item as Record<string, unknown>) : undefined))
+      .filter((item): item is Record<string, unknown> => item !== undefined);
+    jsonResponse(res, 200, { appended: blocks.length, blocks });
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_ARCHIVE) {
+    const parsed = archiveSchema.safeParse(body);
+    if (!parsed.success || !normalizeNotionId(parsed.data.pageId)) {
+      jsonResponse(res, 400, { error: "invalid Notion archive request" });
+      return;
+    }
+    if (!(await allowedParentDatabaseId(accessToken, parsed.data.pageId, options.allowedDatabaseIds, fetcher))) {
+      jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
+      return;
+    }
+    const archived = await notionRequest<NotionPage>({
+      accessToken,
+      path: `/pages/${parsed.data.pageId}`,
+      method: "PATCH",
+      body: { archived: true },
+      fetcher,
+    });
+    if (typeof archived.id !== "string") {
+      jsonResponse(res, 502, { error: "the Notion request was refused" });
+      return;
+    }
+    jsonResponse(res, 200, { page: { id: archived.id, archived: true } });
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_COMMENT_ADD) {
+    const parsed = commentAddSchema.safeParse(body);
+    if (!parsed.success || !normalizeNotionId(parsed.data.pageId)) {
+      jsonResponse(res, 400, { error: "invalid Notion comment" });
+      return;
+    }
+    if (!(await allowedParentDatabaseId(accessToken, parsed.data.pageId, options.allowedDatabaseIds, fetcher))) {
+      jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
+      return;
+    }
+    const parent = parsed.data.discussionId
+      ? { discussion_id: parsed.data.discussionId }
+      : { page_id: parsed.data.pageId };
+    const created = await notionRequest<{ id?: unknown }>({
+      accessToken,
+      path: "/comments",
+      method: "POST",
+      body: { parent, rich_text: [{ type: "text", text: { content: parsed.data.richText } }] },
+      fetcher,
+    });
+    if (typeof created.id !== "string") {
+      jsonResponse(res, 502, { error: "the Notion request was refused" });
+      return;
+    }
+    jsonResponse(res, 200, { comment: { id: created.id } });
     return;
   }
 

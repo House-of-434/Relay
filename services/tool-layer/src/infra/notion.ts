@@ -14,6 +14,12 @@ export const NOTION_INTERNAL_PATHS = {
   update: "/api/internal/notion/update",
   attach: "/api/internal/notion/attach",
   database: "/api/internal/notion/database",
+  pageContent: "/api/internal/notion/blocks/children",
+  appendContent: "/api/internal/notion/blocks/append",
+  archive: "/api/internal/notion/pages/archive",
+  users: "/api/internal/notion/users",
+  comments: "/api/internal/notion/comments",
+  commentAdd: "/api/internal/notion/comments/add",
 } as const;
 
 export class NotionRequestError extends Error {
@@ -43,6 +49,27 @@ export interface NotionPageSummary {
   id: string;
   url?: string;
   properties: Record<string, unknown>;
+}
+
+export interface NotionBlockSummary {
+  id: string;
+  type: string;
+  text?: string;
+  hasChildren?: boolean;
+}
+
+export interface NotionUserSummary {
+  id: string;
+  type: string;
+  name?: string;
+  email?: string;
+}
+
+export interface NotionCommentSummary {
+  id: string;
+  discussionId?: string;
+  text: string;
+  createdBy?: string;
 }
 
 export class RelayNotionClient {
@@ -95,6 +122,42 @@ export class RelayNotionClient {
       actorAssertion,
       input,
     );
+  }
+
+  getPageContent(actorAssertion: string, input: { blockId: string; pageSize?: number; startCursor?: string }) {
+    return this.call<{ blocks: NotionBlockSummary[]; hasMore: boolean; nextCursor?: string }>(
+      NOTION_INTERNAL_PATHS.pageContent,
+      actorAssertion,
+      input,
+    );
+  }
+
+  appendPageContent(actorAssertion: string, input: { blockId: string; children: Array<Record<string, unknown>> }) {
+    return this.call<{ appended: number; blocks: NotionBlockSummary[] }>(NOTION_INTERNAL_PATHS.appendContent, actorAssertion, input);
+  }
+
+  archivePage(actorAssertion: string, input: { pageId: string }) {
+    return this.call<{ page: { id: string; archived: boolean } }>(NOTION_INTERNAL_PATHS.archive, actorAssertion, input);
+  }
+
+  listUsers(actorAssertion: string, input: { pageSize?: number; startCursor?: string }) {
+    return this.call<{ users: NotionUserSummary[]; hasMore: boolean; nextCursor?: string; warning?: string }>(
+      NOTION_INTERNAL_PATHS.users,
+      actorAssertion,
+      input,
+    );
+  }
+
+  getComments(actorAssertion: string, input: { blockId: string; pageSize?: number; startCursor?: string }) {
+    return this.call<{ comments: NotionCommentSummary[]; hasMore: boolean; nextCursor?: string }>(
+      NOTION_INTERNAL_PATHS.comments,
+      actorAssertion,
+      input,
+    );
+  }
+
+  addComment(actorAssertion: string, input: { pageId: string; discussionId?: string; richText: string }) {
+    return this.call<{ comment: { id: string } }>(NOTION_INTERNAL_PATHS.commentAdd, actorAssertion, input);
   }
 
   queryDatabase(actorAssertion: string, input: {

@@ -11,13 +11,19 @@ import { afterEach, test } from "node:test";
 import { NotionConnectionStore } from "./notion-connections.ts";
 import {
   handleInternalNotion,
+  INTERNAL_NOTION_APPEND_CONTENT,
+  INTERNAL_NOTION_ARCHIVE,
   INTERNAL_NOTION_ATTACH,
+  INTERNAL_NOTION_COMMENT_ADD,
+  INTERNAL_NOTION_COMMENTS,
   INTERNAL_NOTION_CREATE,
   INTERNAL_NOTION_DATABASE_GET,
   INTERNAL_NOTION_GET,
+  INTERNAL_NOTION_PAGE_CONTENT,
   INTERNAL_NOTION_QUERY,
   INTERNAL_NOTION_SEARCH,
   INTERNAL_NOTION_UPDATE,
+  INTERNAL_NOTION_USERS,
 } from "./notion-internal.ts";
 
 const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
@@ -96,6 +102,26 @@ function notionFetcher(seen: string[]) {
       return json(200, { id: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", upload_url: "https://upload.notion.test/part-1", status: "pending" });
     }
     if (method === "POST" && path === "/part-1") return json(200, { status: "uploaded" });
+    if (method === "GET" && path === `/v1/blocks/${ALLOWED_PAGE}/children`) {
+      return json(200, {
+        results: [
+          { id: "block-1", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: "Hello body" } }] } },
+          { id: "block-2", type: "child_page", child_page: { title: "Sub page" }, has_children: true },
+        ],
+        has_more: false,
+        next_cursor: null,
+      });
+    }
+    if (method === "PATCH" && path === `/v1/blocks/${ALLOWED_PAGE}/children`) {
+      return json(200, { results: [{ id: "block-new", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: "appended" } }] } }] });
+    }
+    if (method === "GET" && path === "/v1/users") {
+      return json(200, { results: [{ id: "user-1", type: "person", name: "Ada", person: { email: "ada@houseof434.com" } }], has_more: false, next_cursor: null });
+    }
+    if (method === "GET" && path === "/v1/comments") {
+      return json(200, { results: [{ id: "comment-1", discussion_id: "disc-1", rich_text: [{ type: "text", text: { content: "nice" } }], created_by: { id: "user-1" } }], has_more: false, next_cursor: null });
+    }
+    if (method === "POST" && path === "/v1/comments") return json(200, { id: "comment-2" });
     if (method === "PATCH" && (path === `/v1/pages/${ALLOWED_PAGE}` || path === `/v1/pages/${OTHER_PAGE}`)) {
       return json(200, { id: path.split("/").at(-1), url: "https://notion.so/updated" });
     }
@@ -288,4 +314,78 @@ test("the schema route rejects a malformed database id", async () => {
   const { status } = await post(port, INTERNAL_NOTION_DATABASE_GET, USER_ID, "mercury", { databaseId: "nope" });
   assert.equal(status, 400);
   assert.ok(!seen.some((entry) => entry.includes("nope")));
+});
+
+test("page content returns block summaries with text and pagination flags", async () => {
+  const { port } = await createFixture();
+  const { status, body } = await post(port, INTERNAL_NOTION_PAGE_CONTENT, USER_ID, "mercury", { blockId: ALLOWED_PAGE });
+  assert.equal(status, 200);
+  const blocks = (body as { blocks: Array<{ id: string; type: string; text?: string; hasChildren?: boolean }> }).blocks;
+  assert.equal(blocks.length, 2);
+  assert.deepEqual(blocks[0], { id: "block-1", type: "paragraph", text: "Hello body" });
+  assert.equal(blocks[1]?.type, "child_page");
+  assert.equal(blocks[1]?.text, "Sub page");
+  assert.equal(blocks[1]?.hasChildren, true);
+});
+
+test("users and comments read as bounded lists", async () => {
+  const { port } = await createFixture();
+  const users = (await post(port, INTERNAL_NOTION_USERS, USER_ID, "scout", {})).body as { users: Array<{ id: string; name?: string; email?: string }> };
+  assert.deepEqual(users.users, [{ id: "user-1", type: "person", name: "Ada", email: "ada@houseof434.com" }]);
+  const comments = (await post(port, INTERNAL_NOTION_COMMENTS, USER_ID, "scout", { blockId: ALLOWED_PAGE })).body as { comments: Array<{ text: string; discussionId?: string }> };
+  assert.equal(comments.comments[0]?.text, "nice");
+  assert.equal(comments.comments[0]?.discussionId, "disc-1");
+});
+
+test("append content writes only inside the allowlist", async () => {
+  const inside = await createFixture();
+  const ok = await post(inside.port, INTERNAL_NOTION_APPEND_CONTENT, USER_ID, "mercury", {
+    blockId: ALLOWED_PAGE,
+    children: [{ object: "block", type: "paragraph", paragraph: { rich_text: [{ type: "text", text: { content: "note" } }] } }],
+  });
+  assert.equal(ok.status, 200);
+  assert.equal((ok.body as { appended: number }).appended, 1);
+  assert.ok(inside.seen.includes(`PATCH /v1/blocks/${ALLOWED_PAGE}/children`));
+
+  const outside = await createFixture();
+  const refused = await post(outside.port, INTERNAL_NOTION_APPEND_CONTENT, USER_ID, "mercury", {
+    blockId: OTHER_PAGE,
+    children: [{ object: "block", type: "paragraph" }],
+  });
+  assert.equal(refused.status, 403);
+  assert.ok(!outside.seen.some((entry) => entry.startsWith("PATCH /v1/blocks")));
+});
+
+test("a read-only agent cannot append, archive, or comment", async () => {
+  for (const [path, payload] of [
+    [INTERNAL_NOTION_APPEND_CONTENT, { blockId: ALLOWED_PAGE, children: [{ object: "block", type: "paragraph" }] }],
+    [INTERNAL_NOTION_ARCHIVE, { pageId: ALLOWED_PAGE }],
+    [INTERNAL_NOTION_COMMENT_ADD, { pageId: ALLOWED_PAGE, richText: "hi" }],
+  ] as const) {
+    const { port } = await createFixture();
+    const { status } = await post(port, path, USER_ID, "scout", payload);
+    assert.equal(status, 403, path);
+  }
+});
+
+test("archive and comment add refuse a page outside the allowlist", async () => {
+  const archive = await createFixture();
+  assert.equal((await post(archive.port, INTERNAL_NOTION_ARCHIVE, USER_ID, "mercury", { pageId: OTHER_PAGE })).status, 403);
+  assert.ok(!archive.seen.some((entry) => entry === `PATCH /v1/pages/${OTHER_PAGE}`));
+
+  const comment = await createFixture();
+  assert.equal((await post(comment.port, INTERNAL_NOTION_COMMENT_ADD, USER_ID, "mercury", { pageId: OTHER_PAGE, richText: "hi" })).status, 403);
+  assert.ok(!comment.seen.includes("POST /v1/comments"));
+});
+
+test("archive and comment add write inside the allowlist", async () => {
+  const archive = await createFixture();
+  const archived = await post(archive.port, INTERNAL_NOTION_ARCHIVE, USER_ID, "mercury", { pageId: ALLOWED_PAGE });
+  assert.equal(archived.status, 200);
+  assert.equal((archived.body as { page: { archived: boolean } }).page.archived, true);
+
+  const comment = await createFixture();
+  const created = await post(comment.port, INTERNAL_NOTION_COMMENT_ADD, USER_ID, "mercury", { pageId: ALLOWED_PAGE, richText: "looks good" });
+  assert.equal(created.status, 200);
+  assert.equal((created.body as { comment: { id: string } }).comment.id, "comment-2");
 });
