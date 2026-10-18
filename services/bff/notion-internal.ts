@@ -236,7 +236,18 @@ function blockText(block: Record<string, unknown>): string | undefined {
     const text = richTextToPlain(detail.rich_text).trim();
     if (text) return bounded(text, MAX_BLOCK_TEXT);
   }
+  if (Array.isArray(detail.cells)) {
+    const text = detail.cells
+      .map((cell) => (Array.isArray(cell) ? richTextToPlain(cell).trim() : ""))
+      .join(" | ")
+      .trim();
+    if (text) return bounded(text, MAX_BLOCK_TEXT);
+  }
   if (typeof detail.title === "string" && detail.title) return bounded(detail.title, MAX_BLOCK_TEXT);
+  if (Array.isArray(detail.caption)) {
+    const text = richTextToPlain(detail.caption).trim();
+    if (text) return bounded(text, MAX_BLOCK_TEXT);
+  }
   if (typeof detail.url === "string" && detail.url) return bounded(detail.url, MAX_BLOCK_TEXT);
   return undefined;
 }
@@ -595,7 +606,8 @@ async function dispatch(
 
   if (pathname === INTERNAL_NOTION_COMMENT_ADD) {
     const parsed = commentAddSchema.safeParse(body);
-    if (!parsed.success || !normalizeNotionId(parsed.data.pageId)) {
+    const discussionId = parsed.success && parsed.data.discussionId ? normalizeNotionId(parsed.data.discussionId) : undefined;
+    if (!parsed.success || !normalizeNotionId(parsed.data.pageId) || (parsed.data.discussionId && !discussionId)) {
       jsonResponse(res, 400, { error: "invalid Notion comment" });
       return;
     }
@@ -603,7 +615,39 @@ async function dispatch(
       jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
       return;
     }
-    const parent = parsed.data.discussionId
+    if (discussionId) {
+      let cursor: string | undefined;
+      let belongs = false;
+      for (let pages = 0; pages < 20 && !belongs; pages += 1) {
+        const params = new URLSearchParams({ block_id: parsed.data.pageId, page_size: "100" });
+        if (cursor) params.set("start_cursor", cursor);
+        let listed: { results?: unknown[]; has_more?: unknown; next_cursor?: unknown };
+        try {
+          listed = await notionRequest<{ results?: unknown[]; has_more?: unknown; next_cursor?: unknown }>({
+            accessToken,
+            path: `/comments?${params.toString()}`,
+            fetcher,
+          });
+        } catch {
+          jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
+          return;
+        }
+        for (const item of listed.results ?? []) {
+          const raw = item && typeof item === "object" ? (item as Record<string, unknown>).discussion_id : undefined;
+          if (typeof raw === "string" && normalizeNotionId(raw) === discussionId) {
+            belongs = true;
+            break;
+          }
+        }
+        if (listed.has_more === true && typeof listed.next_cursor === "string") cursor = listed.next_cursor;
+        else break;
+      }
+      if (!belongs) {
+        jsonResponse(res, 403, { error: "writes to this Notion database are not permitted" });
+        return;
+      }
+    }
+    const parent = discussionId
       ? { discussion_id: parsed.data.discussionId }
       : { page_id: parsed.data.pageId };
     const created = await notionRequest<{ id?: unknown }>({

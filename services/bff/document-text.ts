@@ -16,7 +16,7 @@
 // malicious or malformed archive; there is deliberately no cap on how much
 // real document text is returned.
 import { extractText } from "unpdf";
-import { unzipSync } from "fflate";
+import { Unzip, UnzipInflate } from "fflate";
 
 export interface ExtractedDocument {
   /** Extracted text, page/slide boundaries included. Empty when nothing could
@@ -101,32 +101,76 @@ interface ArchiveRead {
 }
 
 /** Inflate only the requested entries, bounding entry count and decompressed
- * bytes so a zip bomb cannot exhaust memory. */
+ * bytes by the actual inflated output so a zip bomb cannot exhaust memory. */
 function readArchiveParts(bytes: Buffer, wanted: (name: string) => boolean): ArchiveRead {
   const warnings: string[] = [];
+  const files: Record<string, Uint8Array> = {};
   let entries = 0;
   let total = 0;
   let overLimit = false;
-  const files = unzipSync(new Uint8Array(bytes), {
-    filter: (file) => {
-      entries += 1;
-      if (entries > MAX_ARCHIVE_ENTRIES) {
-        overLimit = true;
-        return false;
+  let fileError: unknown;
+  const unzipper = new Unzip();
+  unzipper.register(UnzipInflate);
+  unzipper.onfile = (file) => {
+    entries += 1;
+    if (entries > MAX_ARCHIVE_ENTRIES) {
+      overLimit = true;
+      return;
+    }
+    if (overLimit || fileError || !wanted(file.name)) return;
+    let size = 0;
+    let skipped = false;
+    const chunks: Uint8Array[] = [];
+    file.ondata = (err, chunk, final) => {
+      if (err) {
+        fileError = err;
+        return;
       }
-      if (!wanted(file.name)) return false;
-      if (file.originalSize > MAX_PART_BYTES) {
+      if (skipped || overLimit || fileError) return;
+      if (size + chunk.length > MAX_PART_BYTES) {
+        total -= size;
+        chunks.length = 0;
+        size = 0;
+        skipped = true;
         warnings.push(`skipped oversized part: ${file.name}`);
-        return false;
+        return;
       }
-      total += file.originalSize;
-      if (total > MAX_TOTAL_BYTES) {
+      if (total + chunk.length > MAX_TOTAL_BYTES) {
+        total -= size;
+        chunks.length = 0;
+        size = 0;
+        skipped = true;
         overLimit = true;
-        return false;
+        return;
       }
-      return true;
-    },
-  });
+      if (chunk.length > 0) {
+        chunks.push(chunk.slice());
+        size += chunk.length;
+        total += chunk.length;
+      }
+      if (final && !skipped) {
+        const out = new Uint8Array(size);
+        let offset = 0;
+        for (const part of chunks) {
+          out.set(part, offset);
+          offset += part.length;
+        }
+        files[file.name] = out;
+      }
+    };
+    try {
+      file.start();
+    } catch (error) {
+      fileError = error;
+    }
+  };
+  const input = new Uint8Array(bytes);
+  for (let offset = 0; offset < input.length; offset += 64 * 1024) {
+    const end = Math.min(offset + 64 * 1024, input.length);
+    unzipper.push(input.subarray(offset, end), end === input.length);
+    if (fileError) break;
+  }
+  if (fileError) throw fileError;
   if (overLimit) warnings.push("archive exceeds the processing limit");
   return { files, warnings };
 }
