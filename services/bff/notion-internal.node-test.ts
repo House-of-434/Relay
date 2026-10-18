@@ -13,6 +13,7 @@ import {
   handleInternalNotion,
   INTERNAL_NOTION_ATTACH,
   INTERNAL_NOTION_CREATE,
+  INTERNAL_NOTION_DATABASE_GET,
   INTERNAL_NOTION_GET,
   INTERNAL_NOTION_QUERY,
   INTERNAL_NOTION_SEARCH,
@@ -75,6 +76,18 @@ function notionFetcher(seen: string[]) {
     }
     if (method === "POST" && path === `/v1/databases/${ALLOWED_DB}/query`) {
       return json(200, { results: [notionPage(ALLOWED_PAGE, ALLOWED_DB)], has_more: false, next_cursor: null });
+    }
+    if (method === "GET" && path === `/v1/databases/${ALLOWED_DB}`) {
+      return json(200, {
+        id: ALLOWED_DB,
+        title: [{ type: "text", text: { content: "Running Deals" } }],
+        properties: {
+          Name: { id: "title", type: "title", title: {} },
+          Stage: { id: "stage", type: "select", select: { options: [{ name: "Pre-Seed" }, { name: "Seed" }] } },
+          Status: { id: "status", type: "status", status: { options: [{ name: "Tracking" }, { name: "Due Diligence" }] } },
+          Raise: { id: "raise", type: "number", number: {} },
+        },
+      });
     }
     if (method === "GET" && path === `/v1/pages/${ALLOWED_PAGE}`) return json(200, notionPage(ALLOWED_PAGE, ALLOWED_DB));
     if (method === "GET" && path === `/v1/pages/${OTHER_PAGE}`) return json(200, notionPage(OTHER_PAGE, OTHER_DB));
@@ -254,4 +267,25 @@ test("a read-only agent cannot attach files", async () => {
   });
   assert.equal(status, 403);
   assert.ok(!seen.includes("POST /v1/file_uploads"));
+});
+
+test("the database schema exposes property types and existing select options", async () => {
+  const { port } = await createFixture();
+  const { status, body } = await post(port, INTERNAL_NOTION_DATABASE_GET, USER_ID, "mercury", { databaseId: ALLOWED_DB });
+  assert.equal(status, 200);
+  const properties = (body as { database: { title: string; properties: Record<string, { type: string; options?: string[] }> } }).database.properties;
+  assert.equal((body as { database: { title: string } }).database.title, "Running Deals");
+  assert.equal(properties.Stage?.type, "select");
+  assert.deepEqual(properties.Stage?.options, ["Pre-Seed", "Seed"]);
+  assert.equal(properties.Status?.type, "status");
+  assert.deepEqual(properties.Status?.options, ["Tracking", "Due Diligence"]);
+  assert.equal(properties.Raise?.type, "number");
+  assert.equal(properties.Raise?.options, undefined);
+});
+
+test("the schema route rejects a malformed database id", async () => {
+  const { port, seen } = await createFixture();
+  const { status } = await post(port, INTERNAL_NOTION_DATABASE_GET, USER_ID, "mercury", { databaseId: "nope" });
+  assert.equal(status, 400);
+  assert.ok(!seen.some((entry) => entry.includes("nope")));
 });

@@ -62,6 +62,24 @@ export function registerNotionTools(server: McpServer, agent: Agent, context: No
   );
 
   server.registerTool(
+    "notion_get_database",
+    {
+      description: "Read a database's schema: every property's name and type, and the existing options for select and status properties. Read-only. Call this before setting a select or status value so you reuse an option that already exists instead of creating a stray new one; it also tells you which properties a create or update will accept.",
+      inputSchema: { databaseId: z.string().min(1).max(64) },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ databaseId }) => {
+      try {
+        authorizeNotion(agent, "read");
+        const result = await client.getDatabase(actorAssertion, { databaseId });
+        return { content: [{ type: "text" as const, text: JSON.stringify(result) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
     "notion_query_db",
     {
       description: "Query rows of one Notion database by id, for example to find an existing deal by company name. Use a title filter on the company name first; fall back to founder email when the name is ambiguous. Read-only.",

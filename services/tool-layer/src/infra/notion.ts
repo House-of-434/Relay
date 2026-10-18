@@ -13,6 +13,7 @@ export const NOTION_INTERNAL_PATHS = {
   create: "/api/internal/notion/create",
   update: "/api/internal/notion/update",
   attach: "/api/internal/notion/attach",
+  database: "/api/internal/notion/database",
 } as const;
 
 export class NotionRequestError extends Error {
@@ -84,6 +85,16 @@ export class RelayNotionClient {
 
   getPage(actorAssertion: string, input: { pageId: string }) {
     return this.call<{ page: NotionPageSummary }>(NOTION_INTERNAL_PATHS.get, actorAssertion, input);
+  }
+
+  /** The database schema: property names, types, and existing select/status
+   * options. */
+  getDatabase(actorAssertion: string, input: { databaseId: string }) {
+    return this.call<{ database: { id: string; title: string; properties: Record<string, { id?: string; type: string; options?: string[] }> } }>(
+      NOTION_INTERNAL_PATHS.database,
+      actorAssertion,
+      input,
+    );
   }
 
   queryDatabase(actorAssertion: string, input: {

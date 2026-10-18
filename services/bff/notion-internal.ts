@@ -12,6 +12,7 @@ export const INTERNAL_NOTION_QUERY = "/api/internal/notion/query";
 export const INTERNAL_NOTION_CREATE = "/api/internal/notion/create";
 export const INTERNAL_NOTION_UPDATE = "/api/internal/notion/update";
 export const INTERNAL_NOTION_ATTACH = "/api/internal/notion/attach";
+export const INTERNAL_NOTION_DATABASE_GET = "/api/internal/notion/database";
 
 const INTERNAL_NOTION_PATHS = [
   INTERNAL_NOTION_SEARCH,
@@ -20,6 +21,7 @@ const INTERNAL_NOTION_PATHS = [
   INTERNAL_NOTION_CREATE,
   INTERNAL_NOTION_UPDATE,
   INTERNAL_NOTION_ATTACH,
+  INTERNAL_NOTION_DATABASE_GET,
 ] as const;
 
 /** Reads are shared research; writes stay with the agent that owns the
@@ -40,6 +42,8 @@ const searchSchema = z.object({
 }).strict();
 
 const getSchema = z.object({ pageId: z.string().min(1).max(MAX_ID_LENGTH) }).strict();
+
+const databaseSchema = z.object({ databaseId: z.string().min(1).max(MAX_ID_LENGTH) }).strict();
 
 const querySchema = z.object({
   databaseId: z.string().min(1).max(MAX_ID_LENGTH),
@@ -133,6 +137,27 @@ function pageTitle(item: { properties?: Record<string, unknown>; title?: unknown
     }
   }
   return "";
+}
+
+/** A database's schema, bounded and flat: property names, their types, and
+ * the option names a select/status property already offers — so an agent
+ * reuses existing options instead of minting stray ones. */
+function databaseSummary(database: { id?: unknown; title?: unknown; properties?: unknown }): Record<string, unknown> | undefined {
+  if (typeof database.id !== "string" || !database.properties || typeof database.properties !== "object") return undefined;
+  const properties: Record<string, unknown> = {};
+  for (const [name, raw] of Object.entries(database.properties as Record<string, unknown>)) {
+    if (!raw || typeof raw !== "object") continue;
+    const prop = raw as Record<string, unknown>;
+    const type = typeof prop.type === "string" ? prop.type : "unknown";
+    const detail = prop[type] as { options?: unknown } | undefined;
+    const options = Array.isArray(detail?.options)
+      ? detail.options
+        .map((option) => (option && typeof option === "object" ? (option as { name?: unknown }).name : undefined))
+        .filter((option): option is string => typeof option === "string")
+      : undefined;
+    properties[name] = { id: typeof prop.id === "string" ? prop.id : undefined, type, ...(options ? { options } : {}) };
+  }
+  return { id: database.id, title: richTextToPlain(database.title).slice(0, 200), properties };
 }
 
 function searchSummary(item: Record<string, unknown>): Record<string, unknown> | undefined {
@@ -231,6 +256,26 @@ async function dispatch(
       .map((item) => (item && typeof item === "object" ? searchSummary(item as Record<string, unknown>) : undefined))
       .filter((item): item is Record<string, unknown> => item !== undefined);
     jsonResponse(res, 200, { results });
+    return;
+  }
+
+  if (pathname === INTERNAL_NOTION_DATABASE_GET) {
+    const parsed = databaseSchema.safeParse(body);
+    if (!parsed.success || !normalizeNotionId(parsed.data.databaseId)) {
+      jsonResponse(res, 400, { error: "invalid Notion database id" });
+      return;
+    }
+    const database = await notionRequest<{ id?: unknown; title?: unknown; properties?: unknown }>({
+      accessToken,
+      path: `/databases/${parsed.data.databaseId}`,
+      fetcher,
+    });
+    const summary = databaseSummary(database);
+    if (!summary) {
+      jsonResponse(res, 502, { error: "the Notion database schema could not be read" });
+      return;
+    }
+    jsonResponse(res, 200, { database: summary });
     return;
   }
 

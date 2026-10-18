@@ -65,6 +65,7 @@ test("mercury sees every notion tool, including the attachment uploader", async 
   assert.deepEqual(await toolNames("mercury"), [
     "notion_attach_attachment",
     "notion_create_page",
+    "notion_get_database",
     "notion_get_page",
     "notion_query_db",
     "notion_search",
@@ -72,8 +73,8 @@ test("mercury sees every notion tool, including the attachment uploader", async 
   ]);
 });
 
-test("scout and curator see only notion reads", async () => {
-  const reads = ["notion_get_page", "notion_query_db", "notion_search"];
+test("scout and curator see only notion reads, including the schema reader", async () => {
+  const reads = ["notion_get_database", "notion_get_page", "notion_query_db", "notion_search"];
   assert.deepEqual(await toolNames("scout"), reads);
   assert.deepEqual(await toolNames("curator"), reads);
 });
