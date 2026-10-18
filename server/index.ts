@@ -500,7 +500,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { deriveMailSubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { deriveMailSubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -6912,6 +6912,48 @@ bus.subscribe((event: RuntimeEvent) => {
       // the provider routed it as: it has no allow/deny answer, only the
       // model's own options. The card carries them so the person can choose.
       const questions = event.questions?.length ? event.questions : undefined;
+      // A question on an email-origin conversation reaches the sender by email.
+      // They have no in-app card to answer, and parking the turn would stall
+      // the request forever, so: email the question, answer the engine so the
+      // turn ends, and let the sender's reply start the next step. One email
+      // per request id, so a re-opened ask cannot send twice.
+      const routedThread = !permission && asker && event.requestId
+        ? store.taskByThread(asker.id, event.threadId)?.mailRouted
+        : undefined;
+      if (routedThread && asker && event.requestId && !commandReceipt("gmail.question", event.requestId)) {
+        runCommand({ kind: "gmail.question", key: event.requestId }, () => true);
+        const mailboxActor = relayMailboxActor();
+        const questionText = event.summary
+          || questions?.map((question) => question.question).filter((text): text is string => typeof text === "string" && text.trim().length > 0).join("\n")
+          || "Relay needs more information to continue.";
+        const base = publicUrl();
+        if (mailboxActor) {
+          void sendMailboxQuestionEmail({
+            capability: relayBffCapability,
+            actor: mailboxActor,
+            email: routedThread.email,
+            subject: routedThread.subject,
+            question: questionText,
+            ...(event.choices?.length ? { choices: event.choices } : {}),
+            ...(base ? { relayUrl: base } : {}),
+          }).catch((error) => {
+            console.warn(`[mailbox] question email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+          });
+        }
+        // End the turn instead of parking on an unreachable card. NO_ACTION
+        // keeps a duplicate result email out of the sender's inbox.
+        void answerRequest(
+          event.threadId,
+          asker.modelSelection.instanceId,
+          event.requestId,
+          "answer",
+          "This is an email conversation; the sender cannot answer an in-app card. Relay has emailed them this question and they will reply by email. End your turn now, replying with exactly NO_ACTION so no duplicate email is sent.",
+          { id: asker.id, name: asker.name },
+        ).catch(() => {
+          console.warn("[mailbox] could not answer the routed-mail question; the turn may stay parked");
+        });
+        break;
+      }
       const message = pushMessage({
         role: "bot",
         kind: "options",

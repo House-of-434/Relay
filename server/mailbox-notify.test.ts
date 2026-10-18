@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deriveMailSubject, mailboxReplyNeedsNoEmail, mailboxReplySubject, markdownToPlainText, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { deriveMailSubject, mailboxReplyNeedsNoEmail, mailboxReplySubject, markdownToPlainText, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
 import type { MailboxActor } from "./mailbox-bff.ts";
 
 const ACTOR: MailboxActor = {
@@ -160,6 +160,24 @@ describe("completion email structure", () => {
     });
     return bodies;
   };
+
+  it("delivers an agent's question with its choices so an email sender can answer", async () => {
+    const bodies = capture();
+    await sendMailboxQuestionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Update Social Gear",
+      question: "Which company's page should I update?",
+      choices: ["Social Gear", "A different company"],
+    });
+    const payload = JSON.parse(bodies[0]!) as { subject: string; body: string };
+    expect(payload.subject).toBe("Re: Update Social Gear");
+    expect(payload.body).toContain("Which company's page should I update?");
+    expect(payload.body).toContain("- Social Gear");
+    expect(payload.body).toContain("- A different company");
+    expect(payload.body).toContain("Reply to this email with your answer.");
+  });
 
   it("receipt and result share one subject so the two emails thread", async () => {
     const bodies = capture();
