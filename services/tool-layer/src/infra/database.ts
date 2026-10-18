@@ -65,6 +65,24 @@ function supabaseError(error: { code?: string; message?: string } | null): never
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+const TERMINAL_CAPTURE_STATUSES = new Set(["completed", "partial", "failed", "skipped"]);
+
+/** Which resolved capture to read: the exact one normally, but when a
+ *  terminal capture produced no segments and the room has a readable sibling
+ *  capture, the sibling — a denied, never-admitted, or silent attempt must
+ *  not mask the room's real recording. A live capture (joining,
+ *  awaiting_admission, active) is still its own meeting even with zero
+ *  segments, so it never falls back. Pure, for tests. */
+export function chooseMeetingCapture(
+  exact: { id: string; segment_count: number; native_id: string | null; status: string },
+  sibling: { id: string } | null,
+): string {
+  return exact.segment_count === 0 && exact.native_id !== null &&
+      TERMINAL_CAPTURE_STATUSES.has(exact.status) && sibling !== null
+    ? sibling.id
+    : exact.id;
+}
+
 /** Model-facing read projection for transcripts.meetings, used by relay_read.
  * Emails, invitee lists, audio_path and internal timestamps stay out of agent
  * reads: they are plumbing, not notes. `error` (the end reason) stays here so
@@ -416,30 +434,78 @@ export class RelayDatabase {
    * anything else matches native_id, newest first (a room code reused over
    * time resolves to the latest capture).
    */
+  /**
+   * One meeting row for a column match, newest first — optionally only rows
+   * that produced segments, and only at/after a time floor.
+   */
+  private async findMeeting(
+    client: any,
+    where: { column: "id" | "instance_id" | "native_id"; value: string },
+    options: { readableOnly?: boolean; createdAfter?: string; createdBefore?: string } = {},
+  ): Promise<{ id: string; native_id: string | null; segment_count: number; created_at: string; status: string } | null> {
+    let query: any = client.schema("transcripts").from("meetings")
+      .select("id, native_id, segment_count, created_at, status")
+      .eq(where.column, where.value)
+      .order("created_at", { ascending: false })
+      .limit(1);
+    if (options.readableOnly) query = query.gt("segment_count", 0);
+    if (options.createdAfter) query = query.gte("created_at", options.createdAfter);
+    if (options.createdBefore) query = query.lte("created_at", options.createdBefore);
+    const { data, error } = await query;
+    supabaseError(error);
+    const row = (Array.isArray(data) ? data[0] : null) as
+      | { id?: string; native_id?: string | null; segment_count?: number; created_at?: string; status?: string }
+      | null;
+    if (!row?.id) return null;
+    return { id: row.id, native_id: row.native_id ?? null, segment_count: row.segment_count ?? 0, created_at: row.created_at ?? "", status: row.status ?? "" };
+  }
+
+  /**
+   * Resolve a meeting reference — a meeting id (uuid), a capture instance_id,
+   * a provider URL, or a room code — to the transcript row to read.
+   *
+   *  A room reference means the room's recording: its latest capture that
+   *  produced content, else its latest attempt. A uuid resolves to that exact
+   *  capture, EXCEPT that a terminal capture which produced nothing (denied,
+   *  never admitted, silent) must not mask the room's real recording — so it
+   *  falls back to a readable sibling for the same room created within 24h
+   *  either side. The two-sided bound covers retries (which land minutes
+   *  apart) without letting a stale occurrence of a reused room code leak in.
+   */
   async resolveMeetingId(ref: string): Promise<string> {
     const trimmed = ref.trim();
     if (!trimmed) throw new Error("meeting_id is required");
     const client = this.client("relay");
+
     if (UUID_RE.test(trimmed)) {
-      const byId = await client.schema("transcripts").from("meetings")
-        .select("id").eq("id", trimmed).maybeSingle();
-      supabaseError(byId.error);
-      if (byId.data?.id) return byId.data.id as string;
-      const byInstance = await client.schema("transcripts").from("meetings")
-        .select("id").eq("instance_id", trimmed).maybeSingle();
-      supabaseError(byInstance.error);
-      if (byInstance.data?.id) return byInstance.data.id as string;
-      throw new Error(`meeting not found: ${trimmed}`);
+      const exact = await this.findMeeting(client, { column: "id", value: trimmed })
+        ?? await this.findMeeting(client, { column: "instance_id", value: trimmed });
+      if (!exact) throw new Error(`meeting not found: ${trimmed}`);
+      let sibling: { id: string } | null = null;
+      if (exact.segment_count === 0 && exact.native_id && TERMINAL_CAPTURE_STATUSES.has(exact.status)) {
+        const parsed = Date.parse(exact.created_at);
+        const createdAfter = Number.isFinite(parsed)
+          ? new Date(parsed - 24 * 60 * 60 * 1000).toISOString()
+          : undefined;
+        const createdBefore = Number.isFinite(parsed)
+          ? new Date(parsed + 24 * 60 * 60 * 1000).toISOString()
+          : undefined;
+        sibling = await this.findMeeting(
+          client,
+          { column: "native_id", value: exact.native_id },
+          { readableOnly: true, createdAfter, createdBefore },
+        );
+      }
+      return chooseMeetingCapture(exact, sibling);
     }
+
     const nativeId = nativeIdFromMeetingRef(trimmed);
     if (!nativeId) throw new Error(`could not parse a meeting reference from "${trimmed}"`);
-    const { data, error } = await client.schema("transcripts").from("meetings")
-      .select("id").eq("native_id", nativeId)
-      .order("created_at", { ascending: false }).limit(1);
-    supabaseError(error);
-    const row = Array.isArray(data) ? data[0] : null;
-    if (!row?.id) throw new Error(`no capture found for meeting ${nativeId}`);
-    return row.id as string;
+    const readable = await this.findMeeting(client, { column: "native_id", value: nativeId }, { readableOnly: true });
+    if (readable) return readable.id;
+    const latest = await this.findMeeting(client, { column: "native_id", value: nativeId });
+    if (!latest) throw new Error(`no capture found for meeting ${nativeId}`);
+    return latest.id;
   }
 
   /**

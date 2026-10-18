@@ -1,10 +1,16 @@
 export const SCRIBE_INTERNAL_PATHS = {
   join: "/api/internal/scribe/join",
+  stop: "/api/internal/scribe/stop",
 } as const;
 
 export interface ScribeJoinResult {
   status: "accepted" | "already_accepted";
   instance_id: string;
+}
+
+export interface ScribeStopResult {
+  status: "stopped" | "not_recording";
+  instance_id?: string;
 }
 
 export class ScribeRequestError extends Error {
@@ -78,6 +84,46 @@ export class RelayScribeJoinClient {
       throw new ScribeRequestError(502, "the meeting capture service answered unexpectedly");
     }
     return { status: body.status, instance_id: body.instance_id };
+  }
+
+  /** Stop a live capture the actor requested, by its meeting link or captured
+   *  instance id. Returns stopped, or not_recording when nothing is live. */
+  async stopMeeting(
+    actorAssertion: string,
+    input: { meetingUrl?: string; instanceId?: string },
+  ): Promise<ScribeStopResult> {
+    if (typeof this.capability !== "string" || Buffer.byteLength(this.capability) < 32) {
+      throw new ScribeRequestError(503, "the meeting capture service is not configured");
+    }
+    let response: Response;
+    try {
+      response = await this.fetcher(new URL(SCRIBE_INTERNAL_PATHS.stop, this.bffInternalUrl), {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${this.capability}`,
+          "x-relay-actor-user": actorAssertion,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          ...(input.instanceId ? { instance_id: input.instanceId } : {}),
+          ...(input.meetingUrl ? { meeting_url: input.meetingUrl } : {}),
+        }),
+      });
+    } catch {
+      throw new ScribeRequestError(502, "the meeting capture service is unreachable");
+    }
+    if (!response.ok) {
+      throw new ScribeRequestError(response.status, await safeErrorMessage(response));
+    }
+    const body = await response.json() as { status?: unknown; instance_id?: unknown };
+    if (body.status !== "stopped" && body.status !== "not_recording") {
+      throw new ScribeRequestError(502, "the meeting capture service answered unexpectedly");
+    }
+    return {
+      status: body.status,
+      ...(typeof body.instance_id === "string" ? { instance_id: body.instance_id } : {}),
+    };
   }
 }
 

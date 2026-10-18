@@ -169,11 +169,11 @@ export function authorizeSearch(agent: Agent, capability: SearchCapability): voi
  * is a visible external action (the join is announced in the meeting), so it
  * stays with the agent that owns external comms — the same agents that may
  * not even see Gmail or calendar tools must not see this one either. */
-export type ScribeCapability = "join";
+export type ScribeCapability = "join" | "stop";
 
 export const SCRIBE_PERMISSIONS: Record<Agent, readonly ScribeCapability[]> = {
   scout: [],
-  mercury: ["join"],
+  mercury: ["join", "stop"],
   curator: [],
 };
 

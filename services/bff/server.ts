@@ -11,6 +11,7 @@ import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
 import { handleInternalGmail, isInternalGmailPath, fetchGmailAttachment } from "./gmail-internal.ts";
 import { handleInternalCalendar, isInternalCalendarPath } from "./calendar-internal.ts";
 import { handleInternalScribeJoin, isInternalScribeJoinPath } from "./scribe-join.ts";
+import { handleInternalScribeStop, isInternalScribeStopPath } from "./scribe-stop.ts";
 import { handleInternalGitHub, isInternalGitHubPath } from "./github-internal.ts";
 import { handleInternalNotion, isInternalNotionPath } from "./notion-internal.ts";
 import { exchangeNotionToken, normalizeNotionId, NOTION_OAUTH_AUTHORIZE_URL } from "./notion-api.ts";
@@ -1815,6 +1816,18 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     // the capability and actor are verified a second time.
     if (isInternalScribeJoinPath(url.pathname)) {
       await handleInternalScribeJoin(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        harnessBase,
+        harnessCapability: config.relayBffCapability,
+        fetcher,
+        now,
+      });
+      return;
+    }
+
+    if (isInternalScribeStopPath(url.pathname)) {
+      await handleInternalScribeStop(req, res, url.pathname, {
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
         harnessBase,
