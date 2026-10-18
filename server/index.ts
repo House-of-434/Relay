@@ -500,7 +500,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { deriveMailSubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { canSendMailboxEmail, deriveMailSubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -5130,6 +5130,7 @@ onSteeredQueueChange(() => broadcast({ kind: "bot.queued", queues: publicBotQueu
 // once can collide on a bare id and patch each other's messages.
 const toolMessageByItem = new Map<string, string>(); // threadId:itemId -> messageId
 const askMessageByRequest = new Map<string, string>(); // threadId:requestId -> messageId
+const mailboxQuestionInflight = new Set<string>(); // requestIds with a question email send in flight
 // Only native, live permission metadata can become a remembered grant. Never
 // rebuild executable authority from an imported transcript or display summary.
 const pendingCommandRules = new Map<string, { botId: string; candidate: CommandAllowlistCandidate }>();
@@ -6912,6 +6913,15 @@ bus.subscribe((event: RuntimeEvent) => {
       // the provider routed it as: it has no allow/deny answer, only the
       // model's own options. The card carries them so the person can choose.
       const questions = event.questions?.length ? event.questions : undefined;
+      // A question on an email-origin conversation reaches the sender by email.
+      // They have no in-app card to answer, and parking the turn would stall
+      // the request forever, so: email the question, answer the engine so the
+      // turn ends, and let the sender's reply start the next step. One email
+      // per request id, so a re-opened ask cannot send twice.
+      const routedThread = !permission && asker && event.requestId
+        ? store.taskByThread(asker.id, event.threadId)?.mailRouted
+        : undefined;
+      const showQuestionCard = (): void => {
       const message = pushMessage({
         role: "bot",
         kind: "options",
@@ -6976,6 +6986,75 @@ bus.subscribe((event: RuntimeEvent) => {
           ));
         }
       }
+      };
+      if (routedThread && asker && event.requestId && !commandReceipt("gmail.question", event.requestId)) {
+        if (mailboxQuestionInflight.has(event.requestId)) break;
+        const mailboxActor = relayMailboxActor();
+        if (mailboxActor && canSendMailboxEmail()) {
+          const requestId = event.requestId;
+          const threadId = event.threadId;
+          const instanceId = asker.modelSelection.instanceId;
+          const askerId = asker.id;
+          const askerName = asker.name;
+          const questionText = questions
+            ? questions.map((entry) => {
+              const text = typeof entry.question === "string" ? entry.question.trim() : "";
+              const labels = (entry.options ?? []).map((option) => typeof option?.label === "string" ? option.label.replace(/\s+/g, " ").trim() : "").filter((label) => label.length > 0).map((label) => `- ${label}`);
+              return [text, ...labels].filter((line) => line.length > 0).join("\n");
+            }).filter((block) => block.length > 0).join("\n\n")
+              || event.summary
+              || "Relay needs more information to continue."
+            : event.summary
+              || "Relay needs more information to continue.";
+          const questionChoices = !questions && event.choices?.length ? [...event.choices] : undefined;
+          const questionEmail = routedThread.email;
+          const questionSubject = routedThread.subject;
+          const base = publicUrl();
+          mailboxQuestionInflight.add(requestId);
+          void (async (): Promise<void> => {
+            try {
+              const sent = await sendMailboxQuestionEmail({
+                capability: relayBffCapability,
+                actor: mailboxActor,
+                email: questionEmail,
+                subject: questionSubject,
+                question: questionText,
+                ...(questionChoices ? { choices: questionChoices } : {}),
+                ...(base ? { relayUrl: base } : {}),
+              });
+              if (!sent) {
+                showQuestionCard();
+                return;
+              }
+              runCommand({ kind: "gmail.question", key: requestId }, () => true);
+              try {
+                const outcome = await answerRequest(
+                  threadId,
+                  instanceId,
+                  requestId,
+                  "answer",
+                  "This is an email conversation; the sender cannot answer an in-app card. Relay has emailed them this question and they will reply by email. End your turn now, replying with exactly NO_ACTION so no duplicate email is sent.",
+                  { id: askerId, name: askerName },
+                );
+                if (outcome === "unavailable") {
+                  console.warn("[mailbox] could not answer the routed-mail question; the turn may stay parked");
+                  showQuestionCard();
+                }
+              } catch {
+                console.warn("[mailbox] could not answer the routed-mail question; the turn may stay parked");
+                showQuestionCard();
+              }
+            } catch (error) {
+              console.warn(`[mailbox] question email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+              showQuestionCard();
+            } finally {
+              mailboxQuestionInflight.delete(requestId);
+            }
+          })();
+          break;
+        }
+      }
+      showQuestionCard();
       break;
     }
     case "request.resolved": {

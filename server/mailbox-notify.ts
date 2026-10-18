@@ -125,6 +125,13 @@ function mailboxNotifyEnabled(): boolean {
   return (process.env.RELAY_MAILBOX_NOTIFY?.trim() || "1") !== "0";
 }
 
+/** Whether the question email can be delivered right now: notifications
+ * enabled and the shared mailbox configured. */
+export function canSendMailboxEmail(): boolean {
+  return mailboxNotifyEnabled()
+    && Boolean(process.env.RELAY_MAILBOX_ADDRESS?.trim() && process.env.RELAY_MAILBOX_USER_ID?.trim());
+}
+
 /** The subject to reply under, before any answer exists (the receipt email):
  * the sender's own subject, else the first meaningful line of their request,
  * else undefined so the caller falls back to a plain line. */
@@ -164,6 +171,43 @@ export async function sendMailboxAcknowledgement(input: {
     body: "Relay received your email and is working on it. You will get a follow-up with the result.\n",
     mailbox: "relay",
   }, input.actor);
+}
+
+/** A question the turn needs answered, delivered to an email sender who
+ * cannot use Relay's in-app card. Framed as the reply to their message so it
+ * threads, with the choices listed when the agent offered any. The sender
+ * answers by replying; that reply starts the next step. */
+export async function sendMailboxQuestionEmail(input: {
+  capability: string | undefined;
+  actor: MailboxActor;
+  email: string;
+  /** The subject of the mail being answered, if any. */
+  subject?: string;
+  question: string;
+  /** Suggested answers the agent offered, as one-tap options in-app. */
+  choices?: readonly string[];
+  /** Relay's public address, so the reply can link back to the full thread. */
+  relayUrl?: string;
+}): Promise<boolean> {
+  if (!canSendMailboxEmail()) return false;
+  const question = markdownToPlainText(redactSecretsInText(input.question.trim())).trim().slice(0, 4_000);
+  const choices = (input.choices ?? []).map((choice) => `- ${markdownToPlainText(redactSecretsInText(choice)).replace(/\s+/g, " ").trim()}`).filter((line) => line.length > 2);
+  const body = [
+    "Relay needs one thing before it can finish your request:",
+    "",
+    question || "It needs more information.",
+    ...(choices.length ? ["", "Suggested answers:", ...choices] : []),
+    "",
+    "Reply to this email with your answer.",
+    ...(input.relayUrl ? ["", `Open Relay to see the full thread: ${input.relayUrl}`] : []),
+  ].join("\n");
+  await mailboxBffCall(input.capability, "/api/internal/gmail/send", {
+    to: [input.email],
+    subject: mailboxReplySubject(input.subject),
+    body,
+    mailbox: "relay",
+  }, input.actor);
+  return true;
 }
 
 export async function sendMailboxCompletionEmail(input: {
