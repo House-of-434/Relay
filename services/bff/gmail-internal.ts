@@ -359,11 +359,6 @@ function bytesMagicClass(bytes: Buffer): MagicClass | undefined {
   return bytes.includes(0) ? undefined : (isTextual(bytes) ? "text" : undefined);
 }
 
-/** Identify an attachment from its bytes, corroborated by the declared MIME or
- * the filename extension. The magic class must match the format, so a
- * mislabeled or spoofed file is rejected rather than parsed as the wrong
- * type. Gmail commonly reports documents as application/octet-stream, which
- * the extension covers. */
 /** Kinds handed back as image bytes for native vision, not extracted as text. */
 const IMAGE_KINDS = new Set(["png", "jpeg", "gif", "webp"]);
 const CANONICAL_IMAGE_MIME: Record<string, string> = {
@@ -373,6 +368,11 @@ const CANONICAL_IMAGE_MIME: Record<string, string> = {
   webp: "image/webp",
 };
 
+/** Identify an attachment from its bytes, corroborated by the declared MIME or
+ * the filename extension. The magic class must match the format, so a
+ * mislabeled or spoofed file is rejected rather than parsed as the wrong
+ * type. Gmail commonly reports documents as application/octet-stream, which
+ * the extension covers. */
 function classifyAttachment(mimeType: string, filename: string, bytes: Buffer): string | undefined {
   const magic = bytesMagicClass(bytes);
   if (!magic) return undefined;

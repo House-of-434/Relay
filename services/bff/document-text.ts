@@ -23,7 +23,7 @@ export interface ExtractedDocument {
    * be read. */
   text: string;
   /** True when the format is known but its text cannot be extracted (legacy
-   * binary Office, or an archive that could not be parsed). */
+   * binary Office, xlsx, ODF, or an archive that could not be parsed). */
   unreadable?: boolean;
   /** True when extraction ran but the document carries no usable text at all
    * (a scanned/image-only PDF, or an image-only/empty DOCX/PPTX). The caller
@@ -42,8 +42,8 @@ const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 /** Formats handled as plain UTF-8 text rather than a structured container. */
 const TEXT_KINDS = new Set(["text", "csv", "tsv", "json", "markdown", "rtf"]);
 
-/** Formats whose text we cannot extract in v1 (legacy binary Office and ODF).
- * They are still accepted and stored; only reading is unsupported. */
+/** Formats whose text we cannot extract in v1 (legacy binary Office, xlsx,
+ * and ODF). They are still accepted and stored; only reading is unsupported. */
 const UNREADABLE_KINDS = new Set(["doc", "ppt", "xls", "xlsx", "odt", "ods", "odp"]);
 
 function decodeCodePoint(code: number): string {

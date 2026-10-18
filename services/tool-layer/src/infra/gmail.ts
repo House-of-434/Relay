@@ -50,7 +50,8 @@ export interface GmailAttachment {
   warnings?: string[];
   /** The format is known but its text cannot be extracted (legacy Office, xlsx, and ODF). */
   unreadable?: boolean;
-  /** Extraction ran but found no usable text (for example a scanned PDF). */
+  /** Extraction ran but found no usable text (for example a scanned PDF, or an
+   * image-only/empty DOCX/PPTX). */
   noText?: boolean;
   /** Image bytes (standard base64) for native vision, when the attachment is
    * an image. Never text: the caller presents this to a vision-capable model. */
