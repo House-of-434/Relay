@@ -63,17 +63,32 @@ async function toolNames(agent: "scout" | "mercury" | "curator"): Promise<string
 
 test("mercury sees every notion tool, including the attachment uploader", async () => {
   assert.deepEqual(await toolNames("mercury"), [
+    "notion_add_comment",
+    "notion_append_page_content",
+    "notion_archive_page",
     "notion_attach_attachment",
     "notion_create_page",
+    "notion_get_comments",
+    "notion_get_database",
     "notion_get_page",
+    "notion_get_page_content",
+    "notion_list_users",
     "notion_query_db",
     "notion_search",
     "notion_update_page",
   ]);
 });
 
-test("scout and curator see only notion reads", async () => {
-  const reads = ["notion_get_page", "notion_query_db", "notion_search"];
+test("scout and curator see only notion reads, including content, users, and comments", async () => {
+  const reads = [
+    "notion_get_comments",
+    "notion_get_database",
+    "notion_get_page",
+    "notion_get_page_content",
+    "notion_list_users",
+    "notion_query_db",
+    "notion_search",
+  ];
   assert.deepEqual(await toolNames("scout"), reads);
   assert.deepEqual(await toolNames("curator"), reads);
 });

@@ -101,10 +101,12 @@ export async function exchangeNotionToken(input: {
   };
 }
 
-/** File uploads and the `file_upload` file type need a newer API version than
- * the data endpoints. Pin it separately so bumping uploads never shifts the
- * page/database behavior the rest of the connector relies on. */
-export const NOTION_FILE_API_VERSION = "2025-09-03";
+/** Endpoints added after the data API's pinned version — file uploads —
+ * need a newer Notion-Version. Pin it once, kept separate from
+ * NOTION_API_VERSION so page/database behavior the rest of the connector
+ * relies on does not shift underneath it. */
+export const NOTION_NEW_API_VERSION = "2025-09-03";
+export const NOTION_FILE_API_VERSION = NOTION_NEW_API_VERSION;
 
 /** One authenticated Notion REST call. */
 export async function notionRequest<T>(input: {

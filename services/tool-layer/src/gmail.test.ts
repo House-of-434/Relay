@@ -134,7 +134,7 @@ test("getAttachment calls the attachment route with message and attachment ids",
       seen.push({ url: String(input), init });
       return Response.json({
         account: { email: "one@example.com" },
-        attachment: { id: "att-1", filename: "deck.pdf", mimeType: "application/pdf", kind: "pdf", size: 8, data: "JVBERi0x" },
+        attachment: { id: "att-1", filename: "deck.pdf", mimeType: "application/pdf", kind: "pdf", size: 8, text: "--- page 1 ---\nHello", warnings: [] },
       });
     }) as typeof fetch,
   });
@@ -143,4 +143,5 @@ test("getAttachment calls the attachment route with message and attachment ids",
   assert.equal(seen[0]!.url, `http://127.0.0.1:8798${GMAIL_INTERNAL_PATHS.attachmentGet}`);
   assert.deepEqual(JSON.parse(String(seen[0]!.init.body)), { messageId: "msg-1", attachmentId: "att-1" });
   assert.equal(result.attachment.kind, "pdf");
+  assert.equal(result.attachment.text, "--- page 1 ---\nHello");
 });

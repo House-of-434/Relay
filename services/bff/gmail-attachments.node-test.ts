@@ -33,7 +33,35 @@ function actorAssertion(userId: string): string {
   return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent: "mercury", signature });
 }
 
-const PDF_BYTES = Buffer.concat([Buffer.from("%PDF-1.4 deck"), Buffer.alloc(64, 0x41)]);
+/** A real, minimal one-page PDF so the route's extraction path is exercised
+ * end to end rather than on a stub. */
+function minimalPdf(lines: string[]): Buffer {
+  const content = [
+    "BT", "/F1 24 Tf", "72 700 Td",
+    ...lines.flatMap((line, index) => (index === 0 ? [`(${line}) Tj`] : ["0 -36 Td", `(${line}) Tj`])),
+    "ET",
+  ].join("\n");
+  const objects = [
+    "<</Type/Catalog/Pages 2 0 R>>",
+    "<</Type/Pages/Kids[3 0 R]/Count 1>>",
+    "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
+    `<</Length ${Buffer.byteLength(content)}>>\nstream\n${content}\nendstream`,
+    "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets: number[] = [];
+  objects.forEach((body, index) => {
+    offsets.push(Buffer.byteLength(pdf));
+    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+  });
+  const xrefStart = Buffer.byteLength(pdf);
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  for (const offset of offsets) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
+  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
+  return Buffer.from(pdf, "latin1");
+}
+
+const PDF_BYTES = minimalPdf(["Hello Deck", "Raise 1.5M"]);
 const ZIP_BYTES = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(64, 0x42)]);
 const TEXT_BYTES = Buffer.from("just some text, not a deck");
 
@@ -119,38 +147,51 @@ async function createFixture(messageParts: Record<string, AttachmentPart[]>) {
       },
       body: JSON.stringify(body),
     });
-    return { status: response.status, body: await response.json() as { attachment?: { id: string; filename: string; mimeType: string; kind: string; size: number; data: string }; error?: string } };
+    return { status: response.status, body: await response.json() as { attachment?: { id: string; filename: string; mimeType: string; kind: string; size: number; text?: string; warnings?: string[]; unreadable?: boolean; noText?: boolean; image?: { mimeType: string; data: string }; data?: string }; error?: string } };
   };
   return { post, calls };
 }
 
 const PDF_PART: AttachmentPart = { attachmentId: "att-pdf", filename: "deck.pdf", mimeType: "application/pdf", size: 1024, bytes: PDF_BYTES };
 
-test("a pdf deck downloads with its kind and bytes", async () => {
+test("a pdf attachment is read as text with page boundaries, never as bytes", async () => {
   const { post } = await createFixture({ "msg-1": [PDF_PART] });
   const { status, body } = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-pdf" });
   assert.equal(status, 200);
   assert.equal(body.attachment?.kind, "pdf");
   assert.equal(body.attachment?.size, PDF_BYTES.length);
-  assert.ok(Buffer.from(body.attachment!.data, "base64").subarray(0, 4).toString() === "%PDF");
+  assert.match(body.attachment?.text ?? "", /--- page 1 ---/);
+  assert.match(body.attachment?.text ?? "", /Hello Deck/);
+  // The raw bytes never travel to the model through the reading route.
+  assert.equal(body.attachment?.data, undefined);
 });
 
 test("the same reader serves documents other than decks", async () => {
   // A request may bring any document; the reader is not deck-specific.
   const docx = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("word")]);
-  const spreadsheet = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from("sheet")]);
   const { post } = await createFixture({
     "msg-1": [
       { attachmentId: "att-docx", filename: "memo.docx", mimeType: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", bytes: docx },
-      { attachmentId: "att-xlsx", filename: "cap.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", bytes: spreadsheet },
       { attachmentId: "att-csv", filename: "notes.csv", mimeType: "text/csv", bytes: Buffer.from("a,b\n1,2\n") },
       { attachmentId: "att-png", filename: "shot.png", mimeType: "image/png", bytes: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.alloc(8)]) },
     ],
   });
-  assert.equal((await post(USER_ID, { messageId: "msg-1", attachmentId: "att-docx" })).body.attachment?.kind, "docx");
-  assert.equal((await post(USER_ID, { messageId: "msg-1", attachmentId: "att-xlsx" })).body.attachment?.kind, "xlsx");
-  assert.equal((await post(USER_ID, { messageId: "msg-1", attachmentId: "att-csv" })).body.attachment?.kind, "csv");
-  assert.equal((await post(USER_ID, { messageId: "msg-1", attachmentId: "att-png" })).body.attachment?.kind, "png");
+  const docxResult = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-docx" });
+  assert.equal(docxResult.body.attachment?.kind, "docx");
+  // A malformed docx is reported, never returned as raw bytes.
+  assert.equal(docxResult.body.attachment?.unreadable, true);
+  assert.equal(docxResult.body.attachment?.data, undefined);
+
+  const csvResult = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-csv" });
+  assert.equal(csvResult.body.attachment?.kind, "csv");
+  assert.equal(csvResult.body.attachment?.text, "a,b\n1,2");
+
+  const pngResult = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-png" });
+  assert.equal(pngResult.body.attachment?.kind, "png");
+  // An image rides as image bytes for native vision, not as text.
+  assert.equal(pngResult.body.attachment?.image?.mimeType, "image/png");
+  assert.equal(typeof pngResult.body.attachment?.image?.data, "string");
+  assert.equal(pngResult.body.attachment?.data, undefined);
 });
 
 test("octet-stream mime is accepted when the filename and magic agree", async () => {
@@ -178,6 +219,8 @@ test("plain text is readable, not rejected as a non-document", async () => {
   const { status, body } = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-txt" });
   assert.equal(status, 200);
   assert.equal(body.attachment?.kind, "text");
+  assert.equal(body.attachment?.text, "just some text, not a deck");
+  assert.equal(body.attachment?.data, undefined);
 });
 
 test("an unrecognizable binary blob is rejected instead of returned raw", async () => {
