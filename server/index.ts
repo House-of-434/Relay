@@ -6996,10 +6996,17 @@ bus.subscribe((event: RuntimeEvent) => {
           const instanceId = asker.modelSelection.instanceId;
           const askerId = asker.id;
           const askerName = asker.name;
-          const questionText = event.summary
-            || questions?.map((question) => question.question).filter((text): text is string => typeof text === "string" && text.trim().length > 0).join("\n")
-            || "Relay needs more information to continue.";
-          const questionChoices = event.choices?.length ? [...event.choices] : undefined;
+          const questionText = questions
+            ? questions.map((entry) => {
+              const text = typeof entry.question === "string" ? entry.question.trim() : "";
+              const labels = (entry.options ?? []).map((option) => typeof option?.label === "string" ? option.label.replace(/\s+/g, " ").trim() : "").filter((label) => label.length > 0).map((label) => `- ${label}`);
+              return [text, ...labels].filter((line) => line.length > 0).join("\n");
+            }).filter((block) => block.length > 0).join("\n\n")
+              || event.summary
+              || "Relay needs more information to continue."
+            : event.summary
+              || "Relay needs more information to continue.";
+          const questionChoices = !questions && event.choices?.length ? [...event.choices] : undefined;
           const questionEmail = routedThread.email;
           const questionSubject = routedThread.subject;
           const base = publicUrl();

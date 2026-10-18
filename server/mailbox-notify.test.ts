@@ -179,6 +179,24 @@ describe("completion email structure", () => {
     expect(payload.body).toContain("Reply to this email with your answer.");
   });
 
+  it("delivers every question and option of a two-question ask", async () => {
+    const bodies = capture();
+    await sendMailboxQuestionEmail({
+      capability: "x".repeat(40),
+      actor: ACTOR,
+      email: "friend@example.test",
+      subject: "Update Social Gear",
+      question: "Which model?\n- Opus\n- Sonnet\n\nWhich stores?\n- Instamart\n- Blinkit",
+    });
+    const payload = JSON.parse(bodies[0]!) as { subject: string; body: string };
+    expect(payload.body).toContain("Which model?");
+    expect(payload.body).toContain("Which stores?");
+    expect(payload.body).toContain("- Opus");
+    expect(payload.body).toContain("- Sonnet");
+    expect(payload.body).toContain("- Instamart");
+    expect(payload.body).toContain("- Blinkit");
+  });
+
   it("receipt and result share one subject so the two emails thread", async () => {
     const bodies = capture();
     // One subject, derived once from the sender's request, used by both sends.
