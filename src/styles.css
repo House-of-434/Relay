@@ -96,6 +96,9 @@
   --color-panel: #111111;
   --color-raised: #2f2f2f;
   --color-raised-hover: #3d3d3d;
+  /* a chosen row inside a menu or list. Midnight reuses its hover tone;
+     Lagoon takes a lighter wash than `raised-hover` so the sheet stays calm. */
+  --color-selected: #3d3d3d;
   /* the composer pill. Both skins paint it in `raised`; the ring stays
      transparent everywhere else for a future skin that needs a tone of
      its own. */
@@ -166,6 +169,7 @@
   --color-panel: #111111;
   --color-raised: #2f2f2f;
   --color-raised-hover: #3d3d3d;
+  --color-selected: #3d3d3d;    /* = raised-hover: unchanged */
   --color-composer: #2f2f2f;    /* = raised: unchanged */
   --color-composer-ring: transparent;
   --color-card: #262626;
@@ -219,6 +223,9 @@
   --color-panel: #ecf4f3;
   --color-raised: #ffffff;
   --color-raised-hover: #cfe4e1;
+  /* lighter than `raised-hover`: the row is chosen, not hovered, so it reads
+     as a gentle wash rather than the user bubble's own tone */
+  --color-selected: #e7f2f0;
   --color-composer: #ffffff;    /* = raised: unchanged */
   --color-composer-ring: transparent;
   --color-card: #ffffff;

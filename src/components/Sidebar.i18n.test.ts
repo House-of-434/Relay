@@ -60,13 +60,9 @@ describe("sidebar rows", () => {
   });
 });
 
-describe("archive / delete confirmation copy", () => {
+describe("delete confirmation copy", () => {
   it("translates and keeps the bot's name out of the catalog", () => {
     setLocale("pt-br");
-    const archive = botConfirmCopy("archive", "Juniper");
-    expect(archive.title).toBe("Arquivar Juniper?");
-    expect(archive.confirmLabel).toBe("Arquivar");
-
     const remove = botConfirmCopy("delete", "Willow");
     expect(remove.body).toContain("Willow");
     expect(remove.confirmLabel).toBe("Excluir");

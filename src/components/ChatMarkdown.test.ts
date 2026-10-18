@@ -532,8 +532,8 @@ describe("bidi: message content carries its own direction", () => {
     }));
 
     expect(html).toContain('<div dir="rtl" class="mt-2 text-[16px] font-semibold">');
-    expect(html).toContain('<p dir="rtl">');
-    expect(html).toContain('<p dir="ltr">An English paragraph');
+    expect(html).toContain('<p dir="rtl" class="break-words">');
+    expect(html).toContain('<p dir="ltr" class="break-words">An English paragraph');
     expect(html).toContain('<blockquote dir="rtl"');
     expect(html).toContain('<ul dir="rtl"');
     expect(html).toContain('<table dir="rtl"');
@@ -554,7 +554,7 @@ describe("bidi: message content carries its own direction", () => {
     const html = renderToStaticMarkup(createElement(ChatMarkdown, {
       text: `\`fs.readFileSync\` ${ARABIC} داخل الحلقة`,
     }));
-    expect(html).toContain('<p dir="rtl">');
+    expect(html).toContain('<p dir="rtl" class="break-words">');
   });
 
   it("uses logical box properties so indents and rules follow the text", () => {
@@ -702,4 +702,23 @@ it("renders mermaid strictly and serves repeat views from cache", async () => {
     effect.mockImplementation(originalUseEffect);
     vi.doUnmock("mermaid");
   }
+});
+
+describe("bubble wrapping and link contrast", () => {
+  it("wraps paragraphs so an unbreakable emphasis run cannot escape the bubble", () => {
+    const token = `*${"Proofpoint".concat("(aThomaBravoportfoliocompany)isacquiring")}${"x".repeat(200)}* tail`;
+    const html = renderToStaticMarkup(createElement(ChatMarkdown, { text: token }));
+    expect(html).toContain("<em>");
+    expect(html).toContain('<p dir="ltr" class="break-words">');
+    // the token itself survives intact — wrapping breaks the line, not the text
+    expect(html).toContain("isacquiring");
+  });
+
+  it("renders web links in the ground-readable accent token, not the fill green", () => {
+    const html = renderToStaticMarkup(createElement(ChatMarkdown, {
+      text: "Source: SEC EDGAR ([index](https://example.com/x))",
+    }));
+    expect(html).toContain('class="break-words text-accent-text underline');
+    expect(html).not.toContain("text-accent underline");
+  });
 });

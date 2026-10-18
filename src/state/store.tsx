@@ -1105,7 +1105,6 @@ export type Action =
   | { type: "deleteBot"; botId: string }
   | { type: "botDeletionPending"; botId: string; on: boolean }
   | { type: "duplicateBot"; botId: string }
-  | { type: "markUnread"; botId: string }
   | { type: "botPatched"; bot: BotAnnouncement }
   | { type: "messageAdded"; threadId: string; message: Message }
   | { type: "messagePatched"; threadId: string; message: Message }
@@ -1588,8 +1587,6 @@ export function reducer(state: AppState, action: Action): AppState {
       const { [action.botId]: _settled, ...deletingBots } = state.deletingBots;
       return { ...state, deletingBots };
     }
-    case "markUnread":
-      return updateBot(withMascotMotion(state, action.botId, "surprise"), action.botId, (b) => ({ ...b, unread: true }));
     case "botPatched": {
       const before = state.bots.find((b) => b.id === action.bot.id);
       // Bot frames are complete except for their transcript. An unknown one
@@ -3245,11 +3242,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           )
             .catch(showError)
             .finally(() => rawDispatch({ type: "botDeletionPending", botId: action.botId, on: false }));
-          break;
-        case "markUnread":
-          api(`/api/bots/${action.botId}`, { method: "PATCH", body: JSON.stringify({ unread: true }) }).catch(
-            () => {},
-          );
           break;
         case "select": {
           const bot = stateRef.current.bots.find((b) => b.id === action.id);

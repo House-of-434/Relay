@@ -612,7 +612,7 @@ function LocalFileLink({ filePath, children, message }: { filePath: string; chil
         onClick={() => void save.save()}
         disabled={save.state === "saving"}
         title="Save a copy"
-        className="inline-flex items-center gap-1 break-words text-start text-accent underline decoration-accent/40 hover:decoration-accent disabled:cursor-wait"
+        className="inline-flex items-center gap-1 break-words text-start text-accent-text underline decoration-accent-text/40 hover:decoration-accent-text disabled:cursor-wait"
       >
         {children}
         {save.state === "saving" ? (
@@ -859,7 +859,7 @@ function ChatMarkdownComponent({ text, streaming = false, message, mentionPeers 
                 target="_blank"
                 rel="noreferrer"
                 dir="auto"
-                className="break-words text-accent underline decoration-accent/40 hover:decoration-accent [unicode-bidi:isolate]"
+                className="break-words text-accent-text underline decoration-accent-text/40 hover:decoration-accent-text [unicode-bidi:isolate]"
               >
                 {children}
               </a>
@@ -881,7 +881,11 @@ function ChatMarkdownComponent({ text, streaming = false, message, mentionPeers 
             return <td className="border-b border-hairline/20 px-2 py-1.5 align-top">{children}</td>;
           },
           p({ node, children }: BlockProps) {
-            return <p dir={blockDirection(node)}>{children}</p>;
+            // break-words because model output sometimes arrives as one long
+            // unbreakable token (a garbled emphasis run, a spaceless span) and
+            // it has nowhere to go but outside the bubble — same guard the
+            // inline code renderer below already carries.
+            return <p dir={blockDirection(node)} className="break-words">{children}</p>;
           },
           ul({ node, children }: BlockProps) {
             return <ul dir={blockDirection(node)} className="list-disc space-y-1 ps-5">{children}</ul>;
