@@ -506,7 +506,7 @@ async function dispatch(
       // Listing users needs the integration's user-information capability,
       // which an operator may not have granted. That is not fatal: report it
       // honestly and let the caller continue without user data.
-      if (error instanceof NotionApiError && error.status >= 400 && error.status < 500) {
+      if (error instanceof NotionApiError && (error.status === 400 || error.status === 401 || error.status === 403)) {
         jsonResponse(res, 200, { users: [], warning: "the Notion connection cannot list users" });
         return;
       }
@@ -541,7 +541,7 @@ async function dispatch(
     } catch (error) {
       // Reading comments needs the integration's comment capability, which an
       // operator may not have granted. Not fatal: report it and continue.
-      if (error instanceof NotionApiError && error.status >= 400 && error.status < 500) {
+      if (error instanceof NotionApiError && (error.status === 401 || error.status === 403)) {
         jsonResponse(res, 200, { comments: [], warning: "the Notion connection cannot read comments" });
         return;
       }
