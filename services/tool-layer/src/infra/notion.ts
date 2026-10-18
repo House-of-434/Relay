@@ -149,7 +149,7 @@ export class RelayNotionClient {
   }
 
   getComments(actorAssertion: string, input: { blockId: string; pageSize?: number; startCursor?: string }) {
-    return this.call<{ comments: NotionCommentSummary[]; hasMore: boolean; nextCursor?: string }>(
+    return this.call<{ comments: NotionCommentSummary[]; hasMore: boolean; nextCursor?: string; warning?: string }>(
       NOTION_INTERNAL_PATHS.comments,
       actorAssertion,
       input,
