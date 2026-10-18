@@ -232,24 +232,29 @@ function blockText(block: Record<string, unknown>): string | undefined {
   if (typeof block.type !== "string") return undefined;
   const detail = block[block.type] as Record<string, unknown> | undefined;
   if (!detail) return undefined;
+  const parts: string[] = [];
   if (Array.isArray(detail.rich_text)) {
     const text = richTextToPlain(detail.rich_text).trim();
-    if (text) return bounded(text, MAX_BLOCK_TEXT);
+    if (text) parts.push(text);
   }
-  if (Array.isArray(detail.cells)) {
-    const text = detail.cells
-      .map((cell) => (Array.isArray(cell) ? richTextToPlain(cell).trim() : ""))
-      .join(" | ")
-      .trim();
-    if (text) return bounded(text, MAX_BLOCK_TEXT);
-  }
-  if (typeof detail.title === "string" && detail.title) return bounded(detail.title, MAX_BLOCK_TEXT);
   if (Array.isArray(detail.caption)) {
     const text = richTextToPlain(detail.caption).trim();
-    if (text) return bounded(text, MAX_BLOCK_TEXT);
+    if (text) parts.push(text);
   }
-  if (typeof detail.url === "string" && detail.url) return bounded(detail.url, MAX_BLOCK_TEXT);
-  return undefined;
+  if (typeof detail.title === "string" && detail.title.trim()) parts.push(detail.title.trim());
+  if (typeof detail.url === "string" && detail.url.trim()) parts.push(detail.url.trim());
+  if (Array.isArray(detail.cells)) {
+    const cellTexts = detail.cells.map((cell) => (Array.isArray(cell) ? richTextToPlain(cell).trim() : ""));
+    if (cellTexts.some((cell) => cell !== "")) {
+      const joined = cellTexts.join(" | ").trim();
+      if (joined) parts.push(joined);
+    }
+  }
+  if (parts.length === 0) return undefined;
+  const text = parts.join("\n").trim();
+  if (!text) return undefined;
+  if (!/[^\s|]/.test(text)) return undefined;
+  return bounded(text, MAX_BLOCK_TEXT);
 }
 
 function blockSummary(block: Record<string, unknown>): Record<string, unknown> | undefined {
