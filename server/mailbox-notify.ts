@@ -125,6 +125,13 @@ function mailboxNotifyEnabled(): boolean {
   return (process.env.RELAY_MAILBOX_NOTIFY?.trim() || "1") !== "0";
 }
 
+/** Whether the question email can be delivered right now: notifications
+ * enabled and the shared mailbox configured. */
+export function canSendMailboxEmail(): boolean {
+  return mailboxNotifyEnabled()
+    && Boolean(process.env.RELAY_MAILBOX_ADDRESS?.trim() && process.env.RELAY_MAILBOX_USER_ID?.trim());
+}
+
 /** The subject to reply under, before any answer exists (the receipt email):
  * the sender's own subject, else the first meaningful line of their request,
  * else undefined so the caller falls back to a plain line. */
@@ -181,11 +188,10 @@ export async function sendMailboxQuestionEmail(input: {
   choices?: readonly string[];
   /** Relay's public address, so the reply can link back to the full thread. */
   relayUrl?: string;
-}): Promise<void> {
-  if (!mailboxNotifyEnabled()) return;
-  if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return;
+}): Promise<boolean> {
+  if (!canSendMailboxEmail()) return false;
   const question = markdownToPlainText(redactSecretsInText(input.question.trim())).trim().slice(0, 4_000);
-  const choices = (input.choices ?? []).map((choice) => `- ${choice.trim()}`).filter((line) => line.length > 2);
+  const choices = (input.choices ?? []).map((choice) => `- ${markdownToPlainText(redactSecretsInText(choice)).replace(/\s+/g, " ").trim()}`).filter((line) => line.length > 2);
   const body = [
     "Relay needs one thing before it can finish your request:",
     "",
@@ -201,6 +207,7 @@ export async function sendMailboxQuestionEmail(input: {
     body,
     mailbox: "relay",
   }, input.actor);
+  return true;
 }
 
 export async function sendMailboxCompletionEmail(input: {
