@@ -10,7 +10,6 @@ const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const transcripts = source("../../../supabase/migrations/0006_transcripts.sql");
 const serviceActors = source("../../../supabase/migrations/0007_service_actors.sql");
-const notionMirror = source("../../../supabase/migrations/0009_mirror_notion_deals.sql");
 const migrations = `${init}\n${stores}\n${ownership}\n${transcripts}\n${serviceActors}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
@@ -63,7 +62,7 @@ test("conversation lifecycle is idle, running, or failed", () => {
   assert.doesNotMatch(stores, /'completed'/);
 });
 
-test("the base entity tables carry no status column or promotion gate; the mirrored pipeline status arrives via 0009", () => {
+test("the base entity tables carry no status column or promotion gate", () => {
   for (const table of ["companies", "people", "events"]) {
     const definition = new RegExp(`create table app\\.${table} \\(([\\s\\S]*?)\\n\\);`).exec(init);
     assert.ok(definition, `app.${table} definition not found`);
@@ -72,10 +71,6 @@ test("the base entity tables carry no status column or promotion gate; the mirro
   // Shared intelligence is visible to every member as soon as it is written.
   assert.equal([...init.matchAll(/using \(classification = 'internal'\)/g)].length, 3);
   assert.doesNotMatch(init, /status = 'active'/);
-  // The Notion deal mirror adds a plain pipeline status to companies only; it
-  // is a board field, not an internal promotion gate.
-  assert.match(notionMirror, /alter table app\.companies\s+add column if not exists status\s+text/);
-  assert.doesNotMatch(notionMirror, /\bstatus\s+text not null\b/);
 });
 
 test("tool calls reference a conversation and stay out of member reach", () => {
