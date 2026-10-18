@@ -75,11 +75,14 @@ test("unknown columns and unsafe broad updates are rejected", () => {
     { agent: "scout", userId: ACTOR_USER_ID },
   ), /where must contain only id/);
 
-  // The entity status column was removed: there is no promotion step to write.
-  assert.throws(() => prepareWrite(
-    "app.companies", "update", { description: "Changed", status: "active" }, { id: UUID },
+  // status is a mirrored Notion pipeline field (migration 0009), not an
+  // internal promotion gate, so it is writable like any other column.
+  const statusUpdate = prepareWrite(
+    "app.companies", "update", { status: "Screening" }, { id: UUID },
     { agent: "scout", userId: ACTOR_USER_ID },
-  ), /Unknown column/);
+  );
+  assert.equal(statusUpdate.values.status, "Screening");
+  assert.deepEqual(statusUpdate.where, { column: "id", value: UUID });
 
   const update = prepareWrite(
     "app.companies", "update", { description: "Changed" }, { id: UUID },
@@ -91,6 +94,68 @@ test("unknown columns and unsafe broad updates are rejected", () => {
     { name: "Acme", source_url: "https://example.com/acme", confidence: 0.5, classification: "restricted" },
     undefined, { agent: "scout", userId: null },
   ), /classification exceeds/);
+});
+
+test("confidence is optional but bounded whenever supplied", () => {
+  // A mirrored board row is data, not an agent observation, so an insert need
+  // not carry a score; the column default applies.
+  const inserted = prepareWrite(
+    "app.companies", "insert",
+    { name: "Social Gear", source_url: "https://app.notion.com/p/social-gear" }, undefined,
+    { agent: "mercury", userId: ACTOR_USER_ID },
+  );
+  assert.equal("confidence" in inserted.values, false);
+
+  // But any supplied score is bounded, on insert and on update.
+  assert.throws(() => prepareWrite(
+    "app.companies", "insert",
+    { name: "Social Gear", source_url: "https://app.notion.com/p/social-gear", confidence: 2 }, undefined,
+    { agent: "mercury", userId: ACTOR_USER_ID },
+  ), /confidence must be a finite number between 0 and 1/);
+  assert.throws(() => prepareWrite(
+    "app.companies", "update", { confidence: -1 }, { id: UUID },
+    { agent: "mercury", userId: ACTOR_USER_ID },
+  ), /confidence must be a finite number between 0 and 1/);
+
+  const scored = prepareWrite(
+    "app.companies", "update", { confidence: 0.9 }, { id: UUID },
+    { agent: "mercury", userId: ACTOR_USER_ID },
+  );
+  assert.equal(scored.values.confidence, 0.9);
+});
+
+test("notion sync: the first run inserts a deal, a rerun updates it by id", () => {
+  const page = {
+    notion_page_id: "3fb2faf9-7eb0-8144-b271-c2149101d198",
+    notion_url: "https://app.notion.com/p/Social-Gear-3fb2faf97eb08144b271c2149101d198",
+    name: "Social Gear",
+    source_url: "https://app.notion.com/p/Social-Gear-3fb2faf97eb08144b271c2149101d198",
+    status: "Screening",
+    technology: "Vertical AI",
+    website: "https://mysocialgear.com",
+    founder_name: "Adris Chakraborty",
+    founder_email: "adris@lykstage.com",
+  };
+  // No existing row for this page -> insert, carrying the Notion identity.
+  const insert = prepareWrite(
+    "app.companies", "insert", { ...page }, undefined,
+    { agent: "mercury", userId: ACTOR_USER_ID },
+  );
+  assert.equal(insert.where, undefined);
+  assert.equal(insert.values.notion_page_id, page.notion_page_id);
+  assert.equal(insert.values.status, "Screening");
+  assert.equal(insert.values.technology, "Vertical AI");
+  assert.equal(insert.values.founder_email, "adris@lykstage.com");
+
+  // The page is already mirrored -> update the existing row by its Relay id.
+  const existingId = "97e3e8df-6f05-4530-8a3e-e8b3b7e20175";
+  const update = prepareWrite(
+    "app.companies", "update", { status: "Due Diligence", stage: "Seed" }, { id: existingId },
+    { agent: "mercury", userId: ACTOR_USER_ID },
+  );
+  assert.deepEqual(update.where, { column: "id", value: existingId });
+  assert.equal(update.values.status, "Due Diligence");
+  assert.equal(update.values.stage, "Seed");
 });
 
 test("conversation ownership columns are not writable by a model", () => {
@@ -137,6 +202,10 @@ test("filters allow only shaped columns and fixed operators", () => {
   assert.throws(() => validateFilters("app.companies", { name_in: [] }), /1–100/);
   assert.deepEqual(validateFilters("app.companies", { actor_user: ACTOR_USER_ID }), [
     { column: "actor_user", operator: "eq", value: ACTOR_USER_ID },
+  ]);
+  // The Notion sync looks rows up by page id.
+  assert.deepEqual(validateFilters("app.companies", { notion_page_id: "3fb2faf9-7eb0-8144-b271-c2149101d198" }), [
+    { column: "notion_page_id", operator: "eq", value: "3fb2faf9-7eb0-8144-b271-c2149101d198" },
   ]);
   // Meeting lookups by provider code and capture id ride the same machinery.
   assert.deepEqual(validateFilters("transcripts.meetings", { native_id: "abc-defg-hij" }), [

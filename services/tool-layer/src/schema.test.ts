@@ -62,11 +62,11 @@ test("conversation lifecycle is idle, running, or failed", () => {
   assert.doesNotMatch(stores, /'completed'/);
 });
 
-test("entity tables carry no status column and no promotion gate", () => {
+test("the base entity tables carry no status column or promotion gate", () => {
   for (const table of ["companies", "people", "events"]) {
     const definition = new RegExp(`create table app\\.${table} \\(([\\s\\S]*?)\\n\\);`).exec(init);
     assert.ok(definition, `app.${table} definition not found`);
-    assert.doesNotMatch(definition[1]!, /\bstatus\b/, `app.${table} must not have a status column`);
+    assert.doesNotMatch(definition[1]!, /\bstatus\b/, `app.${table} must not have a status column in the base model`);
   }
   // Shared intelligence is visible to every member as soon as it is written.
   assert.equal([...init.matchAll(/using \(classification = 'internal'\)/g)].length, 3);

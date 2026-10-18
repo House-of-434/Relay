@@ -9,7 +9,11 @@ export type Shape = {
   writable: readonly string[];
   serverSet: readonly string[];
   filterable: readonly string[];
+  /** Enforced on insert: the field must be present and valid. */
   require: readonly Requirement[];
+  /** Validated whenever the field is supplied on insert or update, but never
+   * required. Keeps bounds on an optional column without demanding it. */
+  validate?: readonly Requirement[];
   valueEnums?: Readonly<Record<string, readonly string[]>>;
   updateKey?: string;
 };
@@ -19,15 +23,32 @@ export const SHAPES: Record<string, Shape> = {
     writable: [
       "name", "domains", "description", "source", "source_url", "observed_at",
       "confidence", "external_source", "external_source_id",
+      // Notion "Running Deals" mirror (migration 0009). The select/status
+      // fields stay plain text: Notion options evolve and are written as given.
+      "status", "stage", "technology", "vertical", "industry", "deal_source",
+      "founder_name", "founder_email", "founder_linkedin", "founder_age",
+      "website", "has_lead", "domain_expertise", "raise_amount",
+      "pre_money_valuation", "founding_date", "submission_date",
+      "target_close_date", "deck_url", "data_room_url", "notion_page_id",
+      "notion_url",
     ],
     serverSet: [
       "actor_user", "actor_agent", "classification", "embedding", "created_at",
       "updated_at", "captured_at", "owner_user_id", "scope",
     ],
-    filterable: ["name", "domains", "classification", "observed_at", "actor_user", "owner_user_id", "scope"],
+    filterable: [
+      "name", "domains", "classification", "observed_at", "actor_user",
+      "owner_user_id", "scope", "notion_page_id", "status", "stage",
+      "technology", "industry",
+    ],
     require: [
       { f: "name", r: "nonempty" },
       { f: "source_url", r: "url" },
+    ],
+    // Optional on insert: a mirrored board row is data, not an agent
+    // observation, so it need not carry a score — but any score supplied must
+    // be in range.
+    validate: [
       { f: "confidence", r: "number" },
     ],
   },
@@ -217,6 +238,14 @@ function validateRequirement(field: string, rule: Requirement["r"], value: unkno
   }
 }
 
+/** Validate a shape's optional rules only when the field is actually supplied,
+ * on insert or update. `require` gates presence; `validate` gates the value. */
+function validateSupplied(shape: Shape, values: Record<string, unknown>): void {
+  for (const { f, r } of shape.validate ?? []) {
+    if (f in values) validateRequirement(f, r, values[f]);
+  }
+}
+
 function validateValueEnums(shape: Shape, data: Record<string, unknown>): void {
   for (const [field, allowed] of Object.entries(shape.valueEnums ?? {})) {
     if (!(field in data)) continue;
@@ -264,6 +293,7 @@ export function prepareWrite(
     for (const { f, r } of shape.require) {
       validateRequirement(f, r, values[f]);
     }
+    validateSupplied(shape, values);
   } else {
     const updateKey = shape.updateKey ?? "id";
     if (!where || typeof where !== "object" || Array.isArray(where)) {
@@ -284,6 +314,7 @@ export function prepareWrite(
     for (const { f, r } of shape.require) {
       if (f in values) validateRequirement(f, r, values[f]);
     }
+    validateSupplied(shape, values);
     validateValueEnums(shape, values);
     if (shape.serverSet.includes("actor_user")) values.actor_user = actor.userId;
     if (shape.serverSet.includes("actor_agent")) values.actor_agent = actor.agent;
