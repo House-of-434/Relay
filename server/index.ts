@@ -7021,7 +7021,7 @@ bus.subscribe((event: RuntimeEvent) => {
               }
               runCommand({ kind: "gmail.question", key: requestId }, () => true);
               try {
-                await answerRequest(
+                const outcome = await answerRequest(
                   threadId,
                   instanceId,
                   requestId,
@@ -7029,6 +7029,10 @@ bus.subscribe((event: RuntimeEvent) => {
                   "This is an email conversation; the sender cannot answer an in-app card. Relay has emailed them this question and they will reply by email. End your turn now, replying with exactly NO_ACTION so no duplicate email is sent.",
                   { id: askerId, name: askerName },
                 );
+                if (outcome === "unavailable") {
+                  console.warn("[mailbox] could not answer the routed-mail question; the turn may stay parked");
+                  showQuestionCard();
+                }
               } catch {
                 console.warn("[mailbox] could not answer the routed-mail question; the turn may stay parked");
                 showQuestionCard();
