@@ -23,6 +23,22 @@ export interface GmailMessage {
   bodyTruncated?: boolean;
   /** Attachment metadata only; fetching bytes is a separate route. */
   attachments?: Array<{ id: string; filename: string; mimeType: string; size?: number }>;
+  /** Present when the read asked for attachment contents inline: one entry
+   * per requested id, in request order. Documents carry `text`; images carry
+   * `image`; a file that could not be read carries `skipped` instead. */
+  attachmentContents?: Array<{
+    id: string;
+    filename?: string;
+    mimeType?: string;
+    kind?: string;
+    size?: number;
+    text?: string;
+    warnings?: string[];
+    unreadable?: boolean;
+    noText?: boolean;
+    skipped?: string;
+    image?: { mimeType: string; data: string };
+  }>;
 }
 
 /** Which connected mailbox a read means: the actor's own account, or Relay's
@@ -54,7 +70,7 @@ export interface GmailAttachment {
   text?: string;
   /** Non-fatal extraction notes. */
   warnings?: string[];
-  /** The format is known but its text cannot be extracted (legacy Office, xlsx, and ODF). */
+  /** The format is known but its text cannot be extracted (legacy Office and ODF). */
   unreadable?: boolean;
   /** Extraction ran but found no usable text (for example a scanned PDF, or an
    * image-only/empty DOCX/PPTX). */
@@ -129,7 +145,7 @@ export class RelayGmailClient {
     );
   }
 
-  getMessage(actorAssertion: string, input: { messageId: string; mailbox?: GmailMailbox }) {
+  getMessage(actorAssertion: string, input: { messageId: string; mailbox?: GmailMailbox; attachmentIds?: string[] }) {
     return this.call<{ account: { email: string }; message: GmailMessage }>(
       GMAIL_INTERNAL_PATHS.messagesGet,
       actorAssertion,

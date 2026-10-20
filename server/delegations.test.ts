@@ -14,6 +14,8 @@ import {
   buildDelegationFailurePrompt,
   buildDelegationRevivalPrompt,
   busyHoldCapText,
+  clearDelegationWake,
+  clearDelegationWatch,
   DELEGATION_BUSY_HOLD_MAX_MS,
   DELEGATION_TTL_MS,
   DELEGATION_WAKE_MAX_PER_WINDOW,
@@ -23,11 +25,15 @@ import {
   drainDelegations,
   expireStaleDelegations,
   findDelegationReceipt,
+  findDurableDelegationWatchByTaskId,
   formatDelegationElapsed,
+  loadDelegationWatches,
   pendingDelegationInfo,
   pendingDelegationSnapshot,
   queueDelegation,
   recordDelegationReceipt,
+  recordDelegationWake,
+  recordDelegationWatch,
   releaseDelegationsWaitingOn,
   summarizeDelegatedActivity,
   threadsWaitingOn,
@@ -833,6 +839,61 @@ describe("delegations survive a restart", () => {
     writeFileSync(file(), "{not json");
     _loadPending();
     expect(pendingThreads()).toEqual([]);
+  });
+
+  it("persists dispatched watches and parked wakes across a restart", () => {
+    recordDelegationWatch({
+      targetThreadId: "target-1",
+      taskId: "task-1",
+      sourceThreadId: "source-1",
+      sourceBotId: "bot-a",
+      toBotId: "bot-b",
+      toBotName: "Scout",
+      startedAtMs: 1_000,
+    });
+    recordDelegationWake("source-1", { botId: "bot-a", targetName: "Scout" });
+    // A fresh process reads the same file: no cache, no reset hook needed.
+    const loaded = loadDelegationWatches();
+    expect(loaded.watches).toEqual([{
+      targetThreadId: "target-1",
+      taskId: "task-1",
+      sourceThreadId: "source-1",
+      sourceBotId: "bot-a",
+      toBotId: "bot-b",
+      toBotName: "Scout",
+      startedAtMs: 1_000,
+    }]);
+    expect(loaded.wakes).toEqual([{ threadId: "source-1", botId: "bot-a", targetName: "Scout" }]);
+    expect(findDurableDelegationWatchByTaskId("task-1")?.targetThreadId).toBe("target-1");
+    expect(findDurableDelegationWatchByTaskId("nope")).toBeNull();
+
+    clearDelegationWake("source-1");
+    expect(loadDelegationWatches().wakes).toEqual([]);
+    // The watch outlives the wake: it clears only once the wake dispatches
+    // or a boot failure-wake replaces it.
+    expect(loadDelegationWatches().watches).toHaveLength(1);
+    clearDelegationWatch("target-1");
+    expect(loadDelegationWatches().watches).toEqual([]);
+  });
+
+  it("drops corrupt watch and wake entries instead of trusting them", () => {
+    const { mkdirSync, writeFileSync } = require("node:fs") as typeof import("node:fs");
+    mkdirSync(DATA_DIR, { recursive: true });
+    writeFileSync(join(DATA_DIR, "delegation-watches.json"), JSON.stringify({
+      watches: {
+        good: { targetThreadId: "t", toBotId: "b", startedAtMs: 5 },
+        "no-bot": { targetThreadId: "t" },
+        empty: {},
+      },
+      wakes: {
+        good: { botId: "b", targetName: "Scout" },
+        "no-name": { botId: "b" },
+      },
+      extra: "ignored",
+    }));
+    const loaded = loadDelegationWatches();
+    expect(loaded.watches.map((watch) => watch.targetThreadId)).toEqual(["t"]);
+    expect(loaded.wakes.map((wake) => wake.threadId)).toEqual(["good"]);
   });
 
   it("restores an over-age backlog without expiring the second job when the first occupies its target", async () => {

@@ -19,11 +19,11 @@ import { extractText } from "unpdf";
 import { Unzip, UnzipInflate } from "fflate";
 
 export interface ExtractedDocument {
-  /** Extracted text, page/slide boundaries included. Empty when nothing could
-   * be read. */
+  /** Extracted text, with page/slide/sheet boundaries. Empty when nothing
+   * could be read. */
   text: string;
   /** True when the format is known but its text cannot be extracted (legacy
-   * binary Office, xlsx, ODF, or an archive that could not be parsed). */
+   * binary Office, ODF, or an archive that could not be parsed). */
   unreadable?: boolean;
   /** True when extraction ran but the document carries no usable text at all
    * (a scanned/image-only PDF, or an image-only/empty DOCX/PPTX). The caller
@@ -42,9 +42,9 @@ const MAX_TOTAL_BYTES = 64 * 1024 * 1024;
 /** Formats handled as plain UTF-8 text rather than a structured container. */
 const TEXT_KINDS = new Set(["text", "csv", "tsv", "json", "markdown", "rtf"]);
 
-/** Formats whose text we cannot extract in v1 (legacy binary Office, xlsx,
- * and ODF). They are still accepted and stored; only reading is unsupported. */
-const UNREADABLE_KINDS = new Set(["doc", "ppt", "xls", "xlsx", "odt", "ods", "odp"]);
+/** Formats whose text we cannot extract (legacy binary Office and ODF).
+ * They are still accepted and stored; only reading is unsupported. */
+const UNREADABLE_KINDS = new Set(["doc", "ppt", "xls", "odt", "ods", "odp"]);
 
 function decodeCodePoint(code: number): string {
   if (!Number.isInteger(code) || code < 0 || code > 0x10ffff || (code >= 0xd800 && code <= 0xdfff)) return "�";
@@ -219,6 +219,213 @@ function extractPptx(bytes: Buffer): ExtractedDocument {
   return { text: body, warnings };
 }
 
+/** A worksheet part inside an xlsx workbook: `xl/worksheets/sheetN.xml`. */
+const XLSX_SHEET_FILE = /^xl\/worksheets\/sheet(\d+)\.xml$/;
+
+/** One `<sheet name="…">` entry of `xl/workbook.xml`, in document order. */
+const XLSX_SHEET_ENTRY = /<sheet\b[^>]*\bname=(?:"([^"]*)"|'([^']*)')/g;
+
+/** Row, cell, value, inline-string, and text-run tags of one worksheet,
+ * in a single pass: `<v>` and `<t>` carry no nested tags (cell text is
+ * entity-escaped), so the text runs straight to the next `<`. */
+const XLSX_SHEET_TOKEN = /<(\/?)(row|c|v|is|t)\b([^>]*)>([^<]*)/g;
+
+/** Sparse-column guard: a row that jumps thousands of columns (for example
+ * a lone value at XFD) pads with empty fields up to this many, so a stray
+ * cell cannot bloat the text with kilobytes of tabs. Real content is never
+ * capped; trailing empties are never emitted. */
+const XLSX_MAX_CELL_GAP = 100;
+
+/** Zero-based column index of an `A1`-style cell reference; -1 when the
+ * reference is missing or malformed, in which case the cell follows the
+ * previous one. */
+function xlsxColumnIndex(reference: string | undefined): number {
+  if (!reference) return -1;
+  let column = 0;
+  let index = 0;
+  while (index < reference.length) {
+    const code = reference.charCodeAt(index);
+    if (code < 65 || code > 90) break;
+    column = column * 26 + (code - 64);
+    index += 1;
+  }
+  if (index === 0) return -1;
+  return column - 1;
+}
+
+/** True when text holds control characters that must never reach a model.
+ * The same set `cleanText` drops, checked first so clean output skips a
+ * second pass. */
+function hasControlCharacters(value: string): boolean {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x20 && code !== 0x09 && code !== 0x0a && code !== 0x0d) return true;
+  }
+  return false;
+}
+
+/** One decoded cell value: entities resolved, control characters dropped,
+ * in-cell line breaks flattened so TSV rows stay intact. */
+function finalizeXlsxCell(value: string): string {
+  const decoded = value.includes("&") ? decodeXmlEntities(value) : value;
+  const cleaned = hasControlCharacters(decoded) ? cleanText(decoded) : decoded;
+  return cleaned.replace(/\r\n|\r|\n/g, " ");
+}
+
+/** Shared strings are decoded on first use and memoized: the table is
+ * usually the largest part of the workbook, and empty or numeric-only
+ * sheets must not pay for decoding it. */
+interface XlsxSharedStrings {
+  raw: string[];
+  cache: (string | undefined)[];
+}
+
+function parseXlsxSharedStrings(xml: string): XlsxSharedStrings {
+  if (!xml) return { raw: [], cache: [] };
+  const raw = xml.match(/<si\b[^>]*>[\s\S]*?<\/si>/g) ?? [];
+  return { raw, cache: raw.map(() => undefined) };
+}
+
+function xlsxSharedString(table: XlsxSharedStrings, indexText: string): string {
+  const index = Number(indexText.trim());
+  if (!Number.isInteger(index) || index < 0 || index >= table.raw.length) return "";
+  const cached = table.cache[index];
+  if (cached !== undefined) return cached;
+  const runs = table.raw[index]!.match(/<t\b[^>]*>([\s\S]*?)<\/t>/g) ?? [];
+  const decoded = finalizeXlsxCell(runs.map((run) => run.replace(/<\/?t\b[^>]*>/g, "")).join(""));
+  table.cache[index] = decoded;
+  return decoded;
+}
+
+/** Sheet names from `xl/workbook.xml`, in order. Positional: the first name
+ * belongs to the lowest-numbered sheet file. */
+function xlsxSheetNames(xml: string): string[] {
+  const names: string[] = [];
+  XLSX_SHEET_ENTRY.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = XLSX_SHEET_ENTRY.exec(xml)) !== null) {
+    const raw = match[1] ?? match[2] ?? "";
+    names.push(raw.includes("&") ? decodeXmlEntities(raw) : raw);
+  }
+  return names;
+}
+
+/** One worksheet as TSV: cells joined with tabs, rows with newlines, empty
+ * rows skipped, sparse columns padded with empty fields. Formulas contribute
+ * their cached `<v>` result; error cells contribute nothing. */
+function parseXlsxSheet(xml: string, shared: XlsxSharedStrings): string {
+  const rows: string[] = [];
+  let cells: string[] = [];
+  let prevColumn = -1;
+  let inRow = false;
+  let cellOpen = false;
+  let cellAttrs = "";
+  let cellValue = "";
+  let inlineBuffer = "";
+  let inInlineString = false;
+
+  const pushCell = (): void => {
+    const reference = /\br="([^"]*)"/.exec(cellAttrs)?.[1];
+    const column = xlsxColumnIndex(reference);
+    if (column > prevColumn) {
+      const gap = Math.min(column - prevColumn - 1, XLSX_MAX_CELL_GAP);
+      for (let index = 0; index < gap; index += 1) cells.push("");
+      prevColumn = column;
+    }
+    const type = /\bt="([a-zA-Z]+)"/.exec(cellAttrs)?.[1] ?? "n";
+    let raw: string;
+    if (type === "s") raw = xlsxSharedString(shared, cellValue);
+    else if (type === "inlineStr") raw = inlineBuffer;
+    else if (type === "b") raw = cellValue.trim() === "1" ? "TRUE" : cellValue.trim() === "0" ? "FALSE" : cellValue.trim();
+    else if (type === "e") raw = "";
+    else raw = cellValue.trim();
+    cells.push(finalizeXlsxCell(raw));
+  };
+
+  const closeRow = (): void => {
+    if (!inRow) return;
+    inRow = false;
+    const line = cells.join("\t").replace(/\t+$/, "");
+    cells = [];
+    prevColumn = -1;
+    if (line.trim().length > 0) rows.push(line);
+  };
+
+  XLSX_SHEET_TOKEN.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = XLSX_SHEET_TOKEN.exec(xml)) !== null) {
+    const closing = match[1] === "/";
+    const tag = match[2];
+    const attrs = match[3] ?? "";
+    const text = match[4] ?? "";
+    if (!closing && tag === "row") {
+      closeRow();
+      inRow = true;
+    } else if (closing && tag === "row") {
+      closeRow();
+    } else if (!closing && tag === "c") {
+      if (!inRow) inRow = true;
+      cellAttrs = attrs;
+      cellValue = "";
+      inlineBuffer = "";
+      inInlineString = false;
+      cellOpen = true;
+      // A self-closed `<c r="B2"/>` is an explicitly empty cell: it holds
+      // its column for gap purposes but contributes no value.
+      if (attrs.trimEnd().endsWith("/")) {
+        pushCell();
+        cellOpen = false;
+      }
+    } else if (closing && tag === "c") {
+      if (cellOpen) {
+        pushCell();
+        cellOpen = false;
+      }
+    } else if (!closing && tag === "v") {
+      if (cellOpen && !inInlineString) cellValue += text;
+    } else if (!closing && tag === "is") {
+      inInlineString = true;
+      inlineBuffer = "";
+    } else if (closing && tag === "is") {
+      inInlineString = false;
+    } else if (!closing && tag === "t") {
+      if (cellOpen && inInlineString) inlineBuffer += text;
+    }
+  }
+  closeRow();
+  return rows.join("\n");
+}
+
+function extractXlsx(bytes: Buffer): ExtractedDocument {
+  const { files, warnings } = readArchiveParts(
+    bytes,
+    (name) => name === "xl/sharedStrings.xml" || name === "xl/workbook.xml" || XLSX_SHEET_FILE.test(name),
+  );
+  const sheets = Object.keys(files)
+    .filter((name) => XLSX_SHEET_FILE.test(name))
+    .map((name) => ({ name, number: Number(XLSX_SHEET_FILE.exec(name)![1]) }))
+    .sort((a, b) => a.number - b.number);
+  if (sheets.length === 0) {
+    return { text: "", unreadable: true, warnings: [...warnings, "no sheets were found in the workbook"] };
+  }
+  const sharedXml = files["xl/sharedStrings.xml"];
+  const shared = parseXlsxSharedStrings(sharedXml ? Buffer.from(sharedXml).toString("utf8") : "");
+  const workbookXml = files["xl/workbook.xml"];
+  const names = workbookXml ? xlsxSheetNames(Buffer.from(workbookXml).toString("utf8")) : [];
+  const body = sheets
+    .map(({ name, number }, index) => {
+      const sheetName = names[index];
+      const header = sheetName ? `--- sheet ${number}: ${sheetName} ---` : `--- sheet ${number} ---`;
+      return `${header}\n${parseXlsxSheet(Buffer.from(files[name]!).toString("utf8"), shared)}`;
+    })
+    .join("\n\n")
+    .trim();
+  if (body.replace(/--- sheet \d+(?:: [^\n]*)? ---/g, "").trim().length === 0) {
+    return { text: body, noText: true, warnings: [...warnings, "no extractable text (empty)"] };
+  }
+  return { text: body, warnings };
+}
+
 /**
  * Extract readable text from a supported document. Resolves a structured
  * result for every input: never throws on malformed content (reported as
@@ -229,6 +436,7 @@ export async function extractDocumentText(kind: string, bytes: Buffer): Promise<
     if (kind === "pdf") return await extractPdf(bytes);
     if (kind === "docx") return extractDocx(bytes);
     if (kind === "pptx") return extractPptx(bytes);
+    if (kind === "xlsx") return extractXlsx(bytes);
     if (TEXT_KINDS.has(kind)) return { text: cleanText(bytes.toString("utf8")).trim(), warnings: [] };
     if (UNREADABLE_KINDS.has(kind)) {
       return { text: "", unreadable: true, warnings: [`${kind} text cannot be extracted; the file can still be stored`] };

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deriveMailSubject, mailboxReplyNeedsNoEmail, mailboxReplySubject, markdownToPlainText, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { deriveMailSubject, MAIL_SEND_CLAIM_TTL_MS, mailboxReplyNeedsNoEmail, mailboxReplySubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, markdownToPlainText, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
 import type { MailboxActor } from "./mailbox-bff.ts";
 
 const ACTOR: MailboxActor = {
@@ -307,5 +307,34 @@ describe("completion email attachments", () => {
 
     const payload = JSON.parse(bodies[0]!) as Record<string, unknown>;
     expect("attachments" in payload).toBe(false);
+  });
+});
+
+describe("record-then-send receipts", () => {
+  it("fingerprints the exact mail content, stable across calls", () => {
+    const fp = mailSendFingerprint(["a@test", "Sub", "Body"]);
+    expect(fp).toBe(mailSendFingerprint(["a@test", "Sub", "Body"]));
+    expect(fp).not.toBe(mailSendFingerprint(["a@test", "Sub", "Other body"]));
+    expect(fp).not.toBe(mailSendFingerprint(["b@test", "Sub", "Body"]));
+    expect(fp).toMatch(/^[0-9a-f]{64}$/);
+  });
+
+  it("treats legacy bare-true receipts as sent", () => {
+    expect(mailSendReceiptSent(true)).toBe(true);
+    expect(mailSendReceiptSent({ state: "sent" })).toBe(true);
+    expect(mailSendReceiptSent({ state: "claimed" })).toBe(false);
+    expect(mailSendReceiptSent(undefined)).toBe(false);
+    expect(mailSendReceiptSent(null)).toBe(false);
+    expect(mailSendReceiptSent("sent")).toBe(false);
+  });
+
+  it("treats only unexpired claims as in-flight", () => {
+    const now = 1_000_000;
+    expect(mailSendClaimFresh({ state: "claimed", at: now - 1_000 }, now)).toBe(true);
+    expect(mailSendClaimFresh({ state: "claimed", at: now - MAIL_SEND_CLAIM_TTL_MS }, now)).toBe(false);
+    expect(mailSendClaimFresh({ state: "claimed", at: now - MAIL_SEND_CLAIM_TTL_MS - 1 }, now)).toBe(false);
+    expect(mailSendClaimFresh({ state: "sent", at: now - 1_000 }, now)).toBe(false);
+    expect(mailSendClaimFresh(true, now)).toBe(false);
+    expect(mailSendClaimFresh(undefined, now)).toBe(false);
   });
 });

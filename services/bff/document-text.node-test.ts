@@ -3,36 +3,7 @@ import { test } from "node:test";
 import { strToU8, zipSync } from "fflate";
 
 import { extractDocumentText } from "./document-text.ts";
-
-/** A minimal, valid one-page PDF whose content stream draws the given lines.
- * Built here so the test exercises the real pdf parser, not a stub. */
-function minimalPdf(lines: string[]): Buffer {
-  const content = [
-    "BT",
-    "/F1 24 Tf",
-    "72 700 Td",
-    ...lines.flatMap((line, index) => (index === 0 ? [`(${line}) Tj`] : ["0 -36 Td", `(${line}) Tj`])),
-    "ET",
-  ].join("\n");
-  const objects = [
-    "<</Type/Catalog/Pages 2 0 R>>",
-    "<</Type/Pages/Kids[3 0 R]/Count 1>>",
-    "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
-    `<</Length ${Buffer.byteLength(content)}>>\nstream\n${content}\nendstream`,
-    "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((body, index) => {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
-  });
-  const xrefStart = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
-  return Buffer.from(pdf, "latin1");
-}
+import { minimalPdf, xlsx } from "./test-document-fixtures.ts";
 
 function docx(body: string): Buffer {
   return Buffer.from(zipSync({ "word/document.xml": strToU8(body) }));
@@ -84,6 +55,80 @@ test("PPTX slides are extracted in numeric order, not archive order", async () =
 test("plain text kinds are returned as UTF-8 text", async () => {
   const result = await extractDocumentText("csv", Buffer.from("company,raise\nNakato,1.5M\n"));
   assert.equal(result.text, "company,raise\nNakato,1.5M");
+});
+
+test("XLSX sheets are extracted as TSV with sheet boundaries", async () => {
+  const result = await extractDocumentText(
+    "xlsx",
+    xlsx({ Q1: [["rep", "deal"], ["amy", 7]], Q2: [["note", true]] }),
+  );
+  assert.equal(result.unreadable, undefined);
+  assert.match(result.text, /--- sheet 1: Q1 ---/);
+  assert.match(result.text, /rep\tdeal/);
+  assert.match(result.text, /amy\t7/);
+  assert.match(result.text, /--- sheet 2: Q2 ---/);
+  assert.match(result.text, /note\tTRUE/);
+});
+
+test("XLSX resolves shared strings, inline strings, booleans, and cached formula values", async () => {
+  const bytes = Buffer.from(zipSync({
+    "xl/workbook.xml": strToU8(`<workbook><sheets><sheet name="Mix" sheetId="1" r:id="rId1"/></sheets></workbook>`),
+    "xl/sharedStrings.xml": strToU8(`<sst count="2" uniqueCount="2"><si><t>Hello</t></si><si><t>R&amp;D</t></si></sst>`),
+    "xl/worksheets/sheet1.xml": strToU8(
+      `<worksheet><sheetData>` +
+      `<row r="1"><c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c></row>` +
+      `<row r="2"><c r="A2" t="inlineStr"><is><t>fresh</t></is></c><c r="B2" t="b"><v>0</v></c></row>` +
+      `<row r="3"><c r="A3"><f>SUM(1,2)</f><v>3</v></c><c r="B3" t="e"><v>#DIV/0!</v></c></row>` +
+      `</sheetData></worksheet>`,
+    ),
+  }));
+  const result = await extractDocumentText("xlsx", bytes);
+  assert.equal(result.unreadable, undefined);
+  assert.match(result.text, /--- sheet 1: Mix ---/);
+  assert.match(result.text, /Hello\tR&D/);
+  assert.match(result.text, /fresh\tFALSE/);
+  // Cached formula results are kept; the formula text itself is dropped.
+  assert.match(result.text, /\n3\t?$/);
+  assert.doesNotMatch(result.text, /SUM/);
+  assert.doesNotMatch(result.text, /DIV\/0/);
+});
+
+test("XLSX sparse cells keep column alignment without trailing tabs", async () => {
+  const bytes = Buffer.from(zipSync({
+    "xl/worksheets/sheet1.xml": strToU8(
+      `<worksheet><sheetData><row r="1"><c r="A1" t="inlineStr"><is><t>a</t></is></c>` +
+      `<c r="C1" t="inlineStr"><is><t>c</t></is></c><c r="D1"/></row></sheetData></worksheet>`,
+    ),
+  }));
+  const result = await extractDocumentText("xlsx", bytes);
+  assert.equal(result.unreadable, undefined);
+  assert.match(result.text, /a\t\tc/);
+  assert.doesNotMatch(result.text, /\t$/m);
+});
+
+test("XLSX dates stay serial and sheet names decode entities", async () => {
+  const result = await extractDocumentText("xlsx", xlsx({ "R&D": [[44927, "x"]] }));
+  assert.equal(result.unreadable, undefined);
+  assert.match(result.text, /--- sheet 1: R&D ---/);
+  assert.match(result.text, /44927\tx/);
+});
+
+test("a workbook with sheets but no values reports noText without failing", async () => {
+  const result = await extractDocumentText("xlsx", xlsx({ Empty: [] }));
+  assert.equal(result.noText, true);
+  assert.match(result.text, /--- sheet 1: Empty ---/);
+});
+
+test("a workbook with no sheets reports unreadable rather than empty success", async () => {
+  const result = await extractDocumentText("xlsx", xlsx({}));
+  assert.equal(result.unreadable, true);
+  assert.equal(result.text, "");
+});
+
+test("a malformed xlsx archive is reported unreadable, never thrown", async () => {
+  const result = await extractDocumentText("xlsx", Buffer.from("PK\x03\x04 not really a zip"));
+  assert.equal(result.unreadable, true);
+  assert.ok(result.warnings.length > 0);
 });
 
 test("legacy binary Office reports unreadable rather than empty success", async () => {

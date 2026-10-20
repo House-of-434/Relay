@@ -306,6 +306,19 @@ export function readCommandReceipt(kind: string, key: string): StoredCommandRece
   return row ?? null;
 }
 
+/** Insert or replace a command receipt outside a command transaction. Used
+ * for record-then-send flows (mailbox emails): the claim is written before
+ * the external send, then overwritten with the sent result after it. Unlike
+ * `withCommandReceipt` this never short-circuits — callers check first. */
+export function upsertCommandReceipt(kind: string, key: string, result: string, at: number): void {
+  db()
+    .prepare(
+      "INSERT INTO command_receipts(kind, key, at, result) VALUES (?, ?, ?, ?) " +
+      "ON CONFLICT(kind, key) DO UPDATE SET at = excluded.at, result = excluded.result",
+    )
+    .run(kind, key, at, result);
+}
+
 /** Run `apply` and record its receipt in ONE transaction on the transcript
  * DB, so a command's rows and the proof that it ran land together or not
  * at all. A receipt already present short-circuits: the stored result is

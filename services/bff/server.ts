@@ -1878,7 +1878,7 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
             mailboxUserId: config.relayMailboxUserId,
             now,
           }, actor, input);
-          return { filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.data };
+          return { filename: attachment.filename, mimeType: attachment.mimeType, data: attachment.bytes.toString("base64") };
         },
       });
       return;

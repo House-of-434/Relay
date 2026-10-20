@@ -4,10 +4,72 @@
 // with a bounded excerpt; the full thread lives in Relay. Server-only: this
 // is never a model-callable tool, and it is addressed only to the verified
 // sender already recorded on the conversation.
+import { createHash } from "node:crypto";
+
 import { fromMarkdown } from "mdast-util-from-markdown";
 
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { redactSecretsInText } from "./redact.ts";
+
+/** Durable receipt payload for record-then-send mailbox emails. A claim is
+ * written before the Gmail send; on success it is overwritten with the sent
+ * result. A stale claim (crash between claim and send) is retryable; a sent
+ * receipt suppresses every later attempt. */
+export interface MailSendReceipt {
+  state: "claimed" | "sent";
+  at: number;
+  /** Hash of the exact recipients + body sent, so a retry sends the same
+   * mail rather than a drifted one. */
+  fp: string;
+  sentId?: string | null;
+  gmailThreadId?: string | null;
+}
+
+/** Claims older than this with no sent result are treated as crashed
+ * attempts and may be retried, rather than suppressing forever. Sends here
+ * are a local hop plus a Gmail API call, so a minute comfortably covers an
+ * in-flight send; an in-process send is also protected by the memory sets,
+ * so this window only governs recovery after a crash. */
+export const MAIL_SEND_CLAIM_TTL_MS = 60 * 1000;
+
+/** Hash of the exact mail content, so a retried send is provably the same
+ * mail the claim was written for. */
+export function mailSendFingerprint(parts: ReadonlyArray<string | undefined>): string {
+  return createHash("sha256").update(parts.map((part) => part ?? "").join("\n")).digest("hex");
+}
+
+/** True when a stored receipt proves the mail went out. Accepts the legacy
+ * bare-`true` receipts written before record-then-send existed. */
+export function mailSendReceiptSent(result: unknown): boolean {
+  if (result === true) return true;
+  return typeof result === "object" && result !== null
+    && (result as { state?: unknown }).state === "sent";
+}
+
+/** True when a stored receipt is an unexpired claim from an in-flight or
+ * recently-crashed send: skip this tick, retry once it goes stale. */
+export function mailSendClaimFresh(result: unknown, nowMs: number): boolean {
+  if (typeof result !== "object" || result === null) return false;
+  const receipt = result as { state?: unknown; at?: unknown };
+  return receipt.state === "claimed"
+    && typeof receipt.at === "number"
+    && nowMs - receipt.at < MAIL_SEND_CLAIM_TTL_MS;
+}
+
+/** Gmail send ids from the BFF send route, for the receipt. Null when the
+ * send was never attempted (notifications off, mailbox unconfigured). */
+export interface MailSendIds {
+  sentId: string | null;
+  gmailThreadId: string | null;
+}
+
+function sentIdsOf(response: unknown): MailSendIds {
+  const sent = (response as { sent?: unknown }).sent as { id?: unknown; threadId?: unknown } | undefined;
+  return {
+    sentId: typeof sent?.id === "string" ? sent.id : null,
+    gmailThreadId: typeof sent?.threadId === "string" ? sent.threadId : null,
+  };
+}
 
 interface MdNode {
   type: string;
@@ -162,15 +224,16 @@ export async function sendMailboxAcknowledgement(input: {
   email: string;
   /** The subject of the mail being acknowledged, if any. */
   subject?: string;
-}): Promise<void> {
-  if (!mailboxNotifyEnabled()) return;
-  if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return;
-  await mailboxBffCall(input.capability, "/api/internal/gmail/send", {
+}): Promise<MailSendIds | null> {
+  if (!mailboxNotifyEnabled()) return null;
+  if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return null;
+  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/send", {
     to: [input.email],
     subject: mailboxReplySubject(input.subject),
     body: "Relay received your email and is working on it. You will get a follow-up with the result.\n",
     mailbox: "relay",
   }, input.actor);
+  return sentIdsOf(response);
 }
 
 /** A question the turn needs answered, delivered to an email sender who
@@ -188,8 +251,8 @@ export async function sendMailboxQuestionEmail(input: {
   choices?: readonly string[];
   /** Relay's public address, so the reply can link back to the full thread. */
   relayUrl?: string;
-}): Promise<boolean> {
-  if (!canSendMailboxEmail()) return false;
+}): Promise<MailSendIds | null> {
+  if (!canSendMailboxEmail()) return null;
   const question = markdownToPlainText(redactSecretsInText(input.question.trim())).trim().slice(0, 4_000);
   const choices = (input.choices ?? []).map((choice) => `- ${markdownToPlainText(redactSecretsInText(choice)).replace(/\s+/g, " ").trim()}`).filter((line) => line.length > 2);
   const body = [
@@ -201,13 +264,13 @@ export async function sendMailboxQuestionEmail(input: {
     "Reply to this email with your answer.",
     ...(input.relayUrl ? ["", `Open Relay to see the full thread: ${input.relayUrl}`] : []),
   ].join("\n");
-  await mailboxBffCall(input.capability, "/api/internal/gmail/send", {
+  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/send", {
     to: [input.email],
     subject: mailboxReplySubject(input.subject),
     body,
     mailbox: "relay",
   }, input.actor);
-  return true;
+  return sentIdsOf(response);
 }
 
 export async function sendMailboxCompletionEmail(input: {
@@ -223,19 +286,20 @@ export async function sendMailboxCompletionEmail(input: {
   /** Files the turn produced (a report, a document). Sent with the reply so a
    * long deliverable reaches the teammate as an attachment, not pasted text. */
   attachments?: ReadonlyArray<{ filename: string; mimeType: string; data: string }>;
-}): Promise<void> {
-  if (!mailboxNotifyEnabled()) return;
-  if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return;
+}): Promise<MailSendIds | null> {
+  if (!mailboxNotifyEnabled()) return null;
+  if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return null;
   const excerpt = markdownToPlainText(redactSecretsInText(input.detail.trim())).trim().slice(0, 4_000);
   const body = [
     excerpt || "Open Relay to see the result.",
     ...(input.relayUrl ? ["", `Open Relay to see the full thread: ${input.relayUrl}`] : []),
   ].join("\n");
-  await mailboxBffCall(input.capability, "/api/internal/gmail/send", {
+  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/send", {
     to: [input.email],
     subject: mailboxReplySubject(input.subject),
     body,
     mailbox: "relay",
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
   }, input.actor);
+  return sentIdsOf(response);
 }
