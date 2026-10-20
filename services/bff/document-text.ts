@@ -1,14 +1,14 @@
 // Document text extraction for email attachments.
 //
 // Format-aware, not domain-aware: this turns a document's bytes into readable
-// text with page/slide boundaries, and knows nothing about companies, Notion
+// text with page/slide/sheet boundaries, and knows nothing about companies, Notion
 // fields, or any workflow. Callers decide what the text means.
 //
 // Pure JavaScript (unpdf for PDF, fflate for OOXML zips): no LibreOffice, no
 // renderer, no OCR. A document whose text cannot be produced is reported
 // honestly (`unreadable`) rather than passed on as empty content. A document
 // with no usable text at all (a scanned PDF, an image-only or empty
-// DOCX/PPTX) yields `noText` so the caller can fall back to vision or ask
+// DOCX/PPTX/XLSX) yields `noText` so the caller can fall back to vision or ask
 // the sender, instead of treating the extraction as a success.
 //
 // Safety here is operational, not editorial: the caps below bound resources
@@ -26,7 +26,7 @@ export interface ExtractedDocument {
    * binary Office, ODF, or an archive that could not be parsed). */
   unreadable?: boolean;
   /** True when extraction ran but the document carries no usable text at all
-   * (a scanned/image-only PDF, or an image-only/empty DOCX/PPTX). The caller
+   * (a scanned/image-only PDF, or an image-only/empty DOCX/PPTX/XLSX). The caller
    * can look at the image instead. */
   noText?: boolean;
   /** Non-fatal notes, e.g. an archive part that was skipped. */
