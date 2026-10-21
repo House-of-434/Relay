@@ -421,6 +421,208 @@ test("a non-address in cc is refused before anything is sent", async () => {
   assert.equal(calls.some((call) => call.operation === "messages.send"), false);
 });
 
+interface ForwardPart {
+  attachmentId: string;
+  filename: string;
+  mimeType: string;
+  size?: number;
+  bytes?: Buffer;
+}
+
+/** A mailbox with real attachment parts, so the send route's forwarding
+ * resolution runs end to end instead of against a stub. */
+function forwardingGateway(
+  calls: GmailCall[],
+  messages: Record<string, ForwardPart[]>,
+): GoogleApiGateway {
+  const bytesById = new Map<string, Buffer>();
+  for (const parts of Object.values(messages)) {
+    for (const part of parts) bytesById.set(part.attachmentId, part.bytes ?? Buffer.from("forwarded bytes"));
+  }
+  const client = {
+    users: {
+      messages: {
+        get: async ({ id }: { id: string }) => {
+          calls.push({ userId: "", accountId: "", operation: `messages.get:${id}` });
+          const parts = messages[id];
+          if (!parts) throw new Error("message not found");
+          return {
+            data: {
+              id,
+              payload: {
+                parts: parts.map((part) => ({
+                  filename: part.filename,
+                  mimeType: part.mimeType,
+                  body: { attachmentId: part.attachmentId, ...(part.size === undefined ? {} : { size: part.size }) },
+                })),
+              },
+            },
+          };
+        },
+        attachments: {
+          get: async ({ id }: { messageId: string; id: string }) => {
+            calls.push({ userId: "", accountId: "", operation: `attachments.get:${id}` });
+            const bytes = bytesById.get(id);
+            if (!bytes) throw new Error("attachment not found");
+            return { data: { data: bytes.toString("base64url") } };
+          },
+        },
+        send: async ({ requestBody }: { requestBody?: { raw?: string } }) => {
+          calls.push({ userId: "", accountId: "", operation: "messages.send", raw: requestBody?.raw });
+          return { data: { id: "sent-1", threadId: "thread-1" } };
+        },
+      },
+    },
+  };
+  return {
+    withClient: async (
+      userId: string,
+      _service: string,
+      accountId: string,
+      scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => {
+      calls.push({ userId, accountId, operation: `withClient:${scopes.join("+")}` });
+      return operation(client);
+    },
+  } as unknown as GoogleApiGateway;
+}
+
+test("a forwarded attachment is fetched once and rides the send as a MIME part", async () => {
+  const calls: GmailCall[] = [];
+  const bytes = Buffer.from("forwarded report bytes");
+  const gateway = forwardingGateway(calls, {
+    "message-1": [
+      { attachmentId: "attachment-1", filename: "Deck.pdf", mimeType: "application/pdf", bytes },
+      { attachmentId: "attachment-2", filename: "Notes.md", mimeType: "text/markdown", bytes: Buffer.from("# notes") },
+    ],
+  });
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Forwarding",
+      body: "Here it is.",
+      attachments: [
+        { messageId: "message-1", attachmentId: "attachment-1" },
+        { messageId: "message-1", attachmentId: "attachment-2" },
+      ],
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls.filter((entry) => entry.operation === "messages.get:message-1").length, 1);
+  const raw = Buffer.from(calls.find((entry) => entry.operation === "messages.send")!.raw!, "base64url").toString("utf8");
+  assert.match(raw, /Content-Type: multipart\/mixed; boundary="relay_/);
+  assert.match(raw, /Content-Disposition: attachment; filename="Deck\.pdf"/);
+  assert.match(raw, /Content-Disposition: attachment; filename="Notes\.md"/);
+  assert.ok(raw.includes(bytes.toString("base64")), "the forwarded bytes are embedded in their part");
+});
+
+test("an attachment id from another message is refused before anything is sent", async () => {
+  const calls: GmailCall[] = [];
+  const gateway = forwardingGateway(calls, {
+    "message-1": [{ attachmentId: "attachment-1", filename: "Deck.pdf", mimeType: "application/pdf" }],
+    "message-2": [],
+  });
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Forwarding",
+      body: "Here it is.",
+      attachments: [{ messageId: "message-2", attachmentId: "attachment-1" }],
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.match((await response.json() as { error: string }).error, /not part of that message/);
+  assert.equal(calls.some((entry) => entry.operation === "messages.send"), false);
+});
+
+test("an executable attachment is refused before it is fetched", async () => {
+  const calls: GmailCall[] = [];
+  const gateway = forwardingGateway(calls, {
+    "message-1": [{ attachmentId: "attachment-1", filename: "setup.exe", mimeType: "application/x-msdownload" }],
+  });
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Forwarding",
+      body: "Here it is.",
+      attachments: [{ messageId: "message-1", attachmentId: "attachment-1" }],
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.match((await response.json() as { error: string }).error, /executable attachments are not allowed/);
+  assert.equal(calls.some((entry) => entry.operation === "messages.send"), false);
+  assert.equal(calls.some((entry) => entry.operation === "attachments.get:attachment-1"), false);
+});
+
+test("a forwarded attachment over the outbound cap is refused", async () => {
+  const calls: GmailCall[] = [];
+  const gateway = forwardingGateway(calls, {
+    "message-1": [{
+      attachmentId: "attachment-1",
+      filename: "Huge.pdf",
+      mimeType: "application/pdf",
+      size: 21 * 1024 * 1024,
+    }],
+  });
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Forwarding",
+      body: "Here it is.",
+      attachments: [{ messageId: "message-1", attachmentId: "attachment-1" }],
+    }),
+  });
+
+  assert.equal(response.status, 413);
+  assert.match((await response.json() as { error: string }).error, /too large/);
+  assert.equal(calls.some((entry) => entry.operation === "messages.send"), false);
+  assert.equal(calls.some((entry) => entry.operation === "attachments.get:attachment-1"), false);
+});
+
 test("no send or message-mutating Gmail operation is routed", () => {
   for (const path of [
     INTERNAL_GMAIL_MESSAGES_LIST,

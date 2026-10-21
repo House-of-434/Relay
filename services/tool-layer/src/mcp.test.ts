@@ -216,6 +216,44 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
   assert.deepEqual(await names("curator"), ["get_meeting_transcript", "relay_read", "relay_write", "search_meetings"], "curator");
 });
 
+test("the Gmail send schema stays flat so engines cannot flatten it away", async () => {
+  const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
+  const database = {
+    async verifyRelayProject() {},
+    authenticateActorAssertion(value: string) {
+      return JSON.parse(value);
+    },
+  } as unknown as RelayDatabase;
+
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent: "mercury" }, SECRET);
+  const server = await createRelayToolServer(database, 0);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const client = new Client({ name: "schema-shape-test", version: "0.1.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${(address as { port: number }).port}/mcp/mercury`), {
+    requestInit: { headers: { "x-relay-actor-user": assertion } },
+  });
+  try {
+    await client.connect(transport);
+    const { tools } = await client.listTools();
+    const send = tools.find((tool) => tool.name === "gmail_send_email");
+    assert.ok(send?.inputSchema);
+    const serialized = JSON.stringify(send.inputSchema);
+    // Several engines drop or mangle composition keywords when converting MCP
+    // schemas to function calls, so the attachment branch must stay one flat
+    // object (source + optional fields).
+    assert.doesNotMatch(serialized, /"(?:anyOf|oneOf|allOf|not)"/);
+    const attachments = send.inputSchema.properties?.attachments as { items?: { properties?: Record<string, unknown> } } | undefined;
+    assert.ok(attachments?.items?.properties);
+    assert.deepEqual(Object.keys(attachments.items.properties).sort(), [
+      "attachmentId", "filename", "messageId", "ref", "source",
+    ]);
+  } finally {
+    await client.close();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
 test("unauthenticated MCP callers cannot reach relay data", async () => {
   const database = {
     async verifyRelayProject() {},

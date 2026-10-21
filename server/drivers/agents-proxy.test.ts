@@ -34,7 +34,7 @@ let execStatus = 200;
 let execResponse: unknown = { exitCode: 0, stdout: "PDF_OK\n", stderr: "", timedOut: false };
 let lastAttachBody: any = null;
 let attachStatus = 200;
-let attachResponse: unknown = { ok: true, name: "report.pdf", bytes: 48639 };
+let attachResponse: unknown = { ok: true, name: "report.pdf", bytes: 48639, ref: "3f2504e0-4f89-41d3-9a0c-0305e82c3301.pdf" };
 let postCalls = 0;
 let postResponse: unknown = { ok: true, messageId: "msg-1", roomName: "Launch" };
 const DEFAULT_AGENTS = { bots: [{ id: "bot-helper", name: "Helper", model: "fake-model", busy: false }] };
@@ -642,7 +642,6 @@ describe("agents-proxy MCP surface", () => {
       "propose_routine_action",
       "propose_profile",
       "propose_calendar_invite",
-      "propose_email_send",
       "propose_model",
       "skills_list",
       "skill_manage",
@@ -894,6 +893,8 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.content[0].text).toContain("Attached report.pdf");
     expect(res.result.content[0].text).toContain("48639 bytes");
     expect(res.result.content[0].text).toContain("never quote its contents");
+    // The opaque store name is the handle gmail_send_email accepts; no path.
+    expect(res.result.content[0].text).toContain('"ref":"3f2504e0-4f89-41d3-9a0c-0305e82c3301.pdf"');
     // who is attaching comes from the harness capability, never from arguments
     expect(lastAttachBody).toEqual({ path: "/home/cua/workspace/report.pdf", name: "Q3 report.pdf" });
     await callTool("attach_file", { path: "clip.mp4" });
@@ -907,7 +908,7 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBe(true);
     expect(res.result.content[0].text).toContain("Supported: images");
     attachStatus = 200;
-    attachResponse = { ok: true, name: "report.pdf", bytes: 48639 };
+    attachResponse = { ok: true, name: "report.pdf", bytes: 48639, ref: "3f2504e0-4f89-41d3-9a0c-0305e82c3301.pdf" };
   });
 
   it("hands a harness refusal to the model verbatim", async () => {

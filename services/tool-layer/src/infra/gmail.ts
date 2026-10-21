@@ -34,6 +34,12 @@ export interface GmailSentMessage {
   threadId?: string | null;
 }
 
+/** Bytes already resolved from the attachment store, or an inbound ref the
+ * BFF resolves against the mailbox the send is from. */
+export type GmailSendAttachment =
+  | { filename: string; mimeType: string; data: string }
+  | { messageId: string; attachmentId: string };
+
 export interface GmailAttachment {
   id: string;
   filename: string;
@@ -139,7 +145,10 @@ export class RelayGmailClient {
     );
   }
 
-  sendEmail(actorAssertion: string, input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string }) {
+  sendEmail(
+    actorAssertion: string,
+    input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; attachments?: GmailSendAttachment[] },
+  ) {
     return this.call<{ account: { email: string }; sent: { id?: string | null; threadId?: string | null }; to: string[]; cc: string[]; bcc: string[] }>(
       GMAIL_INTERNAL_PATHS.send,
       actorAssertion,

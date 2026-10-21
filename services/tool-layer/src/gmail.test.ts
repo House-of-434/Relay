@@ -74,6 +74,33 @@ test("sendEmail forwards cc and bcc unchanged", async () => {
   });
 });
 
+test("sendEmail forwards resolved and inbound attachments unchanged", async () => {
+  const seen: Array<{ url: string; init: RequestInit }> = [];
+  const client = new RelayGmailClient({
+    bffInternalUrl: "http://127.0.0.1:8798/",
+    capability: CAPABILITY,
+    fetcher: (async (input: string | URL, init: RequestInit = {}) => {
+      seen.push({ url: String(input), init });
+      return Response.json({ account: { email: "one@example.com" }, sent: {}, to: [], cc: [], bcc: [] });
+    }) as typeof fetch,
+  });
+
+  await client.sendEmail(ACTOR, {
+    to: ["a@b.test"],
+    subject: "Report",
+    body: "Attached.",
+    attachments: [
+      { filename: "report.pdf", mimeType: "application/pdf", data: "cmVwb3J0" },
+      { messageId: "m-1", attachmentId: "a-1" },
+    ],
+  });
+
+  assert.deepEqual(JSON.parse(String(seen[0]!.init.body)).attachments, [
+    { filename: "report.pdf", mimeType: "application/pdf", data: "cmVwb3J0" },
+    { messageId: "m-1", attachmentId: "a-1" },
+  ]);
+});
+
 test("the Gmail client refuses to run without a usable capability", async () => {
   let called = false;
   const client = new RelayGmailClient({

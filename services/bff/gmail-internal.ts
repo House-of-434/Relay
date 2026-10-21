@@ -40,6 +40,21 @@ const MAX_OUTBOUND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_OUTBOUND_TOTAL_BYTES = 25 * 1024 * 1024;
 const MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_OUTBOUND_ATTACHMENT_BYTES / 3) * 4;
 
+/** Files an outbound message may never carry. Gmail rejects some itself and
+ * silently rewrites others; refusing here makes the refusal legible. */
+const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
+  "exe", "bat", "cmd", "com", "scr", "msi", "ps1", "sh", "dll", "jar", "app", "dmg", "pkg",
+  "vbs", "wsf", "lnk", "iso", "apk", "deb", "rpm", "reg", "hta", "cpl", "msc",
+]);
+const BLOCKED_ATTACHMENT_MIME = /^application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive)$/i;
+
+function assertSendableAttachment(filename: string, mimeType: string): void {
+  const extension = filename.toLowerCase().split(".").pop() ?? "";
+  if (BLOCKED_ATTACHMENT_EXTENSIONS.has(extension) || BLOCKED_ATTACHMENT_MIME.test(mimeType.trim())) {
+    throw new AttachmentRequestError(400, "executable attachments are not allowed");
+  }
+}
+
 /** Which connected mailbox a request means: the actor's own account, or
  * Relay's shared mailbox (read/search, plus server-sent notifications). */
 const MAILBOX_INPUT = z.enum(["own", "relay"]).optional();
@@ -67,11 +82,17 @@ const sendSchema = z.object({
   bcc: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).max(20).optional(),
   subject: z.string().max(MAX_SUBJECT_LENGTH),
   body: z.string().max(MAX_BODY_LENGTH),
-  attachments: z.array(z.object({
-    filename: z.string().min(1).max(MAX_FILENAME_LENGTH),
-    mimeType: z.string().min(1).max(MAX_MIME_LENGTH),
-    data: z.string().min(1).max(MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH),
-  }).strict()).max(MAX_OUTBOUND_ATTACHMENTS).optional(),
+  attachments: z.array(z.union([
+    z.object({
+      filename: z.string().min(1).max(MAX_FILENAME_LENGTH),
+      mimeType: z.string().min(1).max(MAX_MIME_LENGTH),
+      data: z.string().min(1).max(MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH),
+    }).strict(),
+    z.object({
+      messageId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH),
+      attachmentId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH),
+    }).strict(),
+  ])).max(MAX_OUTBOUND_ATTACHMENTS).optional(),
   mailbox: MAILBOX_INPUT,
 }).strict();
 
@@ -170,6 +191,7 @@ function buildRawEmail(input: {
     }
     const name = mimeParamValue(attachment.filename);
     const mimeType = safeMimeType(attachment.mimeType);
+    assertSendableAttachment(attachment.filename, mimeType);
     parts.push(
       `--${boundary}`,
       `Content-Type: ${mimeType}; name="${name}"`,
@@ -401,6 +423,97 @@ function findAttachmentPart(
   return found;
 }
 
+/** The slice of the Gmail client the two attachment readers share. */
+interface AttachmentReader {
+  users: {
+    messages: {
+      attachments: {
+        get(input: { userId: string; messageId: string; id: string }): Promise<{ data?: { data?: string | null } | null }>;
+      };
+    };
+  };
+}
+
+interface RawAttachmentBytes {
+  filename: string;
+  mimeType: string;
+  size: number;
+  data: string;
+}
+
+/** Fetch one part's bytes. The caller resolved the part from this exact
+ * message, so the id can never name a part of another message. */
+async function readAttachmentBytes(
+  client: AttachmentReader,
+  part: GmailPayloadPart,
+  input: { messageId: string; attachmentId: string },
+  maxBytes: number,
+): Promise<RawAttachmentBytes> {
+  const filename = bounded(typeof part.filename === "string" ? part.filename : "", MAX_FILENAME_LENGTH);
+  const mimeType = bounded(
+    typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "application/octet-stream",
+    MAX_MIME_LENGTH,
+  );
+  // Check the declared size first so an oversized part is refused without
+  // asking Google for its bytes.
+  const declaredSize = part.body?.size;
+  if (typeof declaredSize === "number" && declaredSize > maxBytes) {
+    throw new AttachmentRequestError(413, "attachment is too large");
+  }
+  const fetched = await client.users.messages.attachments.get({
+    userId: "me",
+    messageId: input.messageId,
+    id: input.attachmentId,
+  });
+  const encoded = fetched.data?.data;
+  if (typeof encoded !== "string" || !encoded) {
+    throw new AttachmentRequestError(502, "Gmail request failed");
+  }
+  const bytes = Buffer.from(encoded, "base64url");
+  if (bytes.length === 0) throw new AttachmentRequestError(400, "attachment is empty");
+  if (bytes.length > maxBytes) throw new AttachmentRequestError(413, "attachment is too large");
+  return { filename, mimeType, size: bytes.length, data: bytes.toString("base64") };
+}
+
+/** Resolve forwarded attachment ids against the mailbox the send is from.
+ * Each message is fetched once per send, however many of its parts are
+ * forwarded, and every id is checked against that same payload. */
+async function resolveInboundSendAttachments(
+  options: InternalGmailOptions,
+  account: GoogleConnectionMetadata,
+  ownerUserId: string,
+  refs: ReadonlyArray<{ messageId: string; attachmentId: string }>,
+): Promise<Array<{ filename: string; mimeType: string; data: string }>> {
+  return options.googleApi.withClient(
+    ownerUserId,
+    "gmail",
+    account.id,
+    [GOOGLE_API_SCOPE_CATALOG.gmail.read],
+    async (client) => {
+      const payloads = new Map<string, GmailPayloadPart | undefined>();
+      const out: Array<{ filename: string; mimeType: string; data: string }> = [];
+      for (const ref of refs) {
+        if (!payloads.has(ref.messageId)) {
+          const full = await client.users.messages.get({ userId: "me", id: ref.messageId, format: "full" });
+          payloads.set(ref.messageId, full.data.payload as GmailPayloadPart | undefined);
+        }
+        const part = findAttachmentPart(payloads.get(ref.messageId), ref.attachmentId);
+        if (!part) {
+          throw new AttachmentRequestError(400, "an attachment you named is not part of that message");
+        }
+        // Refuse a blocked type before asking Google for its bytes.
+        assertSendableAttachment(
+          typeof part.filename === "string" ? part.filename : "",
+          typeof part.mimeType === "string" ? part.mimeType : "",
+        );
+        const bytes = await readAttachmentBytes(client, part, ref, MAX_OUTBOUND_ATTACHMENT_BYTES);
+        out.push({ filename: bytes.filename || "attachment", mimeType: bytes.mimeType, data: bytes.data });
+      }
+      return out;
+    },
+  );
+}
+
 interface ResolvedMailbox {
   account: GoogleConnectionMetadata;
   /** The user id whose stored credential opens this mailbox: the actor for
@@ -469,39 +582,10 @@ export async function fetchGmailAttachment(
       // message: an id from another message can never be smuggled in.
       const part = findAttachmentPart(full.data.payload as GmailPayloadPart | undefined, input.attachmentId);
       if (!part) throw new AttachmentRequestError(404, "attachment not found");
-      const declaredSize = part.body?.size;
-      if (typeof declaredSize === "number" && declaredSize > ATTACHMENT_MAX_BYTES) {
-        throw new AttachmentRequestError(413, "attachment is too large to open");
-      }
-      const fetched = await client.users.messages.attachments.get({
-        userId: "me",
-        messageId: input.messageId,
-        id: input.attachmentId,
-      });
-      const encoded = fetched.data?.data;
-      if (typeof encoded !== "string" || !encoded) {
-        throw new AttachmentRequestError(502, "Gmail request failed");
-      }
-      let bytes: Buffer;
-      try {
-        bytes = Buffer.from(encoded, "base64url");
-      } catch {
-        throw new AttachmentRequestError(502, "Gmail request failed");
-      }
-      if (bytes.length === 0 || bytes.length > ATTACHMENT_MAX_BYTES) {
-        throw new AttachmentRequestError(
-          bytes.length === 0 ? 400 : 413,
-          bytes.length === 0 ? "attachment is empty" : "attachment is too large to open",
-        );
-      }
-      const filename = bounded(typeof part.filename === "string" ? part.filename : "", MAX_FILENAME_LENGTH);
-      const mimeType = bounded(
-        typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "application/octet-stream",
-        MAX_MIME_LENGTH,
-      );
-      const kind = classifyAttachment(mimeType, filename, bytes);
+      const bytes = await readAttachmentBytes(client, part, input, ATTACHMENT_MAX_BYTES);
+      const kind = classifyAttachment(bytes.mimeType, bytes.filename, Buffer.from(bytes.data, "base64"));
       if (!kind) throw new AttachmentRequestError(400, "unsupported attachment type");
-      return { id: input.attachmentId, filename, mimeType, kind, size: bytes.length, data: bytes.toString("base64") };
+      return { id: input.attachmentId, ...bytes, kind };
     },
   );
   return { email: account.email, attachment };
@@ -682,7 +766,25 @@ export async function handleInternalGmail(
     // the model might have changed since.
     const cc = parsed.data.cc ?? [];
     const bcc = parsed.data.bcc ?? [];
-    const attachments = parsed.data.attachments ?? [];
+    const requested = parsed.data.attachments ?? [];
+    const inbound = requested.filter(
+      (entry): entry is { messageId: string; attachmentId: string } => "messageId" in entry,
+    );
+    const inline = requested.filter(
+      (entry): entry is { filename: string; mimeType: string; data: string } => !("messageId" in entry),
+    );
+    let attachments: Array<{ filename: string; mimeType: string; data: string }>;
+    try {
+      attachments = inbound.length
+        ? [...inline, ...(await resolveInboundSendAttachments(options, account, ownerUserId, inbound))]
+        : inline;
+    } catch (error) {
+      if (error instanceof AttachmentRequestError) {
+        json(res, error.status, { error: error.message });
+        return;
+      }
+      throw error;
+    }
     let rawMessage: string;
     try {
       rawMessage = buildRawEmail({

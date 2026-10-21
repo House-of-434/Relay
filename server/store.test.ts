@@ -70,6 +70,28 @@ describe("Store", () => {
     expect(store.bot(seeded.id)!.approvalMode).toBe("ask");
   });
 
+  it("upgrades a seeded agent's retired soul verbatim but never a customized one", () => {
+    const replaced = new Store(selection);
+    const seeded = replaced.createBot({ name: "Mercury", soul: "old seed" }, { relayAgent: "mercury" });
+    replaced.seedRelayAgentsForOwner(undefined, [{
+      role: "mercury",
+      profile: { name: "Mercury", soul: "new seed" },
+      replacesSoulHashes: [soulHash("old seed")],
+    }]);
+    expect(replaced.bot(seeded.id)!.soul).toBe("new seed");
+    expect(replaced.bot(seeded.id)!.soulDrift).toBeFalsy();
+
+    // A soul somebody edited has a different hash, so it is never overwritten.
+    const customized = new Store(selection);
+    const edited = customized.createBot({ name: "Mercury", soul: "my own rules" }, { relayAgent: "mercury" });
+    customized.seedRelayAgentsForOwner(undefined, [{
+      role: "mercury",
+      profile: { name: "Mercury", soul: "new seed" },
+      replacesSoulHashes: [soulHash("old seed")],
+    }]);
+    expect(customized.bot(edited.id)!.soul).toBe("my own rules");
+  });
+
   it("renames populated teams without changing members, conversations, grants or computer identity", () => {
     const store = new Store(selection);
     const chief = store.createBot({ section: "Delivery" });
