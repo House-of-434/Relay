@@ -8,7 +8,7 @@ import { writeFileAtomic } from "./atomic.ts";
 import { rm as removeDirectory } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { extname, join, resolve, sep } from "node:path";
+import { basename, extname, join, resolve, sep } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
 
 import { z } from "zod";
@@ -15254,7 +15254,9 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const label = saved.attachment.kind === "file"
             ? saved.attachment.name
             : (requestedName?.trim() || requestedPath.split(/[\\/]/).at(-1) || "image");
-          return json(res, 200, { ok: true, name: label, bytes: saved.bytes });
+          // The store name is opaque and path-free: the model can hand it back
+          // to gmail_send_email without ever seeing an absolute path.
+          return json(res, 200, { ok: true, name: label, bytes: saved.bytes, ref: basename(saved.attachment.path) });
         } catch (error) {
           const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 500;
           const message = status === 404
@@ -15461,7 +15463,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       }
       if (method === "POST" && path === "/api/internal/connector-action-requests") {
         const parsed = z.object({
-          kind: z.enum(["calendar-invite", "gmail-send"]),
+          kind: z.literal("calendar-invite"),
           fromBotId: z.string().min(1).max(128),
           fromThreadId: z.string().min(1).max(128),
           target: z.unknown(),
@@ -15480,7 +15482,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         let action;
         try {
           action = connectorActions.submit({
-            kind: body.kind,
             target: body.target,
             botId: from.id,
             threadId: body.fromThreadId,
@@ -15489,7 +15490,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (error instanceof ConnectorActionError) return json(res, error.status, { error: error.message });
           throw error;
         }
-        const display = connectorActionDisplay(action.kind, action.target);
+        const display = connectorActionDisplay(action.target);
         const message = store.appendMessage(body.fromThreadId, {
           role: "bot",
           kind: "options",
@@ -15498,13 +15499,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             subtitle: `${display.subtitle}\n\n${display.detail}`,
             options: ["Confirm", "Cancel"],
             requestId: action.requestId,
-            tool: action.kind === "calendar-invite" ? "calendar_create_event" : "gmail_send_email",
+            tool: "calendar_create_event",
           },
           from: owner.group ? { botId: from.id, name: from.name, color: from.color } : undefined,
         });
         appendDecision(DATA_DIR, {
           threadId: body.fromThreadId, requestId: action.requestId, botId: from.id, botName: from.name,
-          tool: action.kind === "calendar-invite" ? "calendar_create_event" : "gmail_send_email",
+          tool: "calendar_create_event",
           summary: display.detail, decision: "card-shown", source: "connector-scope",
         });
         return json(res, 201, { requestId: action.requestId, messageId: message.id, title: display.title, summary: display.detail });
@@ -20658,7 +20659,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (behavior !== "allow") {
             appendDecision(DATA_DIR, {
               threadId, requestId, botId: bot.id, botName: bot.name,
-              tool: action.kind === "calendar-invite" ? "calendar_create_event" : "gmail_send_email",
+              tool: "calendar_create_event",
               summary: "user declined the confirmation", decision: "user-denied", source: "connector-scope",
             });
             connectorActions.settle(requestId, "declined");
@@ -20678,32 +20679,19 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           if (!proposedBy?.ownerUserId || !role || !toolUrl) {
             return json(res, 403, { error: "connector actions are unavailable" });
           }
-          const { tool, args } = action.kind === "calendar-invite"
-            ? {
-              tool: "calendar_create_event",
-              args: {
-                summary: (action.target as { summary: string }).summary,
-                start: (action.target as { start: unknown }).start,
-                end: (action.target as { end: unknown }).end,
-                attendees: (action.target as { attendees: string[] }).attendees,
-                description: (action.target as { description?: string }).description,
-                location: (action.target as { location?: string }).location,
-                timeZone: (action.target as { timeZone?: string }).timeZone,
-                // The confirmation this branch just verified is what asks
-                // Google to email the guests.
-                notify: "yes",
-              },
-            }
-            : {
-              tool: "gmail_send_email",
-              args: {
-                to: (action.target as { to: string[] }).to,
-                cc: (action.target as { cc?: string[] }).cc ?? [],
-                bcc: (action.target as { bcc?: string[] }).bcc ?? [],
-                subject: (action.target as { subject: string }).subject,
-                body: (action.target as { body: string }).body,
-              },
-            };
+          const tool = "calendar_create_event";
+          const args = {
+            summary: action.target.summary,
+            start: action.target.start,
+            end: action.target.end,
+            attendees: action.target.attendees,
+            description: action.target.description,
+            location: action.target.location,
+            timeZone: action.target.timeZone,
+            // The confirmation this branch just verified is what asks Google
+            // to email the guests.
+            notify: "yes",
+          };
           let assertion: string;
           try {
             assertion = signedActorContext(
@@ -20725,13 +20713,12 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           }
           appendDecision(DATA_DIR, {
             threadId, requestId, botId: bot.id, botName: bot.name, tool,
-            summary: action.kind === "calendar-invite" ? "event created and invitations sent" : "email sent",
+            summary: "event created and invitations sent",
             decision: "user-approved", source: "connector-scope",
           });
-          const outcome = action.kind === "calendar-invite" ? "created" : "sent";
-          connectorActions.settle(requestId, outcome);
+          connectorActions.settle(requestId, "created");
           settleCard("allow");
-          return json(res, 200, { ok: true, outcome });
+          return json(res, 200, { ok: true, outcome: "created" });
         }
         // One-shot deep research: the pending job is server-side only. On
         // confirmation this opens ONE dedicated research thread through the

@@ -8,6 +8,14 @@ export function toolPort(env: NodeJS.ProcessEnv = process.env): number {
   return Number(env.RELAY_TOOL_PORT ?? "8787");
 }
 
+/** The Relay data directory. Compose mounts the same volume into the app and
+ * the Tool Layer and sets RELAY_DATA_DIR in the image, so the attachment
+ * store a bot writes with attach_file is readable here too. */
+export function dataDir(env: NodeJS.ProcessEnv = process.env): string {
+  const configured = env.RELAY_DATA_DIR?.trim();
+  return configured || join(homedir(), ".relay");
+}
+
 /** Bind host for the Tool Layer HTTP server. Loopback by default, so a bare
  * process stays single-host. A compose deployment overrides it to listen on
  * the container's interface while the HMAC actor assertion remains the real

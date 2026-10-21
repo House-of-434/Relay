@@ -3,20 +3,18 @@ import { z } from "zod";
 import { newId } from "./contracts.ts";
 
 /**
- * User-confirmed Google actions. The card the user sees is display-only: the
- * pending action lives here, keyed by requestId, and the resolve path looks
+ * User-confirmed calendar invites. The card the user sees is display-only: the
+ * pending invite lives here, keyed by requestId, and the resolve path looks
  * it up instead of trusting anything on the wire. No wire payload was added
- * for these on purpose — the draft id and event id must never reach the
- * browser, where they could be substituted.
+ * for this on purpose — the event id must never reach the
+ * browser, where it could be substituted. Email sends keep no pending store
+ * here; the agent shows the draft in chat and the tool-call log is the audit trail.
  */
 
 export const CONNECTOR_ACTION_TTL_MS = 15 * 60 * 1000;
 const MAX_PENDING_PER_THREAD = 10;
 const MAX_EMAILS = 20;
 const MAX_ADDRESS = 320;
-const MAX_SUBJECT = 250;
-const MAX_BODY = 20_000;
-const MAX_DISPLAY_BODY = 2_000;
 const MAX_DISPLAY_ATTENDEES = 10;
 
 const email = z.string().email().max(MAX_ADDRESS);
@@ -36,16 +34,6 @@ const calendarInviteSchema = z.object({
   timeZone: z.string().min(1).max(64).optional(),
 }).strict();
 
-const emailSendSchema = z.object({
-  to: z.array(email).min(1).max(MAX_EMAILS),
-  cc: z.array(email).max(MAX_EMAILS).optional(),
-  bcc: z.array(email).max(MAX_EMAILS).optional(),
-  subject: z.string().max(MAX_SUBJECT),
-  body: z.string().min(1).max(MAX_BODY),
-}).strict();
-
-export type ConnectorActionKind = "calendar-invite" | "gmail-send";
-
 export interface CalendarInviteTarget {
   summary: string;
   start: { dateTime?: string; date?: string; timeZone?: string };
@@ -57,19 +45,10 @@ export interface CalendarInviteTarget {
   timeZone?: string;
 }
 
-export interface GmailSendTarget {
-  to: string[];
-  cc?: string[];
-  bcc?: string[];
-  subject: string;
-  body: string;
-}
-
-export type ConnectorActionTarget = CalendarInviteTarget | GmailSendTarget;
+export type ConnectorActionTarget = CalendarInviteTarget;
 
 export interface PendingConnectorAction {
   requestId: string;
-  kind: ConnectorActionKind;
   target: ConnectorActionTarget;
   botId: string;
   threadId: string;
@@ -91,37 +70,16 @@ function attendeeNames(attendees: string[]): string {
   return rest > 0 ? `${shown.join(", ")} and ${rest} more` : shown.join(", ");
 }
 
-export function connectorActionDisplay(kind: ConnectorActionKind, target: ConnectorActionTarget): {
+export function connectorActionDisplay(target: ConnectorActionTarget): {
   title: string;
   subtitle: string;
   detail: string;
 } {
-  if (kind === "calendar-invite") {
-    const invite = target as CalendarInviteTarget;
-    return {
-      title: "Confirm event and invitations",
-      subtitle: `${invite.summary} · ${invite.when}`,
-      detail: `Attendees (${invite.attendees.length}): ${attendeeNames(invite.attendees)}\n\nConfirming creates this on your primary calendar and Google emails invitations to ${invite.attendees.length === 1 ? "this attendee" : "all these attendees"}.`,
-    };
-  }
-  const send = target as GmailSendTarget;
-  const body = send.body.length > MAX_DISPLAY_BODY
-    ? `${send.body.slice(0, MAX_DISPLAY_BODY)}\n\n…(truncated for display; the full text will be sent)`
-    : send.body;
-  const cc = send.cc ?? [];
-  const bcc = send.bcc ?? [];
-  const total = send.to.length + cc.length + bcc.length;
-  // Bcc is invisible by design, so it is rendered as its own line: a hidden
-  // recipient must never slip past the owner unnoticed.
-  const lines = [
-    `To: ${attendeeNames(send.to)}`,
-    ...(cc.length ? [`Cc: ${attendeeNames(cc)}`] : []),
-    ...(bcc.length ? [`Bcc (hidden from other recipients): ${attendeeNames(bcc)}`] : []),
-  ];
+  const invite = target;
   return {
-    title: "Confirm email",
-    subtitle: lines.join("\n"),
-    detail: `Subject: ${send.subject || "(no subject)"}\n\n${body}\n\nThis message will be sent to ${total === 1 ? "1 recipient" : `${total} recipients`}.`,
+    title: "Confirm event and invitations",
+    subtitle: `${invite.summary} · ${invite.when}`,
+    detail: `Attendees (${invite.attendees.length}): ${attendeeNames(invite.attendees)}\n\nConfirming creates this on your primary calendar and Google emails invitations to ${invite.attendees.length === 1 ? "this attendee" : "all these attendees"}.`,
   };
 }
 
@@ -142,14 +100,11 @@ export class PendingConnectorActions {
   }
 
   submit(args: {
-    kind: ConnectorActionKind;
     target: unknown;
     botId: string;
     threadId: string;
   }): PendingConnectorAction {
-    const parsed = args.kind === "calendar-invite"
-      ? calendarInviteSchema.safeParse(args.target)
-      : emailSendSchema.safeParse(args.target);
+    const parsed = calendarInviteSchema.safeParse(args.target);
     if (!parsed.success) throw new ConnectorActionError("invalid connector action", 400);
 
     this.evictExpired();
@@ -160,8 +115,7 @@ export class PendingConnectorActions {
 
     const action: PendingConnectorAction = {
       requestId: newId(),
-      kind: args.kind,
-      target: parsed.data as ConnectorActionTarget,
+      target: parsed.data,
       botId: args.botId,
       threadId: args.threadId,
       createdAt: this.now(),

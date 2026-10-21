@@ -457,7 +457,12 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       body: JSON.stringify({ path: args.path, ...(typeof args.name === "string" ? { name: args.name } : {}) }),
     });
     if (!ok) return { text: String(body.error ?? "Could not attach that file."), isError: true };
-    return { text: `Attached ${String(body.name ?? "the file")} (${Number(body.bytes ?? 0)} bytes). It now appears in the chat with a preview: reply with just the file name and never quote its contents.` };
+    const name = String(body.name ?? "the file");
+    const ref = typeof body.ref === "string" ? body.ref : "";
+    return {
+      text: `Attached ${name} (${Number(body.bytes ?? 0)} bytes). It now appears in the chat with a preview: reply with just the file name and never quote its contents.`
+        + (ref ? ` To email it, pass {"source":"attachment","ref":"${ref}"} in the attachments of gmail_send_email.` : ""),
+    };
   }
   if (name === "create_options_card") {
     if (BOT_ID !== WATCHER_OPTIONS_CARD_BOT_ID) {
@@ -1081,36 +1086,6 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       }),
     });
     return confirmationResult(r, "the calendar invitation", "invite");
-  }
-  if (name === "propose_email_send") {
-    const recipients = Array.isArray(args.to) ? args.to : [];
-    const copied = Array.isArray(args.cc) ? args.cc : [];
-    const blind = Array.isArray(args.bcc) ? args.bcc : [];
-    const validAddresses = (list: unknown[]) => list.length <= 20
-      && list.every((email) => typeof email === "string" && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email));
-    if (recipients.length < 1 || recipients.length > 20 || !validAddresses(recipients)
-      || !validAddresses(copied) || !validAddresses(blind)
-      || typeof args.subject !== "string" || args.subject.length > 250
-      || typeof args.body !== "string" || !args.body.trim() || args.body.length > 20000) {
-      return { text: "propose_email_send needs to, subject, and a non-empty body of at most 20000 characters.", isError: true };
-    }
-    const r = await api("/api/internal/connector-action-requests", {
-      method: "POST",
-      body: JSON.stringify({
-        kind: "gmail-send",
-        fromBotId: BOT_ID,
-        fromThreadId: THREAD_ID,
-        target: {
-          to: recipients,
-          ...(copied.length ? { cc: copied } : {}),
-          ...(blind.length ? { bcc: blind } : {}),
-          subject: args.subject,
-          body: args.body,
-        },
-        reason: args.reason,
-      }),
-    });
-    return confirmationResult(r, "the email", "message");
   }
   if (name === "propose_model") {
     const raw = args.model_selection;

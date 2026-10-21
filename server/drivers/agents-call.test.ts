@@ -152,57 +152,6 @@ describe("propose_calendar_invite", () => {
   });
 });
 
-describe("propose_email_send", () => {
-  it("rejects an empty body without proposing anything", async () => {
-    const calls: Array<{ path: string; body: any }> = [];
-    const ctx = context({
-      client: {
-        api: async (path, init) => {
-          calls.push({ path, body: JSON.parse(String(init?.body)) });
-          return {};
-        },
-        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
-      },
-    });
-    const result = await callTool("propose_email_send", {
-      to: ["friend@example.test"], subject: "Hi", body: "   ", reason: "Hi.",
-    }, ctx);
-    expect(result.isError).toBe(true);
-    expect(result.text).toContain("non-empty body");
-    expect(calls).toEqual([]);
-  });
-
-  it("passes the exact content and ends the turn awaiting the card", async () => {
-    const calls: Array<{ path: string; body: any }> = [];
-    const ctx = context({
-      client: {
-        api: async (path, init) => {
-          calls.push({ path, body: JSON.parse(String(init?.body)) });
-          return { requestId: "req-2", summary: "card-shown" };
-        },
-        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
-      },
-    });
-    const result = await callTool("propose_email_send", {
-      to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday.", reason: "Launch update.",
-    }, ctx);
-    expect(result.isError).toBeFalsy();
-    expect(calls).toEqual([
-      {
-        path: "/api/internal/connector-action-requests",
-        body: {
-          kind: "gmail-send",
-          fromBotId: "bot-voice",
-          fromThreadId: "thread-voice",
-          target: { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." },
-          reason: "Launch update.",
-        },
-      },
-    ]);
-    expect(result.text).toContain("not been applied yet");
-  });
-});
-
 describe("propose_deep_research", () => {
   it("rejects an empty brief without proposing anything", async () => {
     const calls: Array<{ path: string; body: any }> = [];
@@ -251,62 +200,5 @@ describe("propose_deep_research", () => {
       },
     ]);
     expect(result.text).toContain("not been applied yet");
-  });
-});
-
-describe("propose_email_send with cc and bcc", () => {
-  it("rejects a non-address in bcc without proposing anything", async () => {
-    const calls: Array<{ path: string; body: any }> = [];
-    const ctx = context({
-      client: {
-        api: async (path, init) => {
-          calls.push({ path, body: JSON.parse(String(init?.body)) });
-          return {};
-        },
-        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
-      },
-    });
-    const result = await callTool("propose_email_send", {
-      to: ["friend@example.test"], bcc: ["not an address"],
-      subject: "Hi", body: "There.", reason: "Hi.",
-    }, ctx);
-    expect(result.isError).toBe(true);
-    expect(calls).toEqual([]);
-  });
-
-  it("passes cc and bcc through to the pending action", async () => {
-    const calls: Array<{ path: string; body: any }> = [];
-    const ctx = context({
-      client: {
-        api: async (path, init) => {
-          calls.push({ path, body: JSON.parse(String(init?.body)) });
-          return { requestId: "req-3", summary: "card-shown" };
-        },
-        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
-      },
-    });
-    const result = await callTool("propose_email_send", {
-      to: ["friend@example.test"], cc: ["teammate@example.test"], bcc: ["observer@example.test"],
-      subject: "Launch", body: "Shipping Friday.", reason: "Launch update.",
-    }, ctx);
-    expect(result.isError).toBeFalsy();
-    expect(calls).toEqual([
-      {
-        path: "/api/internal/connector-action-requests",
-        body: {
-          kind: "gmail-send",
-          fromBotId: "bot-voice",
-          fromThreadId: "thread-voice",
-          target: {
-            to: ["friend@example.test"],
-            cc: ["teammate@example.test"],
-            bcc: ["observer@example.test"],
-            subject: "Launch",
-            body: "Shipping Friday.",
-          },
-          reason: "Launch update.",
-        },
-      },
-    ]);
   });
 });

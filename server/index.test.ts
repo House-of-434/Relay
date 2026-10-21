@@ -9722,7 +9722,10 @@ describe("bot memory API", () => {
 
       const attached = await attach({ path: "budget.xlsx", name: "Q3 budget.xlsx" });
       expect(attached.status).toBe(200);
-      expect(await attached.json()).toMatchObject({ ok: true, name: "Q3 budget.xlsx", bytes: xlsx.byteLength });
+      const attachedBody = await attached.json() as { ok: boolean; name: string; bytes: number; ref: string };
+      expect(attachedBody).toMatchObject({ ok: true, name: "Q3 budget.xlsx", bytes: xlsx.byteLength });
+      // gmail_send_email takes this opaque store name, never a filesystem path.
+      expect(attachedBody.ref).toMatch(/^[0-9a-f-]{36}\.xlsx$/);
       expect((await attach({ path: "song.mp3" })).status).toBe(200);
 
       const dump = await api("GET", `/api/threads/${bot.threadId}/export?format=json`);
