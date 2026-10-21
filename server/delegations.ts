@@ -111,6 +111,12 @@ const drainingThreads = new Set<string>();
 const queuedRedrains = new Set<string>();
 const DELEGATIONS_FILE = join(DATA_DIR, "delegations.json");
 const RECEIPTS_FILE = join(DATA_DIR, "delegation-receipts.json");
+/** Dispatched-but-unfinalized handoffs plus parked source wakes. Written
+ * before the in-memory-only step they guard, removed once the wake they
+ * exist for is dispatched: a restart replays them instead of dropping the
+ * handoff silently. Small enough to read fresh on every access — no cache,
+ * so readers never need invalidation. */
+const WATCHES_FILE = join(DATA_DIR, "delegation-watches.json");
 const MAX_RECEIPTS = 100;
 const RECEIPT_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 const RESULT_MAX_CHARS = 4_000;
@@ -134,6 +140,172 @@ export const DELEGATION_BUSY_HOLD_MAX_MS = Math.max(
 );
 
 let receipts: DelegationReceipt[] = [];
+
+/** A dispatched delegation that has not finalized yet: the wake that must
+ * resume the source when the target settles. Written before startTurn so a
+ * crash between dispatch and finalize leaves a recoverable record instead
+ * of a ghost handoff. Cleared once a wake for it is dispatched (or when a
+ * boot recovery synthesizes a failure wake for it). */
+export interface DelegationWatchRecord {
+  targetThreadId: string;
+  taskId?: string;
+  sourceThreadId?: string;
+  sourceBotId?: string;
+  toBotId: string;
+  toBotName?: string;
+  channelId?: string;
+  routineRunId?: string;
+  startedAtMs: number;
+}
+
+/** A source wake that was decided but not yet dispatched (the source was
+ * busy, or the process died first). Replayed on boot and on drain. Keyed by
+ * source thread id in the file; the id itself is not stored in the record. */
+export interface DelegationWakeRecord {
+  botId: string;
+  targetName: string;
+  failureReason?: string;
+  routineRunId?: string;
+  budgetAcquired?: boolean;
+}
+
+function readWatchesFile(): { watches: Record<string, unknown>; wakes: Record<string, unknown> } {
+  try {
+    const raw = JSON.parse(readFileSync(WATCHES_FILE, "utf8")) as unknown;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { watches: {}, wakes: {} };
+    const { watches, wakes } = raw as { watches?: unknown; wakes?: unknown };
+    return {
+      watches: watches && typeof watches === "object" && !Array.isArray(watches) ? watches as Record<string, unknown> : {},
+      wakes: wakes && typeof wakes === "object" && !Array.isArray(wakes) ? wakes as Record<string, unknown> : {},
+    };
+  } catch {
+    return { watches: {}, wakes: {} };
+  }
+}
+
+function writeWatchesFile(watches: Record<string, DelegationWatchRecord>, wakes: Record<string, DelegationWakeRecord>): void {
+  try {
+    writeFileAtomic(WATCHES_FILE, JSON.stringify({ watches, wakes }, null, 2), { mode: 0o600 });
+  } catch (error) {
+    console.error("delegations: could not persist watches", error);
+  }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function cleanWatchRecord(value: unknown): DelegationWatchRecord | null {
+  if (!isRecord(value)) return null;
+  const targetThreadId = value.targetThreadId;
+  const toBotId = value.toBotId;
+  const startedAtMs = value.startedAtMs;
+  if (typeof targetThreadId !== "string" || !targetThreadId) return null;
+  if (typeof toBotId !== "string" || !toBotId) return null;
+  if (typeof startedAtMs !== "number" || !Number.isFinite(startedAtMs)) return null;
+  const record: DelegationWatchRecord = { targetThreadId, toBotId, startedAtMs };
+  const optional = ["taskId", "sourceThreadId", "sourceBotId", "toBotName", "channelId", "routineRunId"] as const;
+  for (const field of optional) {
+    const entry = value[field];
+    if (typeof entry === "string" && entry) record[field] = entry;
+  }
+  return record;
+}
+
+function cleanWakeRecord(value: unknown): DelegationWakeRecord | null {
+  if (!isRecord(value)) return null;
+  const { botId, targetName, failureReason, routineRunId, budgetAcquired } = value as {
+    botId?: unknown; targetName?: unknown; failureReason?: unknown; routineRunId?: unknown; budgetAcquired?: unknown;
+  };
+  if (typeof botId !== "string" || !botId) return null;
+  if (typeof targetName !== "string" || !targetName) return null;
+  return {
+    botId,
+    targetName,
+    ...(typeof failureReason === "string" && failureReason ? { failureReason } : {}),
+    ...(typeof routineRunId === "string" && routineRunId ? { routineRunId } : {}),
+    ...(budgetAcquired === true ? { budgetAcquired: true as const } : {}),
+  };
+}
+
+/** Load, validate, mutate, and store the watches file in one step so every
+ * writer sees a cleaned snapshot and no caller duplicates the validation. */
+function rewriteWatchesFile(
+  mutator: (watches: Record<string, DelegationWatchRecord>, wakes: Record<string, DelegationWakeRecord>) => void,
+): void {
+  const { watches, wakes } = readWatchesFile();
+  const currentWatches: Record<string, DelegationWatchRecord> = {};
+  for (const [key, value] of Object.entries(watches)) {
+    const clean = cleanWatchRecord(value);
+    if (clean) currentWatches[key] = clean;
+  }
+  const currentWakes: Record<string, DelegationWakeRecord> = {};
+  for (const [key, value] of Object.entries(wakes)) {
+    const clean = cleanWakeRecord(value);
+    if (clean) currentWakes[key] = clean;
+  }
+  mutator(currentWatches, currentWakes);
+  writeWatchesFile(currentWatches, currentWakes);
+}
+
+/** All persisted watches and parked wakes, validated. Read fresh from disk:
+ * writers always go through the record/clear helpers below, so there is no
+ * cache to invalidate and boot recovery sees exactly what the last write
+ * left behind. */
+export function loadDelegationWatches(): {
+  watches: DelegationWatchRecord[];
+  wakes: Array<DelegationWakeRecord & { threadId: string }>;
+} {
+  const { watches, wakes } = readWatchesFile();
+  const cleanWatches: DelegationWatchRecord[] = [];
+  for (const value of Object.values(watches)) {
+    const record = cleanWatchRecord(value);
+    if (record) cleanWatches.push(record);
+  }
+  const cleanWakes: Array<DelegationWakeRecord & { threadId: string }> = [];
+  for (const [threadId, value] of Object.entries(wakes)) {
+    const record = cleanWakeRecord(value);
+    if (record) cleanWakes.push({ ...record, threadId });
+  }
+  return { watches: cleanWatches, wakes: cleanWakes };
+}
+
+/** The persisted watch for one delegation task, if any. Used by status
+ * checks so a restarted-then-recovered handoff reads as running rather
+ * than unknown. */
+export function findDurableDelegationWatchByTaskId(taskId: string): DelegationWatchRecord | null {
+  if (!taskId) return null;
+  const { watches } = readWatchesFile();
+  for (const value of Object.values(watches)) {
+    const record = cleanWatchRecord(value);
+    if (record && record.taskId === taskId) return record;
+  }
+  return null;
+}
+
+export function recordDelegationWatch(record: DelegationWatchRecord): void {
+  rewriteWatchesFile((watches) => {
+    watches[record.targetThreadId] = record;
+  });
+}
+
+export function clearDelegationWatch(targetThreadId: string): void {
+  rewriteWatchesFile((watches) => {
+    delete watches[targetThreadId];
+  });
+}
+
+export function recordDelegationWake(threadId: string, wake: DelegationWakeRecord): void {
+  rewriteWatchesFile((_watches, wakes) => {
+    wakes[threadId] = wake;
+  });
+}
+
+export function clearDelegationWake(threadId: string): void {
+  rewriteWatchesFile((_watches, wakes) => {
+    delete wakes[threadId];
+  });
+}
 
 function saveReceipts(): void {
   try {

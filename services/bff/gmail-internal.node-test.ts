@@ -9,13 +9,21 @@ import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
 import { GOOGLE_API_SCOPE_CATALOG, type GoogleApiGateway } from "./google-api.ts";
+import { minimalPdf, xlsx } from "./test-document-fixtures.ts";
 import { GoogleConnectionStore } from "./google-connections.ts";
 import {
+  __resetGmailMessageCacheForTests,
+  evictCachedGmailMessage,
+  getCachedGmailMessage,
   handleInternalGmail,
   INTERNAL_GMAIL_MESSAGES_GET,
   INTERNAL_GMAIL_MESSAGES_LIST,
   INTERNAL_GMAIL_SEND,
   isInternalGmailPath,
+  MESSAGE_CACHE_MAX_ENTRIES,
+  MESSAGE_CACHE_TTL_MS,
+  setCachedGmailMessage,
+  type GmailPayloadPart,
 } from "./gmail-internal.ts";
 
 const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
@@ -940,4 +948,309 @@ test("an HTML-only message falls back to stripped text", async () => {
   assert.match(message.body ?? "", /Hello/);
   assert.match(message.body ?? "", /there/);
   assert.equal(message.body?.includes("bad()"), false);
+});
+test("the message cache hits, expires, evicts, and isolates by mailbox", () => {
+  __resetGmailMessageCacheForTests();
+  const payload: GmailPayloadPart = {
+    mimeType: "multipart/mixed",
+    parts: [{ mimeType: "application/pdf", filename: "deck.pdf", body: { attachmentId: "att-1", size: 10 } }],
+  };
+  // Miss on empty cache.
+  assert.equal(getCachedGmailMessage("u1", "own", "m1", 1_000), undefined);
+  setCachedGmailMessage("u1", "own", "m1", payload, 1_000);
+  assert.deepEqual(getCachedGmailMessage("u1", "own", "m1", 1_000), payload);
+  // Isolation: other users, mailboxes, and messages miss.
+  assert.equal(getCachedGmailMessage("u2", "own", "m1", 1_000), undefined);
+  assert.equal(getCachedGmailMessage("u1", "relay", "m1", 1_000), undefined);
+  assert.equal(getCachedGmailMessage("u1", "own", "m2", 1_000), undefined);
+  // Fresh within TTL, stale after.
+  assert.deepEqual(getCachedGmailMessage("u1", "own", "m1", 1_000 + MESSAGE_CACHE_TTL_MS - 1), payload);
+  assert.equal(getCachedGmailMessage("u1", "own", "m1", 1_000 + MESSAGE_CACHE_TTL_MS + 1), undefined);
+  // Re-set then evict explicitly.
+  setCachedGmailMessage("u1", "own", "m1", payload, 2_000);
+  evictCachedGmailMessage("u1", "own", "m1");
+  assert.equal(getCachedGmailMessage("u1", "own", "m1", 2_000), undefined);
+  // LRU cap: filling past the limit evicts the oldest first.
+  for (let index = 0; index < MESSAGE_CACHE_MAX_ENTRIES + 1; index += 1) {
+    setCachedGmailMessage("u1", "own", `m-${index}`, payload, 3_000 + index);
+  }
+  assert.equal(getCachedGmailMessage("u1", "own", "m-0", 4_000), undefined);
+  assert.deepEqual(getCachedGmailMessage("u1", "own", `m-${MESSAGE_CACHE_MAX_ENTRIES}`, 4_000), payload);
+  __resetGmailMessageCacheForTests();
+});
+
+// ── combined read: attachments in the same call as the message ──────────
+
+interface PartFixture {
+  mimeType: string;
+  filename?: string;
+  attachmentId?: string;
+  /** Inline body bytes (base64url), as Gmail returns non-attachment parts. */
+  inlineData?: Buffer;
+  size?: number;
+  parts?: PartFixture[];
+}
+
+interface ByteFixture {
+  bytes: Buffer;
+  declaredSize?: number;
+}
+
+function toGmailPart(part: PartFixture): unknown {
+  const body: Record<string, unknown> = {};
+  if (part.attachmentId) body.attachmentId = part.attachmentId;
+  if (part.inlineData) body.data = part.inlineData.toString("base64url");
+  if (part.size !== undefined) body.size = part.size;
+  return {
+    mimeType: part.mimeType,
+    ...(part.filename ? { filename: part.filename } : {}),
+    body,
+    ...(part.parts ? { parts: part.parts.map(toGmailPart) } : {}),
+  };
+}
+
+function combinedGateway(input: {
+  payloadParts: PartFixture[];
+  bytesById: Record<string, ByteFixture>;
+  calls: GmailCall[];
+}): GoogleApiGateway {
+  const providerClient = {
+    users: {
+      messages: {
+        get: async ({ id }: { id: string }) => {
+          input.calls.push({ userId: "", accountId: "", operation: `messages.get:${id}` });
+          return {
+            data: {
+              id,
+              threadId: "thread-1",
+              snippet: "combined",
+              payload: {
+                headers: [{ name: "Subject", value: "Combined" }],
+                parts: input.payloadParts.map(toGmailPart),
+              },
+            },
+          };
+        },
+        attachments: {
+          get: async ({ id }: { id: string }) => {
+            input.calls.push({ userId: "", accountId: "", operation: `attachments.get:${id}` });
+            const fixture = input.bytesById[id];
+            if (!fixture) throw new Error(`no fixture bytes for ${id}`);
+            return { data: { data: fixture.bytes.toString("base64url"), size: fixture.declaredSize ?? fixture.bytes.length } };
+          },
+        },
+      },
+    },
+  };
+  return {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation(providerClient),
+  } as unknown as GoogleApiGateway;
+}
+
+const COMBINED_ACCOUNTS = [{ userId: USER_ID, service: "gmail" as const, googleSub: "gmail-sub", email: "one@example.com" }];
+
+function combinedRead(call: (path: string, init?: RequestInit) => Promise<Response>, body: unknown) {
+  return call(INTERNAL_GMAIL_MESSAGES_GET, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify(body),
+  });
+}
+
+type CombinedBody = {
+  message: {
+    attachmentContents?: Array<{ id: string; kind?: string; text?: string; skipped?: string; image?: { mimeType: string; data: string } }>;
+    attachments?: Array<{ id: string }>;
+  };
+  error?: string;
+};
+
+test("a combined read extracts every requested attachment with one messages.get", async () => {
+  const calls: GmailCall[] = [];
+  const pdf = minimalPdf(["Combined read"]);
+  const sheet = xlsx({ Q1: [["rep", "deal"], ["amy", 7]] });
+  const { call } = await createFixture({
+    accounts: COMBINED_ACCOUNTS,
+    gateway: combinedGateway({
+      calls,
+      payloadParts: [
+        { mimeType: "application/pdf", filename: "deck.pdf", attachmentId: "att-pdf", size: pdf.length },
+        {
+          mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          filename: "pipeline.xlsx",
+          attachmentId: "att-xlsx",
+          size: sheet.length,
+        },
+      ],
+      bytesById: { "att-pdf": { bytes: pdf }, "att-xlsx": { bytes: sheet } },
+    }),
+  });
+
+  const response = await combinedRead(call, { messageId: "msg-combined", attachmentIds: ["att-pdf", "att-xlsx"] });
+  assert.equal(response.status, 200);
+  const body = await response.json() as CombinedBody;
+  const contents = body.message.attachmentContents ?? [];
+  assert.equal(contents.length, 2);
+  assert.match(contents[0]!.text ?? "", /--- page 1 ---/);
+  assert.match(contents[0]!.text ?? "", /Combined read/);
+  assert.match(contents[1]!.text ?? "", /--- sheet 1: Q1 ---/);
+  assert.match(contents[1]!.text ?? "", /amy\t7/);
+  // The whole point: one message fetch, not one per attachment.
+  assert.equal(calls.filter((entry) => entry.operation === "messages.get:msg-combined").length, 1);
+  assert.equal(calls.filter((entry) => entry.operation.startsWith("attachments.get:")).length, 2);
+});
+
+test("a combined read without attachmentIds returns metadata only, exactly as before", async () => {
+  const calls: GmailCall[] = [];
+  const { call } = await createFixture({
+    accounts: COMBINED_ACCOUNTS,
+    gateway: combinedGateway({
+      calls,
+      payloadParts: [{ mimeType: "application/pdf", filename: "deck.pdf", attachmentId: "att-pdf", size: 10 }],
+      bytesById: { "att-pdf": { bytes: minimalPdf(["x"]) } },
+    }),
+  });
+  const response = await combinedRead(call, { messageId: "msg-plain" });
+  assert.equal(response.status, 200);
+  const body = await response.json() as CombinedBody;
+  assert.equal(body.message.attachments?.length, 1);
+  assert.equal(body.message.attachmentContents, undefined);
+  assert.equal(calls.some((entry) => entry.operation.startsWith("attachments.get:")), false);
+});
+
+test("five attachment ids are accepted and six are rejected before any Gmail call", async () => {
+  const calls: GmailCall[] = [];
+  const pdf = minimalPdf(["batch"]);
+  const parts: PartFixture[] = Array.from({ length: 6 }, (_, index) => ({
+    mimeType: "application/pdf",
+    filename: `file-${index}.pdf`,
+    attachmentId: `att-${index}`,
+    size: pdf.length,
+  }));
+  const bytesById: Record<string, ByteFixture> = {};
+  for (let index = 0; index < 6; index += 1) bytesById[`att-${index}`] = { bytes: pdf };
+  const { call } = await createFixture({
+    accounts: COMBINED_ACCOUNTS,
+    gateway: combinedGateway({ calls, payloadParts: parts, bytesById }),
+  });
+
+  const five = await combinedRead(call, {
+    messageId: "msg-batch",
+    attachmentIds: ["att-0", "att-1", "att-2", "att-3", "att-4"],
+  });
+  assert.equal(five.status, 200);
+  const fiveBody = await five.json() as CombinedBody;
+  assert.equal(fiveBody.message.attachmentContents?.length, 5);
+
+  const callsBefore = calls.length;
+  const six = await combinedRead(call, {
+    messageId: "msg-batch",
+    attachmentIds: ["att-0", "att-1", "att-2", "att-3", "att-4", "att-5"],
+  });
+  assert.equal(six.status, 400);
+  // Input validation rejects the request before touching Gmail.
+  assert.equal(calls.length, callsBefore);
+});
+
+test("nested MIME attachments are found, and a part with only an inline body is not an attachment", async () => {
+  const calls: GmailCall[] = [];
+  const pdf = minimalPdf(["Nested"]);
+  const { call } = await createFixture({
+    accounts: COMBINED_ACCOUNTS,
+    gateway: combinedGateway({
+      calls,
+      payloadParts: [
+        { mimeType: "text/plain", inlineData: Buffer.from("body text") },
+        {
+          mimeType: "multipart/mixed",
+          parts: [
+            {
+              mimeType: "multipart/alternative",
+              parts: [
+                { mimeType: "text/html", inlineData: Buffer.from("<p>body</p>") },
+                {
+                  mimeType: "multipart/related",
+                  parts: [{ mimeType: "application/pdf", filename: "deep.pdf", attachmentId: "att-deep", size: pdf.length }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+      bytesById: { "att-deep": { bytes: pdf } },
+    }),
+  });
+
+  const response = await combinedRead(call, {
+    messageId: "msg-nested",
+    attachmentIds: ["att-deep", "not-an-attachment"],
+  });
+  assert.equal(response.status, 200);
+  const contents = (await response.json() as CombinedBody).message.attachmentContents ?? [];
+  assert.equal(contents.length, 2);
+  assert.match(contents[0]!.text ?? "", /Nested/);
+  // A part carrying only an inline body has no attachment id: it is not an
+  // attachment and is reported as unknown rather than extracted.
+  assert.equal(contents[1]!.skipped, "attachment not found");
+});
+
+test("duplicate attachment ids collapse to one extraction", async () => {
+  const calls: GmailCall[] = [];
+  const pdf = minimalPdf(["Once"]);
+  const { call } = await createFixture({
+    accounts: COMBINED_ACCOUNTS,
+    gateway: combinedGateway({
+      calls,
+      payloadParts: [{ mimeType: "application/pdf", filename: "once.pdf", attachmentId: "att-dup", size: pdf.length }],
+      bytesById: { "att-dup": { bytes: pdf } },
+    }),
+  });
+  const response = await combinedRead(call, {
+    messageId: "msg-dup",
+    attachmentIds: ["att-dup", "att-dup", "att-dup"],
+  });
+  assert.equal(response.status, 200);
+  const contents = (await response.json() as CombinedBody).message.attachmentContents ?? [];
+  assert.equal(contents.length, 1);
+  assert.match(contents[0]!.text ?? "", /Once/);
+  assert.equal(calls.filter((entry) => entry.operation === "attachments.get:att-dup").length, 1);
+});
+
+test("one unreadable attachment never aborts the rest of the batch", async () => {
+  const calls: GmailCall[] = [];
+  const pdf = minimalPdf(["Still here"]);
+  const { call } = await createFixture({
+    accounts: COMBINED_ACCOUNTS,
+    gateway: combinedGateway({
+      calls,
+      payloadParts: [
+        { mimeType: "application/pdf", filename: "big.pdf", attachmentId: "att-big", size: 26 * 1024 * 1024 },
+        { mimeType: "application/pdf", filename: "ok.pdf", attachmentId: "att-ok", size: pdf.length },
+      ],
+      // Deliberately no bytes for att-big: the declared size must stop it
+      // before the download is attempted.
+      bytesById: { "att-ok": { bytes: pdf } },
+    }),
+  });
+  const response = await combinedRead(call, {
+    messageId: "msg-mixed",
+    attachmentIds: ["att-big", "missing-id", "att-ok"],
+  });
+  assert.equal(response.status, 200);
+  const contents = (await response.json() as CombinedBody).message.attachmentContents ?? [];
+  assert.equal(contents.length, 3);
+  assert.match(contents[0]!.skipped ?? "", /too large/);
+  assert.equal(contents[1]!.skipped, "attachment not found");
+  assert.match(contents[2]!.text ?? "", /Still here/);
+  assert.equal(calls.some((entry) => entry.operation === "attachments.get:att-big"), false);
 });

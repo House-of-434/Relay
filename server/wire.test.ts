@@ -39,6 +39,9 @@ const fullTask: TaskRecord = {
   cwd: "/tmp",
   resumeCursors: { claude: "cursor" },
   lastInstanceId: "claude",
+  mailRouted: { userId: "u1", email: "a@test", messageId: "m1" },
+  mailCompletedAt: "2026-01-01T00:00:00.000Z",
+  mailRoutedVia: { userId: "u1", email: "a@test", messageId: "m1", sourceThreadId: "t0" },
 };
 
 describe("shared wire model", () => {
@@ -52,7 +55,17 @@ describe("shared wire model", () => {
     ]);
     expect(wire).not.toHaveProperty("resumeCursors");
     expect(wire).not.toHaveProperty("lastInstanceId");
-    expect(wire).toEqual({ ...fullTask, resumeCursors: undefined, lastInstanceId: undefined });
+    expect(wire).not.toHaveProperty("mailRouted");
+    expect(wire).not.toHaveProperty("mailCompletedAt");
+    expect(wire).not.toHaveProperty("mailRoutedVia");
+    expect(wire).toEqual({
+      ...fullTask,
+      resumeCursors: undefined,
+      lastInstanceId: undefined,
+      mailRouted: undefined,
+      mailCompletedAt: undefined,
+      mailRoutedVia: undefined,
+    });
     expect(fullTask.resumeCursors).toEqual({ claude: "cursor" });
     expect(fullTask.lastInstanceId).toBe("claude");
   });

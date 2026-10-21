@@ -5,7 +5,7 @@ import { z } from "zod";
 import type { RelayActor } from "./actor-assertion.ts";
 import { verifyInternalRequest } from "./internal-request.ts";
 import { extractDocumentText } from "./document-text.ts";
-import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway } from "./google-api.ts";
+import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway, type GoogleApiClientFor } from "./google-api.ts";
 import type { GoogleConnectionMetadata } from "./google-connections.ts";
 
 export const INTERNAL_GMAIL_MESSAGES_LIST = "/api/internal/gmail/messages/list";
@@ -30,6 +30,9 @@ const MAX_LIST_RESULTS = 50;
  * never the whole mailbox. */
 const MAX_EXTRACTED_BODY_LENGTH = 16_000;
 const MAX_ATTACHMENTS = 50;
+/** One combined read may extract at most this many attachments; a second
+ * call covers the rest. Keeps a single response bounded. */
+const MAX_INLINE_ATTACHMENTS = 5;
 const MAX_FILENAME_LENGTH = 255;
 const MAX_MIME_LENGTH = 255;
 /** Outbound email attachments (a bot's finished report, a document it made).
@@ -79,6 +82,8 @@ const messagesListSchema = z.object({
 const messagesGetSchema = z.object({
   messageId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH),
   mailbox: MAILBOX_INPUT,
+  /** Read these attachments inline in the same call. Omitted: metadata only. */
+  attachmentIds: z.array(z.string().min(1).max(MAX_MESSAGE_ID_LENGTH)).max(MAX_INLINE_ATTACHMENTS).optional(),
 }).strict();
 
 const attachmentGetSchema = z.object({
@@ -234,7 +239,7 @@ function buildRawEmail(input: {
  * the peer's address: in the compose deployment the Tool Layer is a separate
  * container and is never a loopback peer.
  */
-interface GmailPayloadPart {
+export interface GmailPayloadPart {
   mimeType?: string | null;
   filename?: string | null;
   body?: { data?: string | null; attachmentId?: string | null; size?: number | null } | null;
@@ -417,21 +422,85 @@ function classifyAttachment(mimeType: string, filename: string, bytes: Buffer): 
   return candidates.find((format) => format.extensions.includes(extension))?.kind;
 }
 
-function findAttachmentPart(
-  payload: GmailPayloadPart | undefined,
-  attachmentId: string,
-): GmailPayloadPart | undefined {
-  let found: GmailPayloadPart | undefined;
+/** Every part of this message carrying an attachment id, in document order.
+ * Gmail rotates attachment ids between `messages.get` calls, so an id the
+ * model read from an earlier listing may no longer match; the fresh listing
+ * is still authoritative for which files this message holds. */
+function listAttachmentParts(payload: GmailPayloadPart | undefined): GmailPayloadPart[] {
+  const out: GmailPayloadPart[] = [];
   const walk = (part: GmailPayloadPart | null | undefined): void => {
-    if (!part || found) return;
-    if (part.body?.attachmentId === attachmentId) {
-      found = part;
-      return;
-    }
+    if (!part) return;
+    if (typeof part.body?.attachmentId === "string" && part.body.attachmentId) out.push(part);
     for (const child of part.parts ?? []) walk(child);
   };
   walk(payload);
-  return found;
+  return out;
+}
+
+interface CachedGmailMessage {
+  payload: GmailPayloadPart | undefined;
+  at: number;
+}
+
+/** Short-lived cache of full message payloads, keyed by the mailbox that
+ * owns them. `gmail_read` warms it; the standalone attachment fetch reads
+ * from it instead of issuing a second `messages.get` for the same message.
+ * (The combined read does not use it — it extracts from the payload it just
+ * fetched.) A short TTL bounds staleness against Gmail's id rotation, and a
+ * small entry cap bounds memory; a resolve miss evicts the entry so the next
+ * read is fresh. Spoof rejection is unaffected: classification still runs on
+ * bytes from a fresh `attachments.get`. */
+export const MESSAGE_CACHE_TTL_MS = 60_000;
+export const MESSAGE_CACHE_MAX_ENTRIES = 20;
+const gmailMessageCache = new Map<string, CachedGmailMessage>();
+
+function messageCacheKey(ownerUserId: string, mailbox: string, messageId: string): string {
+  return `${ownerUserId}\n${mailbox}\n${messageId}`;
+}
+
+export function getCachedGmailMessage(
+  ownerUserId: string,
+  mailbox: string,
+  messageId: string,
+  now: number = Date.now(),
+): GmailPayloadPart | undefined {
+  const key = messageCacheKey(ownerUserId, mailbox, messageId);
+  const entry = gmailMessageCache.get(key);
+  if (!entry) return undefined;
+  if (now - entry.at > MESSAGE_CACHE_TTL_MS) {
+    gmailMessageCache.delete(key);
+    return undefined;
+  }
+  // LRU refresh: a hit moves the entry to the back.
+  gmailMessageCache.delete(key);
+  gmailMessageCache.set(key, entry);
+  return entry.payload;
+}
+
+export function setCachedGmailMessage(
+  ownerUserId: string,
+  mailbox: string,
+  messageId: string,
+  payload: GmailPayloadPart | undefined,
+  now: number = Date.now(),
+): void {
+  const key = messageCacheKey(ownerUserId, mailbox, messageId);
+  gmailMessageCache.delete(key);
+  gmailMessageCache.set(key, { payload, at: now });
+  for (const oldest of gmailMessageCache.keys()) {
+    if (gmailMessageCache.size <= MESSAGE_CACHE_MAX_ENTRIES) break;
+    gmailMessageCache.delete(oldest);
+  }
+}
+
+export function evictCachedGmailMessage(ownerUserId: string, mailbox: string, messageId: string): void {
+  gmailMessageCache.delete(messageCacheKey(ownerUserId, mailbox, messageId));
+}
+
+/** Test-only: drop the whole message cache. Fixtures reuse message ids
+ * across tests, so each fixture starts uncached like a fresh process. */
+export function __resetGmailMessageCacheForTests(): void {
+  gmailMessageCache.clear();
 }
 
 /** The slice of the Gmail client the two attachment readers share. */
@@ -509,7 +578,7 @@ async function resolveInboundSendAttachments(
           const full = await client.users.messages.get({ userId: "me", id: ref.messageId, format: "full" });
           payloads.set(ref.messageId, full.data.payload as GmailPayloadPart | undefined);
         }
-        const part = findAttachmentPart(payloads.get(ref.messageId), ref.attachmentId);
+        const part = attachmentPartInPayload(payloads.get(ref.messageId), ref.attachmentId);
         if (!part) {
           throw new AttachmentRequestError(400, "an attachment you named is not part of that message");
         }
@@ -568,13 +637,84 @@ async function resolveAccount(
   return { account: gmailAccounts[0]!, ownerUserId: actor.userId };
 }
 
+/** The one authoritative resolver: the requested id must name an attachment
+ * part of THIS payload. It never consults the cache, never falls back to a
+ * different part, and never reads another message — ownership comes only
+ * from the payload the caller just fetched. */
+function attachmentPartInPayload(
+  payload: GmailPayloadPart | undefined,
+  attachmentId: string,
+): GmailPayloadPart | undefined {
+  return listAttachmentParts(payload).find((part) => part.body?.attachmentId === attachmentId);
+}
+
+/** Standalone-route resolution. Gmail rotates attachment ids between reads,
+ * so an id listed earlier may be stale by fetch time; a message holding
+ * exactly one attachment is unambiguous and may stand in for it. More than
+ * one candidate fails closed: the caller re-reads the message. */
+function resolveMaybeStalePart(
+  payload: GmailPayloadPart | undefined,
+  attachmentId: string,
+): { part: GmailPayloadPart; stale: boolean } | undefined {
+  const candidates = listAttachmentParts(payload);
+  const exact = candidates.find((part) => part.body?.attachmentId === attachmentId);
+  if (exact) return { part: exact, stale: false };
+  return candidates.length === 1 ? { part: candidates[0]!, stale: true } : undefined;
+}
+
 export interface FetchedGmailAttachment {
   id: string;
   filename: string;
   mimeType: string;
   kind: string;
   size: number;
-  data: string;
+  /** Decoded bytes, kept as a Buffer in-process: callers encode only at the
+   * wire boundary that needs their own format. */
+  bytes: Buffer;
+}
+
+/** Download one attachment part's bytes and identify its format. Throws
+ * AttachmentRequestError for an empty, oversized, or unsupported file, so
+ * both routes enforce exactly the same checks. */
+async function downloadAttachmentPart(
+  client: GoogleApiClientFor<"gmail">,
+  messageId: string,
+  part: GmailPayloadPart,
+  requestedId: string,
+): Promise<FetchedGmailAttachment> {
+  const declaredSize = part.body?.size;
+  if (typeof declaredSize === "number" && declaredSize > ATTACHMENT_MAX_BYTES) {
+    throw new AttachmentRequestError(413, "attachment is too large to open");
+  }
+  const fetched = await client.users.messages.attachments.get({
+    userId: "me",
+    messageId,
+    id: part.body?.attachmentId ?? requestedId,
+  });
+  const encoded = fetched.data?.data;
+  if (typeof encoded !== "string" || !encoded) {
+    throw new AttachmentRequestError(502, "Gmail request failed");
+  }
+  let bytes: Buffer;
+  try {
+    bytes = Buffer.from(encoded, "base64url");
+  } catch {
+    throw new AttachmentRequestError(502, "Gmail request failed");
+  }
+  if (bytes.length === 0 || bytes.length > ATTACHMENT_MAX_BYTES) {
+    throw new AttachmentRequestError(
+      bytes.length === 0 ? 400 : 413,
+      bytes.length === 0 ? "attachment is empty" : "attachment is too large to open",
+    );
+  }
+  const filename = bounded(typeof part.filename === "string" ? part.filename : "", MAX_FILENAME_LENGTH);
+  const mimeType = bounded(
+    typeof part.mimeType === "string" && part.mimeType ? part.mimeType : "application/octet-stream",
+    MAX_MIME_LENGTH,
+  );
+  const kind = classifyAttachment(mimeType, filename, bytes);
+  if (!kind) throw new AttachmentRequestError(400, "unsupported attachment type");
+  return { id: part.body?.attachmentId ?? requestedId, filename, mimeType, kind, size: bytes.length, bytes };
 }
 
 /** Fetch one attachment's bytes for a verified actor, from the actor's own or
@@ -586,7 +726,8 @@ export async function fetchGmailAttachment(
   actor: RelayActor,
   input: { messageId: string; attachmentId: string; mailbox?: "own" | "relay" },
 ): Promise<{ email: string; attachment: FetchedGmailAttachment }> {
-  const resolved = await resolveAccount(options, actor, input.mailbox === "relay" ? "relay" : "own");
+  const mailbox = input.mailbox === "relay" ? "relay" : "own";
+  const resolved = await resolveAccount(options, actor, mailbox);
   if (!resolved) throw new AttachmentRequestError(404, "Gmail is not connected for this user");
   const { account, ownerUserId } = resolved;
   const attachment = await options.googleApi.withClient(
@@ -595,19 +736,39 @@ export async function fetchGmailAttachment(
     account.id,
     [GOOGLE_API_SCOPE_CATALOG.gmail.read],
     async (client) => {
-      const full = await client.users.messages.get({
-        userId: "me",
-        id: input.messageId,
-        format: "full",
-      });
+      const loadFull = async (): Promise<GmailPayloadPart | undefined> => {
+        const full = await client.users.messages.get({
+          userId: "me",
+          id: input.messageId,
+          format: "full",
+        });
+        const payload = full.data.payload as GmailPayloadPart | undefined;
+        setCachedGmailMessage(ownerUserId, mailbox, input.messageId, payload);
+        return payload;
+      };
       // The attachment id is honored only when it names a part of this
       // message: an id from another message can never be smuggled in.
-      const part = findAttachmentPart(full.data.payload as GmailPayloadPart | undefined, input.attachmentId);
-      if (!part) throw new AttachmentRequestError(404, "attachment not found");
-      const bytes = await readAttachmentBytes(client, part, input, ATTACHMENT_MAX_BYTES);
-      const kind = classifyAttachment(bytes.mimeType, bytes.filename, Buffer.from(bytes.data, "base64"));
-      if (!kind) throw new AttachmentRequestError(400, "unsupported attachment type");
-      return { id: input.attachmentId, ...bytes, kind };
+      // Gmail rotates attachment ids between reads, so a listed id may be
+      // stale by fetch time; when this message holds exactly one attachment
+      // it is unambiguous and is used. Anything else fails closed so the
+      // caller re-reads the message for a fresh listing. The substitution is
+      // a normal outcome of Gmail's API, not something the model must reason
+      // about, so it is logged here rather than returned.
+      let resolvedPart = resolveMaybeStalePart(
+        getCachedGmailMessage(ownerUserId, mailbox, input.messageId) ?? await loadFull(),
+        input.attachmentId,
+      );
+      if (!resolvedPart) {
+        // Possibly a stale listing (ids rotate): drop the cached entry,
+        // fetch once fresh, and retry before failing closed.
+        evictCachedGmailMessage(ownerUserId, mailbox, input.messageId);
+        resolvedPart = resolveMaybeStalePart(await loadFull(), input.attachmentId);
+        if (!resolvedPart) throw new AttachmentRequestError(404, "attachment not found");
+      }
+      if (resolvedPart.stale) {
+        console.warn(`[gmail] attachment id was stale for message ${input.messageId}; used the message's only attachment`);
+      }
+      return downloadAttachmentPart(client, input.messageId, resolvedPart.part, input.attachmentId);
     },
   );
   return { email: account.email, attachment };
@@ -701,10 +862,60 @@ export async function handleInternalGmail(
             return typeof match?.value === "string" ? match.value.slice(0, MAX_SUBJECT_LENGTH) : undefined;
           };
           const payload = response.data.payload as GmailPayloadPart | undefined;
+          // Warm the attachment cache so a follow-up attachment read skips
+          // its own messages.get for the same message.
+          setCachedGmailMessage(ownerUserId, requestedMailbox(raw), parsed.data.messageId, payload);
           const parts = extractedBody(payload);
           const extracted = parts.text ?? (parts.html ? htmlToText(parts.html) : undefined);
           const body = extracted === undefined ? undefined : bounded(extracted, MAX_EXTRACTED_BODY_LENGTH);
           const attachments = attachmentMetadata(payload);
+          // Inline extraction: one messages.get above is the sole source of
+          // truth for which parts this message owns, so nothing can drift
+          // between the listing and the fetch. Each file is handled
+          // independently — one oversized, unknown, or failed attachment is
+          // reported on its own entry and never aborts the rest of the batch.
+          // Repeated ids collapse to their first occurrence.
+          const requestedIds = [...new Set(parsed.data.attachmentIds ?? [])];
+          const contents: Array<Record<string, unknown>> = [];
+          for (const attachmentId of requestedIds) {
+            const part = attachmentPartInPayload(payload, attachmentId);
+            if (!part) {
+              contents.push({ id: attachmentId, skipped: "attachment not found" });
+              continue;
+            }
+            let file: FetchedGmailAttachment;
+            try {
+              file = await downloadAttachmentPart(client, parsed.data.messageId, part, attachmentId);
+            } catch (error) {
+              contents.push({
+                id: attachmentId,
+                skipped: error instanceof AttachmentRequestError ? error.message : "attachment could not be read",
+              });
+              continue;
+            }
+            const meta = {
+              id: file.id,
+              filename: file.filename,
+              mimeType: file.mimeType,
+              kind: file.kind,
+              size: file.size,
+            };
+            if (IMAGE_KINDS.has(file.kind)) {
+              contents.push({
+                ...meta,
+                image: { mimeType: CANONICAL_IMAGE_MIME[file.kind]!, data: file.bytes.toString("base64") },
+              });
+              continue;
+            }
+            const document = await extractDocumentText(file.kind, file.bytes);
+            contents.push({
+              ...meta,
+              text: document.text,
+              warnings: document.warnings,
+              ...(document.unreadable ? { unreadable: true } : {}),
+              ...(document.noText ? { noText: true } : {}),
+            });
+          }
           return {
             id: response.data.id ?? parsed.data.messageId,
             threadId: response.data.threadId,
@@ -718,6 +929,7 @@ export async function handleInternalGmail(
             ...(body !== undefined ? { body } : {}),
             ...(extracted !== undefined && extracted.length > MAX_EXTRACTED_BODY_LENGTH ? { bodyTruncated: true } : {}),
             ...(attachments.length ? { attachments } : {}),
+            ...(contents.length ? { attachmentContents: contents } : {}),
           };
         },
       );
@@ -749,13 +961,13 @@ export async function handleInternalGmail(
         if (IMAGE_KINDS.has(attachment.kind)) {
           json(res, 200, {
             account: { email },
-            attachment: { ...meta, image: { mimeType: CANONICAL_IMAGE_MIME[attachment.kind]!, data: attachment.data } },
+            attachment: { ...meta, image: { mimeType: CANONICAL_IMAGE_MIME[attachment.kind]!, data: attachment.bytes.toString("base64") } },
           });
           return;
         }
         // A document is read here, server-side, so the model receives text it
         // can actually use instead of base64 it cannot.
-        const extracted = await extractDocumentText(attachment.kind, Buffer.from(attachment.data, "base64"));
+        const extracted = await extractDocumentText(attachment.kind, attachment.bytes);
         json(res, 200, {
           account: { email },
           attachment: {

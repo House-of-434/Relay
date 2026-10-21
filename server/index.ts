@@ -241,7 +241,7 @@ const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listActiveScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listActiveScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent, upsertCommandReceipt } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentText, type Incident, type IncidentKind } from "./incidents.ts";
@@ -257,7 +257,7 @@ import {
 } from "./aside-queue.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
 import { admit, DRAIN_COALESCE_MAX_ITEMS } from "./admission.ts";
-import { _loadPending, buildDelegationFailurePrompt, buildDelegationRevivalPrompt, DELEGATION_TTL_MS, DelegationWakeBudget, discardDelegations, drainDelegations, expireStaleDelegations, findDelegationReceipt, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, releaseDelegationsWaitingOn, summarizeDelegatedActivity, type DelegationReceipt, type QueueResult } from "./delegations.ts";
+import { _loadPending, buildDelegationFailurePrompt, buildDelegationRevivalPrompt, clearDelegationWake, clearDelegationWatch, DELEGATION_TTL_MS, DelegationWakeBudget, discardDelegations, drainDelegations, expireStaleDelegations, findDelegationReceipt, findDurableDelegationWatchByTaskId, loadDelegationWatches, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, recordDelegationWake, recordDelegationWatch, releaseDelegationsWaitingOn, summarizeDelegatedActivity, type DelegationReceipt, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -478,6 +478,7 @@ import {
   MAILBOX_LIST_LIMIT,
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
+  requesterDomainAllowed,
   routedMailPrompt,
   routedMailTitle,
   type MailboxMessage,
@@ -500,7 +501,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { canSendMailboxEmail, deriveMailSubject, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { canSendMailboxEmail, deriveMailSubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion, type MailSendReceipt } from "./mailbox-notify.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -4512,6 +4513,7 @@ function finishGroupGoalRun(
   const routineRun = routines?.finishGoalRun(run.runId, status, safeDetail);
   if (routineRun?.status === "cancelled") {
     pendingDelegationWakes.delete(operation.threadId);
+    clearDelegationWake(operation.threadId);
     discardDelegations(commsBus, operation.threadId);
   }
   // Member-level turn completions are intentionally private/intermediate for
@@ -5349,6 +5351,7 @@ const watchdog = new TurnWatchdog({
     if (routineRun?.target === "bot") {
       routines?.failThread(turn.threadId, `No activity for ${minutes} minutes — the routine was stopped`);
       pendingDelegationWakes.delete(turn.threadId);
+      clearDelegationWake(turn.threadId);
       discardDelegations(commsBus, turn.threadId);
     }
     store.appendMessage(turn.threadId, {
@@ -6987,7 +6990,7 @@ bus.subscribe((event: RuntimeEvent) => {
         }
       }
       };
-      if (routedThread && asker && event.requestId && !commandReceipt("gmail.question", event.requestId)) {
+      if (routedThread && asker && event.requestId && !mailSendReceiptSent(commandReceipt("gmail.question", event.requestId)?.result) && !mailSendClaimFresh(commandReceipt("gmail.question", event.requestId)?.result, Date.now())) {
         if (mailboxQuestionInflight.has(event.requestId)) break;
         const mailboxActor = relayMailboxActor();
         if (mailboxActor && canSendMailboxEmail()) {
@@ -7012,6 +7015,8 @@ bus.subscribe((event: RuntimeEvent) => {
           const base = publicUrl();
           mailboxQuestionInflight.add(requestId);
           void (async (): Promise<void> => {
+            const questionFingerprint = mailSendFingerprint([questionEmail, questionSubject ?? "", questionText, ...(questionChoices ?? [])]);
+            upsertCommandReceipt("gmail.question", requestId, JSON.stringify({ state: "claimed", at: Date.now(), fp: questionFingerprint } satisfies MailSendReceipt), Date.now());
             try {
               const sent = await sendMailboxQuestionEmail({
                 capability: relayBffCapability,
@@ -7026,7 +7031,7 @@ bus.subscribe((event: RuntimeEvent) => {
                 showQuestionCard();
                 return;
               }
-              runCommand({ kind: "gmail.question", key: requestId }, () => true);
+              upsertCommandReceipt("gmail.question", requestId, JSON.stringify({ state: "sent", at: Date.now(), fp: questionFingerprint, sentId: sent.sentId, gmailThreadId: sent.gmailThreadId } satisfies MailSendReceipt), Date.now());
               try {
                 const outcome = await answerRequest(
                   threadId,
@@ -7339,14 +7344,15 @@ bus.subscribe((event: RuntimeEvent) => {
         // mailing twice.
         {
           const detail = routineRun ? reply || routineRun.output || "" : reply;
+          const completionReceipt = commandReceipt("gmail.completion", event.threadId)?.result;
           const shouldSend = shouldSendMailboxCompletion({
             routed: Boolean(routedMail),
             ok: event.ok !== false,
-            alreadySent: mailCompletionSentThreads.has(event.threadId) || Boolean(settledTask?.mailCompletedAt),
+            alreadySent: mailCompletionSentThreads.has(event.threadId) || Boolean(settledTask?.mailCompletedAt) || mailSendReceiptSent(completionReceipt),
             // The shared gate above: only the turn that truly finished sends.
             awaitingTeammates,
             reply: detail,
-          });
+          }) && !mailSendClaimFresh(completionReceipt, Date.now());
           if (shouldSend && routedMail) {
             const mailboxActor = relayMailboxActor();
             if (!mailboxActor) {
@@ -7355,6 +7361,13 @@ bus.subscribe((event: RuntimeEvent) => {
               mailCompletionSentThreads.add(event.threadId);
               const attachments = routedMailAttachments(event.threadId);
               const base = publicUrl();
+              const completionFingerprint = mailSendFingerprint([
+                routedMail.email,
+                routedMail.subject ?? "",
+                detail,
+                ...attachments.flatMap((attachment) => [attachment.filename, attachment.mimeType, String(attachment.data.length)]),
+              ]);
+              upsertCommandReceipt("gmail.completion", event.threadId, JSON.stringify({ state: "claimed", at: Date.now(), fp: completionFingerprint } satisfies MailSendReceipt), Date.now());
               void sendMailboxCompletionEmail({
                 capability: relayBffCapability,
                 actor: mailboxActor,
@@ -7365,7 +7378,12 @@ bus.subscribe((event: RuntimeEvent) => {
                 detail,
                 ...(base ? { relayUrl: base } : {}),
                 ...(attachments.length ? { attachments } : {}),
-              }).then(() => {
+              }).then((sent) => {
+                if (!sent) {
+                  mailCompletionSentThreads.delete(event.threadId);
+                  return;
+                }
+                upsertCommandReceipt("gmail.completion", event.threadId, JSON.stringify({ state: "sent", at: Date.now(), fp: completionFingerprint, sentId: sent.sentId, gmailThreadId: sent.gmailThreadId } satisfies MailSendReceipt), Date.now());
                 // Mark only on success, so a transient failure retries instead
                 // of being recorded as delivered.
                 store.patchTask(bot.id, event.threadId, { mailCompletedAt: new Date().toISOString() });
@@ -7479,6 +7497,15 @@ function routineDelegationCanResume(threadId: string, routineRunId?: string): bo
 }
 
 function dispatchDelegationWake(botId: string, threadId: string, targetName: string, failureReason?: string, routineRunId?: string, budgetAcquired = false): void {
+  // The wake is being dispatched: drop its durable record, plus any watch
+  // whose delegation already finalized (its receipt exists, so tracking it
+  // further would only resurrect settled work on the next boot).
+  clearDelegationWake(threadId);
+  for (const watch of loadDelegationWatches().watches) {
+    if (watch.sourceThreadId === threadId && watch.taskId && findDelegationReceipt(watch.taskId)) {
+      clearDelegationWatch(watch.targetThreadId);
+    }
+  }
   if (!store.taskByThread(botId, threadId)) return;
   if (!routineDelegationCanResume(threadId, routineRunId)) return;
   if (!budgetAcquired && !delegationWakeBudget.tryAcquire(threadId)) {
@@ -7495,12 +7522,16 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
   })
     .then(() => undefined)
     .catch((error) => {
-      if (!store.taskByThread(botId, threadId)) return;
+      if (!store.taskByThread(botId, threadId)) {
+        clearDelegationWake(threadId);
+        return;
+      }
       const message = error instanceof Error ? error.message : String(error);
       // Raced with a user turn claiming the bot — retry once it settles.
       // This is the same logical wake, so keep its original budget charge.
       if (isTurnAdmissionBlocked(error)) {
         pendingDelegationWakes.set(threadId, { botId, targetName, failureReason, routineRunId, budgetAcquired: true });
+        recordDelegationWake(threadId, { botId, targetName, failureReason, routineRunId, budgetAcquired: true });
         return;
       }
       store.appendMessage(threadId, {
@@ -7516,12 +7547,22 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
 }
 
 function wakeDelegationSource(source: BotRecord, threadId: string, targetName: string, failureReason?: string, routineRunId?: string): void {
-  if (!store.taskByThread(source.id, threadId)) return;
-  if (!routineDelegationCanResume(threadId, routineRunId)) return;
+  if (!store.taskByThread(source.id, threadId)) {
+    clearDelegationWake(threadId);
+    return;
+  }
+  if (!routineDelegationCanResume(threadId, routineRunId)) {
+    clearDelegationWake(threadId);
+    return;
+  }
+  // The wake intent is durable from here on: a crash before the dispatch
+  // below (or before a parked wake is drained) replays it on boot instead
+  // of dropping the handoff. Direct dispatch clears it again on entry.
+  recordDelegationWake(threadId, { botId: source.id, targetName, failureReason, routineRunId });
   // Busy? Hold the wake until the source settles, then drain it — the
   // delegated reply is already in the thread, so nothing is lost, and the
-  // source processes it the moment it is free rather than only on a later
-  // user nudge.
+  // source processes it the moment it is free rather than waiting for the
+  // next user nudge.
   if (threadBusy(source.id, threadId) || botAtThreadCapacity(source.id) || activeGroupTurnForBot(source.id)) {
     pendingDelegationWakes.set(threadId, { botId: source.id, targetName, failureReason, routineRunId });
     return;
@@ -7620,6 +7661,7 @@ function drainDelegationWakes(): void {
   for (const [threadId, entry] of pendingDelegationWakes) {
     if (!store.taskByThread(entry.botId, threadId) || !routineDelegationCanResume(threadId, entry.routineRunId)) {
       pendingDelegationWakes.delete(threadId);
+      clearDelegationWake(threadId);
       continue;
     }
     // Completion can precede asynchronous digest/resource settlement. Keep
@@ -7961,6 +8003,7 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, rawTe
       ? withPeerProvenance(rawText, { botName: opener.name, delivery: "start_thread", unattended })
       : rawText;
     if (targetThreadId) {
+      const routineRunId = activeRoutineRunForThread(sourceThreadId)?.id;
       delegationWatch.set(targetThreadId, {
         channelId: channel?.id,
         toBotId,
@@ -7968,8 +8011,36 @@ const runDelegatedTurn: Parameters<typeof drainDelegations>[3] = (toBotId, rawTe
         taskId,
         sourceThreadId,
         sourceBotId,
-        routineRunId: activeRoutineRunForThread(sourceThreadId)?.id,
+        routineRunId,
         startedAtMs: Date.now(),
+      });
+      // Carry the requester across the hop so auto-confirm/auto-send rules
+      // keep working in the teammate's thread: Scout proposing research for
+      // a mailed request is that request, not a new one.
+      const routed = sourceBotId ? store.taskByThread(sourceBotId, sourceThreadId)?.mailRouted : undefined;
+      if (routed) {
+        store.patchTask(toBotId, targetThreadId, {
+          mailRoutedVia: {
+            userId: routed.userId,
+            email: routed.email,
+            messageId: routed.messageId,
+            ...(routed.subject ? { subject: routed.subject } : {}),
+            sourceThreadId,
+          },
+        });
+      }
+      // Durable before startTurn: a crash between dispatch and finalize must
+      // leave a recoverable record, not a ghost handoff.
+      recordDelegationWatch({
+        targetThreadId,
+        toBotId,
+        startedAtMs: Date.now(),
+        ...(taskId ? { taskId } : {}),
+        ...(sourceThreadId ? { sourceThreadId } : {}),
+        ...(sourceBotId ? { sourceBotId } : {}),
+        ...(target?.name ? { toBotName: target.name } : {}),
+        ...(channel?.id ? { channelId: channel.id } : {}),
+        ...(routineRunId ? { routineRunId } : {}),
       });
     }
     let failureReported = false;
@@ -9859,6 +9930,7 @@ routines = new RoutineManager({
   interruptTurn: async (botId, threadId, runOn) => {
     const bot = botForThread(botId, threadId);
     pendingDelegationWakes.delete(threadId);
+    clearDelegationWake(threadId);
     discardDelegations(commsBus, threadId);
     cancelDirectTurnDispatch(botId, threadId);
     revokeInternalCapabilitiesForThread(threadId);
@@ -9876,6 +9948,7 @@ routines = new RoutineManager({
   onRunFailed: (run) => {
     if (run.threadId) {
       pendingDelegationWakes.delete(run.threadId);
+      clearDelegationWake(run.threadId);
       discardDelegations(commsBus, run.threadId);
     }
     const bot = store.bot(run.botId);
@@ -10015,16 +10088,24 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         // Acknowledge receipt as Mercury reaches the mail, before the work runs,
         // so the sender is never left wondering whether Relay got it. The
         // result follows in its own email when the turn that answers settles.
-        // Keyed by message id so a delivery retry cannot send twice.
-        if (!mailAckSentMessages.has(message.id) && !commandReceipt("gmail.ack", message.id)) {
+        // Keyed by message id so a delivery retry cannot send twice. The
+        // claim goes down before the send; a crash between send and finalize
+        // retries once the claim goes stale instead of double-sending.
+        if (!mailAckSentMessages.has(message.id) && !mailSendReceiptSent(commandReceipt("gmail.ack", message.id)?.result) && !mailSendClaimFresh(commandReceipt("gmail.ack", message.id)?.result, Date.now())) {
           mailAckSentMessages.add(message.id);
+          const ackFingerprint = mailSendFingerprint([person.email, routedSubject ?? "", "ack"]);
+          upsertCommandReceipt("gmail.ack", message.id, JSON.stringify({ state: "claimed", at: Date.now(), fp: ackFingerprint } satisfies MailSendReceipt), Date.now());
           void sendMailboxAcknowledgement({
             capability: relayBffCapability,
             actor: mailboxActor,
             email: person.email,
             ...(routedSubject ? { subject: routedSubject } : {}),
-          }).then(() => {
-            runCommand({ kind: "gmail.ack", key: message.id }, () => true);
+          }).then((sent) => {
+            if (!sent) {
+              mailAckSentMessages.delete(message.id);
+              return;
+            }
+            upsertCommandReceipt("gmail.ack", message.id, JSON.stringify({ state: "sent", at: Date.now(), fp: ackFingerprint, sentId: sent.sentId, gmailThreadId: sent.gmailThreadId } satisfies MailSendReceipt), Date.now());
           }).catch((error) => {
             mailAckSentMessages.delete(message.id);
             console.warn(`[mailbox] acknowledgement email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
@@ -12924,6 +13005,83 @@ function connectorThread(botId: string, threadId: string) {
   return null;
 }
 
+/** The teammate whose emailed request opened this work: directly routed,
+ * or one delegation hop away (a Scout thread working a request Mercury was
+ * mailed). Server-stamped in both cases — never model input — so auto
+ * paths can trust the address the same way.
+ *
+ * Returns nothing unless the requester is still on a configured teammate
+ * domain: auto-apply replaces a human tap, so it only stands in for people
+ * the deployment already recognizes, not for any address that once reached
+ * the shared inbox. An empty allowlist means no domain restriction, matching
+ * what the member lookup does. */
+function routedRequesterFor(botId: string, threadId: string): { userId: string; email: string; messageId: string; subject?: string } | undefined {
+  const task = store.taskByThread(botId, threadId);
+  const routed = task?.mailRouted ?? task?.mailRoutedVia;
+  if (!routed) return undefined;
+  return requesterDomainAllowed(routed.email, allowedEmailDomains()) ? routed : undefined;
+}
+
+/**
+ * Confirm a proposed research job and open its execution thread: create the
+ * thread and claim it with no await between them, post the chip, dispatch.
+ * Shared by the Confirm-card resolve path and the auto-confirm path for
+ * mailbox-routed threads (`autoApproved` rewords the opening line, which
+ * otherwise would falsely claim the person confirmed the plan).
+ * Returns undefined-ish outcomes the caller maps to its own responses; on a
+ * lost start-race the winner's settlement answers.
+ */
+async function confirmAndStartResearch(
+  requestId: string,
+  opts: { autoApproved: boolean },
+): Promise<
+  | { ok: true; threadId: string; title: string; dispatchState: string }
+  | { ok: false; reason: "gone" | "no-bot" | "no-task" | "race-lost"; winnerThreadId?: string; createdThreadId?: string }
+> {
+  const confirmed = researchJobs!.confirm(requestId);
+  if (!confirmed) return { ok: false, reason: "gone" };
+  const bot = store.bot(confirmed.botId);
+  if (!bot) return { ok: false, reason: "no-bot" };
+  // Create the thread and claim it with no await between them: the
+  // claim is the exactly-once gate, so a double tap or retry can never
+  // open a second research thread.
+  const task = store.createTask(bot.id, confirmed.title, false, undefined, { botId: bot.id, name: bot.name, at: Date.now() });
+  if (!task) return { ok: false, reason: "no-task" };
+  const claimed = researchJobs!.start(requestId, task.threadId);
+  if (!claimed) {
+    // A concurrent resolve won the race: take back the thread this attempt
+    // just made and answer with the winner's.
+    store.deleteTask(bot.id, task.threadId);
+    const winner = researchJobs!.settledOutcome(requestId);
+    return { ok: false, reason: "race-lost", winnerThreadId: winner?.executionThreadId, createdThreadId: task.threadId };
+  }
+  threadStarters.set(task.threadId, threadPersonKey(confirmed.threadId));
+  // The work is still for the person whose request the proposal was on, in
+  // the same conversation the plan was (or would have been) shown in.
+  inheritThreadOwner(DATA_DIR, confirmed.threadId, task.threadId);
+  const originOwner = connectorThread(bot.id, confirmed.threadId);
+  const originTitle = originOwner?.group ? originOwner.group.name : (store.taskByThread(bot.id, confirmed.threadId)?.title ?? "");
+  const providerNote = "Research provider: TinyFish via the web_search tool for discovery, then browser_open/browser_read for real reading. If web_search reports it is unavailable, say so in the report's methodology section and record which provider actually answered (including any fallback) — never present fallback results as TinyFish results.";
+  const timebox = confirmed.timeoutMinutes !== undefined
+    ? `\n\nTimebox: aim to finish within ${confirmed.timeoutMinutes} minutes. This is guidance, not an enforced deadline; the person can stop this thread at any time.`
+    : "";
+  const confirmedLine = opts.autoApproved
+    ? "The plan below was auto-approved for an emailed request: do the investigation here with web_search and the browser tools, then deliver the cited report in this conversation."
+    : "The plan below was confirmed by the person: do the investigation here with web_search and the browser tools, then deliver the cited report in this conversation.";
+  const opening = `[Research thread you opened yourself${originTitle ? ` from #${originTitle}` : ""}. ${confirmedLine}]\n\n${confirmed.title}\n\n${confirmed.brief}\n\n${providerNote}${timebox}`;
+  const chip: Omit<Message, "id" | "at"> = {
+    role: "bot",
+    kind: "activity",
+    tool: { name: `Opened thread #${task.title}`, ok: true },
+    threadRef: { botId: bot.id, threadId: task.threadId, title: task.title },
+  };
+  if (originOwner?.group) chip.from = { botId: bot.id, name: bot.name, color: bot.color };
+  store.appendMessage(confirmed.threadId, chip);
+  const dispatchState = await startOrQueueOpenedThread(bot.id, task.threadId, opening, isUnattended(bot.id, confirmed.threadId));
+  researchJobs!.settle(requestId, "started", task.threadId);
+  return { ok: true, threadId: task.threadId, title: confirmed.title, dispatchState: dispatchState.state };
+}
+
 /** When a person last wrote into the room's current conversation, if one
  * ever has. The posting budget's ceiling counts only the bot posts nobody
  * has answered since, so this is read fresh on every attempt rather than
@@ -15558,6 +15716,38 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           (message) => message.card?.requestId === job.researchId && message.kind === "options",
         );
         const display = researchDisplay(job);
+        const routed = routedRequesterFor(from.id, body.fromThreadId);
+        if (routed && !alreadyCarded) {
+          // An emailed request already carries the person's authorization —
+          // the same basis reply-to-requester email sends auto-apply on — so
+          // the plan starts instead of waiting on an in-app card. Chat
+          // threads and already-carded reruns keep the card.
+          if (job.status === "running") {
+            const resumed = researchJobs.settledOutcome(job.researchId);
+            return json(res, 200, { requestId: job.researchId, state: "applied", summary: display.detail, ...(resumed?.executionThreadId ? { threadId: resumed.executionThreadId } : {}) });
+          }
+          const started = await confirmAndStartResearch(job.researchId, { autoApproved: true });
+          if (!started.ok) {
+            // A lost start-race already settled the winner: answer from it
+            // rather than cancelling, which would clobber the settlement.
+            if (started.reason === "race-lost") {
+              return json(res, 200, { requestId: job.researchId, state: "applied", summary: display.detail, ...(started.winnerThreadId ? { threadId: started.winnerThreadId } : {}) });
+            }
+            researchJobs.cancel(job.researchId);
+            appendDecision(DATA_DIR, {
+              threadId: body.fromThreadId, requestId: job.researchId, botId: from.id, botName: from.name,
+              tool: "research_start",
+              summary: `auto-confirmed research failed to start: ${started.reason}`, decision: "auto-denied", source: "research",
+            });
+            return json(res, 502, { error: "the research run could not be started" });
+          }
+          appendDecision(DATA_DIR, {
+            threadId: body.fromThreadId, requestId: job.researchId, botId: from.id, botName: from.name,
+            tool: "research_start",
+            summary: `research auto-started for an emailed request: ${started.title}`, decision: "auto-approved", source: "research",
+          });
+          return json(res, 200, { requestId: job.researchId, state: "applied", summary: `${display.detail}\n\nExecution thread: ${started.threadId}`, threadId: started.threadId });
+        }
         let messageId: string | undefined;
         if (!alreadyCarded) {
           const message = store.appendMessage(body.fromThreadId, {
@@ -16157,8 +16347,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           }
           const stillQueued = pendingDelegationInfo(taskId);
           const runningEntry = [...delegationWatch.entries()].find(([, watch]) => watch.taskId === taskId);
-          const running = runningEntry?.[1];
-          const owner = stillQueued?.sourceThreadId ?? running?.sourceThreadId;
+          // A restart clears the in-memory watch while the target may still
+          // be mid-turn: the durable record keeps the status readable.
+          const durable = !runningEntry ? findDurableDelegationWatchByTaskId(taskId) : undefined;
+          const running = runningEntry?.[1] ?? (durable ? {
+            toBotId: durable.toBotId,
+            startedAtMs: durable.startedAtMs,
+          } : undefined);
+          const owner = stillQueued?.sourceThreadId ?? runningEntry?.[1]?.sourceThreadId ?? durable?.sourceThreadId;
           if (!owner) return json(res, 404, { error: "unknown task id — delegation receipts are kept for about 48 hours" });
           if (owner !== fromThreadId) return json(res, 403, { error: "that task belongs to a different conversation" });
           const toBotId = stillQueued?.toBotId ?? running?.toBotId ?? "";
@@ -16177,6 +16373,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 status: "running",
                 toBotName: store.bot(toBotId)?.name ?? toBotId,
                 elapsedMs: Math.max(0, Date.now() - (running.startedAtMs ?? Date.now())),
+                recentActivity: recent,
+              });
+            }
+            // Same, but from the persisted watch: the in-memory record died
+            // with a restart while the target may still be mid-turn. Boot
+            // recovery replays the wake separately; this only answers status.
+            if (durable && !runningEntry) {
+              const recent = summarizeDelegatedActivity(
+                store.messagesFor(durable.targetThreadId),
+                durable.startedAtMs,
+              );
+              return json(res, 200, {
+                status: "running",
+                toBotName: store.bot(toBotId)?.name ?? toBotId,
+                elapsedMs: Math.max(0, Date.now() - durable.startedAtMs),
                 recentActivity: recent,
               });
             }
@@ -20766,49 +20977,22 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               settleResearchCard("deny");
               return json(res, 200, { ok: true, outcome: "cancelled" });
             }
-            const confirmed = researchJobs.confirm(requestId);
-            if (!confirmed) return json(res, 410, { error: "this confirmation is no longer pending" });
-            // Create the thread and claim it with no await between them: the
-            // claim is the exactly-once gate, so a double tap or retry can
-            // never open a second research thread.
-            const task = store.createTask(bot.id, confirmed.title, false, undefined, { botId: bot.id, name: bot.name, at: Date.now() });
-            if (!task) return json(res, 500, { error: "the research thread could not be created" });
-            const claimed = researchJobs.start(requestId, task.threadId);
-            if (!claimed) {
-              // A concurrent resolve won the race: take back the thread this
-              // attempt just made and answer with the winner's.
-              store.deleteTask(bot.id, task.threadId);
-              const winner = researchJobs.settledOutcome(requestId);
-              return json(res, 200, { ok: true, outcome: "started", threadId: winner?.executionThreadId ?? task.threadId, replayed: true });
+            const started = await confirmAndStartResearch(requestId, { autoApproved: false });
+            if (!started.ok) {
+              if (started.reason === "race-lost") {
+                return json(res, 200, { ok: true, outcome: "started", threadId: started.winnerThreadId ?? started.createdThreadId, replayed: true });
+              }
+              if (started.reason === "gone") return json(res, 410, { error: "this confirmation is no longer pending" });
+              if (started.reason === "no-bot") return json(res, 400, { error: "this confirmation has no valid owner" });
+              return json(res, 500, { error: "the research thread could not be created" });
             }
-            threadStarters.set(task.threadId, threadPersonKey(confirmed.threadId));
-            // The work is still for the person whose request the proposal was
-            // on, in the same conversation the plan card was shown in.
-            inheritThreadOwner(DATA_DIR, confirmed.threadId, task.threadId);
-            const originOwner = connectorThread(bot.id, confirmed.threadId);
-            const originTitle = originOwner?.group ? originOwner.group.name : (store.taskByThread(bot.id, confirmed.threadId)?.title ?? "");
-            const providerNote = "Research provider: TinyFish via the web_search tool for discovery, then browser_open/browser_read for real reading. If web_search reports it is unavailable, say so in the report's methodology section and record which provider actually answered (including any fallback) — never present fallback results as TinyFish results.";
-            const timebox = confirmed.timeoutMinutes !== undefined
-              ? `\n\nTimebox: aim to finish within ${confirmed.timeoutMinutes} minutes. This is guidance, not an enforced deadline; the person can stop this thread at any time.`
-              : "";
-            const opening = `[Research thread you opened yourself${originTitle ? ` from #${originTitle}` : ""}. The plan below was confirmed by the person: do the investigation here with web_search and the browser tools, then deliver the cited report in this conversation.]\n\n${confirmed.title}\n\n${confirmed.brief}\n\n${providerNote}${timebox}`;
-            const chip: Omit<Message, "id" | "at"> = {
-              role: "bot",
-              kind: "activity",
-              tool: { name: `Opened thread #${task.title}`, ok: true },
-              threadRef: { botId: bot.id, threadId: task.threadId, title: task.title },
-            };
-            if (originOwner?.group) chip.from = { botId: bot.id, name: bot.name, color: bot.color };
-            store.appendMessage(confirmed.threadId, chip);
-            const dispatchState = await startOrQueueOpenedThread(bot.id, task.threadId, opening, isUnattended(bot.id, confirmed.threadId));
             appendDecision(DATA_DIR, {
               threadId, requestId, botId: bot.id, botName: bot.name,
               tool: "research_start",
-              summary: `research started: ${confirmed.title}`, decision: "user-approved", source: "research",
+              summary: `research started: ${started.title}`, decision: "user-approved", source: "research",
             });
-            researchJobs.settle(requestId, "started", task.threadId);
             settleResearchCard("allow");
-            return json(res, 200, { ok: true, outcome: "started", threadId: task.threadId, state: dispatchState.state });
+            return json(res, 200, { ok: true, outcome: "started", threadId: started.threadId, state: started.dispatchState });
           }
         }
         const skillCard = store.messagesFor(threadId).find(
@@ -22946,9 +23130,54 @@ server.listen(PORT, "127.0.0.1", () => {
     if (run && !["running", "waiting"].includes(run.status) && !reused) discardDelegations(commsBus, threadId);
     else drainThreadDelegations(threadId);
   }
+  // Recover dispatched-but-unfinalized handoffs and parked source wakes that
+  // did not survive the restart. Queued items above were just re-drained;
+  // these are the ones past queueing: a watch without a terminal receipt
+  // means the target never settled, so the source gets a failure wake that
+  // says so instead of silence. A watch or wake with a receipt means the
+  // result landed but the resume did not — replay the wake.
   // After the boot drain, not before it: that drain already expires stale
   // leftovers, and a sweep ahead of it would wake delegators of stopped
   // routine runs whose handoffs the loop above discards instead.
+  try {
+    // Wakes first: dispatch clears their records synchronously, so the
+    // watch scan below reloads from disk and never replays the same
+    // delegation as a failure.
+    for (const wake of loadDelegationWatches().wakes) {
+      dispatchDelegationWake(wake.botId, wake.threadId, wake.targetName, wake.failureReason, wake.routineRunId, wake.budgetAcquired);
+    }
+    for (const watch of loadDelegationWatches().watches) {
+      if (!watch.taskId) {
+        clearDelegationWatch(watch.targetThreadId);
+        continue;
+      }
+      const receipt = findDelegationReceipt(watch.taskId);
+      if (receipt) {
+        const source = (watch.sourceBotId ? store.bot(watch.sourceBotId) : undefined) ?? store.botByThread(watch.sourceThreadId ?? "");
+        if (source && watch.sourceThreadId) {
+          wakeDelegationSource(source, watch.sourceThreadId, watch.toBotName ?? receipt.toBotName, undefined, watch.routineRunId);
+        } else {
+          clearDelegationWatch(watch.targetThreadId);
+        }
+        continue;
+      }
+      const source = (watch.sourceBotId ? store.bot(watch.sourceBotId) : undefined) ?? store.botByThread(watch.sourceThreadId ?? "");
+      if (source && watch.sourceThreadId) {
+        wakeDelegationSource(
+          source,
+          watch.sourceThreadId,
+          watch.toBotName ?? watch.toBotId,
+          `The handoff to @${watch.toBotName ?? watch.toBotId} was interrupted by a server restart before a result arrived. Check thread ${watch.targetThreadId} for partial work, then continue it there or re-delegate.`,
+          watch.routineRunId,
+        );
+      } else {
+        console.warn(`[delegations] dropping unrecoverable watch for ${watch.targetThreadId}: source thread is gone`);
+      }
+      clearDelegationWatch(watch.targetThreadId);
+    }
+  } catch (error) {
+    console.warn(`[delegations] watch recovery failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
   setInterval(expireDelegationsNow, DELEGATION_SWEEP_MS).unref();
 });
 

@@ -201,4 +201,19 @@ describe("propose_deep_research", () => {
     ]);
     expect(result.text).toContain("not been applied yet");
   });
+
+  it("continues the turn when the proposal auto-applies with a thread", async () => {
+    const ctx = context({
+      client: {
+        api: async () => ({ requestId: "req-research", state: "applied", summary: "plan", threadId: "thread-exec-1" }),
+        apiResponse: async () => ({ ok: true, status: 200, body: {} }),
+      },
+    });
+    const result = await callTool("propose_deep_research", {
+      title: "Verify Electron claims", brief: "Check the four headline claims.",
+    }, ctx);
+    expect(result.isError).toBeFalsy();
+    expect(result.text).toContain("Applied");
+    expect(result.text).toContain("No additional confirmation is needed");
+  });
 });

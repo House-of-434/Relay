@@ -87,6 +87,19 @@ export function senderAddress(from: string | undefined): string | undefined {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : undefined;
 }
 
+/** Whether an address belongs to one of the configured teammate domains.
+ * An empty configuration means "no domain restriction" — the same meaning it
+ * carries in the member lookup — so a deployment that never set the list
+ * keeps working instead of silently refusing every request. */
+export function requesterDomainAllowed(email: string | undefined, configured: readonly string[]): boolean {
+  if (configured.length === 0) return true;
+  const value = (email ?? "").trim().toLowerCase();
+  const at = value.lastIndexOf("@");
+  if (at < 1 || at === value.length - 1) return false;
+  const domain = value.slice(at + 1);
+  return configured.some((allowed) => allowed.trim().toLowerCase() === domain);
+}
+
 /** One-line, bounded conversation title from the subject. */
 export function routedMailTitle(message: MailboxMessage, person: MailboxPerson): string {
   const cleaned = (message.subject ?? "")

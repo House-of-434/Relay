@@ -10,7 +10,8 @@ import { afterEach, test } from "node:test";
 
 import type { GoogleApiGateway } from "./google-api.ts";
 import { GoogleConnectionStore } from "./google-connections.ts";
-import { handleInternalGmail, INTERNAL_GMAIL_ATTACHMENT_GET } from "./gmail-internal.ts";
+import { __resetGmailMessageCacheForTests, handleInternalGmail, INTERNAL_GMAIL_ATTACHMENT_GET } from "./gmail-internal.ts";
+import { minimalPdf, xlsx } from "./test-document-fixtures.ts";
 
 const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
 const ACTOR_SECRET = "internal-actor-secret-fixture-value-0000000000000000";
@@ -31,34 +32,6 @@ function actorAssertion(userId: string): string {
     .update(JSON.stringify(["relay-actor", userId, issuedAt, BOT_ID, THREAD_ID, "mercury"]))
     .digest("base64url");
   return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent: "mercury", signature });
-}
-
-/** A real, minimal one-page PDF so the route's extraction path is exercised
- * end to end rather than on a stub. */
-function minimalPdf(lines: string[]): Buffer {
-  const content = [
-    "BT", "/F1 24 Tf", "72 700 Td",
-    ...lines.flatMap((line, index) => (index === 0 ? [`(${line}) Tj`] : ["0 -36 Td", `(${line}) Tj`])),
-    "ET",
-  ].join("\n");
-  const objects = [
-    "<</Type/Catalog/Pages 2 0 R>>",
-    "<</Type/Pages/Kids[3 0 R]/Count 1>>",
-    "<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R/Resources<</Font<</F1 5 0 R>>>>>>",
-    `<</Length ${Buffer.byteLength(content)}>>\nstream\n${content}\nendstream`,
-    "<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>",
-  ];
-  let pdf = "%PDF-1.4\n";
-  const offsets: number[] = [];
-  objects.forEach((body, index) => {
-    offsets.push(Buffer.byteLength(pdf));
-    pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
-  });
-  const xrefStart = Buffer.byteLength(pdf);
-  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
-  for (const offset of offsets) pdf += `${String(offset).padStart(10, "0")} 00000 n \n`;
-  pdf += `trailer\n<</Size ${objects.length + 1}/Root 1 0 R>>\nstartxref\n${xrefStart}\n%%EOF\n`;
-  return Buffer.from(pdf, "latin1");
 }
 
 const PDF_BYTES = minimalPdf(["Hello Deck", "Raise 1.5M"]);
@@ -118,6 +91,9 @@ function gatewayFor(messageParts: Record<string, AttachmentPart[]>, calls: strin
 }
 
 async function createFixture(messageParts: Record<string, AttachmentPart[]>) {
+  // Fixtures reuse message ids ("msg-1") across tests; the BFF's
+  // message cache is process-global, so start each fixture uncached.
+  __resetGmailMessageCacheForTests();
   const calls: string[] = [];
   const dataDir = mkdtempSync(join(tmpdir(), "relay-gmail-attachments-"));
   cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
@@ -192,6 +168,66 @@ test("the same reader serves documents other than decks", async () => {
   assert.equal(pngResult.body.attachment?.image?.mimeType, "image/png");
   assert.equal(typeof pngResult.body.attachment?.image?.data, "string");
   assert.equal(pngResult.body.attachment?.data, undefined);
+});
+
+test("a second fetch of the same message reuses the cached listing", async () => {
+  const { post, calls } = await createFixture({ "msg-1": [PDF_PART] });
+  const first = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-pdf" });
+  assert.equal(first.status, 200);
+  const second = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-pdf" });
+  assert.equal(second.status, 200);
+  assert.match(second.body.attachment?.text ?? "", /Hello Deck/);
+  // One messages.get for the first fetch; the second is served from cache.
+  // The bytes themselves are always re-fetched per attachment.
+  assert.equal(calls.filter((call) => call === "messages.get:msg-1").length, 1);
+  assert.equal(calls.filter((call) => call === "attachments.get:msg-1:att-pdf").length, 2);
+});
+
+test("an xlsx attachment is read as TSV with sheet boundaries, never as bytes", async () => {
+  const { post } = await createFixture({
+    "msg-1": [{
+      attachmentId: "att-xlsx",
+      filename: "pipeline.xlsx",
+      mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      bytes: xlsx({ Q1: [["rep", "deal"], ["amy", 7]] }),
+    }],
+  });
+  const { status, body } = await post(USER_ID, { messageId: "msg-1", attachmentId: "att-xlsx" });
+  assert.equal(status, 200);
+  assert.equal(body.attachment?.kind, "xlsx");
+  assert.match(body.attachment?.text ?? "", /--- sheet 1: Q1 ---/);
+  assert.match(body.attachment?.text ?? "", /rep\tdeal/);
+  assert.match(body.attachment?.text ?? "", /amy\t7/);
+  assert.equal(body.attachment?.unreadable, undefined);
+  // The raw bytes never travel to the model through the reading route.
+  assert.equal(body.attachment?.data, undefined);
+});
+
+test("a stale attachment id resolves the message's only attachment", async () => {
+  // Gmail rotates attachment ids between reads: the id from gmail_read may
+  // no longer match by fetch time. A single-attachment message is
+  // unambiguous, so it resolves instead of failing. The substitution is an
+  // API detail, not model input: the response carries no warning about it.
+  const { post } = await createFixture({ "msg-1": [PDF_PART] });
+  const { status, body } = await post(USER_ID, { messageId: "msg-1", attachmentId: "stale-id" });
+  assert.equal(status, 200);
+  assert.equal(body.attachment?.kind, "pdf");
+  assert.match(body.attachment?.text ?? "", /Hello Deck/);
+  assert.equal((body.attachment?.warnings ?? []).some((warning) => warning.includes("stale")), false);
+  assert.equal(body.attachment?.data, undefined);
+});
+
+test("a stale attachment id with several attachments is refused", async () => {
+  // With more than one attachment the stale id is ambiguous: fail closed so
+  // the caller re-reads the message for a fresh listing, never the wrong file.
+  const { post } = await createFixture({
+    "msg-1": [
+      { attachmentId: "att-a", filename: "a.pdf", mimeType: "application/pdf", bytes: PDF_BYTES },
+      { attachmentId: "att-b", filename: "b.pdf", mimeType: "application/pdf", bytes: PDF_BYTES },
+    ],
+  });
+  const { status } = await post(USER_ID, { messageId: "msg-1", attachmentId: "stale-id" });
+  assert.equal(status, 404);
 });
 
 test("octet-stream mime is accepted when the filename and magic agree", async () => {
