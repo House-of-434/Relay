@@ -578,7 +578,7 @@ async function resolveInboundSendAttachments(
           const full = await client.users.messages.get({ userId: "me", id: ref.messageId, format: "full" });
           payloads.set(ref.messageId, full.data.payload as GmailPayloadPart | undefined);
         }
-        const part = findAttachmentPart(payloads.get(ref.messageId), ref.attachmentId);
+        const part = attachmentPartInPayload(payloads.get(ref.messageId), ref.attachmentId);
         if (!part) {
           throw new AttachmentRequestError(400, "an attachment you named is not part of that message");
         }

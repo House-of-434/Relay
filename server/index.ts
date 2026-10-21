@@ -197,7 +197,7 @@ import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 import { recoveryCapabilityError } from "./automatic-recovery.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { bindRelayMcpForBot, relaySigningOwner, relayToolMcpServer, relayToolProxySpec, signedActorContext } from "./relay-mcp.ts";
-import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions, type PendingConnectorAction } from "./connector-actions.ts";
+import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
 import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
 import {
