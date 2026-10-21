@@ -588,6 +588,69 @@ test("an executable attachment is refused before it is fetched", async () => {
   assert.equal(calls.some((entry) => entry.operation === "attachments.get:attachment-1"), false);
 });
 
+test("executable filenames with trailing dots, spaces, and script extensions are refused", async () => {
+  const cases: Array<{ filename: string; mimeType: string }> = [
+    { filename: "setup.exe ", mimeType: "application/octet-stream" },
+    { filename: "setup.exe.", mimeType: "application/octet-stream" },
+    { filename: "invoice.js", mimeType: "application/javascript" },
+    { filename: "invoice.vb", mimeType: "text/plain" },
+  ];
+  for (const [index, entry] of cases.entries()) {
+    const forwardCalls: GmailCall[] = [];
+    const attachmentId = `attachment-${index}`;
+    const gateway = forwardingGateway(forwardCalls, {
+      "message-1": [{ attachmentId, filename: entry.filename, mimeType: entry.mimeType }],
+    });
+    const { call } = await createFixture({
+      gateway,
+      accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+    });
+    const response = await call(INTERNAL_GMAIL_SEND, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${CAPABILITY}`,
+        "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        to: ["friend@example.test"],
+        subject: "Forwarding",
+        body: "Here it is.",
+        attachments: [{ messageId: "message-1", attachmentId }],
+      }),
+    });
+
+    assert.equal(response.status, 400, `${entry.filename} must be refused`);
+    assert.match((await response.json() as { error: string }).error, /executable attachments are not allowed/);
+    assert.equal(forwardCalls.some((call) => call.operation === "messages.send"), false);
+    assert.equal(forwardCalls.some((call) => call.operation === `attachments.get:${attachmentId}`), false);
+  }
+});
+
+test("an inline executable with a trailing space is refused before sending", async () => {
+  const { call, calls: inlineCalls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Hi",
+      body: "There",
+      attachments: [{ filename: "setup.exe ", mimeType: "application/octet-stream", data: Buffer.from("x").toString("base64") }],
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.match((await response.json() as { error: string }).error, /executable attachments are not allowed/);
+  assert.equal(inlineCalls.some((call) => call.operation === "messages.send"), false);
+});
+
 test("a forwarded attachment over the outbound cap is refused", async () => {
   const calls: GmailCall[] = [];
   const gateway = forwardingGateway(calls, {

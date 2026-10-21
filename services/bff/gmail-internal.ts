@@ -43,14 +43,14 @@ const MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_OUTBOUND_ATTACHMENT_
 /** Files an outbound message may never carry. Gmail rejects some itself and
  * silently rewrites others; refusing here makes the refusal legible. */
 const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
-  "exe", "bat", "cmd", "com", "scr", "msi", "ps1", "sh", "dll", "jar", "app", "dmg", "pkg",
-  "vbs", "wsf", "lnk", "iso", "apk", "deb", "rpm", "reg", "hta", "cpl", "msc",
+  "exe", "bat", "cmd", "com", "scr", "msi", "ps1", "ps2", "psm1", "sh", "bash", "zsh", "dll", "jar", "app", "dmg", "pkg",
+  "vbs", "vb", "wsf", "lnk", "iso", "apk", "deb", "rpm", "reg", "hta", "cpl", "msc", "chm",
   "js", "jse", "vbe", "wsh", "wsc", "sct", "pif",
 ]);
-const BLOCKED_ATTACHMENT_MIME = /^application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive)$/i;
+const BLOCKED_ATTACHMENT_MIME = /^(?:application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive|javascript|x-javascript|x-vbscript)|text\/(?:javascript|x-vbscript))$/i;
 
 function attachmentExtension(filename: string): string {
-  return filename.toLowerCase().trim().replace(/[. ]+$/, "").split(".").pop()?.trim() ?? "";
+  return filename.trim().replace(/[. ]+$/, "").toLowerCase().split(".").pop()?.trim() ?? "";
 }
 
 function assertSendableAttachment(filename: string, mimeType: string): void {
