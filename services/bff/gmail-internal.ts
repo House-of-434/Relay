@@ -45,6 +45,7 @@ const MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_OUTBOUND_ATTACHMENT_
 const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
   "exe", "bat", "cmd", "com", "scr", "msi", "ps1", "sh", "dll", "jar", "app", "dmg", "pkg",
   "vbs", "wsf", "lnk", "iso", "apk", "deb", "rpm", "reg", "hta", "cpl", "msc",
+  "js", "jse", "vbe", "wsh", "wsc", "sct", "pif",
 ]);
 const BLOCKED_ATTACHMENT_MIME = /^application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive)$/i;
 
