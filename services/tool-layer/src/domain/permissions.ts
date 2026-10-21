@@ -90,9 +90,9 @@ export function authorize(agent: Agent, operation: Operation, table: string): Pr
 }
 
 /** Gmail operations are granted per agent and per capability, never per request. */
-// Gmail is search, read, and send behind a user confirmation. Drafts were
-// removed: proposing the exact content and sending it on confirm needs no
-// intermediate draft sitting in the mailbox.
+// Gmail is search, read, and send after the user confirms the chat draft.
+// There is no server-side pending store for email (calendar invites keep
+// theirs); the tool-call log is the audit trail.
 export type GmailCapability = "search" | "read" | "send";
 
 export const GMAIL_PERMISSIONS: Record<Agent, readonly GmailCapability[]> = {

@@ -3,11 +3,12 @@ import { z } from "zod";
 import { newId } from "./contracts.ts";
 
 /**
- * User-confirmed Google actions. The card the user sees is display-only: the
- * pending action lives here, keyed by requestId, and the resolve path looks
+ * User-confirmed calendar invites. The card the user sees is display-only: the
+ * pending invite lives here, keyed by requestId, and the resolve path looks
  * it up instead of trusting anything on the wire. No wire payload was added
- * for these on purpose — the draft id and event id must never reach the
- * browser, where they could be substituted.
+ * for this on purpose — the event id must never reach the
+ * browser, where it could be substituted. Email sends keep no pending store
+ * here; the agent shows the draft in chat and the tool-call log is the audit trail.
  */
 
 export const CONNECTOR_ACTION_TTL_MS = 15 * 60 * 1000;

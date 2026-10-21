@@ -783,9 +783,10 @@ export async function handleInternalGmail(
       });
       return;
     }
-    // Sending happens only after the owner confirmed the exact content; the
-    // composed message below is built from this same body, not from a draft
-    // the model might have changed since.
+    // The agent shows the complete draft in chat and sends only after the user
+    // says yes there; email keeps no server-side pending store, so the
+    // composed message below is built from this same body and the tool-call
+    // log is the audit trail.
     const cc = parsed.data.cc ?? [];
     const bcc = parsed.data.bcc ?? [];
     const requested = parsed.data.attachments ?? [];
