@@ -2746,7 +2746,8 @@ export class Store {
         }
         // Server-owned default: a seeded agent runs at Auto so its sandboxed
         // tools do not stop to ask on every turn; outward actions keep their
-        // own confirmations (propose_*). A recorded choice is left alone.
+        // own confirmations (a calendar card, a draft shown in chat).
+        // A recorded choice is left alone.
         if (existing.approvalMode === undefined && existing.autoApprove === undefined) {
           this.patchBot(existing.id, { approvalMode: "auto" });
         }
