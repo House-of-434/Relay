@@ -478,6 +478,7 @@ import {
   MAILBOX_LIST_LIMIT,
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
+  requesterDomainAllowed,
   routedMailPrompt,
   routedMailTitle,
   type MailboxMessage,
@@ -13007,10 +13008,18 @@ function connectorThread(botId: string, threadId: string) {
 /** The teammate whose emailed request opened this work: directly routed,
  * or one delegation hop away (a Scout thread working a request Mercury was
  * mailed). Server-stamped in both cases — never model input — so auto
- * paths can trust the address the same way. */
+ * paths can trust the address the same way.
+ *
+ * Returns nothing unless the requester is still on a configured teammate
+ * domain: auto-apply replaces a human tap, so it only stands in for people
+ * the deployment already recognizes, not for any address that once reached
+ * the shared inbox. An empty allowlist means no domain restriction, matching
+ * what the member lookup does. */
 function routedRequesterFor(botId: string, threadId: string): { userId: string; email: string; messageId: string; subject?: string } | undefined {
   const task = store.taskByThread(botId, threadId);
-  return task?.mailRouted ?? task?.mailRoutedVia ?? undefined;
+  const routed = task?.mailRouted ?? task?.mailRoutedVia;
+  if (!routed) return undefined;
+  return requesterDomainAllowed(routed.email, allowedEmailDomains()) ? routed : undefined;
 }
 
 /**

@@ -23,8 +23,10 @@ describe("scout capability manifest", () => {
     expect(scout.profile.soul).toContain("Never use propose_routine for one-shot research");
     expect(scout.profile.soul).toMatch(/once/i);
     expect(scout.profile.soul).not.toMatch(/go-ahead/i);
-    // Background work must never start before the human confirms.
-    expect(scout.profile.soul).toMatch(/never start background work before confirmation/i);
+    // Background work waits for Relay's authorization, and the soul defers to
+    // the proposal result rather than restating which threads auto-apply.
+    expect(scout.profile.soul).toMatch(/never start background work before Relay authorizes it/i);
+    expect(scout.profile.soul).toMatch(/applied means it is already authorized/i);
   });
 
   it("keeps the evidence taxonomy and honesty invariants", () => {

@@ -5,6 +5,7 @@ import {
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
   deliverRoutedMail,
+  requesterDomainAllowed,
   routedMailPrompt,
   routedMailTitle,
   senderAddress,
@@ -285,5 +286,33 @@ describe("routed mail prompt", () => {
     expect(routedMailTitle(message(), BOB)).toBe("Pitch deck");
     expect(routedMailTitle(message({ subject: "  " }), BOB)).toBe(`Email from Bob`);
     expect(routedMailTitle(message({ subject: "x".repeat(200) }), BOB).length).toBe(80);
+  });
+});
+
+describe("requester domain allowlist", () => {
+  const domains = ["houseof434.com", "434vc.com"];
+
+  it("accepts any configured teammate domain, case-insensitively", () => {
+    expect(requesterDomainAllowed("bob@houseof434.com", domains)).toBe(true);
+    expect(requesterDomainAllowed("BOB@434VC.com", domains)).toBe(true);
+  });
+
+  it("rejects other domains and look-alikes", () => {
+    expect(requesterDomainAllowed("bob@example.com", domains)).toBe(false);
+    expect(requesterDomainAllowed("bob@evil434vc.com", domains)).toBe(false);
+    expect(requesterDomainAllowed("bob@houseof434.com.attacker.test", domains)).toBe(false);
+    expect(requesterDomainAllowed("bob@sub.houseof434.com", domains)).toBe(false);
+  });
+
+  it("rejects malformed addresses instead of guessing", () => {
+    expect(requesterDomainAllowed(undefined, domains)).toBe(false);
+    expect(requesterDomainAllowed("", domains)).toBe(false);
+    expect(requesterDomainAllowed("bob", domains)).toBe(false);
+    expect(requesterDomainAllowed("bob@", domains)).toBe(false);
+    expect(requesterDomainAllowed("@houseof434.com", domains)).toBe(false);
+  });
+
+  it("treats an empty configuration as no restriction, matching the member lookup", () => {
+    expect(requesterDomainAllowed("anyone@example.com", [])).toBe(true);
   });
 });
