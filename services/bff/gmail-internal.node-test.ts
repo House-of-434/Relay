@@ -651,6 +651,76 @@ test("an inline executable with a trailing space is refused before sending", asy
   assert.equal(inlineCalls.some((call) => call.operation === "messages.send"), false);
 });
 
+test("an extensionless generic-type attachment is refused before it is fetched", async () => {
+  const calls: GmailCall[] = [];
+  const gateway = forwardingGateway(calls, {
+    "message-1": [{ attachmentId: "attachment-1", filename: "", mimeType: "application/octet-stream" }],
+  });
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Forwarding",
+      body: "Here it is.",
+      attachments: [{ messageId: "message-1", attachmentId: "attachment-1" }],
+    }),
+  });
+
+  assert.equal(response.status, 400);
+  assert.match((await response.json() as { error: string }).error, /cannot be verified/);
+  assert.equal(calls.some((entry) => entry.operation === "messages.send"), false);
+  assert.equal(calls.some((entry) => entry.operation === "attachments.get:attachment-1"), false);
+});
+
+test("several large inbound refs fail with 413 without fetching every part", async () => {
+  const calls: GmailCall[] = [];
+  const declared = 9 * 1024 * 1024;
+  const big = Buffer.alloc(declared, 1);
+  const gateway = forwardingGateway(calls, {
+    "message-1": [
+      { attachmentId: "attachment-1", filename: "a.pdf", mimeType: "application/pdf", size: declared, bytes: big },
+      { attachmentId: "attachment-2", filename: "b.pdf", mimeType: "application/pdf", size: declared, bytes: big },
+      { attachmentId: "attachment-3", filename: "c.pdf", mimeType: "application/pdf", size: declared, bytes: big },
+    ],
+  });
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Forwarding",
+      body: "Here it is.",
+      attachments: [
+        { messageId: "message-1", attachmentId: "attachment-1" },
+        { messageId: "message-1", attachmentId: "attachment-2" },
+        { messageId: "message-1", attachmentId: "attachment-3" },
+      ],
+    }),
+  });
+
+  assert.equal(response.status, 413);
+  assert.match((await response.json() as { error: string }).error, /too large/);
+  assert.equal(calls.some((entry) => entry.operation === "messages.send"), false);
+  assert.equal(calls.filter((entry) => entry.operation.startsWith("attachments.get:")).length, 2);
+});
+
 test("a forwarded attachment over the outbound cap is refused", async () => {
   const calls: GmailCall[] = [];
   const gateway = forwardingGateway(calls, {

@@ -50,13 +50,19 @@ const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
 const BLOCKED_ATTACHMENT_MIME = /^(?:application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive|javascript|x-javascript|x-vbscript)|text\/(?:javascript|x-vbscript))$/i;
 
 function attachmentExtension(filename: string): string {
-  return filename.trim().replace(/[. ]+$/, "").toLowerCase().split(".").pop()?.trim() ?? "";
+  const normalized = filename.trim().replace(/[. ]+$/, "").toLowerCase();
+  if (!normalized.includes(".")) return "";
+  return normalized.split(".").pop()?.trim() ?? "";
 }
 
 function assertSendableAttachment(filename: string, mimeType: string): void {
   const extension = attachmentExtension(filename);
   if (BLOCKED_ATTACHMENT_EXTENSIONS.has(extension) || BLOCKED_ATTACHMENT_MIME.test(mimeType.trim())) {
     throw new AttachmentRequestError(400, "executable attachments are not allowed");
+  }
+  const mime = mimeType.trim().toLowerCase();
+  if (!extension && (mime === "" || mime === "application/octet-stream")) {
+    throw new AttachmentRequestError(400, "attachment type cannot be verified: rename the file with an extension or convert it to a supported type");
   }
 }
 
@@ -497,6 +503,7 @@ async function resolveInboundSendAttachments(
     async (client) => {
       const payloads = new Map<string, GmailPayloadPart | undefined>();
       const out: Array<{ filename: string; mimeType: string; data: string }> = [];
+      let totalBytes = 0;
       for (const ref of refs) {
         if (!payloads.has(ref.messageId)) {
           const full = await client.users.messages.get({ userId: "me", id: ref.messageId, format: "full" });
@@ -511,7 +518,17 @@ async function resolveInboundSendAttachments(
           typeof part.filename === "string" ? part.filename : "",
           typeof part.mimeType === "string" ? part.mimeType : "",
         );
+        const declaredSize = part.body?.size;
+        if (typeof declaredSize === "number" && Number.isFinite(declaredSize) && declaredSize > 0) {
+          if (totalBytes + declaredSize > MAX_OUTBOUND_TOTAL_BYTES) {
+            throw new AttachmentRequestError(413, "the email attachments are too large");
+          }
+        }
         const bytes = await readAttachmentBytes(client, part, ref, MAX_OUTBOUND_ATTACHMENT_BYTES);
+        totalBytes += bytes.size;
+        if (totalBytes > MAX_OUTBOUND_TOTAL_BYTES) {
+          throw new AttachmentRequestError(413, "the email attachments are too large");
+        }
         out.push({ filename: bytes.filename || "attachment", mimeType: bytes.mimeType, data: bytes.data });
       }
       return out;
