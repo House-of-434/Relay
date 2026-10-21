@@ -48,8 +48,12 @@ const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
 ]);
 const BLOCKED_ATTACHMENT_MIME = /^application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive)$/i;
 
+function attachmentExtension(filename: string): string {
+  return filename.toLowerCase().trim().replace(/[. ]+$/, "").split(".").pop()?.trim() ?? "";
+}
+
 function assertSendableAttachment(filename: string, mimeType: string): void {
-  const extension = filename.toLowerCase().split(".").pop() ?? "";
+  const extension = attachmentExtension(filename);
   if (BLOCKED_ATTACHMENT_EXTENSIONS.has(extension) || BLOCKED_ATTACHMENT_MIME.test(mimeType.trim())) {
     throw new AttachmentRequestError(400, "executable attachments are not allowed");
   }
@@ -399,7 +403,7 @@ function classifyAttachment(mimeType: string, filename: string, bytes: Buffer): 
   const magic = bytesMagicClass(bytes);
   if (!magic) return undefined;
   const mime = mimeType.trim().toLowerCase();
-  const extension = filename.toLowerCase().split(".").pop() ?? "";
+  const extension = attachmentExtension(filename);
   const candidates = DOCUMENT_FORMATS.filter((format) => format.magic === magic);
   const byMime = candidates.find((format) => format.mime.includes(mime));
   if (byMime) return byMime.kind;

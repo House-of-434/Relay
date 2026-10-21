@@ -2742,7 +2742,7 @@ export class Store {
           && existing.soulHash !== undefined
           && seed.replacesSoulHashes?.includes(existing.soulHash)
         ) {
-          this.patchBot(existing.id, { soul: seed.profile.soul });
+          this.setSoul(existing.id, seed.profile.soul);
         }
         // Server-owned default: a seeded agent runs at Auto so its sandboxed
         // tools do not stop to ask on every turn; outward actions keep their
