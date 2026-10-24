@@ -43,6 +43,8 @@ export interface WorkerConfig {
   probeDir: string;
   /** Injected bundle for the per-channel Meet lane; default resolved next to src. */
   gmeetBundlePath: string | undefined;
+  /** Injected bundle for the per-track Zoom lane; default resolved next to src. */
+  zoomBundlePath: string | undefined;
   /** Scribe state root: spool, failures, status files, profile. */
   dataDir: string;
   /** Retention for failure screenshots and status files. */
@@ -81,6 +83,7 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     gmeetProbe: (env.RELAY_SCRIBE_GMEET_PROBE ?? "0") === "1",
     probeDir: (env.RELAY_SCRIBE_PROBE_DIR ?? "/data/scribe/probes").trim(),
     gmeetBundlePath: env.RELAY_SCRIBE_GMEET_BUNDLE?.trim() || undefined,
+    zoomBundlePath: env.RELAY_SCRIBE_ZOOM_BUNDLE?.trim() || undefined,
     dataDir: (env.RELAY_SCRIBE_DATA_DIR ?? "/data/scribe").trim(),
     retentionMs: num(env.RELAY_SCRIBE_RETENTION_MS, 30 * 24 * 60 * 60 * 1000),
     diskMinBytes: num(env.RELAY_SCRIBE_DISK_MIN_BYTES, 1024 * 1024 * 1024),

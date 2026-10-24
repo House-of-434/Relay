@@ -101,7 +101,12 @@ export function nativeIdFromMeetingRef(ref: string): string | null {
   const host = url.hostname.toLowerCase();
   const seg = url.pathname.split("/").filter(Boolean);
   if (host === "meet.google.com") return seg[0] ?? null;
-  const markers = host === "zoom.us" || host.endsWith(".zoom.us") ? ["j", "wc", "s"] : ["meet"];
+  const isZoom =
+    host === "zoom.us" ||
+    host.endsWith(".zoom.us") ||
+    host === "zoom.com" ||
+    host.endsWith(".zoom.com");
+  const markers = isZoom ? ["j", "wc", "s"] : ["meet", "meeting"];
   const i = seg.findIndex((s) => markers.includes(s));
   return i >= 0 && seg[i + 1] ? seg[i + 1]! : null;
 }

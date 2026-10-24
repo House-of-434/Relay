@@ -32,6 +32,7 @@ Third-party artifacts these sources depend on (not vendored here):
 | `core/meetings/modules/buffer/` | `@vexa/transcribe-buffer`: LocalAgreement-N confirm core + `GmeetCompatibleBuffer` (the pipeline's confirmation primitive) |
 | `core/meetings/modules/whisper/` | `stt.v1` multipart-WAV client contract + confidence filter |
 | `core/meetings/contracts/transcript.v1/` | The SEALED `transcript.v1` schema (+ golden) the pipeline conformance golden validates against |
+| `core/meetings/modules/zoom-capture/` | **Zoom per-track lane** (browser): `zoom-speakers` (active-speaker DOM watcher), `zoom-chat` (chat panel reader), and `track-name-resolver` (the pure vote/margin/purity/1:1/self correlator that binds each stable WebRTC track to a display name) |
 | `core/meetings/modules/join/` | Deterministic Meet/Zoom/Teams selectors (`googlemeet`, `zoom`, `msteams`, `shared`, root `_host`/`browser-args`/`index`) — plus the `jitsi` lane, included although Scribe never instantiates it, because `index.ts` imports it and the package must stay coherent |
 | `core/meetings/services/bot/src/{capture-bridge,pipeline,join-driver}.ts` | Orchestration seam — **adapt, don't copy wholesale** |
 
@@ -59,6 +60,9 @@ directly under the module directory here (e.g.
 upstream `src/README.md`. Two modules keep their `src/` level because code in
 them resolves files by relative path above `src/`:
 - `join/` — only four subdirectories were taken.
+- `zoom-capture/` — `package.json` and `tsconfig.json` sit above `src/`
+  upstream; taken as-is so the module keeps its own entry point and the
+  vendored tests run from their original relative paths.
 - `gmeet-pipeline/` — `pipeline-conformance.test.ts` reads the sealed schema at
   `../../../contracts/transcript.v1/transcript.schema.json`, which only resolves
   from `gmeet-pipeline/src/`. `contracts/transcript.v1/` is vendored at its
@@ -84,3 +88,9 @@ Only the documented changes below deviate from upstream. No vendored source
   value it backs, `createGmeetCaptureV1`, is not on Scribe's path).
 - `gmeet-pipeline/*` — 2026-10-10 — Re-laid out to keep the upstream `src/`
   level (see Layout) so the conformance golden runs unmodified.
+- `zoom-capture/package.json` — 2026-10-24 — Added for `@vexa/zoom-capture`,
+  same reason and shape as the other vendored manifests: upstream builds
+  `dist/`, while our capture entry is bundled by esbuild straight from source,
+  so `exports`/`main`/`types` point at `./src/index.ts`. The upstream `scripts`
+  and `devDependencies` are kept verbatim; only `exports`, `main`, `types`, the
+  `private` flag and the description are Relay's.

@@ -16,6 +16,7 @@ import { createNavigationGuard } from "./navigation-guard.js";
 import { sharedBrowserContext } from "./shared-browser.js";
 import { WORKER_BOOT_ID } from "./boot.js";
 import { postMeetDisclosure } from "./chat.js";
+import { newChatSegments, SeenChatSet } from "./chat-port.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
 /** One confirmed segment from the vendored gmeet pipeline (transcript.v1 view). */
@@ -79,9 +80,16 @@ async function loadVexaJoin(): Promise<VexaJoin> {
 
 const VEXA_SCREENSHOT_DIR = "/app/storage/screenshots";
 
+/** Page-side API name for a per-channel lane (installed by its capture bundle). */
+function laneApi(lane: "gmeet" | "zoom"): "__scribeGmeet" | "__scribeZoom" {
+  return lane === "zoom" ? "__scribeZoom" : "__scribeGmeet";
+}
+
 /** Per-channel Meet lane bundle (built by scripts/build-capture.mjs). */
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GMEET_BUNDLE = joinPath(HERE, "../dist/gmeet-capture.bundle.js");
+/** Per-track Zoom lane bundle (built by scripts/build-capture.mjs). */
+const DEFAULT_ZOOM_BUNDLE = joinPath(HERE, "../dist/zoom-capture.bundle.js");
 
 interface ProbeFrame {
   t: number;
@@ -176,6 +184,8 @@ class MeetSession {
   private probeStreams = 0;
   private probeDomStart: unknown = null;
   private probeDomEnd: unknown = null;
+  /** Chat keys already converted, per capture (chat panels re-render). */
+  private readonly seenChat = new SeenChatSet();
 
   constructor(private readonly descriptor: JoinDescriptor, private readonly config: WorkerConfig) {
     this.spool = new SegmentSpool(config.flushSegments, config.flushMs, Date.now());
@@ -266,13 +276,14 @@ class MeetSession {
       // initial page, redirect hops, subresources, iframes, popups — is
       // validated pre-flight, so aborts never contact their destination.
       await guard.install(this.page);
-      const isMeet = this.descriptor.platform === "google_meet";
-      if (isMeet) {
-        // Per-channel Meet lane: the remote-audio hook (so elements exist even if
-        // Meet hides them — the entry dedupes by audio track id) + the capture
-        // bundle. The mixed tap is NOT installed for Meet. Installed per page
-        // (was: per context) so Meet and non-Meet captures sharing the browser
-        // keep their lanes separate.
+      // Per-channel lanes (Meet, Zoom) tap each participant's own WebRTC track and
+      // bind a name; the mixed lane is the speaker-unknown fallback. Installed per
+      // page (not per context) so two captures on one browser keep their lanes apart.
+      const lane: "gmeet" | "zoom" | "mixed" =
+        this.descriptor.platform === "google_meet" ? "gmeet"
+          : this.descriptor.platform === "zoom" ? "zoom"
+            : "mixed";
+      if (lane === "gmeet") {
         const bundle = this.config.gmeetBundlePath ?? DEFAULT_GMEET_BUNDLE;
         if (!existsSync(bundle)) {
           throw new Error(`gmeet capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
@@ -281,6 +292,20 @@ class MeetSession {
         await this.page.addInitScript({ path: bundle });
         await this.page.addInitScript({
           content: `window.__scribeGmeetConfig = ${JSON.stringify({
+            selfName: this.config.selfName,
+            maxStreams: this.config.maxStreams,
+            debug: false,
+          })};`,
+        });
+      } else if (lane === "zoom") {
+        const bundle = this.config.zoomBundlePath ?? DEFAULT_ZOOM_BUNDLE;
+        if (!existsSync(bundle)) {
+          throw new Error(`zoom capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
+        }
+        await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
+        await this.page.addInitScript({ path: bundle });
+        await this.page.addInitScript({
+          content: `window.__scribeZoomConfig = ${JSON.stringify({
             selfName: this.config.selfName,
             maxStreams: this.config.maxStreams,
             debug: false,
@@ -317,7 +342,7 @@ class MeetSession {
 
       // Join disclosure: once, after admission, Meet only, best-effort. A send
       // failure is recorded (disclosure_posted=false) and never blocks capture.
-      if (isMeet && !this.config.gmeetProbe && this.config.disclosure && this.page) {
+      if (lane === "gmeet" && !this.config.gmeetProbe && this.config.disclosure && this.page) {
         const outcome = await postMeetDisclosure(this.page, this.config.disclosure, {
           log: (message) => console.log(message),
         });
@@ -334,9 +359,9 @@ class MeetSession {
       }
       if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
 
-      if (isMeet) {
-        await this.gmeetStart();
-        if (this.config.gmeetProbe) await this.probeStart();
+      if (lane !== "mixed") {
+        await this.channelStart(laneApi(lane));
+        if (lane === "gmeet" && this.config.gmeetProbe) await this.probeStart();
       }
 
       const deadline = Date.now() + this.config.maxMeetingMs;
@@ -345,17 +370,18 @@ class MeetSession {
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
-        if (isMeet) await this.gmeetFeedOnce();
+        if (lane !== "mixed") await this.channelFeedOnce(laneApi(lane));
         else await this.captureOnce();
+        if (lane === "zoom") await this.captureChatOnce();
         await this.flush(false, "active");
-        if (isMeet && this.config.gmeetProbe) await this.probeTick();
+        if (lane === "gmeet" && this.config.gmeetProbe) await this.probeTick();
         // Voice-idle end (Meet only): no remote voice for 3 minutes means
         // the meeting is over whether or not tiles agree; 5 minutes without
         // ever hearing any covers a room that never fills. maxMeetingMs
         // remains the hard backstop. The idle reason is written to error so
         // the row explains why it ended; status stays completed when any
         // segment landed, else partial.
-        if (isMeet && this.status === "active" && voiceIdleExpired({
+        if (lane !== "mixed" && this.status === "active" && voiceIdleExpired({
           captureStartMs: this.captureStartMs,
           firstVoiceAt: this.firstVoiceAt,
           lastVoiceAt: this.lastRemoteAudioAt,
@@ -419,7 +445,7 @@ class MeetSession {
 
   // ── Per-channel Meet lane (vendored gmeet-pipeline) ──
 
-  private async gmeetStart(): Promise<void> {
+  private async channelStart(api: string): Promise<void> {
     if (!this.page) return;
     const mod = await loadGmeetPipeline();
     const captureStartSec = this.captureStartMs / 1000;
@@ -451,16 +477,35 @@ class MeetSession {
         this.error = (e instanceof Error ? e.message : "gmeet pipeline error").slice(0, 200);
       },
     });
-    await this.page.evaluate(async () => {
-      await (window as any).__scribeGmeet?.start?.();
-    });
+    await this.page.evaluate(async (a) => {
+      await (window as any)[a]?.start?.();
+    }, api);
   }
 
-  private async gmeetFeedOnce(): Promise<void> {
+  /** Inbound chat → segments (Zoom today). Read-only scrape; a closed chat panel
+   *  simply yields nothing, and a failed drain never interrupts capture. */
+  private async captureChatOnce(): Promise<void> {
+    if (!this.page) return;
+    let messages: Array<{ sender: string | null; text: string; ts: number }>;
+    try {
+      messages = await this.page.evaluate(() => (window as any).__scribeZoom?.drainChat?.() ?? []);
+    } catch {
+      return;
+    }
+    if (messages.length === 0) return;
+    const segments = newChatSegments(
+      messages.map((m) => ({ sender: m.sender ?? null, text: m.text, atMs: m.ts })),
+      { platform: this.descriptor.platform, captureStartMs: this.captureStartMs, seen: this.seenChat },
+    );
+    for (const segment of segments) this.spool.add(segment);
+    if (segments.length > 0) console.log(`scribe: ${this.descriptor.instance_id} ingested ${segments.length} chat message(s)`);
+  }
+
+  private async channelFeedOnce(api: string): Promise<void> {
     if (!this.page || !this.gmeet) return;
     let frames: Array<{ channel: number; name: string | null; energy: number; ts: number; pcm?: number[] }>;
     try {
-      frames = await this.page.evaluate(() => (window as any).__scribeGmeet?.drain?.(true) ?? []);
+      frames = await this.page.evaluate((a) => (window as any)[a]?.drain?.(true) ?? [], api);
     } catch {
       return;
     }
@@ -560,11 +605,12 @@ class MeetSession {
         await this.gmeet.dispose().catch(() => { /* best effort */ });
         this.gmeet = null;
       }
-      if (this.page && this.descriptor.platform === "google_meet") {
+      if (this.page && this.descriptor.platform !== "teams") {
         try {
-          await this.page.evaluate(() => {
-            (window as any).__scribeGmeet?.stop?.();
-          });
+          const api = this.descriptor.platform === "zoom" ? "__scribeZoom" : "__scribeGmeet";
+          await this.page.evaluate((a) => {
+            (window as any)[a]?.stop?.();
+          }, api);
         } catch { /* best effort */ }
       }
       if (this.config.gmeetProbe && this.descriptor.platform === "google_meet") {

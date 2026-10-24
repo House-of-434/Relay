@@ -7,6 +7,7 @@ packages:
   # resolve without editing the (unmodified) vendored import lines.
   - "third_party/vexa-capture/core/meetings/modules/gmeet-capture"
   - "third_party/vexa-capture/core/meetings/modules/gmeet-pipeline"
+  - "third_party/vexa-capture/core/meetings/modules/zoom-capture"
   - "third_party/vexa-capture/core/meetings/modules/buffer"
   - "third_party/vexa-capture/core/meetings/modules/whisper"
 
