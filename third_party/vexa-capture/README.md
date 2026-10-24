@@ -32,7 +32,7 @@ Third-party artifacts these sources depend on (not vendored here):
 | `core/meetings/modules/buffer/` | `@vexa/transcribe-buffer`: LocalAgreement-N confirm core + `GmeetCompatibleBuffer` (the pipeline's confirmation primitive) |
 | `core/meetings/modules/whisper/` | `stt.v1` multipart-WAV client contract + confidence filter |
 | `core/meetings/contracts/transcript.v1/` | The SEALED `transcript.v1` schema (+ golden) the pipeline conformance golden validates against |
-| `core/meetings/modules/zoom-capture/` | **Zoom per-track lane** (browser): `zoom-speakers` (active-speaker DOM watcher), `zoom-chat` (chat panel reader), and `track-name-resolver` (the pure vote/margin/purity/1:1/self correlator that binds each stable WebRTC track to a display name) |
+| `core/meetings/modules/zoom-capture/` | **Zoom per-track lane** (browser): `zoom-speakers` (active-speaker DOM watcher) and `track-name-resolver` (the pure vote/margin/purity/1:1/self correlator that binds each stable WebRTC track to a display name) |
 | `core/meetings/modules/join/` | Deterministic Meet/Zoom/Teams selectors (`googlemeet`, `zoom`, `msteams`, `shared`, root `_host`/`browser-args`/`index`) — plus the `jitsi` lane, included although Scribe never instantiates it, because `index.ts` imports it and the package must stay coherent |
 | `core/meetings/services/bot/src/{capture-bridge,pipeline,join-driver}.ts` | Orchestration seam — **adapt, don't copy wholesale** |
 

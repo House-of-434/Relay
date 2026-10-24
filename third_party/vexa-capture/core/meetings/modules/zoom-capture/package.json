@@ -1,7 +1,7 @@
 {
   "name": "@vexa/zoom-capture",
   "version": "0.1.0",
-  "description": "Vendored @vexa/zoom-capture (browser): Zoom active-speaker DOM watcher, chat reader, and the pure per-track name resolver. ADAPTED for Relay: exports resolve to the .ts sources (upstream builds dist/), because esbuild bundles them directly from our capture entry, the same adaptation @vexa/gmeet-capture already carries.",
+  "description": "Vendored @vexa/zoom-capture (browser): Zoom active-speaker DOM watcher and the pure per-track name resolver. ADAPTED for Relay: exports resolve to the .ts sources (upstream builds dist/), because esbuild bundles them directly from our capture entry, the same adaptation @vexa/gmeet-capture already carries.",
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
