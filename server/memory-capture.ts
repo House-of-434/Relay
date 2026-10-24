@@ -38,8 +38,8 @@ export function topicFileName(raw: unknown): string | null {
   return `${name}.md`;
 }
 
-export const MIN_CONFIDENCE = 0.6;
-export const MAX_CANDIDATES = 8;
+export const MIN_CONFIDENCE = 0.7;
+export const MAX_CANDIDATES = 4;
 const TEXT_MAX = 300;
 const LINE_MAX = 1_500;
 const NOTEBOOK_MAX = 6_000;

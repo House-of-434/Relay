@@ -10,7 +10,7 @@ export interface SessionIdlePolicy {
   minimumMs: number;
 }
 
-const DEFAULT_IDLE_MS = 10 * 60_000;
+const DEFAULT_IDLE_MS = 2 * 60_000;
 const MINIMUM_IDLE_MS = 10_000;
 /** setTimeout treats anything above 2^31-1 ms as 1 ms, so a larger delay
  *  would close the session immediately instead of much later. */

@@ -396,8 +396,7 @@ import {
   userProfileSystemPrompt,
   cloudHomePrompt,
   computerPrompt,
-  composioSystemPrompt,
-  customMcpPrompt,
+  connectorsSystemPrompt,
   mailboxSystemPrompt,
   CLARIFICATION_PROMPT,
   CREDENTIAL_PROMPT,
@@ -3368,10 +3367,9 @@ function previewSystemPrompt(bot: BotRecord) {
     { id: "plan", label: "Surface", text: previewPlan.computer === undefined ? "" : surfacePrompt({
       computer: previewPlan.computer && previewPlan.computer !== "off" && computerPromptKind ? previewPlan.computer : null,
     }, { note: previewPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
-    { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
-    { id: "composio", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? composioSystemPrompt(bot.connectorTools) : "" },
+    { id: "cloud-home", label: "Relay Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
+    { id: "connectors", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? connectorsSystemPrompt(bot.connectorTools) : "" },
     { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
-    { id: "mcp", label: "MCP servers", text: caps?.customMcp ? customMcpPrompt(Object.keys(engineMcpServers(bot))) : "" },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
     { id: "routine", label: "Routines", text: agentsMounted ? ROUTINE_PROMPT : "" },
@@ -9392,12 +9390,11 @@ async function startTurn(
         { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
         { id: "team-computer", label: "Team computer", text: teamComputerPrompt(RELAY_COMPUTER_DISABLED ? undefined : teamComputer ?? undefined) },
         { id: "plan", label: "Surface", text: surfacePrompt({ computer: mountedComputer }, { pinned: plan.pinned, note: plan.note, canSelect: computerSelectionTurns.has(threadId), cloudHome: Boolean(CLOUD_HOME) }) },
-        { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
+        { id: "cloud-home", label: "Relay Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
-        { id: "composio", label: "Connected apps", text: integrations.composio ? composioSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) : "" },
+        { id: "connectors", label: "Connected apps", text: integrations.composio ? connectorsSystemPrompt(liveBot?.connectorTools ?? bot.connectorTools) : "" },
         { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
-        { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
         { id: "outstanding", label: "Outstanding teammate work", text: outstandingAssignmentsPrompt(threadId) },
@@ -9473,7 +9470,6 @@ async function startTurn(
         // must still deliver their note (SendTurnInput.mentionTurn)
         mentionTurn: tagged.length > 0,
         integrations,
-        mcpFromUserConfig: false,
         cwd,
       }), () => !directTurnClaimExists(bot.id, dispatchClaimId, threadId), async () => {
         await instance.adapter.interruptTurn(threadId).catch(() => {});
@@ -11804,11 +11800,10 @@ async function runGroupMemberTurn(
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
-    { id: "mcp", label: "MCP servers", text: customMcpPrompt(Object.keys(integrations.custom ?? {})) },
     { id: "computer", label: "Computer", text: computerPrompt(roomComputerPromptKind) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer ?? undefined) },
     { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
-    { id: "cloud-home", label: "OMB Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
+    { id: "cloud-home", label: "Relay Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
     { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
     { id: "recent", label: "Recent work", text: recentWorkPrompt(recentLines) },
@@ -11942,7 +11937,6 @@ async function runGroupMemberTurn(
         systemVolatile: roomSystem.volatile,
         cwd,
         integrations,
-        mcpFromUserConfig: false,
         ...(instance.instanceId === readyBot.modelSelection.instanceId
           ? memberTurnSelection(readyBot.modelSelection)
           : { model: instance.models.default }),

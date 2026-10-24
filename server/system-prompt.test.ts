@@ -12,9 +12,8 @@ import {
   computerPrompt,
   resolveComputerPromptKind,
   mentionPrompt,
-  COMPOSIO_PROMPT,
-  composioSystemPrompt,
-  customMcpPrompt,
+  CONNECTORS_PROMPT,
+  connectorsSystemPrompt,
   mailboxSystemPrompt,
   CREDENTIAL_PROMPT,
   CLARIFICATION_PROMPT,
@@ -209,7 +208,7 @@ describe("computerPrompt", () => {
 
 describe("shared sentences", () => {
   it("each begins with one space so they concatenate onto the persona line", () => {
-    for (const sentence of [COMPOSIO_PROMPT, CREDENTIAL_PROMPT, CLARIFICATION_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
+    for (const sentence of [CONNECTORS_PROMPT, CREDENTIAL_PROMPT, CLARIFICATION_PROMPT, ROUTINE_PROMPT, ROUTINE_EXECUTION_PROMPT, LEARN_PROMPT, WEBHOOK_PROMPT, PROFILE_PROMPT, SIGN_IN_PROMPT]) {
       expect(sentence.startsWith(" ")).toBe(true);
       expect(sentence.startsWith("  ")).toBe(false);
     }
@@ -224,15 +223,6 @@ describe("shared sentences", () => {
     expect(CLARIFICATION_PROMPT).toContain("whether you may use additional tools");
     expect(CLARIFICATION_PROMPT).toContain("the specific gaps, why you left each one, and your reasoning");
     expect(CLARIFICATION_PROMPT).not.toMatch(/Dealflow|Notion|deck|pitch/i);
-  });
-
-  it("customMcpPrompt names the mounted servers and is empty for none", () => {
-    expect(customMcpPrompt([])).toBe("");
-    const one = customMcpPrompt(["notes"]);
-    expect(one.startsWith(" The user also added an MCP server for you: \"notes\".")).toBe(true);
-    expect(one).toContain("engine's normal approval rules");
-    expect(one).not.toContain("each call asks");
-    expect(customMcpPrompt(["notes", "linear"])).toContain('MCP servers for you: "notes", "linear".');
   });
 
   it("mentionPrompt names every tagged bot with its id, and is empty for none", () => {
@@ -258,17 +248,17 @@ describe("shared sentences", () => {
   });
 });
 
-describe("composioSystemPrompt", () => {
+describe("connectorsSystemPrompt", () => {
   it("keeps the generic all-tools sentence for legacy bots", () => {
-    expect(composioSystemPrompt(undefined)).toBe(COMPOSIO_PROMPT);
+    expect(connectorsSystemPrompt(undefined)).toBe(CONNECTORS_PROMPT);
   });
 
   it("is absent when no tools are granted", () => {
-    expect(composioSystemPrompt({})).toBe("");
+    expect(connectorsSystemPrompt({})).toBe("");
   });
 
   it("names exactly the granted services for a partial grant", () => {
-    const prompt = composioSystemPrompt({
+    const prompt = connectorsSystemPrompt({
       gmail: { tools: ["GMAIL_SEND_EMAIL"] },
       google_calendar: { tools: "*" },
     });
@@ -282,7 +272,7 @@ describe("composioSystemPrompt", () => {
   });
 
   it("starts with exactly one space like every shared sentence", () => {
-    const prompt = composioSystemPrompt({ gmail: { tools: "*" } });
+    const prompt = connectorsSystemPrompt({ gmail: { tools: "*" } });
     expect(prompt.startsWith(" ")).toBe(true);
     expect(prompt.startsWith("  ")).toBe(false);
   });
@@ -292,7 +282,7 @@ describe("cloudHomePrompt", () => {
   it("says the bot runs in the cloud, offers what works there, and never asks for a place that cannot exist", () => {
     for (const tools of [true, false]) {
       const text = cloudHomePrompt(tools);
-      expect(text).toMatch(/^ You run on the user's OMB Cloud, a server in the cloud, not on their own computer\./);
+      expect(text).toMatch(/^ You run on the user's Relay Cloud, a server in the cloud, not on their own computer\./);
       expect(text).toContain("Offer what works here: the built-in browser and cloud computers.");
       expect(text).toContain("Never ask them to set up this computer or a Local VM; neither exists here.");
       expect(text).not.toMatch(/Computer panel|container runtime|configure/i);
@@ -301,7 +291,7 @@ describe("cloudHomePrompt", () => {
 
   it("points to a lent Mac only when the turn has the shared-computer tools", () => {
     expect(cloudHomePrompt(true)).toContain("check list_shared_computers: a Mac they lend to their Cloud is reachable through shared_computer");
-    expect(cloudHomePrompt(true)).toContain("turn on Let my Cloud use this Mac under Settings → OMB Cloud in the desktop app on that Mac");
+    expect(cloudHomePrompt(true)).toContain("turn on Let my Cloud use this Mac under Settings → Relay Cloud in the desktop app on that Mac");
     expect(cloudHomePrompt(false)).not.toMatch(/shared_computer|list_shared_computers/);
     expect(cloudHomePrompt(false)).toContain("You cannot see or use their Mac or PC, its screen or its files from here.");
   });

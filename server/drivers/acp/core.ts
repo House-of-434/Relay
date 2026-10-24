@@ -9,7 +9,7 @@
 // (initialize, authenticate) and the native session are established once,
 // and later turns prompt the live session directly instead of paying the
 // full handshake per message. The pool mirrors the Claude driver: a session
-// closes after RELAY_ACP_SESSION_IDLE_MS of quiet (default 10 minutes, floored
+// closes after RELAY_ACP_SESSION_IDLE_MS of quiet (default 2 minutes, floored
 // by RELAY_ACP_SESSION_IDLE_MIN_MS default 10s), when the spawn contract
 // changes, when the child crashes, when an interrupt's cancel goes
 // unanswered, and on stopAll/dispose. A resume cursor left by an earlier

@@ -1293,7 +1293,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         // and connectors from the person's own Claude Code config — the way
         // Codex reads its own config.toml — while skills, hooks and the
         // personal CLAUDE.md stay out.
-        if (!turn.mcpFromUserConfig && claudeCliSupports(cliVersion, "--strict-mcp-config")) args.push("--strict-mcp-config");
+        if (claudeCliSupports(cliVersion, "--strict-mcp-config")) args.push("--strict-mcp-config");
         if (claudeCliSupports(cliVersion, "--setting-sources")) args.push("--setting-sources", "project");
       }
       const compactWindow = autoCompactWindow(turnEnvironment);

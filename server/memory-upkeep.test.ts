@@ -375,12 +375,15 @@ describe("the upkeep loop", () => {
     expect(rows.map((row) => row.path).sort()).toEqual(["MEMORY.md", "memory/Dining.md", "memory/asha.md"]);
   });
 
-  it("organizes right after a capture, whoever wrote the line", async () => {
+  it("leaves organization to the tidy-up instead of running it after a capture", async () => {
     ensureWorkspace(BOT.id);
     writeMemoryFile(BOT.id, "- 2026-09-26 · The client Acme wants logo revisions.\n");
     organizeAnswer = '{"moves":[{"i":0,"topic":"acme","aliases":["client"]}]}';
     const report = await upkeep().capture({ botId: BOT.id, threadId: "t1", turns: [{ person: "hi", bot: "hello" }] });
-    expect(report.organized).toBe(1);
+    expect(report.organized).toBeUndefined();
+    expect(organizePrompts).toEqual([]);
+    expect(memory()).toContain("The client Acme wants logo revisions.");
+    expect((await upkeep().tidy(BOT.id)).organized).toBe(1);
     expect(readMemoryTopic(BOT.id, "acme.md")).toContain("The client Acme wants logo revisions.");
   });
 

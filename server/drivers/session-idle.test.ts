@@ -3,9 +3,9 @@ import { describe, expect, it } from "vitest";
 import { sessionIdlePolicy } from "./session-idle.ts";
 
 describe("sessionIdlePolicy", () => {
-  it("defaults to ten minutes with a ten-second floor", () => {
-    expect(sessionIdlePolicy("CLAUDE", {})).toEqual({ idleMs: 10 * 60_000, minimumMs: 10_000 });
-    expect(sessionIdlePolicy("ACP", {})).toEqual({ idleMs: 10 * 60_000, minimumMs: 10_000 });
+  it("defaults to two minutes with a ten-second floor", () => {
+    expect(sessionIdlePolicy("CLAUDE", {})).toEqual({ idleMs: 2 * 60_000, minimumMs: 10_000 });
+    expect(sessionIdlePolicy("ACP", {})).toEqual({ idleMs: 2 * 60_000, minimumMs: 10_000 });
   });
 
   it("honors each harness's own legacy names", () => {
@@ -35,8 +35,8 @@ describe("sessionIdlePolicy", () => {
 
   it("rejects unusable delays before the floor instead of coercing them to a 1 ms timer", () => {
     for (const raw of ["not-a-number", "0", "-5", "", "Infinity", "1e309", "2147483648"]) {
-      expect(sessionIdlePolicy("CLAUDE", { RELAY_CLAUDE_SESSION_IDLE_MS: raw }).idleMs).toBe(10 * 60_000);
-      expect(sessionIdlePolicy("ACP", { RELAY_SESSION_IDLE_MS: raw }).idleMs).toBe(10 * 60_000);
+      expect(sessionIdlePolicy("CLAUDE", { RELAY_CLAUDE_SESSION_IDLE_MS: raw }).idleMs).toBe(2 * 60_000);
+      expect(sessionIdlePolicy("ACP", { RELAY_SESSION_IDLE_MS: raw }).idleMs).toBe(2 * 60_000);
     }
     expect(sessionIdlePolicy("CLAUDE", { RELAY_CLAUDE_SESSION_IDLE_MS: "2147483647" }).idleMs).toBe(2_147_483_647);
     expect(sessionIdlePolicy("ACP", { RELAY_ACP_SESSION_IDLE_MIN_MS: "Infinity" }).minimumMs).toBe(10_000);
