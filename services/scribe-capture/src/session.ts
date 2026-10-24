@@ -15,8 +15,6 @@ import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
 import { sharedBrowserContext } from "./shared-browser.js";
 import { WORKER_BOOT_ID } from "./boot.js";
-import { postMeetDisclosure } from "./chat.js";
-import { newChatSegments, SeenChatSet } from "./chat-port.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
 /** One confirmed segment from the vendored gmeet pipeline (transcript.v1 view). */
@@ -159,8 +157,6 @@ class MeetSession {
   status: CaptureStatus = "joining";
   captureStartedAt: string | null = null;
   error: string | null = null;
-  /** Set once the join disclosure was posted to the meeting chat (once per capture). */
-  disclosurePosted = false;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private stopped = false;
@@ -184,8 +180,6 @@ class MeetSession {
   private probeStreams = 0;
   private probeDomStart: unknown = null;
   private probeDomEnd: unknown = null;
-  /** Chat keys already converted, per capture (chat panels re-render). */
-  private readonly seenChat = new SeenChatSet();
 
   constructor(private readonly descriptor: JoinDescriptor, private readonly config: WorkerConfig) {
     this.spool = new SegmentSpool(config.flushSegments, config.flushMs, Date.now());
@@ -213,7 +207,6 @@ class MeetSession {
       invitees: d.invitees ?? [],
       segment_count: this.spool.added,
       duration_seconds: this.lastEnd > 0 ? this.lastEnd : null,
-      disclosure_posted: this.disclosurePosted,
       ...extra,
     };
   }
@@ -340,23 +333,6 @@ class MeetSession {
       this.captureStartMs = Date.now();
       this.status = "active";
 
-      // Join disclosure: once, after admission, Meet only, best-effort. A send
-      // failure is recorded (disclosure_posted=false) and never blocks capture.
-      if (lane === "gmeet" && !this.config.gmeetProbe && this.config.disclosure && this.page) {
-        const outcome = await postMeetDisclosure(this.page, this.config.disclosure, {
-          log: (message) => console.log(message),
-        });
-        this.disclosurePosted = outcome !== "failed";
-        if (outcome === "failed") {
-          try {
-            const dir = joinPath(this.config.dataDir, "failures");
-            mkdirSync(dir, { recursive: true });
-            await this.page.screenshot({ path: joinPath(dir, `disclosure-${this.descriptor.instance_id}.png`) });
-          } catch {
-            /* best effort */
-          }
-        }
-      }
       if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
 
       if (lane !== "mixed") {
@@ -372,7 +348,6 @@ class MeetSession {
         if (this.stopped) break;
         if (lane !== "mixed") await this.channelFeedOnce(laneApi(lane));
         else await this.captureOnce();
-        if (lane === "zoom") await this.captureChatOnce();
         await this.flush(false, "active");
         if (lane === "gmeet" && this.config.gmeetProbe) await this.probeTick();
         // Voice-idle end (Meet only): no remote voice for 3 minutes means
@@ -480,32 +455,6 @@ class MeetSession {
     await this.page.evaluate(async (a) => {
       await (window as any)[a]?.start?.();
     }, api);
-  }
-
-  /** Inbound chat → segments (Zoom today). Read-only scrape; a closed chat panel
-   *  simply yields nothing, and a failed drain never interrupts capture. */
-  private async captureChatOnce(): Promise<void> {
-    if (!this.page) return;
-    let messages: Array<{ sender: string | null; text: string; ts: number; message_id?: string; stamp?: string; ordinal?: number }>;
-    try {
-      messages = await this.page.evaluate(() => (window as any).__scribeZoom?.drainChat?.() ?? []);
-    } catch {
-      return;
-    }
-    if (messages.length === 0) return;
-    const segments = newChatSegments(
-      messages.map((m) => ({
-        sender: m.sender ?? null,
-        text: m.text,
-        atMs: m.ts,
-        ...(m.message_id ? { message_id: m.message_id } : {}),
-        ...(m.stamp ? { stamp: m.stamp } : {}),
-        ...(typeof m.ordinal === "number" ? { ordinal: m.ordinal } : {}),
-      })),
-      { platform: this.descriptor.platform, captureStartMs: this.captureStartMs, seen: this.seenChat },
-    );
-    for (const segment of segments) this.spool.add(segment);
-    if (segments.length > 0) console.log(`scribe: ${this.descriptor.instance_id} ingested ${segments.length} chat message(s)`);
   }
 
   private async channelFeedOnce(api: string): Promise<void> {

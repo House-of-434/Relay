@@ -53,9 +53,6 @@ export interface WorkerConfig {
   diskMinBytes: number;
   /** Maintenance sweep interval. */
   maintenanceMs: number;
-  /** One-line join disclosure posted to the meeting chat after admission.
-   *  Empty string disables it. */
-  disclosure: string;
 }
 
 function num(value: string | undefined, fallback: number): number {
@@ -88,6 +85,5 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     retentionMs: num(env.RELAY_SCRIBE_RETENTION_MS, 30 * 24 * 60 * 60 * 1000),
     diskMinBytes: num(env.RELAY_SCRIBE_DISK_MIN_BYTES, 1024 * 1024 * 1024),
     maintenanceMs: num(env.RELAY_SCRIBE_MAINTENANCE_MS, 60 * 60 * 1000),
-    disclosure: (env.RELAY_SCRIBE_DISCLOSURE ?? "This meeting is transcribed by Relay AI.").trim(),
   };
 }

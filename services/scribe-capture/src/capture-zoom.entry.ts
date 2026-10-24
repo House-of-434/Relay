@@ -5,9 +5,6 @@
  *   createZoomSpeakers    → who Zoom is rendering as the active speaker (the DOM signal)
  *   createTrackNameResolver → energy ↔ active-speaker correlation → a stable per-track name
  *   createPcmCaptureNode  → AudioWorklet PCM per stream
- *   createZoomChat        → chat panel telemetry (container/candidates state);
- *                             message delivery comes from the adapter row scan below,
- *                             which keys each row by platform id or per-row ordinal
  *
  * Zoom's audio arrives as ONE WebRTC audio track per participant (verified live: three
  * native `zoom-audio-tag-N` elements, three distinct live tracks), so the per-track lane
@@ -23,16 +20,7 @@
  * channel and cannot thrash the resolver's 1:1 rule.
  */
 import { createPcmCaptureNode } from "@vexa/gmeet-capture";
-import { createTrackNameResolver, createZoomChat, createZoomSpeakers } from "@vexa/zoom-capture";
-import {
-  assignRowKeys,
-  dropNested,
-  platformIdFromAttrs,
-  pickStamp,
-  resolveFallbackText,
-  unionRows,
-  type ChatRowIdentity,
-} from "./zoom-chat-rows.js";
+import { createTrackNameResolver, createZoomSpeakers } from "@vexa/zoom-capture";
 
 interface ZoomFrame {
   channel: number;
@@ -50,15 +38,6 @@ interface ZoomConfig {
   silenceThreshold?: number;
   maxFrames?: number;
   maxStreams?: number;
-}
-
-interface ZoomChatRow {
-  sender: string;
-  text: string;
-  ts: number;
-  ordinal: number;
-  message_id?: string;
-  stamp?: string;
 }
 
 (function () {
@@ -103,177 +82,6 @@ interface ZoomChatRow {
     },
     log: cfg.debug ? (m: string) => log("zoom-speakers: " + m) : undefined,
   });
-
-  // Inbound chat, observed row by row in this adapter. Each row is identified
-  // at first sight by the platform message id when the row genuinely carries
-  // one, else by its content (sender, text, and row timestamp attribute when
-  // present), else by its ordinal among the currently rendered rows plus its
-  // text. A rebuilt list re-rendering the same messages yields the same keys,
-  // so a re-poll delivers nothing; a recycled node showing a new message
-  // yields a new key.
-  const chatMessages: ZoomChatRow[] = [];
-  const deliveredChatKeys = new Set<string>();
-  const deliveredChatOrder: string[] = [];
-  const DELIVERED_CHAT_LIMIT = 2000;
-  const chatDrops: Record<string, number> = {};
-
-  function markChatDelivered(key: string): void {
-    if (deliveredChatKeys.has(key)) return;
-    deliveredChatKeys.add(key);
-    deliveredChatOrder.push(key);
-    if (deliveredChatOrder.length > DELIVERED_CHAT_LIMIT) {
-      const oldest = deliveredChatOrder.shift();
-      if (oldest !== undefined) deliveredChatKeys.delete(oldest);
-    }
-  }
-
-  const CHAT_ROW_SELECTORS = [
-    '[id^="chat-message-"]',
-    ".new-chat-message__container",
-    '[class*="chat-message-item"]',
-    '[class*="chatMessage"]',
-    "div[data-index]",
-  ];
-  const CHAT_SENDER_SELECTORS = [
-    ".chat-message-text__user-name",
-    '[class*="user-name"]',
-    '[class*="userName"]',
-    '[class*="sender"]',
-    '[class*="display-name"]',
-  ];
-  const CHAT_TEXT_SELECTORS = [
-    '[class*="chat-message-text"]',
-    '[class*="message-text"]',
-    '[class*="messageText"]',
-    ".text-wrapper",
-    '[class*="text-content"]',
-  ];
-
-  function chatRowText(root: Element, selectors: string[]): string {
-    for (const sel of selectors) {
-      const t = root.querySelector(sel)?.textContent?.trim();
-      if (t) return t;
-    }
-    return "";
-  }
-
-  function chatRowPlatformId(row: Element): string | null {
-    const own = platformIdFromAttrs({
-      id: row.getAttribute("id"),
-      mid: row.getAttribute("data-mid"),
-      messageId: row.getAttribute("data-message-id"),
-    });
-    if (own) return own;
-    const desc = row.querySelector('[id^="chat-message-"],[data-mid],[data-message-id]');
-    if (!desc || desc === row) return null;
-    return platformIdFromAttrs({
-      id: desc.getAttribute("id"),
-      mid: desc.getAttribute("data-mid"),
-      messageId: desc.getAttribute("data-message-id"),
-    });
-  }
-
-  function chatRowStamp(row: Element): string | null {
-    const time = row.querySelector("time[datetime]");
-    return pickStamp([
-      row.getAttribute("data-time"),
-      row.getAttribute("data-timestamp"),
-      row.getAttribute("data-ts"),
-      row.getAttribute("data-created"),
-      row.getAttribute("data-created-at"),
-      time?.getAttribute("datetime") ?? null,
-    ]);
-  }
-
-  function normalizeSender(sender: string): string {
-    return sender.replace(/\s*\d{1,2}:\d{2}\s*(AM|PM)?\s*$/i, "").trim();
-  }
-
-  function readChatRow(row: Element): { sender: string; text: string } | { drop: "no-text" | "unseparable" } {
-    const textHit = chatRowText(row, CHAT_TEXT_SELECTORS);
-    let sender = chatRowText(row, CHAT_SENDER_SELECTORS);
-    let senderFound = sender.length > 0;
-    if (!senderFound) {
-      let cur = row.parentElement;
-      for (let i = 0; i < 4 && cur && !senderFound; i++, cur = cur.parentElement) {
-        sender = chatRowText(cur, CHAT_SENDER_SELECTORS);
-        senderFound = sender.length > 0;
-      }
-    }
-    if (!senderFound) {
-      let cur: Element | null = row;
-      for (let i = 0; i < 4 && cur; i++, cur = cur.parentElement) {
-        const label = cur.getAttribute("aria-label") || "";
-        const m = label.match(/^(.+?)\s+(?:said|to\s+Everyone|to\s+[A-Z])/i);
-        if (m && m[1].trim()) {
-          sender = m[1].trim();
-          senderFound = true;
-          break;
-        }
-      }
-    }
-    if (textHit) {
-      return { sender: normalizeSender(sender) || "Unknown", text: textHit };
-    }
-    const frags = Array.from(row.querySelectorAll("*"))
-      .map((e) => (e.childElementCount === 0 ? (e.textContent || "").trim() : ""))
-      .filter((t) => t.length > 0);
-    if (!frags.length) return { drop: "no-text" };
-    const clean = normalizeSender(sender);
-    const text = resolveFallbackText(frags, clean, senderFound);
-    if (!text) return { drop: "unseparable" };
-    return { sender: clean || "Unknown", text };
-  }
-
-  function scanChatRows(): void {
-    const rows = dropNested(
-      unionRows(CHAT_ROW_SELECTORS.map((sel) => Array.from(document.querySelectorAll(sel)))),
-      (r) => r.parentElement,
-    );
-    const identities: ChatRowIdentity[] = [];
-    const parsed: Array<{ sender: string; text: string }> = [];
-    rows.forEach((row, index) => {
-      const result = readChatRow(row);
-      if ("drop" in result) {
-        chatDrops[result.drop] = (chatDrops[result.drop] ?? 0) + 1;
-        log(`chat row dropped (${result.drop})`);
-        return;
-      }
-      parsed.push(result);
-      identities.push({
-        platformId: chatRowPlatformId(row),
-        stamp: chatRowStamp(row),
-        index,
-        sender: result.sender,
-        text: result.text,
-      });
-    });
-    const keys = assignRowKeys(identities);
-    for (let i = 0; i < parsed.length; i++) {
-      const key = keys[i];
-      if (deliveredChatKeys.has(key)) continue;
-      const identity = identities[i];
-      const entry: ZoomChatRow = { sender: parsed[i].sender, text: parsed[i].text, ts: Date.now(), ordinal: identity.index };
-      if (identity.platformId) entry.message_id = identity.platformId;
-      if (identity.stamp) entry.stamp = identity.stamp;
-      chatMessages.push(entry);
-      markChatDelivered(key);
-      try {
-        g.__scribeZoomChat?.(parsed[i].sender, parsed[i].text, Date.now());
-      } catch {
-        /* optional host hook */
-      }
-    }
-  }
-
-  // The vendored reader stays attached for its container/candidate telemetry
-  // (see state().chatState); delivery comes from the row scan above.
-  const chat = createZoomChat({
-    log: cfg.debug ? (m: string) => log("zoom-chat: " + m) : undefined,
-    onMessage: () => {},
-  });
-  scanChatRows();
-  const chatPoll = setInterval(scanChatRows, 2000);
 
   let ctx: any = null;
   const streams = new Map<string, { index: number; src: any; node: any }>();
@@ -379,16 +187,6 @@ interface ZoomChatRow {
         /* best effort */
       }
       try {
-        clearInterval(chatPoll);
-      } catch {
-        /* best effort */
-      }
-      try {
-        chat.destroy();
-      } catch {
-        /* best effort */
-      }
-      try {
         ctx?.close?.();
       } catch {
         /* best effort */
@@ -406,23 +204,12 @@ interface ZoomChatRow {
         ...(includePcm ? { pcm: Array.from(f.pcm) } : {}),
       }));
     },
-    /** Inbound chat since the last drain, each row with a stable identity. */
-    drainChat(): ZoomChatRow[] {
-      scanChatRows();
-      return chatMessages.splice(0, chatMessages.length);
-    },
     state(): Record<string, unknown> {
       let speakerState: unknown = null;
       try {
         speakerState = speakers.getState();
       } catch {
         speakerState = null;
-      }
-      let chatState: unknown = null;
-      try {
-        chatState = chat.getState();
-      } catch {
-        chatState = null;
       }
       const channels = (() => {
         try {
@@ -444,8 +231,6 @@ interface ZoomChatRow {
         channels,
         labels: Object.fromEntries(channels.map((c: number) => [c, resolver.labelFor(c)])),
         speakerState,
-        chatState,
-        chatDrops: { ...chatDrops },
         hook: {
           injected: (g.__vexaInjectedAudioElements ?? []).length,
           mirroredTracks: g.__vexaMirroredTrackIds?.size ?? 0,

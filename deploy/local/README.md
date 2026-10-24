@@ -239,11 +239,6 @@ capability; `tools` holds the ingest capability. The harness monitor arms
 captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
 `RELAY_SCRIBE_ENABLED` gates the whole feature.
 
-`RELAY_SCRIBE_DISCLOSURE` is the one-line notice the bot posts to the **Meet**
-chat once after admission (empty disables it; default "This meeting is
-transcribed by Relay AI."). It is best-effort: Meet selector drift is logged as
-a non-fatal `disclosure_posted=false`, never a capture failure.
-
 Diagnostic retention defaults to **30 days** and sweeps `/app/storage/screenshots`,
 `/data/scribe/failures`, `/data/scribe/status`, and `/data/scribe/probes`.
 It never removes the persistent browser profile, the spool, or active capture
