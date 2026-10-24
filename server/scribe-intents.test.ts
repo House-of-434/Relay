@@ -282,3 +282,36 @@ describe("joinRequestFromIntent", () => {
     expect(request.event).toMatchObject({ id: intent.instanceId, summary: "Investor sync" });
   });
 });
+
+describe("manual join passcode", () => {
+  const ZOOM = "https://us05web.zoom.us/j/88009371222";
+
+  it("carries a passcode from the request into the worker descriptor", () => {
+    const accepted = accept({ meetingUrl: ZOOM, platform: "zoom", passcode: "1aXeBT" });
+    expect(accepted.intent.passcode).toBe("1aXeBT");
+    const request = intents.joinRequestFromIntent(accepted.intent, { manualLateMs: 300_000, reconcileGraceMs: 1_800_000 });
+    expect(request.descriptor.passcode).toBe("1aXeBT");
+    expect(request.descriptor.meeting_url).toBe(ZOOM);
+  });
+
+  it("omits the field entirely when no passcode was supplied", () => {
+    const accepted = accept({ meetingUrl: ZOOM, platform: "zoom" });
+    const request = intents.joinRequestFromIntent(accepted.intent, { manualLateMs: 300_000, reconcileGraceMs: 1_800_000 });
+    expect(accepted.intent.passcode).toBeNull();
+    expect("passcode" in request.descriptor).toBe(false);
+  });
+
+  it("scrubs the passcode when the intent goes terminal", () => {
+    const accepted = accept({ meetingUrl: ZOOM, platform: "zoom", passcode: "1aXeBT" });
+    expect(dbmod.setScribeJoinIntentStatus(accepted.intent.instanceId, "terminal", 2_000)).toBe(true);
+    const stored = dbmod.getScribeJoinIntent(accepted.intent.instanceId);
+    expect(stored?.passcode).toBeNull();
+    expect(stored?.status).toBe("terminal");
+  });
+
+  it("keeps the passcode while the intent is only armed", () => {
+    const accepted = accept({ meetingUrl: ZOOM, platform: "zoom", passcode: "1aXeBT" });
+    expect(dbmod.setScribeJoinIntentStatus(accepted.intent.instanceId, "armed", 1_500)).toBe(true);
+    expect(dbmod.getScribeJoinIntent(accepted.intent.instanceId)?.passcode).toBe("1aXeBT");
+  });
+});

@@ -46,6 +46,7 @@ function intent(over: Partial<ScribeJoinIntent> = {}): ScribeJoinIntent {
     platform: "google_meet",
     title: "Investor sync",
     organizerEmail: "owner@houseof434.com",
+    passcode: null,
     ownerUserId: "owner",
     botId: "bot",
     threadId: "thread",

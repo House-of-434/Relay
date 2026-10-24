@@ -36,6 +36,9 @@ const bodySchema = z.object({
   meeting_url: z.string().min(1).max(2048),
   /** Untrusted display metadata only: trimmed, bounded, never identity. */
   title: z.string().trim().min(1).max(200).optional(),
+  /** Dial-in passcode when the invite does not encode it in the URL. Bounded,
+   *  never logged, and dropped once the intent is terminal. */
+  passcode: z.string().trim().min(1).max(128).optional(),
 }).strict();
 
 function header(value: string | string[] | undefined): string | undefined {
@@ -131,6 +134,7 @@ export function createScribeJoinRoutes(options: {
         platform,
         title: parsed.data.title,
         organizerEmail,
+        passcode: parsed.data.passcode,
         actor,
       });
       if (outcome === "created") {

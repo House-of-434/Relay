@@ -45,7 +45,9 @@ services:
       # because the session store is not a durable user directory.
       RELAY_MAILBOX_ADDRESS: ${RELAY_MAILBOX_ADDRESS:-}
       RELAY_MAILBOX_USER_ID: ${RELAY_MAILBOX_USER_ID:-}
-      RELAY_MAILBOX_POLL_MINUTES: ${RELAY_MAILBOX_POLL_MINUTES:-15}
+      # 1 minute: an emailed live-meeting link is useless with a 15-minute poll.
+      # One tick is a single messages.list plus a read per unseen message.
+      RELAY_MAILBOX_POLL_MINUTES: ${RELAY_MAILBOX_POLL_MINUTES:-1}
       RELAY_MAILBOX_NOTIFY: ${RELAY_MAILBOX_NOTIFY:-1}
       RELAY_SCRIBE_ENABLED: ${RELAY_SCRIBE_ENABLED:-0}
       # The harness monitor arms captures by calling the worker over the compose

@@ -45,10 +45,11 @@ test("member lookup resolves a sender's email through the auth table", async () 
     seen.push({ email, domains });
     return "11111111-1111-4111-8111-111111111111";
   }, async (port) => {
-    const result = await lookup(port, CAPABILITY, { email: "ada@houseof434.com", allowedDomains: ["houseof434.com"] });
+    const result = await lookup(port, CAPABILITY, { email: "ada@houseof434.com" });
     assert.equal(result.status, 200);
     assert.equal(result.body.userId, "11111111-1111-4111-8111-111111111111");
-    assert.deepEqual(seen, [{ email: "ada@houseof434.com", domains: ["houseof434.com"] }]);
+    // No caller-supplied domain list: Supabase's sign-up hook is the boundary.
+    assert.deepEqual(seen, [{ email: "ada@houseof434.com", domains: undefined }]);
   });
 });
 

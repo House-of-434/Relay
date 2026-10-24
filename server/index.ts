@@ -479,7 +479,6 @@ import {
   MAILBOX_LIST_LIMIT,
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
-  requesterDomainAllowed,
   routedMailPrompt,
   routedMailTitle,
   type MailboxMessage,
@@ -10002,23 +10001,22 @@ function ensureOwnerMercury(ownerUserId: string | undefined): string | undefined
   return store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === ownerUserId)?.id;
 }
 
-const allowedEmailDomains = (): string[] =>
-  (process.env.RELAY_ALLOWED_EMAIL_DOMAINS ?? "").split(",").map((domain) => domain.trim().toLowerCase()).filter(Boolean);
-
 /** Resolve a sender's email to the canonical user id through the auth table,
- * via the Tool Layer (which holds the service-role client). The sign-in domain
- * allowlist is applied server-side. Undefined when unresolved or the Tool
- * Layer is unreachable — the caller then treats the mail as unknown rather
- * than guessing an identity. */
+ * via the Tool Layer (which holds the service-role client). Supabase IS the
+ * domain boundary: sign-ups are restricted by the auth "before user created"
+ * hook, and the lookup returns confirmed, non-deleted, non-banned users only.
+ * A second caller-supplied domain list would narrow that silently (a teammate
+ * on an allowed domain the env forgot would be dropped as unknown), so none is
+ * passed. Undefined when unresolved or the Tool Layer is unreachable — the
+ * caller then treats the mail as unknown rather than guessing an identity. */
 async function lookupMemberByEmail(email: string): Promise<{ userId: string } | undefined> {
   if (!RELAY_TOOL_URL || !relayBffCapability) return undefined;
-  const domains = allowedEmailDomains();
   try {
     const response = await fetch(new URL("/internal/member-by-email", RELAY_TOOL_URL), {
       method: "POST",
       redirect: "error",
       headers: { authorization: `Bearer ${relayBffCapability}`, "content-type": "application/json" },
-      body: JSON.stringify({ email, ...(domains.length ? { allowedDomains: domains } : {}) }),
+      body: JSON.stringify({ email }),
       signal: AbortSignal.timeout(3_000),
     });
     if (!response.ok) return undefined;
@@ -10029,9 +10027,14 @@ async function lookupMemberByEmail(email: string): Promise<{ userId: string } | 
   }
 }
 
+// One minute by default: an emailed live-meeting link is useless with a 15-minute
+// poll. A tick is one messages.list (5 quota units) plus a read per unseen message,
+// and receipts dedupe, so steady state is ~7k units/day against Gmail's 1e9/day
+// quota — the poll costs nothing measurable. Floor stays at 1 so this cannot be
+// configured into a hot loop.
 const mailboxPollMs = (() => {
-  const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "15");
-  const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(5, Math.round(raw))) : 15;
+  const raw = Number(process.env.RELAY_MAILBOX_POLL_MINUTES?.trim() || "1");
+  const minutes = Number.isFinite(raw) ? Math.min(1440, Math.max(1, Math.round(raw))) : 1;
   return minutes * 60_000;
 })();
 
@@ -10080,7 +10083,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
       deliver: async (message, person) => {
         const personKey = personKeyForIdentity(person.userId, person.email);
         const title = routedMailTitle(message, person);
-        const prompt = routedMailPrompt(message, person, { scribeEnabled: RELAY_SCRIBE_ENABLED });
+        const prompt = routedMailPrompt(message, person);
         const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s): ${message.attachments.map((attachment) => attachment.filename || "(unnamed)").join(", ")}]` : ""}`;
         // The sender's subject when they gave one, else the first line of the
         // request: the receipt replies under it, and it is the fallback when
@@ -13011,16 +13014,12 @@ function connectorThread(botId: string, threadId: string) {
  * mailed). Server-stamped in both cases — never model input — so auto
  * paths can trust the address the same way.
  *
- * Returns nothing unless the requester is still on a configured teammate
- * domain: auto-apply replaces a human tap, so it only stands in for people
- * the deployment already recognizes, not for any address that once reached
- * the shared inbox. An empty allowlist means no domain restriction, matching
- * what the member lookup does. */
+ * No domain check here: a thread only gets `mailRouted` after the sender was
+ * resolved to a member (see lookupPerson), so membership is already proven
+ * upstream and a second allowlist would only drift from it. */
 function routedRequesterFor(botId: string, threadId: string): { userId: string; email: string; messageId: string; subject?: string } | undefined {
   const task = store.taskByThread(botId, threadId);
-  const routed = task?.mailRouted ?? task?.mailRoutedVia;
-  if (!routed) return undefined;
-  return requesterDomainAllowed(routed.email, allowedEmailDomains()) ? routed : undefined;
+  return task?.mailRouted ?? task?.mailRoutedVia ?? undefined;
 }
 
 /**

@@ -222,14 +222,14 @@ async function handleMemberLookup(
     return;
   }
   const email = body && typeof body === "object" ? (body as { email?: unknown }).email : undefined;
-  const domains = body && typeof body === "object" ? (body as { allowedDomains?: unknown }).allowedDomains : undefined;
   if (typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) {
     sendJson(response, 400, { error: "invalid email" });
     return;
   }
-  const allowed = Array.isArray(domains) ? domains.filter((entry): entry is string => typeof entry === "string") : undefined;
+  // No caller-supplied domain list: Supabase's sign-up hook IS the boundary, and
+  // the RPC only returns confirmed, non-deleted, non-banned users.
   try {
-    const userId = await database.memberByEmail(email.trim().toLowerCase(), allowed);
+    const userId = await database.memberByEmail(email.trim().toLowerCase());
     sendJson(response, 200, { userId });
   } catch {
     sendJson(response, 502, { error: "member lookup failed" });

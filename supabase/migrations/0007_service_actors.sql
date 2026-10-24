@@ -85,8 +85,12 @@ as $$ select actor_user_id from relay.service_actors where name = 'scribe' and e
 revoke execute on function app.scribe_service_actor_id() from public, anon, authenticated;
 grant execute on function app.scribe_service_actor_id() to service_role;
 
--- email -> uuid. Service-role only. The caller passes its allowed domains for
--- defense in depth; the Tool Layer still enforces RELAY_ALLOWED_EMAIL_DOMAINS.
+-- email -> uuid. Service-role only. auth.users IS the teammate boundary:
+-- sign-ups are restricted by hook_restrict_signup_domain, so a confirmed row
+-- here is already an allowed teammate. allowed_domains remains available for a
+-- caller that wants an extra narrowing, but Relay passes none — a second list
+-- drifted from the auth gate and silently dropped teammates whose domain was
+-- allowed at sign-up but missing from the env var.
 -- Confirmed, non-deleted, non-banned users only.
 create or replace function app.member_by_email(candidate text, allowed_domains text[] default null)
 returns uuid language sql stable security definer set search_path = ''

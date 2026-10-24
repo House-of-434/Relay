@@ -5,7 +5,6 @@ import {
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
   deliverRoutedMail,
-  requesterDomainAllowed,
   routedMailPrompt,
   routedMailTitle,
   senderAddress,
@@ -247,30 +246,35 @@ describe("routed mail prompt", () => {
   });
 
   it("frames the message as untrusted and asks for a readable result", () => {
-    const prompt = routedMailPrompt(message(), BOB, { scribeEnabled: false });
+    const prompt = routedMailPrompt(message(), BOB);
     expect(prompt).toContain("UNTRUSTED EMAIL DATA");
     expect(prompt).toContain(BOB.email);
     expect(prompt).toContain("delegate to Scout");
-    // Invitations must be acknowledged with NO_ACTION even before Scribe ships.
-    expect(prompt).toContain("NO_ACTION");
-    expect(prompt).not.toContain("Scribe attends");
-    expect(prompt).not.toContain("meeting transcribed");
+    expect(prompt).toContain("Follow the teammate's request");
   });
 
-  it("gates only the Scribe claim, not the invitation no-action rule", () => {
-    const on = routedMailPrompt(message(), BOB, { scribeEnabled: true });
-    expect(on).toContain("Scribe attends");
-    expect(on).toContain("meeting transcribed");
-    expect(on).toContain("NO_ACTION");
-    const off = routedMailPrompt(message(), BOB, { scribeEnabled: false });
-    expect(off).toContain("NO_ACTION");
-    expect(off).not.toContain("Scribe attends");
+  it("states one rule about calendar events instead of a NO_ACTION matrix", () => {
+    const prompt = routedMailPrompt(message(), BOB);
+    // No accept/decline on someone's behalf, but nothing that tells the agent to
+    // refuse a request the teammate actually made.
+    expect(prompt).toContain("Never accept, decline, or edit a calendar event on their behalf");
+    expect(prompt).not.toContain("NO_ACTION");
+    expect(prompt).not.toContain("Relay detected a supported meeting link");
+  });
+
+  it("closes the untrusted block before any instruction, so guidance is not read as email body", () => {
+    const prompt = routedMailPrompt(message({ body: "please join\nhttps://us05web.zoom.us/j/123" }), BOB);
+    const end = prompt.indexOf("--- END UNTRUSTED EMAIL DATA ---");
+    expect(end).toBeGreaterThan(-1);
+    expect(prompt.indexOf("Follow the teammate's request")).toBeGreaterThan(end);
+    // The email's own URL must be inside the block, not restated as an instruction.
+    expect(prompt.lastIndexOf("https://us05web.zoom.us/j/123")).toBeLessThan(end);
   });
 
   it("lists attachments so the reader can identify them, without a type-specific rule", () => {
     const prompt = routedMailPrompt(message({
       attachments: [{ filename: "deck.pdf", mimeType: "application/pdf", size: 12_345 }],
-    }), BOB, { scribeEnabled: false });
+    }), BOB);
     expect(prompt).toContain("- deck.pdf (application/pdf, 12345 bytes)");
     // No claim that attachments are unreadable, and no hardcoded workflow.
     expect(prompt).not.toContain("I can't open attachments yet");
@@ -278,7 +282,7 @@ describe("routed mail prompt", () => {
   });
 
   it("leaves a message without attachments free of attachment talk", () => {
-    const prompt = routedMailPrompt(message(), BOB, { scribeEnabled: false });
+    const prompt = routedMailPrompt(message(), BOB);
     expect(prompt).not.toContain("Attachments:");
   });
 
@@ -286,33 +290,5 @@ describe("routed mail prompt", () => {
     expect(routedMailTitle(message(), BOB)).toBe("Pitch deck");
     expect(routedMailTitle(message({ subject: "  " }), BOB)).toBe(`Email from Bob`);
     expect(routedMailTitle(message({ subject: "x".repeat(200) }), BOB).length).toBe(80);
-  });
-});
-
-describe("requester domain allowlist", () => {
-  const domains = ["houseof434.com", "434vc.com"];
-
-  it("accepts any configured teammate domain, case-insensitively", () => {
-    expect(requesterDomainAllowed("bob@houseof434.com", domains)).toBe(true);
-    expect(requesterDomainAllowed("BOB@434VC.com", domains)).toBe(true);
-  });
-
-  it("rejects other domains and look-alikes", () => {
-    expect(requesterDomainAllowed("bob@example.com", domains)).toBe(false);
-    expect(requesterDomainAllowed("bob@evil434vc.com", domains)).toBe(false);
-    expect(requesterDomainAllowed("bob@houseof434.com.attacker.test", domains)).toBe(false);
-    expect(requesterDomainAllowed("bob@sub.houseof434.com", domains)).toBe(false);
-  });
-
-  it("rejects malformed addresses instead of guessing", () => {
-    expect(requesterDomainAllowed(undefined, domains)).toBe(false);
-    expect(requesterDomainAllowed("", domains)).toBe(false);
-    expect(requesterDomainAllowed("bob", domains)).toBe(false);
-    expect(requesterDomainAllowed("bob@", domains)).toBe(false);
-    expect(requesterDomainAllowed("@houseof434.com", domains)).toBe(false);
-  });
-
-  it("treats an empty configuration as no restriction, matching the member lookup", () => {
-    expect(requesterDomainAllowed("anyone@example.com", [])).toBe(true);
   });
 });
