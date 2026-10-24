@@ -24,6 +24,8 @@ export interface ThreadSwitcherEntry {
   openedByName?: string;
   /** Routine-internal, closed, or archived threads never list. */
   hidden?: boolean;
+  /** False hides the row's delete action. Defaults to true; callers own the
+      policy (GroupView clears it when one thread remains, which the server keeps). */
   deletable?: boolean;
 }
 
