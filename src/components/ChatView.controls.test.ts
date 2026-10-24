@@ -5,11 +5,16 @@ import type { Bot, InstanceInfo } from "@/state/store";
 import type { ApprovalModeSelector } from "./ApprovalModeSelector";
 import type { ModelPicker } from "./ModelPicker";
 
+type SwitcherProps = {
+  entries: Array<{ threadId: string; deletable?: boolean }>;
+  onDelete?: (threadId: string) => void;
+};
+
 const fixture = vi.hoisted(() => {
   vi.stubGlobal("window", {});
   vi.stubGlobal("localStorage", { getItem: () => null, setItem: () => {} });
   return { dispatch: vi.fn(), canWrite: null as boolean | null, showToolCalls: false, platform: "other", localReasonCode: "cua-driver-unavailable", localMessage: "", model: null as ComponentProps<typeof ModelPicker> | null,
-    approval: null as ComponentProps<typeof ApprovalModeSelector> | null };
+    approval: null as ComponentProps<typeof ApprovalModeSelector> | null, switcher: null as SwitcherProps | null };
 });
 vi.mock("@/state/store", async (importOriginal) => {
   const original = await importOriginal<typeof import("@/state/store")>();
@@ -34,6 +39,12 @@ vi.mock("./ApprovalModeSelector", () => ({ ApprovalModeSelector: (props: Compone
   fixture.approval = props;
   return createElement("span", { "data-test-approval-control": true });
 } }));
+vi.mock("./ThreadSwitcher", () => ({
+  ThreadSwitcher: (props: SwitcherProps) => {
+    fixture.switcher = props;
+    return createElement("span", { "data-test-thread-switcher": true });
+  },
+}));
 
 const { ChatView, ErrorRow, NewConversationInstead, claudeUpdateTarget } = await import("./ChatView");
 afterAll(() => vi.unstubAllGlobals());
@@ -52,6 +63,15 @@ describe("thread control placement", () => {
     expect(markup).toMatch(/<textarea[^>]*disabled=""[^>]*aria-busy="true"/);
     expect(markup).not.toContain("Finish group setup");
   });
+  it("deletes a bot thread from the header switcher", () => {
+    fixture.dispatch.mockClear();
+    const older = { threadId: "older", title: "Older", createdAt: 0 };
+    renderToStaticMarkup(createElement(ChatView, { bot: { ...bot, tasks: [...(bot.tasks ?? []), older] } }));
+    expect(fixture.switcher?.entries.map((entry) => entry.threadId)).toEqual(expect.arrayContaining(["selected", "older"]));
+    fixture.switcher?.onDelete?.("older");
+    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "deleteTask", botId: "bot", threadId: "older" });
+  });
+
   it("offers trusted modes in the composer without requiring a Full bot default", () => {
     const fullBot = { ...bot, busy: false, approvalMode: "full" as const };
     expect(renderToStaticMarkup(createElement(ChatView, { bot: fullBot }))).not.toContain("Use bot’s Full access for this thread");
