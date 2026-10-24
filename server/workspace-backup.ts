@@ -346,8 +346,8 @@ export async function createWorkspaceBackupSnapshot(dataDir: string, options: Cr
           }
           // Only the app's disposable native-discovery links may be omitted.
           // An arbitrary user link represents user data, even inside the root.
-          if (!/^workspaces\/[^/]+\/\.(?:claude|agents|grok)\/skills\/[^/]+$/.test(path) ||
-            !rel.replaceAll("\\", "/").startsWith(`workspaces/${path.split("/")[1]}/skills/`)) {
+          const managedLink = /^((?:users\/[^/]+\/)?workspaces\/[^/]+)\/\.(?:claude|agents|grok)\/skills\/[^/]+$/.exec(path);
+          if (!managedLink || !rel.replaceAll("\\", "/").startsWith(`${managedLink[1]}/skills/`)) {
             throw new Error(`Cannot back up user-created symbolic link; replace it with regular files first: ${path}`);
           }
           skippedLinks++;

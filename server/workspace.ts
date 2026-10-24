@@ -9,7 +9,7 @@
 // file tools. Plain markdown on purpose — the user can open, edit, or
 // delete anything the bot believes.
 import { closeSync, constants, existsSync, fstatSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { isMemoryDate, untilMark, withoutExpired } from "./memory-entries.ts";
@@ -18,9 +18,55 @@ import { indexMemoryFile, indexedMemoryFiles, recallMemory, removeMemoryFile, ty
 import { redactSecretsInText } from "./redact.ts";
 
 import { DATA_DIR } from "./config.ts";
+import { isCanonicalUserId, userThreadsDir, userWorkspacesDir } from "./user-paths.ts";
 
 export const WORKSPACES_DIR = join(DATA_DIR, "workspaces");
 export const TASK_WORKSPACES_DIR = join(DATA_DIR, "task-workspaces");
+
+const botOwners = new Map<string, string>();
+
+export function registerBotOwner(botId: string, ownerUserId: string | undefined): void {
+  if (isCanonicalUserId(ownerUserId)) botOwners.set(botId, ownerUserId.toLowerCase());
+  else botOwners.delete(botId);
+}
+
+export function registerBotOwners(bots: readonly { id: string; ownerUserId?: string }[]): void {
+  botOwners.clear();
+  for (const bot of bots) registerBotOwner(bot.id, bot.ownerUserId);
+}
+
+export function unregisterBotOwner(botId: string): void {
+  botOwners.delete(botId);
+}
+
+export function clearBotOwners(): void {
+  botOwners.clear();
+}
+
+function workspaceRootFor(botId: string): string {
+  const owner = botOwners.get(botId);
+  return owner ? userWorkspacesDir(owner) : WORKSPACES_DIR;
+}
+
+function taskWorkspaceRootFor(botId: string): string {
+  const owner = botOwners.get(botId);
+  return owner ? userThreadsDir(owner) : TASK_WORKSPACES_DIR;
+}
+
+export function taskWorkspacesRootFor(botId: string): string {
+  return join(taskWorkspaceRootFor(botId), botId);
+}
+
+export function taskWorkspaceDir(botId: string, threadId: string): string {
+  if (![botId, threadId].every((id) => /^[A-Za-z0-9_-]{1,128}$/.test(id))) {
+    throw new Error("Invalid bot or thread id for a task workspace.");
+  }
+  return join(taskWorkspaceRootFor(botId), botId, threadId);
+}
+
+export function isLegacyWorkspacePath(value: string): boolean {
+  return [WORKSPACES_DIR, TASK_WORKSPACES_DIR].some((root) => value === root || value.startsWith(`${root}${sep}`));
+}
 
 /** MCP support does not imply native filesystem tools or a local working directory. */
 export function supportsWorkspaceFiles(driverKind: string): boolean {
@@ -30,10 +76,7 @@ export function supportsWorkspaceFiles(driverKind: string): boolean {
 /** Default task files are private to the thread, outside the bot's shared
  * memory folder. This is directory organization, not a shell sandbox. */
 export function ensureTaskWorkspace(botId: string, threadId: string): string {
-  if (![botId, threadId].every((id) => /^[A-Za-z0-9_-]{1,128}$/.test(id))) {
-    throw new Error("Invalid bot or thread id for a task workspace.");
-  }
-  const dir = join(TASK_WORKSPACES_DIR, botId, threadId);
+  const dir = taskWorkspaceDir(botId, threadId);
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   return dir;
 }
@@ -54,7 +97,7 @@ Longer notes belong in memory/<topic>.md files, read on demand.
 /** Create (once) and return the bot's workspace directory. Idempotent and
  * cheap enough to call at every turn dispatch. */
 export function ensureWorkspace(botId: string): string {
-  const dir = join(WORKSPACES_DIR, botId);
+  const dir = workspaceDir(botId);
   // Memories can contain personal details and task history. New workspace
   // directories should not be readable by other local accounts.
   mkdirSync(join(dir, "memory"), { recursive: true, mode: 0o700 });
@@ -64,7 +107,7 @@ export function ensureWorkspace(botId: string): string {
 }
 
 export function workspaceDir(botId: string): string {
-  return join(WORKSPACES_DIR, botId);
+  return join(workspaceRootFor(botId), botId);
 }
 
 /** On an OMB Cloud home a bot's memory is read only from regular files,
@@ -120,7 +163,7 @@ export function workspaceLocationsPrompt(botId: string, cwd: string | undefined,
   return "\n\nFile locations for this bot (absolute paths, for tool inputs only): " + JSON.stringify({
     currentWorkingFolder: cwd ?? "Provider default; inspect the working directory before using relative paths",
     sharedBotFolder: workspaceDir(botId),
-    otherThreadFiles: join(TASK_WORKSPACES_DIR, botId),
+    otherThreadFiles: taskWorkspacesRootFor(botId),
     ...(botCwd ? { configuredProjectFolder: botCwd } : {}),
   }) + ". Different conversations can have different working folders. For an existing file, use the exact path from the conversation; if missing here, check this bot's listed folders before saying it is gone or recreating it." +
     " Follow an explicitly requested destination. Otherwise put new task output in the current working folder. Never paste filesystem paths in chat: refer to deliverables by filename and share them with attach_file, whose card is the download link. Do not quote an attached file's contents in chat either: the card already previews them, so name the file and summarize instead of repeating it. Another thread or room resolves the file server-side, so a pasted path helps nobody and only leaks internal layout." +

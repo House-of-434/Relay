@@ -53,6 +53,8 @@ const TEST_CAPABILITY_KEY = "index-fixture-internal-capability";
 // Owner bearer for raw http.request helpers (fetch is covered by
 // registerOwnerFetch). Set in beforeAll alongside the fetch wrapper.
 let ownerToken = "";
+let ownerWorkspaces = "";
+let linkedWorkspace = "";
 
 async function mintTestCapability(
   baseUrl: string,
@@ -556,7 +558,8 @@ beforeAll(async () => {
     ]),
   );
 
-  const linkedWorkspace = join(home, ".relay", "workspaces", "test-bot-a");
+  ownerWorkspaces = join(home, ".relay", "users", TEST_OWNER_USER_ID, "workspaces");
+  linkedWorkspace = join(ownerWorkspaces, "test-bot-a");
   const linkedFile = join(linkedWorkspace, "phone report.md");
   const linkedImage = join(linkedWorkspace, "preview.png");
   const privateAttachments = join(home, ".relay", "attachments");
@@ -9168,9 +9171,7 @@ describe("harness HTTP API", () => {
         "A stale replacement.",
       );
       const skillPath = join(
-        home,
-        ".relay",
-        "workspaces",
+        ownerWorkspaces,
         bot.id,
         ".agents",
         "skills",
@@ -9702,7 +9703,7 @@ describe("bot memory API", () => {
       req.end();
     });
 
-  const workspaceOf = (botId: string) => join(home, ".relay", "workspaces", botId);
+  const workspaceOf = (botId: string) => join(ownerWorkspaces, botId);
 
   it("lets a bot attach a file it made, and serves it only through that message", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
@@ -10743,7 +10744,7 @@ describe("message pages", () => {
 
   it("downloads only a file linked by the exact stored bot message", async () => {
     const threadId = "test-linked-file-room-thread";
-    const linkedFile = join(home, ".relay", "workspaces", "test-bot-a", "phone report.md");
+    const linkedFile = join(linkedWorkspace, "phone report.md");
     const response = await fetch(
       `${BASE}/api/threads/${threadId}/messages/linked-file-message/file`,
       {
@@ -10770,7 +10771,7 @@ describe("message pages", () => {
     expect((await api(
       "POST",
       `/api/threads/${threadId}/messages/linked-file-message/file`,
-      { path: join(home, ".relay", "workspaces", "test-bot-a", "other.md") },
+      { path: join(linkedWorkspace, "other.md") },
     )).status).toBe(403);
     expect((await fetch(`${BASE}/api/threads/${threadId}/messages/no-such-message/file`, {
       method: "POST",
@@ -10794,13 +10795,13 @@ describe("message pages", () => {
     const route = (id: string) => `/api/threads/test-linked-file-room-thread/messages/${id}/file`;
     expect((await api("POST", route("prose-file-message"), { path: image })).status).toBe(403);
     expect((await api("POST", route("generated-image-message"), { path: join(home, ".relay", "attachments", "other.png") })).status).toBe(403);
-    expect((await api("POST", route("outside-generated-image-message"), { path: join(home, ".relay", "workspaces", "test-bot-a", "preview.png") })).status).toBe(403);
+    expect((await api("POST", route("outside-generated-image-message"), { path: join(linkedWorkspace, "preview.png") })).status).toBe(403);
     expect((await api("POST", route("not-image-attachment-message"), { path: join(home, ".relay", "attachments", "shared-notes.pdf") })).status).toBe(415);
   });
 
   it("downloads an image rendered by the exact stored bot message", async () => {
     const threadId = "test-linked-file-room-thread";
-    const linkedImage = join(home, ".relay", "workspaces", "test-bot-a", "preview.png");
+    const linkedImage = join(linkedWorkspace, "preview.png");
     const response = await fetch(`${BASE}/api/threads/${threadId}/messages/linked-image-message/file`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -10865,7 +10866,7 @@ describe("message pages", () => {
     expect((await api(
       "POST",
       `/api/threads/${threadId}/messages/user-outside-file-message/file`,
-      { path: join(home, ".relay", "workspaces", "test-bot-a", "phone report.md") },
+      { path: join(linkedWorkspace, "phone report.md") },
     )).status).toBe(403);
   });
 

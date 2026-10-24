@@ -98,9 +98,107 @@ docker compose restart tools       # bounce the browser worker
 docker compose down                # stop (volume `data` persists)
 ```
 
-Data lives in the `data` volume (`/data/.relay` for the harness,
-`/data/blade` for Bladebro). The volume survives `docker compose down`;
-only `docker volume rm` destroys it.
+Data lives in the `data` volume. The Compose project is `relay`; containers are
+`relay-*` and the persistent volumes are `relay_data`, `relay_scribe_data`,
+`relay_caddy_data`, and `relay_caddy_config`. The data volume survives
+`docker compose down`; only `docker volume rm` destroys it.
+
+Existing hosts that still use the older `openmausbot` Compose project must copy
+its volumes to the `relay_*` names once, before starting the renamed project:
+
+```sh
+docker compose -p openmausbot down
+docker volume rm relay_data relay_caddy_data relay_caddy_config 2>/dev/null || true
+copy_volume() {
+  docker run --rm -u 0 --entrypoint sh -v "$1":/from -v "$2":/to relay-local:latest -c "cp -a /from/. /to/"
+}
+copy_volume openmausbot_data relay_data
+copy_volume openmausbot_scribe_data relay_scribe_data
+copy_volume openmausbot_caddy_data relay_caddy_data
+copy_volume openmausbot_caddy_config relay_caddy_config
+```
+
+Set `COMPOSE_PROJECT_NAME=relay` and `RELAY_LOCAL_IMAGE=relay-local:latest` in
+`.env`, tag or rebuild the image, then start `docker compose up -d`. Verify the
+container mounts and health before removing the old volumes.
+
+- `/data/.relay/users/<supabase-uid>/workspaces/<botId>` — an owned bot's
+  shared working folder and memory.
+- `/data/.relay/users/<supabase-uid>/threads/<botId>/<threadId>` — files for
+  one conversation.
+- `/data/.relay/attachments` — the shared, UUID-addressed attachment store.
+  Uploaded files, generated files, and `attach_file` copies live here so chat,
+  email, and every bot reference one file.
+- `/data/.relay/bots/<botId>` — app-managed bot profile mirrors. Bots remain
+  shared application records, not per-user folders.
+- `/data/blade/<supabase-uid>` — Bladebro's per-user browser profile and
+  artifacts.
+
+Legacy `workspaces/` and `task-workspaces/` are not used by owned bots after
+the user-scoped release. Archive them once the new build is running:
+
+```sh
+docker compose stop app
+stamp=$(date -u +%Y%m%dT%H%M%SZ)
+docker compose run --rm --no-deps --entrypoint sh app -lc \
+  "mkdir -p /data/.relay/_legacy-$stamp && mv /data/.relay/workspaces /data/.relay/task-workspaces /data/.relay/_legacy-$stamp/"
+docker compose start app
+```
+
+The server clears stale legacy task-folder paths on boot, so existing test
+threads start in their new user-scoped folder. Leave `attachments/` and
+`bots/` in place. Delete `_legacy-*` after the test data is no longer useful.
+
+### Disk maintenance
+
+Check what Docker is using before removing anything:
+
+```sh
+docker system df -v
+docker buildx du
+df -h /
+```
+
+Build cache is safe to prune and is the largest reclaimable item:
+
+```sh
+docker builder prune --all --force
+docker buildx prune --all --force
+docker system df
+df -h /
+```
+
+Do not run `docker system prune -a --volumes`; it can remove rollback images
+and volumes. Re-run the prune after the final image build so the build does
+not immediately repopulate the cache.
+
+### Resource samples
+
+`deploy/local/sample-resources.sh` writes one TSV row per run with load,
+memory, swap, disk, per-container CPU/memory, restart count, and OOM state.
+Run it every five minutes with the bundled timer:
+
+```sh
+sudo cp deploy/local/relay-resources.service deploy/local/relay-resources.timer /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now relay-resources.timer
+```
+
+Cron is equivalent if the host has it:
+
+```cron
+*/5 * * * * /home/ubuntu/Relay/deploy/local/sample-resources.sh
+```
+
+Rotate the log with `deploy/local/relay-resources.logrotate`:
+
+```sh
+sudo cp deploy/local/relay-resources.logrotate /etc/logrotate.d/relay-resources
+```
+
+Use the samples to compare idle, one Scribe capture, one heavy agent run, and
+both at once. The default file is `/var/log/relay-resources.tsv`; override it
+with `RELAY_RESOURCE_LOG`.
 
 ## Services
 
@@ -145,6 +243,11 @@ captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791
 chat once after admission (empty disables it; default "This meeting is
 transcribed by Relay AI."). It is best-effort: Meet selector drift is logged as
 a non-fatal `disclosure_posted=false`, never a capture failure.
+
+Diagnostic retention defaults to **30 days** and sweeps `/app/storage/screenshots`,
+`/data/scribe/failures`, `/data/scribe/status`, and `/data/scribe/probes`.
+It never removes the persistent browser profile, the spool, or active capture
+data. Set `RELAY_SCRIBE_RETENTION_MS` to override the window.
 
 ### One-time browser logins (on the host that runs `scribe`)
 

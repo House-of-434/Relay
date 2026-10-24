@@ -114,6 +114,7 @@ services:
       RELAY_SCRIBE_PROFILE_DIR: /data/scribe/profile
       RELAY_SCRIBE_DATA_DIR: /data/scribe
       RELAY_SCRIBE_PROBE_DIR: /data/scribe/probes
+      RELAY_SCRIBE_RETENTION_MS: ${RELAY_SCRIBE_RETENTION_MS:-2592000000}
       RELAY_STT_URL: http://stt:8090
       RELAY_INGEST_URL: http://tools:8787/internal/transcripts
       # Join policy: 2 captures max (a third meeting becomes a `failed`

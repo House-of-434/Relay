@@ -10,7 +10,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { soulFile, soulHash } from "./bot-folder.ts";
 import { flushProfileHistory, readHistory, recordProfileChange } from "./profile-versions.ts";
-import { DATA_DIR } from "./config.ts";
+import { DATA_DIR, USERS_DIR } from "./config.ts";
 import type { ModelSelection } from "./contracts.ts";
 import * as mdb from "./message-db.ts";
 import { peerAllowKey } from "./peer-approval-key.ts";
@@ -20,6 +20,7 @@ import type { TeamSetupRequest } from "../shared/team-setup.ts";
 import { SECTION_CONTEXTS_FILE, readSectionContext, writeSectionContext } from "./section-context.ts";
 import { TeamComputers } from "./team-computers.ts";
 import { RELAY_AGENT_SEEDS } from "./relay-agents.ts";
+import { TASK_WORKSPACES_DIR, workspaceDir } from "./workspace.ts";
 
 const selection = (): ModelSelection => ({ instanceId: "claude", model: "claude-sonnet-5" });
 
@@ -1316,6 +1317,17 @@ describe("Store", () => {
     store.deleteBot(curator.id);
     expect(store.seedRelayAgentsForOwner("owner-a", RELAY_AGENT_SEEDS).map((bot) => bot.relayAgent)).toEqual(["curator"]);
     expect(store.bots.filter((bot) => bot.ownerUserId === "owner-a" && bot.relayAgent)).toHaveLength(3);
+  });
+
+  it("moves an owned bot to its user root and clears legacy task folders on reload", () => {
+    const owner = "11111111-1111-4111-8111-111111111111";
+    const store = new Store(selection);
+    const bot = store.createBot({ name: "Scout" }, { ownerUserId: owner });
+    const legacy = join(TASK_WORKSPACES_DIR, bot.id, bot.threadId);
+    expect(store.pinTaskCwd(bot.id, bot.threadId, legacy)).toBe(legacy);
+    expect(workspaceDir(bot.id)).toBe(join(USERS_DIR, owner, "workspaces", bot.id));
+    const reloaded = new Store(selection);
+    expect(reloaded.taskByThread(bot.id, bot.threadId)?.cwd).toBeUndefined();
   });
 
   it("keeps a seeded Relay role private from client bot records", () => {

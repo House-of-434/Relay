@@ -5,11 +5,12 @@ import { existsSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync 
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { DATA_DIR } from "./config.ts";
+import { DATA_DIR, USERS_DIR } from "./config.ts";
 import { closeMessageDb, recallMemory } from "./message-db.ts";
 
 import {
   appendMemoryLog,
+  clearBotOwners,
   ensureWorkspace,
   ensureTaskWorkspace,
   listMemoryLogs,
@@ -21,8 +22,11 @@ import {
   supportsWorkspaceFiles,
   readMemoryFile,
   readMemoryTopic,
+  registerBotOwner,
   searchMemoryFiles,
   syncMemoryIndex,
+  taskWorkspaceDir,
+  taskWorkspacesRootFor,
   workspaceDir,
   workspaceLocationsPrompt,
   writeMemoryTopic,
@@ -47,9 +51,28 @@ describe("workspace", () => {
     // the search index lives in the messages database, beside the files
     // it mirrors; wiping the workspaces without it would leave stale rows
     closeMessageDb();
+    clearBotOwners();
     rmSync(DATA_DIR, { recursive: true, force: true });
     rmSync(WORKSPACES_DIR, { recursive: true, force: true });
     rmSync(TASK_WORKSPACES_DIR, { recursive: true, force: true });
+  });
+
+  it("places an owned bot's workspace and thread files under the user root", () => {
+    const owner = "11111111-1111-4111-8111-111111111111";
+    registerBotOwner(BOT, owner);
+    const shared = join(USERS_DIR, owner, "workspaces", BOT);
+    const thread = join(USERS_DIR, owner, "threads", BOT, "thread-owned");
+    expect(workspaceDir(BOT)).toBe(shared);
+    expect(ensureWorkspace(BOT)).toBe(shared);
+    expect(taskWorkspacesRootFor(BOT)).toBe(join(USERS_DIR, owner, "threads", BOT));
+    expect(taskWorkspaceDir(BOT, "thread-owned")).toBe(thread);
+    expect(ensureTaskWorkspace(BOT, "thread-owned")).toBe(thread);
+    expect(existsSync(thread)).toBe(true);
+  });
+
+  it("keeps an ownerless test bot on the legacy workspace root", () => {
+    expect(workspaceDir(BOT)).toBe(join(WORKSPACES_DIR, BOT));
+    expect(taskWorkspacesRootFor(BOT)).toBe(join(TASK_WORKSPACES_DIR, BOT));
   });
 
   it("describes current and earlier file locations without moving or exposing their contents", () => {

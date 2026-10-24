@@ -82,7 +82,7 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     probeDir: (env.RELAY_SCRIBE_PROBE_DIR ?? "/data/scribe/probes").trim(),
     gmeetBundlePath: env.RELAY_SCRIBE_GMEET_BUNDLE?.trim() || undefined,
     dataDir: (env.RELAY_SCRIBE_DATA_DIR ?? "/data/scribe").trim(),
-    retentionMs: num(env.RELAY_SCRIBE_RETENTION_MS, 14 * 24 * 60 * 60 * 1000),
+    retentionMs: num(env.RELAY_SCRIBE_RETENTION_MS, 30 * 24 * 60 * 60 * 1000),
     diskMinBytes: num(env.RELAY_SCRIBE_DISK_MIN_BYTES, 1024 * 1024 * 1024),
     maintenanceMs: num(env.RELAY_SCRIBE_MAINTENANCE_MS, 60 * 60 * 1000),
     disclosure: (env.RELAY_SCRIBE_DISCLOSURE ?? "This meeting is transcribed by Relay AI.").trim(),

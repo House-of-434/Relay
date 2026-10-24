@@ -2,6 +2,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
+import { TEST_OWNER_USER_ID } from "./testing/owner.ts";
 
 it("keeps ordinary work out of setup and carries explicit bot defaults and file locations into rooms", async () => {
   const fixture = await launchVerificationServer();
@@ -42,11 +43,11 @@ it("keeps ordinary work out of setup and carries explicit bot defaults and file 
     const ordinary = await direct("What is 17 + 25? Answer with the number.");
     expect(ordinary.system).not.toContain("at most four questions");
     expect(ordinary.system).not.toContain("The user explicitly asked you to set yourself up");
-    const oldFile = join(fixture.info.dataDir, "workspaces", bot.id, "garden-plan.txt");
+    const oldFile = join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id, "garden-plan.txt");
     writeFileSync(oldFile, "Water the garden on Friday. Fixture code: MOSS-42.\n");
     // The prompt JSON-encodes paths, including Windows backslashes.
-    expect(ordinary.system).toContain(JSON.stringify(join(fixture.info.dataDir, "workspaces", bot.id)));
-    expect(ordinary.system).toContain(JSON.stringify(join(fixture.info.dataDir, "task-workspaces", bot.id, bot.threadId)));
+    expect(ordinary.system).toContain(JSON.stringify(join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id)));
+    expect(ordinary.system).toContain(JSON.stringify(join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", bot.id, bot.threadId)));
 
     const setup = await direct("/setup Help me track garden watering");
     expect(setup.system).toContain("The user explicitly asked you to set yourself up");
@@ -73,8 +74,8 @@ it("keeps ordinary work out of setup and carries explicit bot defaults and file 
     const shared = await room("Read the garden-plan.txt you made earlier and tell me its fixture code.");
     expect(shared.model).toBe(b);
     expect(shared.system).toContain("You look after the garden");
-    expect(shared.system).toContain(JSON.stringify(join(fixture.info.dataDir, "task-workspaces", bot.id)));
-    expect(shared.system).toContain(JSON.stringify(join(fixture.info.dataDir, "workspaces", bot.id)));
+    expect(shared.system).toContain(JSON.stringify(join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", bot.id)));
+    expect(shared.system).toContain(JSON.stringify(join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id)));
     expect(readFileSync(oldFile, "utf8")).toContain("MOSS-42");
     const state = (await api("GET", "/api/bots")).bots.find((item: any) => item.id === bot.id);
     expect(state.modelSelection).toEqual(selection(b));

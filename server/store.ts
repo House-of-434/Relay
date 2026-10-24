@@ -15,7 +15,8 @@ import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
 import { DATA_DIR, EVENTS_DIR, NATIVE_DIR } from "./config.ts";
 import * as mdb from "./message-db.ts";
 import { runCommand, type Command } from "./commands.ts";
-import { workspaceDir } from "./workspace.ts";
+import { isLegacyWorkspacePath, registerBotOwner, registerBotOwners, unregisterBotOwner, workspaceDir } from "./workspace.ts";
+import { isCanonicalUserId } from "./user-paths.ts";
 import type { Destination } from "./surface.ts";
 import { newId, type ModelSelection } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
@@ -652,15 +653,46 @@ export class Store {
     } catch {
       this.groups = [];
     }
+    registerBotOwners(this.bots);
     this.rememberSections([...this.bots, ...this.groups].map((record) => record.section));
     // busy never survives a restart — no turn does either. Rooms saved
     // before default responders existed adopt their first member as lead.
     let botsMigrated = false;
+    for (const b of this.bots) {
+      if (!isCanonicalUserId(b.ownerUserId)) continue;
+      if (b.cwd && isLegacyWorkspacePath(b.cwd)) {
+        delete b.cwd;
+        botsMigrated = true;
+      }
+      for (const task of b.tasks ?? []) {
+        if (task.cwd && isLegacyWorkspacePath(task.cwd)) {
+          delete task.cwd;
+          botsMigrated = true;
+        }
+      }
+    }
     const chiefSectionsSeen = new Set<string>();
     // Role uniqueness is per owner: every account gets its own Scout, Mercury
     // and Curator, so a repeated role is only dropped within one owner.
     const relayAgentRolesSeen = new Set<string>();
     let groupsMigrated = false;
+    for (const g of this.groups) {
+      if (!isCanonicalUserId(g.ownerUserId)) continue;
+      if (g.cwd && isLegacyWorkspacePath(g.cwd)) {
+        delete g.cwd;
+        groupsMigrated = true;
+      }
+      if (g.pinnedCwd && isLegacyWorkspacePath(g.pinnedCwd)) {
+        delete g.pinnedCwd;
+        groupsMigrated = true;
+      }
+      for (const task of g.tasks ?? []) {
+        if (task.pinnedCwd && isLegacyWorkspacePath(task.pinnedCwd)) {
+          delete task.pinnedCwd;
+          groupsMigrated = true;
+        }
+      }
+    }
     for (const b of this.bots) {
       if (b.relayAgent !== undefined) {
         const roleKey = `${b.ownerUserId ?? ""}:${b.relayAgent}`;
@@ -1729,6 +1761,7 @@ export class Store {
       activity: "idle",
       busy: false,
     }];
+    registerBotOwner(bot.id, opts.ownerUserId);
     this.bots.unshift(bot);
     this.saveBots();
     // The folder exists from the first moment, so the user can open
@@ -1904,6 +1937,7 @@ export class Store {
     try {
       rmSync(workspaceDir(id), { recursive: true, force: true });
     } catch {}
+    unregisterBotOwner(id);
     // Generated task-workspaces are project files, not bot memory. Keep
     // them (and user-selected cwd folders) when deleting conversations.
     // Approval state deliberately lives outside the bot-writable workspace.
