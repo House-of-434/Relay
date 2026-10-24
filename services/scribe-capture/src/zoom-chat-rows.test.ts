@@ -116,3 +116,11 @@ test("fallback text that is only the sender name or a timestamp is dropped", () 
   assert.equal(resolveFallbackText(["Micheal"], "Micheal", true), null);
   assert.equal(resolveFallbackText(["Micheal", "10:20 AM"], "Micheal", true), null);
 });
+
+test("a combined sender and timestamp leaf yields the body, never the header", () => {
+  assert.equal(resolveFallbackText(["Micheal 10:20 AM", "ok"], "Micheal", true), "ok");
+});
+
+test("a combined sender and timestamp leaf alone is dropped", () => {
+  assert.equal(resolveFallbackText(["Micheal 10:20 AM"], "Micheal", true), null);
+});

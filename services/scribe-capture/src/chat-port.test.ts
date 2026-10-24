@@ -24,6 +24,24 @@ test("identical messages from distinct rows produce distinct segments", () => {
   }
 });
 
+test("a later identical message at a new ordinal produces a new segment", () => {
+  const seen = new SeenChatSet();
+  const first = newChatSegments(
+    [{ sender: "Micheal", text: "thanks", atMs: START + 1000, ordinal: 0 }],
+    { platform: "zoom", captureStartMs: START, seen },
+  );
+  assert.equal(first.length, 1);
+  const second = newChatSegments(
+    [
+      { sender: "Micheal", text: "thanks", atMs: START + 2000, ordinal: 0 },
+      { sender: "Micheal", text: "thanks", atMs: START + 2000, ordinal: 1 },
+    ],
+    { platform: "zoom", captureStartMs: START, seen },
+  );
+  assert.equal(second.length, 1);
+  assert.notEqual(second[0].segment_key, first[0].segment_key);
+});
+
 test("a re-poll of the same rows produces no new segments", () => {
   const seen = new SeenChatSet();
   const rows = [

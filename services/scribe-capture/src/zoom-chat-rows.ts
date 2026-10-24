@@ -46,11 +46,16 @@ export function assignRowKeys(rows: ChatRowIdentity[]): string[] {
 
 const TIMESTAMP_FRAG = /^\d{1,2}:\d{2}/;
 
+function stripTrailingStamp(s: string): string {
+  return s.replace(/\s*\d{1,2}:\d{2}\s*(AM|PM)?\s*$/i, "").trim();
+}
+
 export function resolveFallbackText(frags: string[], sender: string, senderFound: boolean): string | null {
   if (!senderFound) return null;
   let best: string | null = null;
   for (const f of frags) {
     if (f === sender || TIMESTAMP_FRAG.test(f)) continue;
+    if (stripTrailingStamp(f) === sender) continue;
     if (best === null || f.length > best.length) best = f;
   }
   return best;
