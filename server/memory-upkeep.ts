@@ -95,7 +95,8 @@ export interface CaptureReport {
   topics: number;
   /** Facts added to the shared About me. */
   aboutMe: number;
-  /** MEMORY.md entries moved into topic files afterwards. */
+  /** Legacy: older captures moved MEMORY.md entries into topic files
+   * afterwards; capture now appends only and the nightly tidy organizes. */
   organized?: number;
   note?: string;
 }

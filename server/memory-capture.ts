@@ -3,7 +3,7 @@
 // one chat until it is compacted away, unless the bot happened to call
 // memory_update. After a chat goes quiet, one tool-free model call reads the
 // finished turns — the person's words and the bot's under different rules —
-// beside the current MEMORY.md, and proposes up to eight facts. Pure here:
+// beside the current MEMORY.md, and proposes up to four facts. Pure here:
 // prompt, parsing, dedupe and the per-thread buffer. Wiring and writes live
 // in memory-upkeep.ts.
 import { factIdentity, isMemoryDate, notebookIdentities } from "./memory-entries.ts";
