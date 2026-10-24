@@ -1,12 +1,10 @@
 /**
  * zoom-capture L2 — the PURE parsing/binding logic, no browser. Drives the real
- * createZoomChat (sender/text extraction, group-header climb, aria fallback,
- * trailing-timestamp strip) and createZoomSpeakers (active-speaker read + the
- * flicker-confirmation that a single transient poll must NOT emit a hint) against
- * an in-memory DOM shim + a manual setInterval. DOM capture itself is live-validated.
+ * createZoomSpeakers (active-speaker read + the flicker-confirmation that a
+ * single transient poll must NOT emit a hint) against an in-memory DOM shim +
+ * a manual setInterval. DOM capture itself is live-validated.
  * Run: npm test  or  npx tsx src/zoom-capture.test.ts
  */
-import { createZoomChat } from './zoom-chat.js';
 import { createZoomSpeakers } from './zoom-speakers.js';
 
 let failed = 0;
@@ -64,38 +62,6 @@ g.window = { setInterval: (cb: () => void) => { intervalCb = cb; return 1 as any
 g.setInterval = g.window.setInterval; g.clearInterval = g.window.clearInterval;
 const setDoc = (root: FakeEl) => { g.document = makeDocument(root); };
 const tickN = (n: number) => { for (let i = 0; i < n; i++) intervalCb?.(); };
-
-// ── createZoomChat: extract sender + body from a Zoom-shaped message node ──────
-// Collect the first message createZoomChat emits for a given DOM (array, not a
-// nullable local, so tsc doesn't narrow the capture to `never`).
-function firstChatMessage(root: FakeEl): { sender: string; text: string } | undefined {
-  setDoc(root);
-  const out: { sender: string; text: string }[] = [];
-  const chat = createZoomChat({ onMessage: (m) => out.push(m) });
-  chat.destroy();
-  return out[0];
-}
-{
-  // Group header carries the sender; the message node carries the text.
-  const msg = e('div', { id: 'chat-message-7' }, [ t('div', 'Hello team', { class: 'chat-message-text' }) ]);
-  const group = e('div', {}, [ t('div', 'Barbara W.', { class: 'chat-message-text__user-name' }), msg ]);
-  const got = firstChatMessage(e('body', {}, [ e('div', { 'aria-label': 'Chat Message List' }, [ group ]) ]));
-  check('chat: body extracted from the message node', got?.text === 'Hello team');
-  check('chat: sender climbed from the group header', got?.sender === 'Barbara W.');
-}
-{
-  // No explicit sender node → aria-label "X said to Everyone …" fallback.
-  const msg = e('div', { id: 'chat-message-1', 'aria-label': 'Carlos said to Everyone at 10:42 AM: Hi' }, [ t('span', 'Hi there everyone') ]);
-  const got = firstChatMessage(e('body', {}, [ e('div', { id: 'chat-list-content' }, [ msg ]) ]));
-  check('chat: sender from aria-label "X said to Everyone"', got?.sender === 'Carlos');
-  check('chat: body via largest-leaf fallback', got?.text === 'Hi there everyone');
-}
-{
-  // Trailing timestamp on the sender row is stripped.
-  const msg = e('div', { id: 'chat-message-2' }, [ t('div', 'Dana 10:42 AM', { class: 'user-name' }), t('div', 'meeting note', { class: 'message-text' }) ]);
-  const got = firstChatMessage(e('body', {}, [ e('div', { id: 'chat-list-content' }, [ msg ]) ]));
-  check('chat: trailing "10:42 AM" stripped from sender', got?.sender === 'Dana');
-}
 
 // ── createZoomSpeakers: active-speaker read + flicker confirmation ─────────────
 const speakerTile = (name: string) =>
@@ -201,4 +167,4 @@ const speakerTile = (name: string) =>
 }
 
 if (failed) { console.error(`\n❌ zoom-capture: ${failed} checks FAILED.`); process.exit(1); }
-console.log(`\n✅ zoom-capture: chat sender/body extraction + active-speaker flicker confirmation pass. (DOM capture is live-validated.)`);
+console.log(`\n✅ zoom-capture: active-speaker flicker confirmation passes. (DOM capture is live-validated.)`);

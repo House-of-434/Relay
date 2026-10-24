@@ -147,6 +147,10 @@ export function voiceIdleExpired(args: {
 
 /** Leave after 3 minutes without remote voice; 5 minutes without ever
  * hearing any (a room that never produces a single frame never will). */
+export function wallClockDurationSeconds(platform: string, captureStartMs: number, nowMs: number): number | null {
+  if (platform === "teams" || captureStartMs <= 0) return null;
+  return (nowMs - captureStartMs) / 1000;
+}
 const VOICE_IDLE_MS = 3 * 60_000;
 const FIRST_VOICE_TIMEOUT_MS = 5 * 60_000;
 /** Remote-audio energy floor mirroring the capture bundle's silence gate:
@@ -551,8 +555,9 @@ class MeetSession {
 
   private async finalize(status: CaptureStatus): Promise<void> {
     this.status = status;
-    if (this.descriptor.platform !== "teams" && this.captureStartMs > 0) {
-      this.lastEnd = (Date.now() - this.captureStartMs) / 1000;
+    const wallClock = wallClockDurationSeconds(this.descriptor.platform, this.captureStartMs, Date.now());
+    if (wallClock !== null) {
+      this.lastEnd = wallClock;
     }
     try {
       // Flush every open turn through the lane BEFORE the final spool flush, so

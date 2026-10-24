@@ -160,9 +160,8 @@ feb002f4456a7f272f1871a86c8c69104058793cb2dfe62042544c6fbb218dac  core/meetings/
 db875c339077c2f050dfba025b8ce16958e5d5ac81a606f0943018d9e9ae9469  core/meetings/modules/zoom-capture/scripts/README.md
 17418e61bdd682a9fe4d3f16ad2be8a415db25f49abea6f83d0baecefc364c06  core/meetings/modules/zoom-capture/scripts/check-isolation.js
 d36958b7dedaa4c58b36144f14bb88f033ab6b6570cbc06e65b7c7083e11b658  core/meetings/modules/zoom-capture/src/README.md
-3c1e088b92e6a6d6fde0025d2f1aa6a8c8b79ef731ce7f25382efdd3cf23d82e  core/meetings/modules/zoom-capture/src/index.ts
+9e2afc4c383bdcfbac66e623a9c61d85121bfa1246fff10b89d0f698681b7ea5  core/meetings/modules/zoom-capture/src/index.ts
 1e3fc27412b5a18ed3ef3edf0a9857ebd14d865f3aaf651840ab8236858ffb19  core/meetings/modules/zoom-capture/src/track-name-resolver.golden.test.ts
 d509b5d4f00dfac89216d92d0b0ef14840721d168388181b1214bc004695a0a7  core/meetings/modules/zoom-capture/src/track-name-resolver.ts
-f2f045fb51489722c82f8c22749341a74aa3d0fd8c096b63067bcfc79aea27c8  core/meetings/modules/zoom-capture/src/zoom-capture.test.ts
-3555263b678463b7068de35ff7fa2b4fcc8fd95e322a7ee1c44b14eca344280b  core/meetings/modules/zoom-capture/src/zoom-chat.ts
+c869f22b08b6d704fc81784b8ac539804381543bff04d34171882d734f39f9c4  core/meetings/modules/zoom-capture/src/zoom-capture.test.ts
 57435d2463c2ee91ef2d6bb09a3385b216aad1760047603b22b68b0910859fef  core/meetings/modules/zoom-capture/src/zoom-speakers.ts

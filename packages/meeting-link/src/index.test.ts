@@ -91,35 +91,39 @@ describe("passcodeFor", () => {
 describe("redactMeetingUrlSecrets", () => {
   it("redacts every secret-bearing key in the query string", () => {
     expect(redactMeetingUrlSecrets("https://us02web.zoom.us/j/123?pwd=abc123")).toBe(
-      "https://us02web.zoom.us/j/123?pwd=<redacted>",
+      "https://us02web.zoom.us/j/123?pwd=REDACTED",
     );
     expect(redactMeetingUrlSecrets("https://zoom.us/j/123?password=xyz")).toBe(
-      "https://zoom.us/j/123?password=<redacted>",
+      "https://zoom.us/j/123?password=REDACTED",
     );
     expect(redactMeetingUrlSecrets("https://zoom.us/j/123?passcode=qrs")).toBe(
-      "https://zoom.us/j/123?passcode=<redacted>",
+      "https://zoom.us/j/123?passcode=REDACTED",
     );
   });
 
   it("redacts secrets in the fragment", () => {
     expect(redactMeetingUrlSecrets("https://us02web.zoom.us/j/123#pwd=frag1")).toBe(
-      "https://us02web.zoom.us/j/123#pwd=<redacted>",
+      "https://us02web.zoom.us/j/123#pwd=REDACTED",
     );
     expect(redactMeetingUrlSecrets("https://zoom.us/j/123#password=frag2")).toBe(
-      "https://zoom.us/j/123#password=<redacted>",
+      "https://zoom.us/j/123#password=REDACTED",
     );
     expect(redactMeetingUrlSecrets("https://zoom.us/j/123#passcode=frag3")).toBe(
-      "https://zoom.us/j/123#passcode=<redacted>",
+      "https://zoom.us/j/123#passcode=REDACTED",
     );
   });
 
   it("redacts mixed query and fragment secrets while leaving the rest intact", () => {
     expect(redactMeetingUrlSecrets("navigated to https://zoom.us/j/123?pwd=abc&role=1#pwd=frag failed")).toBe(
-      "navigated to https://zoom.us/j/123?pwd=<redacted>&role=1#pwd=<redacted> failed",
+      "navigated to https://zoom.us/j/123?pwd=REDACTED&role=1#pwd=REDACTED failed",
     );
     expect(redactMeetingUrlSecrets("no secrets here https://meet.google.com/abc")).toBe(
       "no secrets here https://meet.google.com/abc",
     );
+  });
+
+  it("returns malformed input unchanged and never throws", () => {
+    expect(redactMeetingUrlSecrets("not a url")).toBe("not a url");
   });
 });
 

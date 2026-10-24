@@ -75,7 +75,7 @@ golden tests are run UNMODIFIED by
 ## Adaptations
 
 Only the documented changes below deviate from upstream. No vendored source
-(`*.ts`) was edited.
+(`*.ts`) was edited except the documented `zoom-capture` chat removal.
 
 - `package.json` (added for `gmeet-capture`, `gmeet-pipeline`, `buffer`,
   `whisper`) — 2026-10-10 — Upstream ships no in-tree package manifest for these
@@ -94,3 +94,9 @@ Only the documented changes below deviate from upstream. No vendored source
   so `exports`/`main`/`types` point at `./src/index.ts`. The upstream `scripts`
   and `devDependencies` are kept verbatim; only `exports`, `main`, `types`, the
   `private` flag and the description are Relay's.
+- `zoom-capture/src/zoom-chat.ts` — 2026-10-24 — Removed from the vendored set
+  (plus its `createZoomChat` export and chat cases in `zoom-capture.test.ts`);
+  the resolver and speaker modules stay byte-identical. Our capture path does
+  not ingest chat yet, and the upstream chat dedup was flagged lossy (repeat
+  messages sharing sender+text collapse), so dead flagged code is diverged out
+  rather than shipped.

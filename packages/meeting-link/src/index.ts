@@ -130,14 +130,16 @@ export function meetingUrlFor(event: CalendarEventLike): string | null {
 /** Query/fragment keys that may carry a dial-in passcode. Single definition
  * shared by passcodeFor (read) and redactMeetingUrlSecrets (log scrubbing),
  * so a newly understood key cannot leak through the redactor. */
-export const SECRET_PARAM_KEYS = ["pwd", "password", "passcode"] as const;
+export const SECRET_URL_KEYS = ["pwd", "password", "passcode"] as const;
 
-/** Scrub dial-in secrets from free text before logging. Covers every key in
- * SECRET_PARAM_KEYS in both the query string (?pwd=) and the fragment
- * (#pwd=); the key name's own casing is preserved. */
-export function redactMeetingUrlSecrets(text: string): string {
-  const keys = SECRET_PARAM_KEYS.join("|");
-  return text.replace(new RegExp(`([?&#](?:${keys})=)[^&\\s#;]*`, "gi"), "$1<redacted>");
+/** Scrub dial-in secrets from text before logging. Covers every key in
+ * SECRET_URL_KEYS in both the query string (?pwd=) and the fragment
+ * (#pwd=); the key name's own casing is preserved, the rest of the input
+ * is byte-identical, and input without secrets (including a malformed URL)
+ * is returned unchanged. Never throws. */
+export function redactMeetingUrlSecrets(url: string): string {
+  const keys = SECRET_URL_KEYS.join("|");
+  return url.replace(new RegExp(`([?&#](?:${keys})=)[^&\\s#;]*`, "gi"), "$1REDACTED");
 }
 
 /** Dial-in passcode, if any. Entry-point passcode first, then URL params
@@ -149,7 +151,7 @@ export function passcodeFor(event: CalendarEventLike, url: string): string | und
   if (typeof fromEntry === "string" && fromEntry.length > 0) return fromEntry;
   try {
     const parsed = new URL(url);
-    for (const key of SECRET_PARAM_KEYS) {
+    for (const key of SECRET_URL_KEYS) {
       const value = parsed.searchParams.get(key);
       if (value && value.length > 0) return value;
     }
@@ -157,7 +159,7 @@ export function passcodeFor(event: CalendarEventLike, url: string): string | und
     const fragmentQuery = hash.startsWith("?") ? hash.slice(1) : hash.includes("=") ? hash : "";
     if (fragmentQuery) {
       const fragmentParams = new URLSearchParams(fragmentQuery);
-      for (const key of SECRET_PARAM_KEYS) {
+      for (const key of SECRET_URL_KEYS) {
         const value = fragmentParams.get(key);
         if (value && value.length > 0) return value;
       }
