@@ -58,12 +58,13 @@ the public hostname, and the Google OAuth client must register
 ### Lock down sign-ups
 
 Public sign-up must be closed to non-company addresses before the host is
-reachable. Run `supabase/migrations/0005_restrict_signup_domain.sql` in the
-SQL Editor, then wire the hook: **Authentication → Hooks → Before User
+reachable. Run `supabase/migrations/0010_allow_second_signup_domain.sql` in the
+SQL Editor (it supersedes `0005_restrict_signup_domain.sql`), then wire the hook: **Authentication → Hooks → Before User
 Created → Postgres function → `hook_restrict_signup_domain`**. Confirm with
 `select proname from pg_proc where proname = 'hook_restrict_signup_domain';`
-(one row), then call the sign-up endpoint with the anon key and a
-non-`@houseof434.com` address and confirm it returns the 400 message.
+(one row), then call the sign-up endpoint with the anon key and confirm an
+`@houseof434.com` and an `@434vc.com` address pass while a non-company
+address returns the 400 message.
 
 ## Build and run
 
