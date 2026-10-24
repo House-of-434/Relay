@@ -60,7 +60,10 @@ export async function callJoiningCallback(_botConfig: BotConfig): Promise<void> 
   await hooks.onState("joining");
 }
 export async function callAwaitingAdmissionCallback(_botConfig: BotConfig): Promise<void> {
-  await hooks.onState("awaiting_admission");
+  // Carry the embedder's instance id so a host watching several concurrent
+  // joins can attribute this state to the right capture. Never the whole
+  // config (it holds the passcode).
+  await hooks.onState("awaiting_admission", { instanceId: (_botConfig as any)?.instanceId });
 }
 export async function callLeaveCallback(_botConfig: BotConfig, ...rest: any[]): Promise<void> {
   await hooks.onState("leaving", rest?.[0]);

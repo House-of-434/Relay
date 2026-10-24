@@ -53,6 +53,9 @@ export interface JoinOptions {
    *  (e.g. from @vexa/remote-browser); the brick skips guest name-entry. */
   authenticated?: boolean;
   waitingRoomTimeoutMs?: number;
+  /** Embedder's capture id, echoed on admission states so a host running
+   *  several concurrent joins can attribute them. */
+  instanceId?: string;
   /** turn on the live debug view (VNC pixels on Linux, CDP control anywhere) */
   debug?: boolean;
   hooks?: Partial<Hooks>;
@@ -94,6 +97,7 @@ export async function joinMeeting(page: Page, opts: JoinOptions): Promise<JoinRe
     passcode: opts.passcode,
     authenticated: opts.authenticated,
     uiInteractionMode: opts.uiInteractionMode,
+    instanceId: opts.instanceId,
     automaticLeave: { waitingRoomTimeout: opts.waitingRoomTimeoutMs ?? 180_000 },
   };
 

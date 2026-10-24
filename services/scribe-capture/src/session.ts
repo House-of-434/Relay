@@ -77,6 +77,16 @@ async function loadVexaJoin(): Promise<VexaJoin> {
   return vexaJoinCache;
 }
 
+/** Live join-state signals from the vendored join layer, keyed by instance id.
+ *  That layer installs ONE global hook, so the handler here is stateless and
+ *  dispatches by the instance id carried in the callback detail — correct even
+ *  when two captures are joining at once. */
+const joinStateListeners = new Map<string, (state: string) => void>();
+function relayJoinState(state: string, detail?: { instanceId?: unknown }): void {
+  const id = detail?.instanceId;
+  if (typeof id === "string") joinStateListeners.get(id)?.(state);
+}
+
 const VEXA_SCREENSHOT_DIR = "/app/storage/screenshots";
 
 /** Per-channel Meet lane bundle (built by scripts/build-capture.mjs). */
@@ -156,6 +166,7 @@ class MeetSession {
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private stopped = false;
+  private stopWake: (() => void) | null = null;
   private seq = 0;
   private lastEnd = 0;
   private readonly spool: SegmentSpool;
@@ -291,18 +302,31 @@ class MeetSession {
       }
 
       this.status = "joining";
+      // Reflect the waiting room in /status the moment the join layer reports
+      // it, so the monitor can tell the requester to admit Scribe.
+      joinStateListeners.set(this.descriptor.instance_id, (state) => {
+        if (state === "awaiting_admission" && this.status === "joining") this.status = "awaiting_admission";
+      });
+      if (this.stopped) {
+        joinStateListeners.delete(this.descriptor.instance_id);
+        await this.finalize("failed");
+        return;
+      }
       const { joinMeeting } = await loadVexaJoin();
       const result = await joinMeeting(this.page, {
         meetingUrl: this.descriptor.meeting_url,
         platform: this.descriptor.platform,
         botName: "Relay Scribe",
         passcode: this.descriptor.passcode,
+        instanceId: this.descriptor.instance_id,
         // Join with the persistent (signed-in) profile. Meet needs it (relay@
         // Google session); Zoom is tried authenticated too — its anti-bot wall
         // asks a guest to "sign in to join", so a signed-in web client may pass.
         authenticated: this.descriptor.platform === "google_meet" || this.descriptor.platform === "zoom",
         waitingRoomTimeoutMs: 600_000,
+        hooks: { onState: relayJoinState },
       });
+      joinStateListeners.delete(this.descriptor.instance_id);
       if (!result.admitted) {
         this.status = "awaiting_admission";
         this.error = "not admitted within the waiting-room timeout";
@@ -343,7 +367,13 @@ class MeetSession {
       let endedIdle = false;
       let idleFinalStatus: CaptureStatus = "completed";
       while (!this.stopped && Date.now() < deadline) {
-        await new Promise((r) => setTimeout(r, 6000));
+        await new Promise<void>((resolve) => {
+          this.stopWake = resolve;
+          setTimeout(() => {
+            if (this.stopWake === resolve) this.stopWake = null;
+            resolve();
+          }, 6000);
+        });
         if (this.stopped) break;
         if (isMeet) await this.gmeetFeedOnce();
         else await this.captureOnce();
@@ -373,7 +403,8 @@ class MeetSession {
       }
       await this.finalize(this.current === "skipped" ? "skipped" : endedIdle ? idleFinalStatus : this.stopped ? "partial" : "completed");
     } catch (e) {
-      this.error = describeJoinFailure(e);
+      joinStateListeners.delete(this.descriptor.instance_id);
+      if (!(this.stopped && this.error)) this.error = describeJoinFailure(e);
       // Never log full URLs: navigation errors can embed meeting ?pwd=.
       console.error(`scribe: ${this.descriptor.instance_id} failed: ${this.error.replace(/([?&]pwd=)[^&\s]*/gi, "$1<redacted>")}`);
       await this.finalize("failed");
@@ -589,8 +620,21 @@ class MeetSession {
     }
   }
 
-  requestStop(): void {
+  async stop(): Promise<void> {
+    const live = this.roomLive;
     this.stopped = true;
+    this.stopWake?.();
+    this.stopWake = null;
+    joinStateListeners.delete(this.descriptor.instance_id);
+    if (live && this.captureStartedAt === null && this.error === null) this.error = "capture stopped";
+    const page = this.page;
+    this.page = null;
+    if (page && !page.isClosed()) {
+      try {
+        await leaveFor(page, this.descriptor.platform);
+      } catch { /* best effort */ }
+      await page.close().catch(() => {});
+    }
   }
 
   outcome(): StatusOutcome {
@@ -610,8 +654,11 @@ class MeetSession {
   }
 
   /** Live for dedup purposes: states where a browser participant exists or
-   * is imminent. Terminal states never block a room. */
+   * is imminent. Terminal states never block a room, nor does a stopped
+   * session — stop() tears the browser down before it resolves, so a rejoin
+   * past this point can never seat a second bot. */
   get roomLive(): boolean {
+    if (this.stopped) return false;
     return this.status === "joining" || this.status === "awaiting_admission" || this.status === "active";
   }
 }
@@ -656,7 +703,7 @@ export class SessionController implements JoinController {
     // Reject path: monitor validation failed or we are at capacity — write a
     // failed row without attempting a join.
     let reject = descriptor.reject_reason;
-    const live = [...this.sessions.values()].filter((s) => s.status === "joining" || s.status === "awaiting_admission" || s.status === "active").length;
+    const live = [...this.sessions.values()].filter((s) => s.roomLive).length;
     if (!reject && live >= this.config.maxConcurrent) reject = "at capacity";
     if (!reject && !hostAllowed(descriptor.platform, descriptor.meeting_url)) reject = "meeting host is not an allowed provider domain";
     if (reject) {
@@ -729,7 +776,7 @@ export class SessionController implements JoinController {
   async stop(instanceId: string): Promise<JoinOutcome> {
     const session = this.sessions.get(instanceId);
     if (!session) return { instance_id: instanceId, status: "unknown" };
-    session.requestStop();
+    await session.stop();
     const s = session.outcome();
     return { instance_id: s.instance_id, status: s.status, capture_started_at: s.capture_started_at, error: s.error };
   }
