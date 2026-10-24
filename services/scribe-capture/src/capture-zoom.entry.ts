@@ -21,6 +21,7 @@
  */
 import { createPcmCaptureNode } from "@vexa/gmeet-capture";
 import { createTrackNameResolver, createZoomSpeakers } from "@vexa/zoom-capture";
+import { createZoomSpeakerGlue } from "./zoom-speaker-glue.js";
 
 interface ZoomFrame {
   channel: number;
@@ -74,11 +75,13 @@ interface ZoomConfig {
     },
   });
 
+  const handleSpeakerChange = createZoomSpeakerGlue(resolver);
+
   const speakers = createZoomSpeakers({
     selfName: cfg.selfName,
     pollMs: POLL,
     onSpeakerChange: (name: string | null) => {
-      resolver.onSpeak(name, Date.now(), name === null);
+      handleSpeakerChange(name, Date.now());
     },
     log: cfg.debug ? (m: string) => log("zoom-speakers: " + m) : undefined,
   });

@@ -131,7 +131,8 @@ async function leaveFor(page: Page, platform: string): Promise<void> {
  * heard, or after FIRST_VOICE_TIMEOUT_MS with nothing ever heard (covers
  * waiting for others who never arrive). Pure logic over timestamps — no
  * browser needed, fully unit-testable. maxMeetingMs remains the hard
- * backstop; non-Meet lanes keep maxMeetingMs only (no per-frame energy). */
+ * backstop; the mixed lane keeps maxMeetingMs only (no per-frame energy —
+ * only the per-channel gmeet and zoom lanes feed it). */
 export function voiceIdleExpired(args: {
   captureStartMs: number;
   firstVoiceAt: number | null;
@@ -354,7 +355,7 @@ class MeetSession {
         else await this.captureOnce();
         await this.flush(false, "active");
         if (lane === "gmeet" && this.config.gmeetProbe) await this.probeTick();
-        // Voice-idle end (Meet only): no remote voice for 3 minutes means
+        // Voice-idle end (per-channel gmeet and zoom lanes; not mixed): no remote voice for 3 minutes means
         // the meeting is over whether or not tiles agree; 5 minutes without
         // ever hearing any covers a room that never fills. maxMeetingMs
         // remains the hard backstop. The idle reason is written to error so
