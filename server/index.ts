@@ -343,8 +343,9 @@ import {
   memorySourceLabel,
   searchMemoryFiles,
   SESSION_SEARCH_SYSTEM_PROMPT,
-  TASK_WORKSPACES_DIR,
   readMemoryOnlyFromRegularFiles,
+  taskWorkspaceDir,
+  taskWorkspacesRootFor,
   workspaceDir,
 } from "./workspace.ts";
 import { listMemoryTopics, memoryDate, readMemoryFile, readMemoryTopic, writeMemoryFile, writeMemoryTopic } from "./workspace.ts";
@@ -678,7 +679,7 @@ const lendingMemory = CLOUD_HOME ? createLendingMemory({
     // (A bot's own conversations are never a room's: its opener is enough.)
     const ownerOpened = (threadId: string) => { const starter = threadStarters.get(threadId); return starter === undefined || cloudOwnerPerson(starter); };
     return botMemoryFiles(bot ? { id: bot.id, cwd: bot.cwd, tasks: store.tasks(bot.id).filter((task) => ownerOpened(task.threadId)) } : undefined,
-      { workspace: ensureWorkspace, taskWorkspaces: TASK_WORKSPACES_DIR });
+      { workspace: ensureWorkspace, taskWorkspaces: taskWorkspacesRootFor });
   },
   knownBots: () => store.bots.map((bot) => bot.id),
   log: (line) => console.warn(line),
@@ -1146,7 +1147,7 @@ const COMMAND_ALLOWLIST_DRIVERS = new Set([
 function commandAllowlistResponse(bot: BotRecord): CommandAllowlistResponse {
   const instance = registry.get(bot.modelSelection.instanceId);
   const task = store.taskByThread(bot.id, bot.threadId);
-  let cwd = task?.cwd !== undefined ? task.cwd : bot.cwd ?? join(realpathSync(DATA_DIR), "task-workspaces", bot.id, bot.threadId);
+  let cwd = task?.cwd !== undefined ? task.cwd : bot.cwd ?? taskWorkspaceDir(bot.id, bot.threadId);
   if (cwd && existsSync(cwd)) cwd = realpathSync(cwd);
   return {
     rules: commandAllowlist.list(bot.id),

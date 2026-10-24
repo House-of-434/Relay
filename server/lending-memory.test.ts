@@ -98,7 +98,7 @@ describe("a bot's memory and a lent Mac (server/lending-memory.ts)", () => {
     for (const folder of [join(tasks, "bot1", "t-ran"), join(tasks, "bot1", "t-new"), join(dir, "pinned")]) mkdirSync(folder, { recursive: true });
     for (const folder of [join(tasks, "bot1", "t-ran"), join(tasks, "bot1", "t-new"), join(dir, "pinned"), project, join(tasks, "bot1")]) writeFileSync(join(folder, "AGENTS.md"), "x");
     const workspaces: string[] = [];
-    const files = (bot: Parameters<typeof botMemoryFiles>[0]) => botMemoryFiles(bot, { workspace: (id) => { workspaces.push(id); return ws; }, taskWorkspaces: tasks });
+    const files = (bot: Parameters<typeof botMemoryFiles>[0]) => botMemoryFiles(bot, { workspace: (id) => { workspaces.push(id); return ws; }, taskWorkspaces: (id) => join(tasks, id) });
     const own = Object.keys(files({ id: "bot1", tasks: [
       { threadId: "t-ran", cwd: join(tasks, "bot1", "t-ran") }, { threadId: "t-pinned", cwd: join(dir, "pinned") }, { threadId: "t-new" }, { threadId: "t-legacy", cwd: null },
     ] }));
@@ -250,7 +250,7 @@ describe("a bot's memory and a lent Mac (server/lending-memory.ts)", () => {
     const bot = { id: "bot1", tasks: Array.from({ length: 4_000 }, (_, i) => ({ threadId: `t${i}`, ...(i < 3_000 ? { cwd: join(tasks, "bot1", `t${i}`) } : {}) })) };
     for (let i = 0; i < 3_000; i += 1) mkdirSync(join(tasks, "bot1", `t${i}`), { recursive: true });
     for (let i = 0; i < 3_000; i += 300) writeFileSync(join(tasks, "bot1", `t${i}`, "AGENTS.md"), `folder ${i}`);
-    const snapshot = () => botMemoryFiles(bot, { workspace: () => ws, taskWorkspaces: tasks });
+    const snapshot = () => botMemoryFiles(bot, { workspace: () => ws, taskWorkspaces: (id) => join(tasks, id) });
     const cold = snapshot();
     expect(Object.keys(cold).filter((name) => name.endsWith("AGENTS.md"))).toHaveLength(10);
     // Warm, each conversation's folder costs one look (its entries are not

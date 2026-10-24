@@ -46,3 +46,13 @@ export async function diskFreeBytes(path: string): Promise<number> {
 export function diskFreeBelow(freeBytes: number, minBytes: number): boolean {
   return freeBytes < minBytes;
 }
+
+export async function maintainDiagnostics(
+  dirs: readonly string[],
+  retentionMs: number,
+  nowMs: number = Date.now(),
+): Promise<number> {
+  let removed = 0;
+  for (const dir of dirs) removed += await sweepDir(dir, nowMs, retentionMs);
+  return removed;
+}

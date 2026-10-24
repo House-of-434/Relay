@@ -10,6 +10,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { launchVerificationServer, type VerificationServer } from "../scripts/control-relay.ts";
 import { hashMemoryText } from "./memory-store.ts";
+import { TEST_OWNER_USER_ID } from "./testing/owner.ts";
 
 interface Reply {
   status: number;
@@ -29,7 +30,7 @@ describe("memory routes through an isolated HTTP fixture", () => {
     });
     return { status: response.status, body: await response.json() };
   };
-  const workspace = () => join(fixture.info.dataDir, "workspaces", botId);
+  const workspace = () => join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", botId);
 
   beforeAll(async () => {
     fixture = await launchVerificationServer();
@@ -58,6 +59,7 @@ describe("memory routes through an isolated HTTP fixture", () => {
     expect(created.status).toBe(201);
     botId = created.body.bot.id;
     threadId = created.body.bot.threadId;
+    mkdirSync(join(workspace(), "memory"), { recursive: true });
     writeFileSync(target, join(workspace(), "memory", "learned.md"));
   });
 
@@ -84,6 +86,7 @@ describe("memory routes through an isolated HTTP fixture", () => {
       expect((await api("DELETE", `/api/bots/${botId}/memory/file?path=${encodeURIComponent(path)}`)).status).toBe(400);
     }
     expect(existsSync(join(fixture.info.dataDir, "workspaces", "etc"))).toBe(false);
+    expect(existsSync(join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", "etc"))).toBe(false);
   });
 
   it("writes a topic with the hash of empty, then refuses a stale save with 409 and what is there now", async () => {

@@ -193,10 +193,10 @@ export interface LendingBot {
  * of those that have not yet. A conversation that never ran has no folder
  * to look in (its first turn creates it). A bot that no longer exists has
  * nothing left to judge, and its workspace must not be recreated to look. */
-export function botMemoryFiles(bot: LendingBot | undefined, dirs: { workspace: (botId: string) => string; taskWorkspaces: string }): Record<string, string> {
+export function botMemoryFiles(bot: LendingBot | undefined, dirs: { workspace: (botId: string) => string; taskWorkspaces: (botId: string) => string }): Record<string, string> {
   if (!bot) return {};
   const folders = bot.tasks.flatMap((task) => typeof task.cwd === "string" ? [task.cwd] : []);
-  return memoryFiles(dirs.workspace(bot.id), [...new Set([...(bot.cwd ? [bot.cwd] : []), ...folders])], [join(dirs.taskWorkspaces, bot.id)]);
+  return memoryFiles(dirs.workspace(bot.id), [...new Set([...(bot.cwd ? [bot.cwd] : []), ...folders])], [dirs.taskWorkspaces(bot.id)]);
 }
 
 /** One hash over a set of files, for the stored record and the review token. */

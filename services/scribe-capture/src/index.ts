@@ -1,16 +1,15 @@
 import { workerConfig } from "./config.js";
 import { createScribeWorkerServer } from "./http-server.js";
 import { SessionController } from "./session.js";
-import { sweepDir, diskFreeBytes, diskFreeBelow } from "./maintenance.js";
+import { diskFreeBytes, diskFreeBelow, maintainDiagnostics } from "./maintenance.js";
 
 /** Retention + disk maintenance. Vexa writes failure screenshots to a hardcoded
  * path; the worker also owns /data/scribe/failures and /data/scribe/status. */
-async function maintain(dataDir: string, retentionMs: number, diskMinBytes: number): Promise<void> {
-  const now = Date.now();
-  const removed =
-    (await sweepDir("/app/storage/screenshots", now, retentionMs)) +
-    (await sweepDir(`${dataDir}/failures`, now, retentionMs)) +
-    (await sweepDir(`${dataDir}/status`, now, retentionMs));
+export async function maintain(dataDir: string, probeDir: string, retentionMs: number, diskMinBytes: number): Promise<void> {
+  const removed = await maintainDiagnostics(
+    ["/app/storage/screenshots", `${dataDir}/failures`, `${dataDir}/status`, probeDir],
+    retentionMs,
+  );
   if (removed > 0) console.log(`[relay-scribe] retention: removed ${removed} expired file(s)`);
   try {
     const free = await diskFreeBytes(dataDir);
@@ -28,11 +27,11 @@ async function main(): Promise<void> {
   const server = createScribeWorkerServer(controller, config);
 
   const maintenance = setInterval(
-    () => void maintain(config.dataDir, config.retentionMs, config.diskMinBytes),
+    () => void maintain(config.dataDir, config.probeDir, config.retentionMs, config.diskMinBytes),
     config.maintenanceMs,
   );
   maintenance.unref?.();
-  void maintain(config.dataDir, config.retentionMs, config.diskMinBytes);
+  void maintain(config.dataDir, config.probeDir, config.retentionMs, config.diskMinBytes);
 
   server.on("error", (error) => {
     console.error("[relay-scribe] fatal:", error);

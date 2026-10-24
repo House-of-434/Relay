@@ -461,6 +461,18 @@ describe("encrypted full workspace backups", () => {
     expect(exported.summary.warnings.some((warning) => warning.includes("1 managed skill"))).toBe(true);
   });
 
+  it("omits managed discovery links under a user-scoped workspace", async () => {
+    const root = directory();
+    const skill = join(root, "users", "11111111-1111-4111-8111-111111111111", "workspaces", "bot", "skills", "example");
+    mkdirSync(skill, { recursive: true });
+    writeFileSync(join(skill, "SKILL.md"), "# Example");
+    const native = join(root, "users", "11111111-1111-4111-8111-111111111111", "workspaces", "bot", ".agents", "skills");
+    mkdirSync(native, { recursive: true });
+    symlinkSync(skill, join(native, "example"), process.platform === "win32" ? "junction" : "dir");
+    const exported = await createWorkspaceBackup(root, { password: PASSWORD });
+    expect(exported.summary.warnings.some((warning) => warning.includes("1 managed skill"))).toBe(true);
+  });
+
   it("recovers an interrupted top-level swap before any application state is loaded", async () => {
     const source = directory();
     json(join(source, "bots.json"), []);

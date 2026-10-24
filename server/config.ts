@@ -598,6 +598,7 @@ export const DATA_DIR = process.env.RELAY_DATA_DIR ?? join(homedir(), ".relay");
 const LEGACY_DATA_DIR = join(homedir(), ".opengrokbot");
 export const EVENTS_DIR = join(DATA_DIR, "events");
 export const NATIVE_DIR = join(DATA_DIR, "native");
+export const USERS_DIR = process.env.RELAY_USERS_DIR?.trim() || join(DATA_DIR, "users");
 
 export function ensureDirs() {
   // one-time migration from the pre-rename data dir — bots, transcripts,
@@ -609,7 +610,7 @@ export function ensureDirs() {
       /* cross-device or busy — fall through to a fresh dir */
     }
   }
-  for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR]) mkdirSync(dir, { recursive: true });
+  for (const dir of [DATA_DIR, EVENTS_DIR, NATIVE_DIR, USERS_DIR]) mkdirSync(dir, { recursive: true });
   migrateLegacyFeatureFlags();
 }
 

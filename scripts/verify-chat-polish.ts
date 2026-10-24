@@ -3,6 +3,7 @@ import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { launchVerificationServer, runControlOmb } from "./control-relay.ts";
+import { TEST_OWNER_USER_ID } from "../server/testing/owner.ts";
 import { fixtureApi, mountPreview, parkUntilSignal, type MountedPreview } from "./testing/preview-fixture.ts";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -14,7 +15,7 @@ try {
   await control(["new-bot", "--name", "Pepper"]);
   const { bots } = await api("GET", "/api/bots?messages=0");
   const bot = bots.find((item: { name: string }) => item.name === "Pepper");
-  const workspace = join(fixture.info.dataDir, "workspaces", bot.id);
+  const workspace = join(fixture.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id);
   mkdirSync(workspace, { recursive: true });
   const video = join(workspace, "demo.mp4");
   copyFileSync(join(root, "docs/screenshots/composer-dock-after.mp4"), video);

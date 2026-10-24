@@ -1,0 +1,8 @@
+[Unit]
+Description=Relay host resource sample
+After=docker.service
+
+[Service]
+Type=oneshot
+User=ubuntu
+ExecStart=/home/ubuntu/Relay/deploy/local/sample-resources.sh

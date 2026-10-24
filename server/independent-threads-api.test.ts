@@ -10,6 +10,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb, type VerificationServer } from "../scripts/control-relay.ts";
 import { handleToolCall, request } from "../scripts/mcp-server.ts";
 import { memoryDate } from "./workspace.ts";
+import { TEST_OWNER_USER_ID } from "./testing/owner.ts";
 
 describe("independent bot tasks through the isolated control surface", () => {
   let session: VerificationServer;
@@ -184,7 +185,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     const before = (await api("GET", "/api/bots")).body.bots.find((bot: any) => bot.id === botId);
     expect(before.tasks).toHaveLength(1);
     expect(before.messages.some((message: any) => message.role === "user" && message.text === "LAST_THREAD_WORK")).toBe(true);
-    const artifact = join(session.info.dataDir, "task-workspaces", botId, threadId, "result.txt");
+    const artifact = join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, threadId, "result.txt");
     writeFileSync(artifact, "Retain generated project files");
 
     const deleted = await api("DELETE", `/api/bots/${botId}/tasks/${threadId}`);
@@ -224,7 +225,7 @@ describe("independent bot tasks through the isolated control surface", () => {
       // the append landed as one dated entry naming the thread it came from
       expect((await api("GET", `/api/bots/${botId}/memory`)).body.text).toBe(`- ${memoryDate()} · from chat "${"t".repeat(60)}…" · A unique saved fact.\n`);
     }
-    const project = join(session.info.dataDir, "task-workspaces", botId, threadId, "result.txt");
+    const project = join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, threadId, "result.txt");
     writeFileSync(project, "Generated project files are retained.");
     await control(["interrupt", "--bot", botId, "--task", threadId]);
     await expect.poll(async () => (await botState(botId)).busy, { timeout: 10_000 }).toBe(false);
@@ -311,8 +312,8 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect(launchedA.argv[launchedA.argv.indexOf("--permission-mode") + 1]).toBe("default");
     expect(launchedB.argv[launchedB.argv.indexOf("--permission-mode") + 1]).toBe("auto");
     evidence.push({ providerSelections: [models[0], models[1]], distinctProcesses: true });
-    expect(launchedA.env.RELAY_FIXTURE_CWD).toBe(realpathSync(join(session.info.dataDir, "task-workspaces", botId, taskA)));
-    expect(launchedB.env.RELAY_FIXTURE_CWD).toBe(realpathSync(join(session.info.dataDir, "task-workspaces", botId, taskB)));
+    expect(launchedA.env.RELAY_FIXTURE_CWD).toBe(realpathSync(join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, taskA)));
+    expect(launchedB.env.RELAY_FIXTURE_CWD).toBe(realpathSync(join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, taskB)));
 
     const tokenA = launchedA.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
     const tokenB = launchedB.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;

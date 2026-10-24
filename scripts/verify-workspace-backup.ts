@@ -7,7 +7,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { launchVerificationServer, runControlOmb, type VerificationServer } from "./control-relay.ts";
 import { waitForExit } from "../server/testing/cleanup.ts";
-import { prepareOwnerSession, registerOwnerFetch } from "../server/testing/owner.ts";
+import { prepareOwnerSession, registerOwnerFetch, TEST_OWNER_USER_ID } from "../server/testing/owner.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -124,7 +124,7 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
     // A reviewed skill and memory seed are written only into our fixture;
     // the real server must list/enable and later restore the exact content.
     const skill = "---\nname: backup-check\ndescription: Verify restored fixture files.\n---\nWORKSPACE_SKILL_MARKER\n";
-    const skillDir = join(source.info.dataDir, "workspaces", bot.id, "skills", "backup-check");
+    const skillDir = join(source.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id, "skills", "backup-check");
     const stateDir = join(source.info.dataDir, "skill-state", bot.id);
     mkdirSync(skillDir, { recursive: true });
     mkdirSync(stateDir, { recursive: true });
@@ -135,7 +135,7 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
       warnings: [], skippedFiles: [],
     } }), { mode: 0o600 });
     const memory = "WORKSPACE_MEMORY_MARKER: preserve this memory.\n";
-    writeFileSync(join(source.info.dataDir, "workspaces", bot.id, "MEMORY.md"), memory, { mode: 0o600 });
+    writeFileSync(join(source.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id, "MEMORY.md"), memory, { mode: 0o600 });
     assert.equal((await api(source, "PATCH", `/api/bots/${bot.id}/skills/backup-check`, { enabled: true })).status, 200);
     const sourceSkills = (await api(source, "GET", `/api/bots/${bot.id}/skills`)).body;
     assert.equal(sourceSkills.skills[0].enabled, true);
@@ -211,7 +211,7 @@ export async function verifyWorkspaceBackup(report: (event: unknown) => void = (
     assert.deepEqual(readFileSync(destinationAttachment), attachment);
     record({ command: "read restored attachment", path: destinationAttachment, bytes: attachment.length, sha256: createHash("sha256").update(readFileSync(destinationAttachment)).digest("hex") });
     assert.equal(basename(destinationAttachment), basename(attached.path));
-    assert.equal(readFileSync(join(destination.info.dataDir, "workspaces", bot.id, "MEMORY.md"), "utf8"), memory);
+    assert.equal(readFileSync(join(destination.info.dataDir, "users", TEST_OWNER_USER_ID, "workspaces", bot.id, "MEMORY.md"), "utf8"), memory);
     assert.equal((await api(destination, "GET", `/api/bots/${bot.id}/skills/backup-check`)).body.text, skill);
     assert.deepEqual((await api(destination, "GET", `/api/bots/${bot.id}/skills`)).body, sourceSkills);
     const restoredConfig = JSON.parse(readFileSync(join(destination.info.dataDir, "config.json"), "utf8"));
