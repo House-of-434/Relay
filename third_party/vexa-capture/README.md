@@ -25,8 +25,6 @@ Third-party artifacts these sources depend on (not vendored here):
 
 | Path | Purpose |
 |---|---|
-| `core/meetings/modules/mixed-capture-core/` | WebRTC remote-audio hook, Teams main-audio tap, CSRC transport poll |
-| `core/meetings/modules/mixed-pipeline/` | Mixed-lane (Zoom/Teams) chunked transcription + hints-based speaker binder |
 | `core/meetings/modules/gmeet-pipeline/` | Per-channel Meet lane (named audio, no diarizer) |
 | `core/meetings/modules/gmeet-capture/` | **Meet page-side capture** (browser): per-participant PCM (`gmeet-capture`, AudioWorklet `pcm-capture`) + glow speaker naming (`gmeet-speakers`, `gmeet-channel-binder`) + the `capture.v1` producer (`gmeet-capture-v1`) |
 | `core/meetings/modules/buffer/` | `@vexa/transcribe-buffer`: LocalAgreement-N confirm core + `GmeetCompatibleBuffer` (the pipeline's confirmation primitive) |
@@ -34,18 +32,29 @@ Third-party artifacts these sources depend on (not vendored here):
 | `core/meetings/contracts/transcript.v1/` | The SEALED `transcript.v1` schema (+ golden) the pipeline conformance golden validates against |
 | `core/meetings/modules/zoom-capture/` | **Zoom per-track lane** (browser): `zoom-speakers` (active-speaker DOM watcher) and `track-name-resolver` (the pure vote/margin/purity/1:1/self correlator that binds each stable WebRTC track to a display name) |
 | `core/meetings/modules/join/` | Deterministic Meet/Zoom/Teams selectors (`googlemeet`, `zoom`, `msteams`, `shared`, root `_host`/`browser-args`/`index`) — plus the `jitsi` lane, included although Scribe never instantiates it, because `index.ts` imports it and the package must stay coherent |
-| `core/meetings/services/bot/src/{capture-bridge,pipeline,join-driver}.ts` | Orchestration seam — **adapt, don't copy wholesale** |
 
 Test files shipped alongside the sources above (`*.test.ts`, `contracts/`,
 `hallucinations/`) so the golden/contract net travels with the code:
 `confirm-loop.golden`, `pending-stability`, `webrtc-dedup`, `gap-reclaim`,
-`never-lose-tail`, plus lane conformance and parity tests.
+`never-lose-tail`, plus lane conformance tests.
 
 ## What was NOT taken
 
 Vexa's gateway, agent platform, dashboards, share links, recordings, TTS,
 routines, workspaces, webhooks, API-key machinery, and the `jitsi` lane.
 Those stay upstream reference material only.
+
+Also deliberately NOT vendored, because nothing in Relay imports them
+(removed 2026-10-24 after auditing every import):
+- `core/meetings/modules/mixed-pipeline/` — the pyannote mixed lane. Scribe has
+  never used it: the mixed fallback here is a plain PCM tap plus the STT client.
+- `core/meetings/modules/mixed-capture-core/` — its WebRTC remote-audio hook was
+  reimplemented inline in `services/scribe-capture/src/vexa-remote-audio-hook.ts`.
+- `core/meetings/services/bot/src/{capture-bridge,pipeline,join-driver}.ts` — the
+  orchestration seam. It was reference material only; `session.ts` owns that
+  orchestration here.
+
+They are re-fetchable from `UPSTREAM_COMMIT` if a future lane needs them.
 
 ## Verification
 
