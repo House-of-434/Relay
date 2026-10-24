@@ -24,6 +24,15 @@
  */
 import { createPcmCaptureNode } from "@vexa/gmeet-capture";
 import { createTrackNameResolver, createZoomChat, createZoomSpeakers } from "@vexa/zoom-capture";
+import {
+  assignRowKeys,
+  dropNested,
+  platformIdFromAttrs,
+  pickStamp,
+  resolveFallbackText,
+  unionRows,
+  type ChatRowIdentity,
+} from "./zoom-chat-rows.js";
 
 interface ZoomFrame {
   channel: number;
@@ -49,6 +58,7 @@ interface ZoomChatRow {
   ts: number;
   ordinal: number;
   message_id?: string;
+  stamp?: string;
 }
 
 (function () {
@@ -95,15 +105,17 @@ interface ZoomChatRow {
   });
 
   // Inbound chat, observed row by row in this adapter. Each row is identified
-  // at first sight by the platform message id when the row (or a descendant)
-  // carries one, else by a per-row ordinal. The same row re-polled keeps its
-  // identity; a distinct row with identical text gets its own.
+  // at first sight by the platform message id when the row genuinely carries
+  // one, else by its content (sender, text, and row timestamp attribute when
+  // present), else by its ordinal among the currently rendered rows plus its
+  // text. A rebuilt list re-rendering the same messages yields the same keys,
+  // so a re-poll delivers nothing; a recycled node showing a new message
+  // yields a new key.
   const chatMessages: ZoomChatRow[] = [];
-  const rowOrdinals = new WeakMap<Element, number>();
-  let nextChatOrdinal = 1;
   const deliveredChatKeys = new Set<string>();
   const deliveredChatOrder: string[] = [];
   const DELIVERED_CHAT_LIMIT = 2000;
+  const chatDrops: Record<string, number> = {};
 
   function markChatDelivered(key: string): void {
     if (deliveredChatKeys.has(key)) return;
@@ -146,86 +158,108 @@ interface ZoomChatRow {
   }
 
   function chatRowPlatformId(row: Element): string | null {
-    const mid = row.getAttribute("data-mid") || row.getAttribute("data-message-id");
-    if (mid) return mid;
-    const id = row.getAttribute("id");
-    if (id && id.startsWith("chat-message-")) return id;
-    const desc =
-      row.querySelector('[id^="chat-message-"]') ||
-      row.querySelector("[data-mid]") ||
-      row.querySelector("[data-message-id]");
-    if (desc) {
-      const did = desc.getAttribute("id");
-      if (did) return did;
-      const dmid = desc.getAttribute("data-mid") || desc.getAttribute("data-message-id");
-      if (dmid) return dmid;
-    }
-    if (id) return id;
-    return null;
+    const own = platformIdFromAttrs({
+      id: row.getAttribute("id"),
+      mid: row.getAttribute("data-mid"),
+      messageId: row.getAttribute("data-message-id"),
+    });
+    if (own) return own;
+    const desc = row.querySelector('[id^="chat-message-"],[data-mid],[data-message-id]');
+    if (!desc || desc === row) return null;
+    return platformIdFromAttrs({
+      id: desc.getAttribute("id"),
+      mid: desc.getAttribute("data-mid"),
+      messageId: desc.getAttribute("data-message-id"),
+    });
   }
 
-  function readChatRow(row: Element): { sender: string; text: string } | null {
-    let text = chatRowText(row, CHAT_TEXT_SELECTORS);
+  function chatRowStamp(row: Element): string | null {
+    const time = row.querySelector("time[datetime]");
+    return pickStamp([
+      row.getAttribute("data-time"),
+      row.getAttribute("data-timestamp"),
+      row.getAttribute("data-ts"),
+      row.getAttribute("data-created"),
+      row.getAttribute("data-created-at"),
+      time?.getAttribute("datetime") ?? null,
+    ]);
+  }
+
+  function normalizeSender(sender: string): string {
+    return sender.replace(/\s*\d{1,2}:\d{2}\s*(AM|PM)?\s*$/i, "").trim();
+  }
+
+  function readChatRow(row: Element): { sender: string; text: string } | { drop: "no-text" | "unseparable" } {
+    const textHit = chatRowText(row, CHAT_TEXT_SELECTORS);
     let sender = chatRowText(row, CHAT_SENDER_SELECTORS);
-    if (!sender) {
+    let senderFound = sender.length > 0;
+    if (!senderFound) {
       let cur = row.parentElement;
-      for (let i = 0; i < 4 && cur && !sender; i++, cur = cur.parentElement) {
+      for (let i = 0; i < 4 && cur && !senderFound; i++, cur = cur.parentElement) {
         sender = chatRowText(cur, CHAT_SENDER_SELECTORS);
+        senderFound = sender.length > 0;
       }
     }
-    if (!sender) {
+    if (!senderFound) {
       let cur: Element | null = row;
       for (let i = 0; i < 4 && cur; i++, cur = cur.parentElement) {
         const label = cur.getAttribute("aria-label") || "";
         const m = label.match(/^(.+?)\s+(?:said|to\s+Everyone|to\s+[A-Z])/i);
         if (m && m[1].trim()) {
           sender = m[1].trim();
+          senderFound = true;
           break;
         }
       }
     }
-    if (!text) {
-      const frags = Array.from(row.querySelectorAll("*"))
-        .map((e) => (e.childElementCount === 0 ? (e.textContent || "").trim() : ""))
-        .filter((t) => t.length > 0);
-      if (!frags.length) return null;
-      text = frags.reduce((a, b) => (b.length > a.length ? b : a), "");
-      if (!sender) {
-        const short = frags.find((f) => f !== text && f.length <= 40 && !/^\d{1,2}:\d{2}/.test(f));
-        if (short) sender = short;
-      }
+    if (textHit) {
+      return { sender: normalizeSender(sender) || "Unknown", text: textHit };
     }
-    sender = sender.replace(/\s*\d{1,2}:\d{2}\s*(AM|PM)?\s*$/i, "").trim() || "Unknown";
-    if (!text) return null;
-    return { sender, text };
+    const frags = Array.from(row.querySelectorAll("*"))
+      .map((e) => (e.childElementCount === 0 ? (e.textContent || "").trim() : ""))
+      .filter((t) => t.length > 0);
+    if (!frags.length) return { drop: "no-text" };
+    const clean = normalizeSender(sender);
+    const text = resolveFallbackText(frags, clean, senderFound);
+    if (!text) return { drop: "unseparable" };
+    return { sender: clean || "Unknown", text };
   }
 
   function scanChatRows(): void {
-    let rows: Element[] = [];
-    for (const sel of CHAT_ROW_SELECTORS) {
-      const nodes = document.querySelectorAll(sel);
-      if (nodes.length) {
-        rows = Array.from(nodes);
-        break;
+    const rows = dropNested(
+      unionRows(CHAT_ROW_SELECTORS.map((sel) => Array.from(document.querySelectorAll(sel)))),
+      (r) => r.parentElement,
+    );
+    const identities: ChatRowIdentity[] = [];
+    const parsed: Array<{ sender: string; text: string }> = [];
+    rows.forEach((row, index) => {
+      const result = readChatRow(row);
+      if ("drop" in result) {
+        chatDrops[result.drop] = (chatDrops[result.drop] ?? 0) + 1;
+        log(`chat row dropped (${result.drop})`);
+        return;
       }
-    }
-    for (const row of rows) {
-      const platformId = chatRowPlatformId(row);
-      let ordinal = rowOrdinals.get(row);
-      if (ordinal === undefined) {
-        ordinal = nextChatOrdinal++;
-        rowOrdinals.set(row, ordinal);
-      }
-      const key = platformId ? `id:${platformId}` : `row:${ordinal}`;
+      parsed.push(result);
+      identities.push({
+        platformId: chatRowPlatformId(row),
+        stamp: chatRowStamp(row),
+        index,
+        sender: result.sender,
+        text: result.text,
+      });
+    });
+    const keys = assignRowKeys(identities);
+    for (let i = 0; i < parsed.length; i++) {
+      const key = keys[i];
       if (deliveredChatKeys.has(key)) continue;
-      const parsed = readChatRow(row);
-      if (!parsed) continue;
-      const entry: ZoomChatRow = { sender: parsed.sender, text: parsed.text, ts: Date.now(), ordinal };
-      if (platformId) entry.message_id = platformId;
+      const identity = identities[i];
+      const entry: ZoomChatRow = { sender: parsed[i].sender, text: parsed[i].text, ts: Date.now(), ordinal: identity.index };
+      if (identity.platformId) entry.message_id = identity.platformId;
+      if (identity.stamp) entry.stamp = identity.stamp;
       chatMessages.push(entry);
       markChatDelivered(key);
       try {
-        g.__scribeZoomChat?.(parsed.sender, parsed.text, Date.now());
+        g.__scribeZoomChat?.(parsed[i].sender, parsed[i].text, Date.now());
       } catch {
         /* optional host hook */
       }
@@ -411,6 +445,7 @@ interface ZoomChatRow {
         labels: Object.fromEntries(channels.map((c: number) => [c, resolver.labelFor(c)])),
         speakerState,
         chatState,
+        chatDrops: { ...chatDrops },
         hook: {
           injected: (g.__vexaInjectedAudioElements ?? []).length,
           mirroredTracks: g.__vexaMirroredTrackIds?.size ?? 0,

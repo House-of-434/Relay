@@ -33,15 +33,17 @@ export interface InboundChat {
 }
 
 /** A chat message as drained from the page. `message_id` is the platform's
- *  own id for the row when the adapter could read one; `ordinal` is the
- *  adapter's per-row number, stable for the same row. Either may be absent;
- *  absence means the page gave no identity for that row. */
+ *  own id for the row when the adapter could read one; `stamp` is the row's
+ *  timestamp attribute when present; `ordinal` is the row's position among
+ *  the currently rendered rows. Any of them may be absent; absence means the
+ *  page gave no identity of that kind for the row. */
 export interface DrainedChatMessage {
   sender: string | null;
   text: string;
   /** Epoch ms from the page. */
   atMs: number;
   message_id?: string | null;
+  stamp?: string | null;
   ordinal?: number | null;
 }
 
@@ -52,10 +54,18 @@ export interface DrainedChatMessage {
 export function chatMessageKey(message: DrainedChatMessage): string {
   const id = message.message_id?.trim();
   if (id) return `id:${id}`;
-  if (typeof message.ordinal === "number" && Number.isFinite(message.ordinal)) return `row:${message.ordinal}`;
+  const stamp = message.stamp?.trim();
+  if (stamp) return `content:${contentHash(message.sender, message.text, stamp)}`;
+  if (typeof message.ordinal === "number" && Number.isFinite(message.ordinal)) {
+    return `row:${message.ordinal}:${contentHash(message.sender, message.text, "")}`;
+  }
   const second = Math.floor(message.atMs / 1000);
+  return contentHash(message.sender, message.text, String(second));
+}
+
+function contentHash(sender: string | null, text: string, extra: string): string {
   return createHash("sha256")
-    .update(`${message.sender ?? ""}\u0000${message.text}\u0000${second}`)
+    .update(`${sender ?? ""}\u0000${text}\u0000${extra}`)
     .digest("hex")
     .slice(0, 16);
 }
@@ -112,8 +122,12 @@ export function newChatSegments(
   options: { platform: Platform; captureStartMs: number; seen: SeenChatSet },
 ): Segment[] {
   const out: Segment[] = [];
+  const batchCounts = new Map<string, number>();
   for (const message of messages) {
-    const messageKey = chatMessageKey(message);
+    const base = chatMessageKey(message);
+    const n = batchCounts.get(base) ?? 0;
+    batchCounts.set(base, n + 1);
+    const messageKey = n === 0 ? base : `${base}#${n + 1}`;
     if (options.seen.has(messageKey)) continue;
     const segment = toChatSegment({ ...message, message_key: messageKey, platform: options.platform }, options.captureStartMs);
     if (!segment) continue;

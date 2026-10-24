@@ -486,7 +486,7 @@ class MeetSession {
    *  simply yields nothing, and a failed drain never interrupts capture. */
   private async captureChatOnce(): Promise<void> {
     if (!this.page) return;
-    let messages: Array<{ sender: string | null; text: string; ts: number; message_id?: string; ordinal?: number }>;
+    let messages: Array<{ sender: string | null; text: string; ts: number; message_id?: string; stamp?: string; ordinal?: number }>;
     try {
       messages = await this.page.evaluate(() => (window as any).__scribeZoom?.drainChat?.() ?? []);
     } catch {
@@ -499,6 +499,7 @@ class MeetSession {
         text: m.text,
         atMs: m.ts,
         ...(m.message_id ? { message_id: m.message_id } : {}),
+        ...(m.stamp ? { stamp: m.stamp } : {}),
         ...(typeof m.ordinal === "number" ? { ordinal: m.ordinal } : {}),
       })),
       { platform: this.descriptor.platform, captureStartMs: this.captureStartMs, seen: this.seenChat },
