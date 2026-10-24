@@ -7,4 +7,5 @@ export {
   meetCode,
   meetingUrlKey,
   nativeIdFor,
+  redactMeetingUrlSecrets,
 } from "../../../packages/meeting-link/src/index.js";

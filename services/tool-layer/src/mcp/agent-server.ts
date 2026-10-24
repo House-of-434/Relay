@@ -413,7 +413,7 @@ export function createAgentMcpServer(
   }
 
   // Meeting capture is Mercury-only, like Gmail and calendar: joining is a
-  // visible external action (announced in the meeting), so agents without
+  // visible external action (it joins under a visible display name), so agents without
   // external comms must not even see the tool offered.
   if (scribe && SCRIBE_PERMISSIONS[agent].length > 0) {
     const scribeContext: RelayScribeContext = scribe;
@@ -421,7 +421,7 @@ export function createAgentMcpServer(
     server.registerTool(
       "scribe_join_meeting",
       {
-        description: "Ask Relay Scribe to join a live meeting and transcribe it. Pass the meeting link the user gave you (Google Meet, Zoom, or Teams), plus the passcode when the invitation states one separately from the link. This queues the join: Scribe usually appears within a couple of minutes and announces itself in the meeting chat, but admission varies — do not tell the user it is in the meeting until you have confirmed it. already_accepted means the room already has a capture queued or underway; do not resubmit. Scheduled meetings are picked up automatically — do not submit them here.",
+        description: "Ask Relay Scribe to join a live meeting and transcribe it. Pass the meeting link the user gave you (Google Meet, Zoom, or Teams), plus the passcode when the invitation states one separately from the link. This queues the join: Scribe joins under a visible display name, usually appearing within a couple of minutes, but admission varies — do not tell the user it is in the meeting until you have confirmed it. already_accepted means the room already has a capture queued or underway; do not resubmit. Scheduled meetings are picked up automatically — do not submit them here.",
         inputSchema: {
           meeting_url: z.string().min(1).max(2048),
           title: z.string().trim().min(1).max(200).optional(),

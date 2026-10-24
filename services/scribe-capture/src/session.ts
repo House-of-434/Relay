@@ -10,7 +10,7 @@ import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
 import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
 import { toSegment } from "./gmeet-segment.js";
-import { hostAllowed, meetingUrlKey, nativeIdFor } from "./urls.js";
+import { hostAllowed, meetingUrlKey, nativeIdFor, redactMeetingUrlSecrets } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
 import { sharedBrowserContext } from "./shared-browser.js";
@@ -376,7 +376,7 @@ class MeetSession {
     } catch (e) {
       this.error = describeJoinFailure(e);
       // Never log full URLs: navigation errors can embed meeting ?pwd=.
-      console.error(`scribe: ${this.descriptor.instance_id} failed: ${this.error.replace(/([?&]pwd=)[^&\s]*/gi, "$1<redacted>")}`);
+      console.error(`scribe: ${this.descriptor.instance_id} failed: ${redactMeetingUrlSecrets(this.error)}`);
       await this.finalize("failed");
     }
   }

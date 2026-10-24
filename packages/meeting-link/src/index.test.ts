@@ -9,6 +9,7 @@ import {
   normalizeMeetingUrlKey,
   passcodeFor,
   platformForUrl,
+  redactMeetingUrlSecrets,
 } from "./index.ts";
 
 describe("platformForUrl", () => {
@@ -84,6 +85,41 @@ describe("passcodeFor", () => {
     expect(passcodeFor({}, "https://zoom.us/j/123#pwd=frag1")).toBe("frag1");
     expect(passcodeFor({}, "https://zoom.us/j/123")).toBeUndefined();
     expect(passcodeFor({}, "not a url")).toBeUndefined();
+  });
+});
+
+describe("redactMeetingUrlSecrets", () => {
+  it("redacts every secret-bearing key in the query string", () => {
+    expect(redactMeetingUrlSecrets("https://us02web.zoom.us/j/123?pwd=abc123")).toBe(
+      "https://us02web.zoom.us/j/123?pwd=<redacted>",
+    );
+    expect(redactMeetingUrlSecrets("https://zoom.us/j/123?password=xyz")).toBe(
+      "https://zoom.us/j/123?password=<redacted>",
+    );
+    expect(redactMeetingUrlSecrets("https://zoom.us/j/123?passcode=qrs")).toBe(
+      "https://zoom.us/j/123?passcode=<redacted>",
+    );
+  });
+
+  it("redacts secrets in the fragment", () => {
+    expect(redactMeetingUrlSecrets("https://us02web.zoom.us/j/123#pwd=frag1")).toBe(
+      "https://us02web.zoom.us/j/123#pwd=<redacted>",
+    );
+    expect(redactMeetingUrlSecrets("https://zoom.us/j/123#password=frag2")).toBe(
+      "https://zoom.us/j/123#password=<redacted>",
+    );
+    expect(redactMeetingUrlSecrets("https://zoom.us/j/123#passcode=frag3")).toBe(
+      "https://zoom.us/j/123#passcode=<redacted>",
+    );
+  });
+
+  it("redacts mixed query and fragment secrets while leaving the rest intact", () => {
+    expect(redactMeetingUrlSecrets("navigated to https://zoom.us/j/123?pwd=abc&role=1#pwd=frag failed")).toBe(
+      "navigated to https://zoom.us/j/123?pwd=<redacted>&role=1#pwd=<redacted> failed",
+    );
+    expect(redactMeetingUrlSecrets("no secrets here https://meet.google.com/abc")).toBe(
+      "no secrets here https://meet.google.com/abc",
+    );
   });
 });
 
