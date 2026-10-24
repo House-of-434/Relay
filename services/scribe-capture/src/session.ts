@@ -551,7 +551,7 @@ class MeetSession {
 
   private async finalize(status: CaptureStatus): Promise<void> {
     this.status = status;
-    if (this.descriptor.platform === "google_meet" && this.captureStartMs > 0) {
+    if (this.descriptor.platform !== "teams" && this.captureStartMs > 0) {
       this.lastEnd = (Date.now() - this.captureStartMs) / 1000;
     }
     try {
