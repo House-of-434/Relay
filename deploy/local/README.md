@@ -98,8 +98,29 @@ docker compose restart tools       # bounce the browser worker
 docker compose down                # stop (volume `data` persists)
 ```
 
-Data lives in the `data` volume. The volume survives `docker compose down`;
-only `docker volume rm` destroys it.
+Data lives in the `data` volume. The Compose project is `relay`; containers are
+`relay-*` and the persistent volumes are `relay_data`, `relay_scribe_data`,
+`relay_caddy_data`, and `relay_caddy_config`. The data volume survives
+`docker compose down`; only `docker volume rm` destroys it.
+
+Existing hosts that still use the older `openmausbot` Compose project must copy
+its volumes to the `relay_*` names once, before starting the renamed project:
+
+```sh
+docker compose -p openmausbot down
+docker volume rm relay_data relay_caddy_data relay_caddy_config 2>/dev/null || true
+copy_volume() {
+  docker run --rm -u 0 --entrypoint sh -v "$1":/from -v "$2":/to relay-local:latest -c "cp -a /from/. /to/"
+}
+copy_volume openmausbot_data relay_data
+copy_volume openmausbot_scribe_data relay_scribe_data
+copy_volume openmausbot_caddy_data relay_caddy_data
+copy_volume openmausbot_caddy_config relay_caddy_config
+```
+
+Set `COMPOSE_PROJECT_NAME=relay` and `RELAY_LOCAL_IMAGE=relay-local:latest` in
+`.env`, tag or rebuild the image, then start `docker compose up -d`. Verify the
+container mounts and health before removing the old volumes.
 
 - `/data/.relay/users/<supabase-uid>/workspaces/<botId>` — an owned bot's
   shared working folder and memory.
