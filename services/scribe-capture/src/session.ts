@@ -486,7 +486,7 @@ class MeetSession {
    *  simply yields nothing, and a failed drain never interrupts capture. */
   private async captureChatOnce(): Promise<void> {
     if (!this.page) return;
-    let messages: Array<{ sender: string | null; text: string; ts: number }>;
+    let messages: Array<{ sender: string | null; text: string; ts: number; message_id?: string; ordinal?: number }>;
     try {
       messages = await this.page.evaluate(() => (window as any).__scribeZoom?.drainChat?.() ?? []);
     } catch {
@@ -494,7 +494,13 @@ class MeetSession {
     }
     if (messages.length === 0) return;
     const segments = newChatSegments(
-      messages.map((m) => ({ sender: m.sender ?? null, text: m.text, atMs: m.ts })),
+      messages.map((m) => ({
+        sender: m.sender ?? null,
+        text: m.text,
+        atMs: m.ts,
+        ...(m.message_id ? { message_id: m.message_id } : {}),
+        ...(typeof m.ordinal === "number" ? { ordinal: m.ordinal } : {}),
+      })),
       { platform: this.descriptor.platform, captureStartMs: this.captureStartMs, seen: this.seenChat },
     );
     for (const segment of segments) this.spool.add(segment);

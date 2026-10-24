@@ -5,7 +5,9 @@
  *   createZoomSpeakers    → who Zoom is rendering as the active speaker (the DOM signal)
  *   createTrackNameResolver → energy ↔ active-speaker correlation → a stable per-track name
  *   createPcmCaptureNode  → AudioWorklet PCM per stream
- *   createZoomChat        → in-meeting chat messages
+ *   createZoomChat        → chat panel telemetry (container/candidates state);
+ *                             message delivery comes from the adapter row scan below,
+ *                             which keys each row by platform id or per-row ordinal
  *
  * Zoom's audio arrives as ONE WebRTC audio track per participant (verified live: three
  * native `zoom-audio-tag-N` elements, three distinct live tracks), so the per-track lane
@@ -39,6 +41,14 @@ interface ZoomConfig {
   silenceThreshold?: number;
   maxFrames?: number;
   maxStreams?: number;
+}
+
+interface ZoomChatRow {
+  sender: string;
+  text: string;
+  ts: number;
+  ordinal: number;
+  message_id?: string;
 }
 
 (function () {
@@ -84,18 +94,152 @@ interface ZoomConfig {
     log: cfg.debug ? (m: string) => log("zoom-speakers: " + m) : undefined,
   });
 
-  const chatMessages: Array<{ sender: string; text: string; ts: number }> = [];
-  const chat = createZoomChat({
-    log: cfg.debug ? (m: string) => log("zoom-chat: " + m) : undefined,
-    onMessage: (msg: { sender: string; text: string }) => {
-      chatMessages.push({ sender: msg.sender, text: msg.text, ts: Date.now() });
+  // Inbound chat, observed row by row in this adapter. Each row is identified
+  // at first sight by the platform message id when the row (or a descendant)
+  // carries one, else by a per-row ordinal. The same row re-polled keeps its
+  // identity; a distinct row with identical text gets its own.
+  const chatMessages: ZoomChatRow[] = [];
+  const rowOrdinals = new WeakMap<Element, number>();
+  let nextChatOrdinal = 1;
+  const deliveredChatKeys = new Set<string>();
+  const deliveredChatOrder: string[] = [];
+  const DELIVERED_CHAT_LIMIT = 2000;
+
+  function markChatDelivered(key: string): void {
+    if (deliveredChatKeys.has(key)) return;
+    deliveredChatKeys.add(key);
+    deliveredChatOrder.push(key);
+    if (deliveredChatOrder.length > DELIVERED_CHAT_LIMIT) {
+      const oldest = deliveredChatOrder.shift();
+      if (oldest !== undefined) deliveredChatKeys.delete(oldest);
+    }
+  }
+
+  const CHAT_ROW_SELECTORS = [
+    '[id^="chat-message-"]',
+    ".new-chat-message__container",
+    '[class*="chat-message-item"]',
+    '[class*="chatMessage"]',
+    "div[data-index]",
+  ];
+  const CHAT_SENDER_SELECTORS = [
+    ".chat-message-text__user-name",
+    '[class*="user-name"]',
+    '[class*="userName"]',
+    '[class*="sender"]',
+    '[class*="display-name"]',
+  ];
+  const CHAT_TEXT_SELECTORS = [
+    '[class*="chat-message-text"]',
+    '[class*="message-text"]',
+    '[class*="messageText"]',
+    ".text-wrapper",
+    '[class*="text-content"]',
+  ];
+
+  function chatRowText(root: Element, selectors: string[]): string {
+    for (const sel of selectors) {
+      const t = root.querySelector(sel)?.textContent?.trim();
+      if (t) return t;
+    }
+    return "";
+  }
+
+  function chatRowPlatformId(row: Element): string | null {
+    const mid = row.getAttribute("data-mid") || row.getAttribute("data-message-id");
+    if (mid) return mid;
+    const id = row.getAttribute("id");
+    if (id && id.startsWith("chat-message-")) return id;
+    const desc =
+      row.querySelector('[id^="chat-message-"]') ||
+      row.querySelector("[data-mid]") ||
+      row.querySelector("[data-message-id]");
+    if (desc) {
+      const did = desc.getAttribute("id");
+      if (did) return did;
+      const dmid = desc.getAttribute("data-mid") || desc.getAttribute("data-message-id");
+      if (dmid) return dmid;
+    }
+    if (id) return id;
+    return null;
+  }
+
+  function readChatRow(row: Element): { sender: string; text: string } | null {
+    let text = chatRowText(row, CHAT_TEXT_SELECTORS);
+    let sender = chatRowText(row, CHAT_SENDER_SELECTORS);
+    if (!sender) {
+      let cur = row.parentElement;
+      for (let i = 0; i < 4 && cur && !sender; i++, cur = cur.parentElement) {
+        sender = chatRowText(cur, CHAT_SENDER_SELECTORS);
+      }
+    }
+    if (!sender) {
+      let cur: Element | null = row;
+      for (let i = 0; i < 4 && cur; i++, cur = cur.parentElement) {
+        const label = cur.getAttribute("aria-label") || "";
+        const m = label.match(/^(.+?)\s+(?:said|to\s+Everyone|to\s+[A-Z])/i);
+        if (m && m[1].trim()) {
+          sender = m[1].trim();
+          break;
+        }
+      }
+    }
+    if (!text) {
+      const frags = Array.from(row.querySelectorAll("*"))
+        .map((e) => (e.childElementCount === 0 ? (e.textContent || "").trim() : ""))
+        .filter((t) => t.length > 0);
+      if (!frags.length) return null;
+      text = frags.reduce((a, b) => (b.length > a.length ? b : a), "");
+      if (!sender) {
+        const short = frags.find((f) => f !== text && f.length <= 40 && !/^\d{1,2}:\d{2}/.test(f));
+        if (short) sender = short;
+      }
+    }
+    sender = sender.replace(/\s*\d{1,2}:\d{2}\s*(AM|PM)?\s*$/i, "").trim() || "Unknown";
+    if (!text) return null;
+    return { sender, text };
+  }
+
+  function scanChatRows(): void {
+    let rows: Element[] = [];
+    for (const sel of CHAT_ROW_SELECTORS) {
+      const nodes = document.querySelectorAll(sel);
+      if (nodes.length) {
+        rows = Array.from(nodes);
+        break;
+      }
+    }
+    for (const row of rows) {
+      const platformId = chatRowPlatformId(row);
+      let ordinal = rowOrdinals.get(row);
+      if (ordinal === undefined) {
+        ordinal = nextChatOrdinal++;
+        rowOrdinals.set(row, ordinal);
+      }
+      const key = platformId ? `id:${platformId}` : `row:${ordinal}`;
+      if (deliveredChatKeys.has(key)) continue;
+      const parsed = readChatRow(row);
+      if (!parsed) continue;
+      const entry: ZoomChatRow = { sender: parsed.sender, text: parsed.text, ts: Date.now(), ordinal };
+      if (platformId) entry.message_id = platformId;
+      chatMessages.push(entry);
+      markChatDelivered(key);
       try {
-        g.__scribeZoomChat?.(msg.sender, msg.text, Date.now());
+        g.__scribeZoomChat?.(parsed.sender, parsed.text, Date.now());
       } catch {
         /* optional host hook */
       }
-    },
+    }
+  }
+
+  // The vendored reader stays attached for its container/candidate telemetry
+  // (see state().chatState); delivery comes from the row scan above.
+  const chat = createZoomChat({
+    log: cfg.debug ? (m: string) => log("zoom-chat: " + m) : undefined,
+    onMessage: () => {},
   });
+  scanChatRows();
+  const chatPoll = setInterval(scanChatRows, 2000);
 
   let ctx: any = null;
   const streams = new Map<string, { index: number; src: any; node: any }>();
@@ -201,6 +345,11 @@ interface ZoomConfig {
         /* best effort */
       }
       try {
+        clearInterval(chatPoll);
+      } catch {
+        /* best effort */
+      }
+      try {
         chat.destroy();
       } catch {
         /* best effort */
@@ -223,10 +372,10 @@ interface ZoomConfig {
         ...(includePcm ? { pcm: Array.from(f.pcm) } : {}),
       }));
     },
-    /** Inbound chat since the last drain. */
-    drainChat(): Array<{ sender: string; text: string; ts: number }> {
-      const snapshot = chatMessages.splice(0, chatMessages.length);
-      return snapshot;
+    /** Inbound chat since the last drain, each row with a stable identity. */
+    drainChat(): ZoomChatRow[] {
+      scanChatRows();
+      return chatMessages.splice(0, chatMessages.length);
     },
     state(): Record<string, unknown> {
       let speakerState: unknown = null;

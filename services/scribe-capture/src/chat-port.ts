@@ -32,8 +32,27 @@ export interface InboundChat {
   platform: Platform;
 }
 
-/** Stable key for a chat message when the platform gives no id. */
-export function chatMessageKey(message: { sender: string | null; text: string; atMs: number }): string {
+/** A chat message as drained from the page. `message_id` is the platform's
+ *  own id for the row when the adapter could read one; `ordinal` is the
+ *  adapter's per-row number, stable for the same row. Either may be absent;
+ *  absence means the page gave no identity for that row. */
+export interface DrainedChatMessage {
+  sender: string | null;
+  text: string;
+  /** Epoch ms from the page. */
+  atMs: number;
+  message_id?: string | null;
+  ordinal?: number | null;
+}
+
+/** Stable key for a chat message. The page-provided identity wins when
+ *  present, so genuinely repeated lines stay distinct while a re-flush of
+ *  the same row maps back to the same key. Without page identity, falls
+ *  back to the sender+text+second hash. */
+export function chatMessageKey(message: DrainedChatMessage): string {
+  const id = message.message_id?.trim();
+  if (id) return `id:${id}`;
+  if (typeof message.ordinal === "number" && Number.isFinite(message.ordinal)) return `row:${message.ordinal}`;
   const second = Math.floor(message.atMs / 1000);
   return createHash("sha256")
     .update(`${message.sender ?? ""}\u0000${message.text}\u0000${second}`)
@@ -89,7 +108,7 @@ export class SeenChatSet {
 
 /** Convert raw page messages into unseen segments, advancing the seen set. */
 export function newChatSegments(
-  messages: Array<{ sender: string | null; text: string; atMs: number }>,
+  messages: DrainedChatMessage[],
   options: { platform: Platform; captureStartMs: number; seen: SeenChatSet },
 ): Segment[] {
   const out: Segment[] = [];
