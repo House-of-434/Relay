@@ -73,12 +73,6 @@ deploy/local/up.sh            # build, up -d, verify caddy's network attachment
 deploy/local/up.sh --no-build # config/.env change only
 ```
 
-Use this instead of hand-writing `docker compose up -d <services>`. `caddy`
-shares the app container's network namespace (`network_mode: service:app`), so
-recreating `app` on its own leaves caddy running inside a destroyed namespace:
-no DNS, no ports, and the public site dark while `docker compose ps` still says
-every container is up. The script always brings the whole project up and then
-asserts caddy is attached to the current app container.
 
 Caddy serves `:80` and, with `RELAY_HTTPS_HOST` set, `:443` with automatic
 HTTPS. The app proxies `/auth/*`, `/api/*`, and
