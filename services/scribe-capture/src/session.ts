@@ -289,7 +289,7 @@ class MeetSession {
           throw new Error(`gmeet capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
         }
         await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
-        await this.page.addInitScript({ path: bundle });
+        // Config before bundle: the bundle reads it synchronously at IIFE evaluation.
         await this.page.addInitScript({
           content: `window.__scribeGmeetConfig = ${JSON.stringify({
             selfName: this.config.selfName,
@@ -297,13 +297,14 @@ class MeetSession {
             debug: false,
           })};`,
         });
+        await this.page.addInitScript({ path: bundle });
       } else if (lane === "zoom") {
         const bundle = this.config.zoomBundlePath ?? DEFAULT_ZOOM_BUNDLE;
         if (!existsSync(bundle)) {
           throw new Error(`zoom capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
         }
         await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
-        await this.page.addInitScript({ path: bundle });
+        // Config before bundle: the bundle reads it synchronously at IIFE evaluation.
         await this.page.addInitScript({
           content: `window.__scribeZoomConfig = ${JSON.stringify({
             selfName: this.config.selfName,
@@ -311,6 +312,7 @@ class MeetSession {
             debug: false,
           })};`,
         });
+        await this.page.addInitScript({ path: bundle });
       } else {
         await this.page.addInitScript({ content: CAPTURE_INIT_SCRIPT });
         if (this.descriptor.platform === "teams") {

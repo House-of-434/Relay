@@ -56,7 +56,7 @@ export const TEAMS_HINTS_SCRIPT = String.raw`
       var tag = tile.querySelector('div[data-tid="participant-info-nametag"]');
       var name = tag ? (tag.textContent || "").replace(/\s+/g, " ").trim() : "";
       // The bot's own tile never names a remote speaker.
-      if (!name || name === cfg.selfName) continue;
+      if (!name || (cfg.selfName && name.toLowerCase() === String(cfg.selfName).trim().toLowerCase())) continue;
       if (out.indexOf(name) < 0) out.push(name);
     }
     return out.sort();
