@@ -3,8 +3,8 @@
  *  Wraps `RTCPeerConnection` so every remote audio track is mirrored into a
  *  hidden `<audio data-vexa-injected="true">` element. On Meet this guarantees the
  *  media elements exist even when the platform hides per-participant audio from the
- *  DOM; the mixed tap (slice 1) and the per-channel Meet lane both scan those
- *  elements. Extracted from `capture-init.ts` so both paths install one copy.
+ *  DOM; the mixed tap and the per-channel Meet / per-track Zoom lanes all scan those
+ *  elements. Extracted from `capture-init.ts` so all paths install one copy.
  *
  *  Mirrors `third_party/vexa-capture/core/meetings/modules/mixed-capture-core/webrtc-audio-hook.ts`
  *  behaviour; kept inline so the page bundle has no extra dependency. */

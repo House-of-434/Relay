@@ -7,7 +7,7 @@ the meeting + segments to Supabase through the Tool Layer ingest route.
 ## Shape
 
 ```
-monitor ──POST /join──▶ worker ──join (authenticated, persistent profile)──▶ Meet/Zoom
+monitor ──POST /join──▶ worker ──join (authenticated, persistent profile)──▶ Meet/Zoom/Teams
                           │  in-page PCM tap ──▶ STT server ──▶ segments
                           └──POST /internal/transcripts──▶ Tool Layer ──▶ Supabase
 ```
@@ -31,9 +31,10 @@ requirement; the capability is the boundary.
 5. On stop/end → final flush, `completed`; on error → `failed`; on live-meeting
    conflict → `skipped`.
 
-The mixed lane (Teams and any other fallback) writes `speaker: null`; the
-per-channel Meet lane and the per-track Zoom lane bind the
-resolved speaker name per channel.
+The Teams mixed lane attributes the speaker from the stage-tile observer
+(`teams-hints` + `teams-attribution`); any other mixed fallback writes
+`speaker: null`. The per-channel Meet lane and the per-track Zoom lane bind
+the resolved speaker name per channel.
 
 ## Run
 
@@ -57,4 +58,4 @@ The calendar monitor (`server/scribe-monitor.ts`), failure/ready notices, the
 per-channel Meet lane, the per-track Zoom lane, the compose `scribe`/`stt`
 services, and the `.env.ingest` / `.env.scribe` capability wiring —
 deploy/run owner is `deploy/local/README.md` (Scribe section). Remaining:
-Teams stays on the mixed lane.
+chat ingress remains unsupported (Zoom ingress removed; Teams never had it).

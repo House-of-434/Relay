@@ -224,7 +224,7 @@ Two more services, both compose-network only (no published ports):
 
 | Service | Runs | Reachable as | Data |
 |---|---|---|---|
-| `scribe` | Per-channel capture worker (`:8791`): joins relay@'s meetings, taps per-participant audio, writes rows via the Tool Layer | `http://scribe:8791` from `app`/`tools` only | `scribe_data` volume at `/data` (signed-in profile, spool, failures, probes) — mounted ONLY here |
+| `scribe` | Capture worker (`:8791`): joins relay@'s meetings, taps meeting audio, writes rows via the Tool Layer | `http://scribe:8791` from `app`/`tools` only | `scribe_data` volume at `/data` (signed-in profile, spool, failures, probes) — mounted ONLY here |
 | `stt` | Shared Parakeet int8 STT server (`:8090`), 16 kHz WAV → text | `http://stt:8090` from `scribe` only | model baked into the image |
 
 Capabilities live in their own gitignored files (see

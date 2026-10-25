@@ -94,7 +94,7 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
-  # Scribe: joins relay@'s meetings, captures per-channel audio, transcribes via
+  # Scribe: joins relay@'s meetings, captures meeting audio, transcribes via
   # the shared `stt` service, and writes rows through the Tool Layer ingest
   # route. Holds only .env.scribe (its endpoint capability) and .env.ingest
   # (the ingest capability) — never the BFF secrets. Signed-in profile + spool

@@ -1,4 +1,4 @@
-/** Shared types for the Scribe capture worker (slice 1: Meet). */
+/** Shared types for the Scribe capture worker (Meet, Zoom, Teams). */
 
 export type Platform = "google_meet" | "zoom" | "teams";
 

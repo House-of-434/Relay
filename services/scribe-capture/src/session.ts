@@ -277,7 +277,7 @@ class MeetSession {
       // validated pre-flight, so aborts never contact their destination.
       await guard.install(this.page);
       // Per-channel lanes (Meet, Zoom) tap each participant's own WebRTC track and
-      // bind a name; the mixed lane is the speaker-unknown fallback. Installed per
+      // bind a name; any other mixed fallback stays speaker-unknown. Installed per
       // page (not per context) so two captures on one browser keep their lanes apart.
       const lane: "gmeet" | "zoom" | "mixed" =
         this.descriptor.platform === "google_meet" ? "gmeet"
