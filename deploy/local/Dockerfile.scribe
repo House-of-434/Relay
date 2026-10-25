@@ -68,6 +68,11 @@ COPY --from=build /src/services/scribe-capture/dist ./services/scribe-capture/di
 COPY services/scribe-capture/src ./services/scribe-capture/src
 COPY services/scribe-capture/stt ./services/scribe-capture/stt
 COPY third_party/vexa-capture ./third_party/vexa-capture
+# The worker's urls.ts imports the shared meeting-link module by relative path
+# (../../../packages/meeting-link), so the package must be in the image. The
+# harness image already ships all of packages/; this one copies only what the
+# worker imports.
+COPY packages/meeting-link ./packages/meeting-link
 # Vexa hardcodes /app/storage/screenshots for join checkpoints; the worker owns
 # /data/scribe. Both must be writable by the run user.
 RUN mkdir -p /app/storage/screenshots /data/scribe \
