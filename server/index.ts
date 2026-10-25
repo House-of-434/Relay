@@ -479,6 +479,7 @@ import {
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
   routedMailPrompt,
+  routedMailText,
   routedMailTitle,
   type MailboxMessage,
 } from "./mailbox-monitor.ts";
@@ -10079,8 +10080,8 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
       deliver: async (message, person) => {
         const personKey = personKeyForIdentity(person.userId, person.email);
         const title = routedMailTitle(message, person);
-        const prompt = routedMailPrompt(message, person);
-        const text = `[Email from ${person.name?.trim() || person.email} <${person.email}>, routed from Relay's shared mailbox]\n${message.subject ? `Subject: ${message.subject}\n` : ""}${message.body?.trim() || "(no readable body)"}${message.attachments?.length ? `\n\n[${message.attachments.length} attachment(s): ${message.attachments.map((attachment) => attachment.filename || "(unnamed)").join(", ")}]` : ""}`;
+        const prompt = routedMailPrompt();
+        const text = routedMailText(message, person);
         // The sender's subject when they gave one, else the first line of the
         // request: the receipt replies under it, and it is the fallback when
         // the answering turn does not name its own subject.
