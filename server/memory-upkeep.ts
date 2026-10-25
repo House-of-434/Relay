@@ -95,7 +95,8 @@ export interface CaptureReport {
   topics: number;
   /** Facts added to the shared About me. */
   aboutMe: number;
-  /** MEMORY.md entries moved into topic files afterwards. */
+  /** Legacy: older captures moved MEMORY.md entries into topic files
+   * afterwards; capture now appends only and the nightly tidy organizes. */
   organized?: number;
   note?: string;
 }
@@ -284,10 +285,9 @@ export function createMemoryUpkeep(deps: UpkeepDeps): MemoryUpkeep {
     // own memory, and About me is where every other bot learns it.
     const owner = batch.turns.every((turn) => turn.owner !== false);
     const aboutMe = owner ? deps.addToAboutMe({ botId: bot.id, botName: bot.name }, parsed.filter((c) => c.aboutUser).map((c) => c.text)) : 0;
-    // whoever wrote MEMORY.md — the bot, the person or this capture — detail
-    // that is not core moves to its topic now, not only at night
-    const organized = await organize(bot.id);
-    const report: CaptureReport = { at, added, topics, aboutMe, organized, ...(full ? { note: "MEMORY.md is full; the tidy-up or a person needs to make room." } : {}) };
+    // Topic filing waits for the nightly tidy-up: capture appends, tidy
+    // organizes. One model call per capture instead of two.
+    const report: CaptureReport = { at, added, topics, aboutMe, ...(full ? { note: "MEMORY.md is full; the tidy-up or a person needs to make room." } : {}) };
     record(bot.id, { lastCapture: report });
     if (added || topics || aboutMe) log(`memory upkeep: noticed ${added} fact(s) for MEMORY.md, ${topics} for topic files and ${aboutMe} for About me — ${bot.name} (${bot.id}) from ${batch.threadId}`);
     return report;

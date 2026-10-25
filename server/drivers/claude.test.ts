@@ -1233,21 +1233,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.argv).not.toContain("--setting-sources");
   });
 
-  it("loads the machine's own MCP servers when the turn asks, keeping the rest isolated", async () => {
-    await create();
-    const dump = join(scratch, "user-mcp.json");
-    process.env.FAKE_CLAUDE_DUMP = dump;
-
-    await instance.adapter.sendTurn({ threadId: "t-user-mcp", text: "hi", mcpFromUserConfig: true });
-    await recorder.until((e) => e.type === "turn.completed");
-
-    const seen = JSON.parse(readFileSync(dump, "utf8"));
-    // the Plugins → MCP servers switch: only the MCP half of the isolation
-    // goes; skills, hooks and the personal CLAUDE.md stay out
-    expect(seen.argv).not.toContain("--strict-mcp-config");
-    expect(seen.argv[seen.argv.indexOf("--setting-sources") + 1]).toBe("project");
-  });
-
   it("mounts a url server in the CLI's own shape, header values in the private file", async () => {
     await create();
     const dump = join(scratch, "remote-mcp.json");

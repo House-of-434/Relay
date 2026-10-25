@@ -110,14 +110,14 @@ export function computerPrompt(kind: ComputerPromptKind | null): string {
  * reachable only when they lend it (docs/cloud-pro.md), through the
  * shared-computer tools, so only a turn that has those tools is told to use them. */
 export function cloudHomePrompt(sharedComputerTools: boolean): string {
-  return " You run on the user's OMB Cloud, a server in the cloud, not on their own computer." + (sharedComputerTools
-    ? " If they ask for something on their own Mac or PC, check list_shared_computers: a Mac they lend to their Cloud is reachable through shared_computer, within the folders and apps it allows. If none is lent and online, say so in one sentence: they can turn on Let my Cloud use this Mac under Settings → OMB Cloud in the desktop app on that Mac."
+  return " You run on the user's Relay Cloud, a server in the cloud, not on their own computer." + (sharedComputerTools
+    ? " If they ask for something on their own Mac or PC, check list_shared_computers: a Mac they lend to their Cloud is reachable through shared_computer, within the folders and apps it allows. If none is lent and online, say so in one sentence: they can turn on Let my Cloud use this Mac under Settings → Relay Cloud in the desktop app on that Mac."
     : " You cannot see or use their Mac or PC, its screen or its files from here. If they ask for something on it, say so in one sentence.")
     + " Offer what works here: the built-in browser and cloud computers. Never ask them to set up this computer or a Local VM; neither exists here.";
 }
 
-export const COMPOSIO_PROMPT =
-  " The user's connected apps (Gmail, Calendar, Slack, Notion, and the rest) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service.";
+export const CONNECTORS_PROMPT =
+  " The user's connected apps (Gmail, Calendar, Notion, GitHub, and the rest) are reachable through the connector tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Reach for them before telling the user you have no access to a service.";
 
 /** The connected-apps paragraph, personalized to the bot's grants (issue
  * #1737). A bot with no grants record keeps the legacy all-tools sentence;
@@ -126,12 +126,12 @@ export const COMPOSIO_PROMPT =
  * what else exists; a record granting nothing gets no paragraph at all.
  * Like the persona, the text only changes when settings change, so the
  * stable-prompt split from #1758 is preserved. */
-export function composioSystemPrompt(grants: Record<string, ConnectorToolGrant> | undefined): string {
-  if (grants === undefined) return COMPOSIO_PROMPT;
+export function connectorsSystemPrompt(grants: Record<string, ConnectorToolGrant> | undefined): string {
+  if (grants === undefined) return CONNECTORS_PROMPT;
   const services = Object.keys(grants);
   if (services.length === 0) return "";
   const named = services.map(connectorServiceLabel).join(", ");
-  return ` The user's connected apps assigned to this bot (${named}) are reachable through the composio tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Only the tools this bot was granted will run; when a needed tool is refused, tell the user and ask them to grant it in Relay. Reach for the granted services before telling the user you have no access.`;
+  return ` The user's connected apps assigned to this bot (${named}) are reachable through the connector tools — find the right one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, then run it with COMPOSIO_MULTI_EXECUTE_TOOL. Only the tools this bot was granted will run; when a needed tool is refused, tell the user and ask them to grant it in Relay. Reach for the granted services before telling the user you have no access.`;
 }
 
 /** "gmail" → "Gmail", "google_calendar" → "Google Calendar". The prompt
@@ -143,13 +143,6 @@ function connectorServiceLabel(slug: string): string {
     .join(" ");
 }
 
-/** Names the user-added MCP servers a turn actually mounted, so the bot
- * reaches for them instead of saying it has no such tool. Empty when none. */
-export function customMcpPrompt(names: string[]): string {
-  if (names.length === 0) return "";
-  const list = names.map((name) => `"${name}"`).join(", ");
-  return ` The user also added ${names.length === 1 ? "an MCP server" : "MCP servers"} for you: ${list}. Use their available tools under the engine's normal approval rules.`;
-}
 /** Relay's own shared mailbox paragraph: every bot is told the account
  * exists so none claims it has no access; only Mercury holds the Tool Layer's
  * Gmail grant, so the others reach it by asking Mercury. The Scribe line is

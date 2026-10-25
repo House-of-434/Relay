@@ -207,21 +207,14 @@ export interface SendTurnInput {
     /** dweb network daemon: an MCP proxy exposing dweb status, repo, and
      * opencode model access as tools. url is the dweb HTTP base. */
     dweb?: { url: string };
-    /** User-configured MCP servers (config.json `mcpServers`), already
-     * validated and normalized by customMcpServers(). Mounted WITHOUT any
-     * pre-allow: their tools ride each driver's normal permission flow.
-     * A server is either a command this machine runs (stdio) or a server
-     * reached at a URL; a driver that cannot speak to one kind skips it. */
+    /** Relay Tool Layer routes for this bot (Gmail, Calendar, Notion,
+      * GitHub, research), mounted WITHOUT any pre-allow: their tools ride
+      * each driver's normal permission flow. A server is either a command
+      * this machine runs (stdio) or a server reached at a URL; a driver
+      * that cannot speak to one kind skips it. */
     custom?: Record<string, McpServerSpec>;
   };
   cwd?: string;
-  /** Let the engine also load the MCP servers from the person's own CLI
-   * setup (Claude Code's user-scope servers and claude.ai connectors). Off
-   * by default: a bot gets the servers its owner gave it, and each extra
-   * tool costs tokens on every model call. Codex already reads its own
-   * config.toml and ignores this; the Claude driver drops
-   * --strict-mcp-config for the turn. */
-  mcpFromUserConfig?: boolean;
 }
 
 /** An MCP server this machine starts and talks to over stdio. */
@@ -302,9 +295,9 @@ export interface ProviderAdapter {
     /** True only when local MCP calls can reach the human approval channel.
      * Full-auto/bypass provider instances must leave this false. */
     localComputerMcp?: boolean;
-    /** True when the driver mounts turn.integrations.custom (the user's own
-     * MCP servers from config). Same rule as composioMcp: an entry in the
-     * config says the servers exist, not that this engine can reach them. */
+    /** True when the driver mounts turn.integrations.custom (Relay Tool
+      * Layer routes for the bot). Same rule as composioMcp: a route being
+      * configured says it exists, not that this engine can reach it. */
     customMcp?: boolean;
     /** True when a turn given a resumeCursor runs in that exact native
      * session, or, if the provider refuses the session before accepting the
