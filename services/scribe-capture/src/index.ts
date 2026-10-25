@@ -5,7 +5,7 @@ import { diskFreeBytes, diskFreeBelow, maintainDiagnostics } from "./maintenance
 
 /** Retention + disk maintenance. Vexa writes failure screenshots to a hardcoded
  * path; the worker also owns /data/scribe/failures and /data/scribe/status. */
-export async function maintain(dataDir: string, probeDir: string, retentionMs: number, diskMinBytes: number): Promise<void> {
+async function maintain(dataDir: string, probeDir: string, retentionMs: number, diskMinBytes: number): Promise<void> {
   const removed = await maintainDiagnostics(
     ["/app/storage/screenshots", `${dataDir}/failures`, `${dataDir}/status`, probeDir],
     retentionMs,

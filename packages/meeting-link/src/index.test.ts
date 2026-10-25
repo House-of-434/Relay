@@ -152,6 +152,8 @@ describe("meetingUrlKey / normalizeMeetingUrlKey", () => {
     expect(meetingUrlKey("google_meet", "http://meet.google.com/abc")).toBeNull();
     expect(meetingUrlKey("google_meet", "https://meet.google.com@127.0.0.1/")).toBeNull();
     expect(meetingUrlKey("google_meet", "not a url")).toBeNull();
+    // Trailing-dot host (from the worker's old facade test).
+    expect(meetingUrlKey("google_meet", "https://meet.google.com./abc")).toBe("google_meet|meet.google.com/abc");
   });
 
   it("gates on the claimed platform", () => {

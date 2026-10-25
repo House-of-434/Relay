@@ -1,8 +1,9 @@
-# Relay Scribe worker image: per-channel Meet/Zoom/Teams capture + ingest client.
+# Relay Scribe worker image: Meet/Zoom per-channel capture, Teams mixed capture
+# with page-side speaker hints, and the ingest client.
 #
 # Runs services/scribe-capture (tsx, because the vendored third_party capture
-# bricks are TypeScript loaded lazily by relative specifier), headless Chromium
-# via Playwright, and the vendored code under third_party/. Holds only its own
+# bricks are TypeScript loaded lazily by relative specifier), Chromium via
+# Playwright (headful under Xvfb; Zoom rejects headless), and the vendored code under third_party/. Holds only its own
 # endpoint capability (.env.scribe) and the ingest capability (.env.ingest) —
 # never the BFF secrets.
 #

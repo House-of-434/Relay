@@ -118,11 +118,6 @@ interface GmeetConfig {
         if (peak <= SILENCE) return;
         const name = binder.nameForChannel(index, now, peak);
         if (frames.length < MAX_FRAMES) frames.push({ channel: index, name: name ?? null, energy: peak, ts: now, pcm });
-        try {
-          g.__scribeNamedAudioData?.(index, name, pcm, now);
-        } catch {
-          /* optional hook */
-        }
       })
         .then((node: any) => {
           src.connect(node);

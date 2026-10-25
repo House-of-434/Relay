@@ -16,7 +16,6 @@ Relay/
   services/bff/                     # session + Google OAuth boundary (:8798)
   services/tool-layer/              # database security boundary (:8787, localhost-only)
   packages/relay-shared/            # shared agent roles and calendar types
-  infra/                            # Caddy, systemd, Tailscale
   scripts/ public/ third_party/
 ```
 

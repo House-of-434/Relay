@@ -35,13 +35,15 @@ Third-party artifacts these sources depend on (not vendored here):
 
 Test files shipped alongside the sources above (`*.test.ts`, `contracts/`,
 `hallucinations/`) so the golden/contract net travels with the code:
-`confirm-loop.golden`, `pending-stability`, `webrtc-dedup`, `gap-reclaim`,
-`never-lose-tail`, plus lane conformance tests.
+`confirm-loop.golden`, `gmeet-compatible-buffer.parity`, `pipeline-conformance`,
+the zoom-capture resolver/speaker tests, and the transcript goldens. The curated
+set Relay actually runs is `services/scribe-capture/scripts/run-vendored-tests.mjs`;
+join's own test files are upstream reference and are not run (they need jsdom).
 
 ## What was NOT taken
 
 Vexa's gateway, agent platform, dashboards, share links, recordings, TTS,
-routines, workspaces, webhooks, API-key machinery, and the `jitsi` lane.
+routines, workspaces, webhooks, and API-key machinery.
 Those stay upstream reference material only.
 
 Also deliberately NOT vendored, because nothing in Relay imports them
@@ -58,20 +60,25 @@ They are re-fetchable from `UPSTREAM_COMMIT` if a future lane needs them.
 
 ## Verification
 
-Vendored sources are byte-identical to the pinned upstream commit; per-file
-SHA-256 hashes are in `HASHES`. Re-verify with
+Vendored sources are byte-identical to the pinned upstream commit except for the
+adaptations listed below; per-file SHA-256 hashes (post-adaptation) are in
+`HASHES`, which therefore cannot alone prove upstream equality for the few
+adapted files. Re-verify the rest with
 `git show <UPSTREAM_COMMIT>:<upstream path>` per the mapping above.
 
 **Layout.** Most modules are flattened: their upstream `src/` contents live
 directly under the module directory here (e.g.
-`mixed-pipeline/chunked-transcriber.ts`, not
-`mixed-pipeline/src/chunked-transcriber.ts`); their vendored `README.md` is the
+`gmeet-capture/gmeet-speakers.ts`, not
+`gmeet-capture/src/gmeet-speakers.ts`); their vendored `README.md` is the
 upstream `src/README.md`. Two modules keep their `src/` level because code in
 them resolves files by relative path above `src/`:
-- `join/` — only four subdirectories were taken.
-- `zoom-capture/` — `package.json` and `tsconfig.json` sit above `src/`
-  upstream; taken as-is so the module keeps its own entry point and the
-  vendored tests run from their original relative paths.
+- `join/` — its `src/` level and the provider subdirectories its `index.ts`
+  imports were taken; unrelated bot-only files were not.
+- `zoom-capture/` — `package.json` sits above `src/` upstream; taken as-is so the
+  module keeps its own entry point and the vendored tests run from their
+  original relative paths. Its upstream `tsconfig.json` (which extends a base
+  file not vendored) and `build` script were dropped: Relay bundles this module
+  from source with esbuild.
 - `gmeet-pipeline/` — `pipeline-conformance.test.ts` reads the sealed schema at
   `../../../contracts/transcript.v1/transcript.schema.json`, which only resolves
   from `gmeet-pipeline/src/`. `contracts/transcript.v1/` is vendored at its

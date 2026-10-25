@@ -16,8 +16,8 @@
  */
 
 import {
-  isZoomHost,
   meetingUrlFor as linkMeetingUrlFor,
+  nativeIdFor as linkNativeIdFor,
   passcodeFor as linkPasscodeFor,
   platformForUrl as linkPlatformForUrl,
 } from "../packages/meeting-link/src/index.ts";
@@ -189,19 +189,17 @@ export function platformForUrl(url: string): ScribeDescriptor["platform"] | null
  *  to name a capture in a chat update, never for identity. Mirrors the capture
  *  worker's nativeIdFor. */
 export function meetingCodeFor(url: string): string | null {
-  let url2: URL;
+  // Provider id via the shared parser; the last path segment is the fallback
+  // this label has always used for provider-shaped URLs with no known marker.
+  const platform = linkPlatformForUrl(url);
+  const native = platform ? linkNativeIdFor(platform, url) : null;
+  if (native) return native;
   try {
-    url2 = new URL(url);
+    const seg = new URL(url).pathname.split("/").filter(Boolean);
+    return seg.length > 0 ? seg[seg.length - 1]! : null;
   } catch {
     return null;
   }
-  const host = url2.hostname.toLowerCase();
-  const seg = url2.pathname.split("/").filter(Boolean);
-  if (host === "meet.google.com") return seg[0] ?? null;
-  const markers = isZoomHost(host) ? ["j", "wc", "s"] : ["meet"];
-  const i = seg.findIndex((s) => markers.includes(s));
-  if (i >= 0 && seg[i + 1]) return seg[i + 1]!;
-  return seg.length > 0 ? seg[seg.length - 1]! : null;
 }
 
 /** The join URL from a calendar event: video entry point, then hangoutLink,

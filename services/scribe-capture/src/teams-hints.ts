@@ -19,14 +19,6 @@
  * ranges and audio ranges cannot drift.
  */
 
-export interface TeamsHintInterval {
-  /** Distinct display names lit during the interval; empty = nobody detected,
-   *  two or more = ambiguous (overlap or a transition in flight). */
-  names: string[];
-  fromMs: number;
-  toMs: number;
-}
-
 export const TEAMS_HINTS_SCRIPT = String.raw`
 (function () {
   if (window.__scribeTeamsHints) return;

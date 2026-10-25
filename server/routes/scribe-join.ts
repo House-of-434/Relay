@@ -1,11 +1,10 @@
 /** Manual Scribe join route: Mercury asks the harness to capture a meeting now.
  *
- * POST /api/internal/scribe/join — capability-authed with NO loopback
- * requirement (the shared capability is the boundary: the legitimate caller,
- * the tool layer, reaches the harness over the compose network, same as the
- * capture worker's own endpoint). Dual auth, mirroring the BFF internal
- * routes: Bearer RELAY_BFF_CAPABILITY plus the verified per-turn actor
- * assertion. The actor must be a Mercury bot in its owner's workspace;
+ * POST /api/internal/scribe/join — loopback-only. The tool layer never reaches
+ * this route directly: it calls the BFF, which terminates tool-facing auth and
+ * proxies over loopback (the harness edge gate requires a loopback Host). Dual
+ * auth, mirroring the BFF internal routes: Bearer RELAY_BFF_CAPABILITY plus the
+ * verified per-turn actor assertion, both re-checked here. The actor must be a Mercury bot in its owner's workspace;
  * organizer identity derives server-side from that actor, never from the
  * request body.
  *

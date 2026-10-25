@@ -7,13 +7,13 @@ import type { RelayDatabase } from "./infra/database.js";
 const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
 
 async function withServer(
-  lookup: (email: string, domains?: readonly string[]) => Promise<string | null>,
+  lookup: (email: string) => Promise<string | null>,
   run: (port: number) => Promise<void>,
 ): Promise<void> {
   const database = {
     async verifyRelayProject() {},
-    async memberByEmail(email: string, domains?: readonly string[]) {
-      return lookup(email, domains);
+    async memberByEmail(email: string) {
+      return lookup(email);
     },
   } as unknown as RelayDatabase;
   const server = await createRelayToolServer(database, 0);
@@ -40,16 +40,16 @@ async function lookup(port: number, token: string | null, body: unknown): Promis
 
 test("member lookup resolves a sender's email through the auth table", async () => {
   process.env.RELAY_BFF_CAPABILITY = CAPABILITY;
-  const seen: Array<{ email: string; domains?: readonly string[] }> = [];
-  await withServer(async (email, domains) => {
-    seen.push({ email, domains });
+  const seen: string[] = [];
+  await withServer(async (email) => {
+    seen.push(email);
     return "11111111-1111-4111-8111-111111111111";
   }, async (port) => {
     const result = await lookup(port, CAPABILITY, { email: "ada@houseof434.com" });
     assert.equal(result.status, 200);
     assert.equal(result.body.userId, "11111111-1111-4111-8111-111111111111");
     // No caller-supplied domain list: Supabase's sign-up hook is the boundary.
-    assert.deepEqual(seen, [{ email: "ada@houseof434.com", domains: undefined }]);
+    assert.deepEqual(seen, ["ada@houseof434.com"]);
   });
 });
 

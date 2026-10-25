@@ -94,7 +94,7 @@ separate architecture test.
 ## Operate
 
 ```sh
-docker compose logs -f relay tools   # follow logs
+docker compose logs -f app tools   # follow logs
 docker compose restart tools       # bounce the browser worker
 docker compose down                # stop (volume `data` persists)
 ```

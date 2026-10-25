@@ -14,6 +14,7 @@ on:
       - services/**
       - shared/**
       - packages/**
+      - third_party/**
       - src/**
       - scripts/bundle-server.mjs
       - package.json
@@ -29,6 +30,7 @@ on:
       - services/**
       - shared/**
       - packages/**
+      - third_party/**
       - src/**
       - scripts/bundle-server.mjs
       - package.json
