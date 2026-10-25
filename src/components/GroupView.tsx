@@ -1234,8 +1234,10 @@ export function GroupView({ group }: {
                   title: task.title,
                   createdAt: task.createdAt,
                   updatedAt: task.updatedAt,
+                  deletable: (group.tasks?.length ?? 0) > 1,
                 }))}
                 onSelect={(threadId) => dispatch({ type: "switchGroupTask", groupId: group.id, threadId })}
+                onDelete={(threadId) => dispatch({ type: "deleteGroupTask", groupId: group.id, threadId })}
               />
             </>
           )}

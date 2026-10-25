@@ -1242,6 +1242,7 @@ export function ChatView({ bot: profile }: {
               hidden: task.routineRunId != null || task.closedBy != null || task.archivedAt != null,
             }))}
             onSelect={(threadId) => dispatch({ type: "switchTask", botId: bot.id, threadId })}
+            onDelete={(threadId) => dispatch({ type: "deleteTask", botId: bot.id, threadId })}
           />
           {bot.chiefOfStaff && (
             // One line, never shrinking with the name (it wrapped "Chief / of /

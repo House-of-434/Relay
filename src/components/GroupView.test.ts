@@ -4,11 +4,23 @@ import { describe, expect, it, vi } from "vitest";
 
 import { StoreProvider, type Group, type Message } from "@/state/store";
 
+type SwitcherProps = {
+  entries: Array<{ threadId: string; deletable?: boolean }>;
+  onDelete?: (threadId: string) => void;
+};
+const fixture = vi.hoisted(() => ({ switcher: null as SwitcherProps | null }));
+
 // Replaced whole: its context default reads window.ogb at import time. An
 // empty caption chrome is the non-Windows layout.
 vi.mock("./DesktopCapabilities", () => ({
   useDesktopCapabilities: () => ({ capabilities: { dictation: { available: false } } }),
   useCaptionChrome: () => ({}),
+}));
+vi.mock("./ThreadSwitcher", () => ({
+  ThreadSwitcher: (props: SwitcherProps) => {
+    fixture.switcher = props;
+    return createElement("span", { "data-test-thread-switcher": true });
+  },
 }));
 
 import { GroupView, RoomToolChip } from "./GroupView";
@@ -93,5 +105,42 @@ describe("room header", () => {
     const controls = /data-roomhead-controls="[^"]*" class="([^"]*)"/.exec(markup)!;
     expect(controls[1].split(" ")).toEqual(expect.arrayContaining(["@max-3xl/roomhead:ml-auto", "@max-3xl/roomhead:flex-wrap"]));
     expect(markup).toContain("Launch planning");
+  });
+
+  it("offers channel thread deletion while another thread remains", () => {
+    const group: Group = {
+      ...room,
+      tasks: [
+        { threadId: "room-thread", title: "Current", createdAt: 1 },
+        { threadId: "older", title: "Older", createdAt: 0 },
+      ],
+    };
+    vi.stubGlobal("window", { ogb: undefined });
+    try {
+      renderToStaticMarkup(createElement(StoreProvider, null, createElement(GroupView, { group })));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fixture.switcher?.entries).toEqual([
+      expect.objectContaining({ threadId: "room-thread", deletable: true }),
+      expect.objectContaining({ threadId: "older", deletable: true }),
+    ]);
+    expect(fixture.switcher?.onDelete).toBeTypeOf("function");
+  });
+
+  it("does not offer deleting a channel's last thread", () => {
+    const group: Group = {
+      ...room,
+      tasks: [{ threadId: "room-thread", title: "Current", createdAt: 1 }],
+    };
+    vi.stubGlobal("window", { ogb: undefined });
+    try {
+      renderToStaticMarkup(createElement(StoreProvider, null, createElement(GroupView, { group })));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(fixture.switcher?.entries).toEqual([
+      expect.objectContaining({ threadId: "room-thread", deletable: false }),
+    ]);
   });
 });

@@ -7,10 +7,11 @@
 // running. The entries arrive pre-sorted from the snapshot's tasks array, so
 // the panel is a plain scrollable list, not a virtualized one.
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown } from "lucide-react";
+import { ChevronDown, Trash2 } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { ConfirmDialog } from "./ConfirmDialog";
 import { useMenuMotion } from "./MenuMotion";
 
 export interface ThreadSwitcherEntry {
@@ -23,6 +24,9 @@ export interface ThreadSwitcherEntry {
   openedByName?: string;
   /** Routine-internal, closed, or archived threads never list. */
   hidden?: boolean;
+  /** False hides the row's delete action. Defaults to true; callers own the
+      policy (GroupView clears it when one thread remains, which the server keeps). */
+  deletable?: boolean;
 }
 
 function entryTime(entry: ThreadSwitcherEntry): number {
@@ -38,15 +42,19 @@ export function ThreadSwitcher({
   currentTitle,
   entries,
   onSelect,
+  onDelete,
 }: {
   currentThreadId: string;
   currentTitle: string;
   entries: readonly ThreadSwitcherEntry[];
   onSelect: (threadId: string) => void;
+  onDelete?: (threadId: string) => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
   const motion = useMenuMotion(open);
   const menuRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -73,6 +81,11 @@ export function ThreadSwitcher({
     if (threadId !== currentThreadId) onSelect(threadId);
   };
 
+  const requestDelete = (threadId: string) => {
+    setOpen(false);
+    setPendingDeleteThreadId(threadId);
+  };
+
   return (
     // Hug the content up to the cap so a short name keeps the chevron
     // right after it; longer names truncate at a width that never reflows
@@ -80,6 +93,7 @@ export function ThreadSwitcher({
     // matches the visible width.
     <div className="relative w-fit max-w-[min(11rem,30vw)] shrink-0" ref={menuRef}>
       <button
+        ref={triggerRef}
         type="button"
         onClick={() => setOpen((prev) => !prev)}
         aria-haspopup="menu"
@@ -109,30 +123,61 @@ export function ThreadSwitcher({
                 ? t("thread.switcher.openedBy", { name: entry.openedByName })
                 : dayLine(entryTime(entry));
               return (
-                <button
+                <div
                   key={entry.threadId}
-                  type="button"
-                  role="menuitem"
-                  aria-current={current || undefined}
-                  onClick={() => choose(entry.threadId)}
                   className={cn(
-                    "flex w-full items-center gap-2 rounded-lg px-2.5 py-1.5 text-left",
+                    "group/thread flex w-full items-center rounded-lg",
                     // Hover never touches the selected row: dimming the
                     // highlight under the cursor reads as losing selection.
                     current ? "bg-selected" : "hover:bg-raised/70",
                   )}
                 >
-                  <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{entry.title}</span>
-                  <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-ink-tertiary">{meta}</span>
-                  {entry.unread && !current && (
-                    <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
+                  <button
+                    type="button"
+                    role="menuitem"
+                    aria-current={current || undefined}
+                    onClick={() => choose(entry.threadId)}
+                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
+                  >
+                    <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{entry.title}</span>
+                    <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-ink-tertiary">{meta}</span>
+                    {entry.unread && !current && (
+                      <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
+                    )}
+                  </button>
+                  {onDelete && entry.deletable !== false && (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      aria-label={`${t("task.deleteAria")}: ${entry.title}`}
+                      title={t("task.deleteTitle")}
+                      onClick={() => requestDelete(entry.threadId)}
+                      className="pointer-events-none mr-1 flex size-7 shrink-0 items-center justify-center rounded text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 touch:pointer-events-auto touch:opacity-70"
+                    >
+                      <Trash2 size={13} />
+                    </button>
                   )}
-                </button>
+                </div>
               );
             })
           )}
         </div>
       )}
+
+      <ConfirmDialog
+        open={pendingDeleteThreadId !== null}
+        title={t("task.deleteConfirm")}
+        body={t("thread.deleteBody")}
+        confirmLabel={t("thread.delete")}
+        tone="danger"
+        returnFocusRef={triggerRef}
+        onCancel={() => setPendingDeleteThreadId(null)}
+        onConfirm={() => {
+          const threadId = pendingDeleteThreadId;
+          setPendingDeleteThreadId(null);
+          if (threadId && onDelete) onDelete(threadId);
+        }}
+      />
     </div>
   );
 }
