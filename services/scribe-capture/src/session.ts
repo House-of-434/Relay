@@ -5,6 +5,8 @@ import { type BrowserContext, type Page } from "playwright";
 
 import type { WorkerConfig } from "./config.js";
 import { CAPTURE_INIT_SCRIPT } from "./capture-init.js";
+import { TEAMS_HINTS_SCRIPT } from "./teams-hints.js";
+import { attributeSegment, splitAtTransitions, type HintInterval } from "./teams-attribution.js";
 import { REMOTE_AUDIO_HOOK } from "./vexa-remote-audio-hook.js";
 import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
@@ -311,6 +313,15 @@ class MeetSession {
         });
       } else {
         await this.page.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+        if (this.descriptor.platform === "teams") {
+          // Teams has one mixed track, so attribution comes from the page's
+          // speaking-tile observer, stamped on the tap's clock. Observing only:
+          // the PCM path above is unchanged.
+          await this.page.addInitScript({
+            content: `window.__scribeTeamsHintsConfig = ${JSON.stringify({ selfName: this.config.selfName })};`,
+          });
+          await this.page.addInitScript({ content: TEAMS_HINTS_SCRIPT });
+        }
       }
 
       this.status = "joining";
@@ -337,6 +348,14 @@ class MeetSession {
       this.captureStartedAt = new Date().toISOString();
       this.captureStartMs = Date.now();
       this.status = "active";
+      if (this.descriptor.platform === "teams") {
+        try {
+          await this.page.evaluate(() => {
+            (window as any).__scribePcm?.reset?.();
+            (window as any).__scribeTeamsHints?.reset?.();
+          });
+        } catch { /* best effort: clocks start at first sample anyway */ }
+      }
 
       if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
 
@@ -352,6 +371,7 @@ class MeetSession {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
         if (lane !== "mixed") await this.channelFeedOnce(laneApi(lane));
+        else if (this.descriptor.platform === "teams") await this.captureTeamsOnce();
         else await this.captureOnce();
         await this.flush(false, "active");
         if (lane === "gmeet" && this.config.gmeetProbe) await this.probeTick();
@@ -421,6 +441,64 @@ class MeetSession {
       language: "en",
     };
     this.spool.add(segment);
+  }
+
+  /** Teams: one mixed track plus a speaker timeline from the page.
+   *
+   * Drains the same PCM the other mixed platforms use, then cuts it at confirmed
+   * speaker transitions. Each slice is transcribed on its own and attributed from
+   * the hints covering that slice's audio-clock range; a slice the hints cannot
+   * support stays speaker=null rather than guessing. */
+  private async captureTeamsOnce(): Promise<void> {
+    if (!this.page) return;
+    let drain: { b64: string; count: number; sampleRate: number; fromMs: number; toMs: number };
+    try {
+      drain = await this.page.evaluate(() => (window as any).__scribePcm.drain());
+    } catch {
+      return;
+    }
+    let hints: HintInterval[] = [];
+    try {
+      hints = await this.page.evaluate(() => (window as any).__scribeTeamsHints?.drain?.() ?? []);
+    } catch {
+      /* hints are best-effort: audio still transcribes, unattributed */
+    }
+    if (drain.count < 16_000) return; // <1s of audio; let it accumulate
+
+    const pcm = Buffer.from(drain.b64, "base64");
+    const transitions = hints
+      .filter((h) => h.fromMs > drain.fromMs && h.fromMs < drain.toMs)
+      .map((h) => h.fromMs);
+    const slices = splitAtTransitions(
+      { fromMs: drain.fromMs, toMs: drain.toMs, count: drain.count, sampleRate: drain.sampleRate },
+      transitions,
+    );
+
+    for (const slice of slices) {
+      const bytes = pcm.subarray(slice.startSample * 2, slice.endSample * 2);
+      if (bytes.length < 16_000) continue; // <0.5s after a split: not worth a call
+      let text = "";
+      try {
+        const out = await this.stt.transcribe(pcm16ToWav(bytes));
+        text = out.text.trim();
+      } catch (e) {
+        this.error = e instanceof Error ? e.message.slice(0, 200) : "stt error";
+        return;
+      }
+      if (!text) continue;
+      this.seq += 1;
+      const startSeconds = Math.max(0, (slice.fromMs - this.captureStartMs) / 1000);
+      const endSeconds = Math.max(startSeconds, (slice.toMs - this.captureStartMs) / 1000);
+      this.spool.add({
+        segment_key: `teams:${this.seq}`,
+        speaker: attributeSegment(hints, slice.fromMs, slice.toMs).speaker,
+        start_seconds: Number(startSeconds.toFixed(2)),
+        end_seconds: Number(endSeconds.toFixed(2)),
+        text,
+        language: "en",
+      });
+      this.lastEnd = endSeconds;
+    }
   }
 
   // ── Per-channel Meet lane (vendored gmeet-pipeline) ──
@@ -566,6 +644,13 @@ class MeetSession {
       if (this.gmeet) {
         await this.gmeet.dispose().catch(() => { /* best effort */ });
         this.gmeet = null;
+      }
+      if (this.page && this.descriptor.platform === "teams") {
+        try {
+          await this.page.evaluate(() => {
+            (window as any).__scribeTeamsHints?.stop?.();
+          });
+        } catch { /* best effort */ }
       }
       if (this.page && this.descriptor.platform !== "teams") {
         try {
