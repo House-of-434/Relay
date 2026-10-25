@@ -3,7 +3,9 @@
  * Teams mixes all participants into one audio track, so the WebRTC layer cannot
  * say who spoke. The page can: the stage tiles carry a voice-level outline that
  * is switched into `vdi-frame-occlusion` on the tile of the participant Teams is
- * currently rendering as speaking. Reading that tile's nametag gives the name.
+ * currently rendering as speaking. The participant-info-nametag is the only name
+ * source: a tile with nametag text yields that name, a tile without it yields
+ * no name.
  *
  * ADAPTED (not imported) from joinly-ai/joinly (MIT):
  *   joinly/providers/browser/platforms/teams.py::_setup_active_speaker_observer
@@ -53,10 +55,6 @@ export const TEAMS_HINTS_SCRIPT = String.raw`
       if (!tile.querySelector('div[data-tid="voice-level-stream-outline"].vdi-frame-occlusion')) continue;
       var tag = tile.querySelector('div[data-tid="participant-info-nametag"]');
       var name = tag ? (tag.textContent || "").replace(/\s+/g, " ").trim() : "";
-      if (!name) {
-        var leaf = tile.querySelector("div:not(:has(*)):not(:empty)");
-        name = leaf ? (leaf.textContent || "").replace(/\s+/g, " ").trim() : "";
-      }
       // The bot's own tile never names a remote speaker.
       if (!name || name === cfg.selfName) continue;
       if (out.indexOf(name) < 0) out.push(name);

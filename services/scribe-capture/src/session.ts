@@ -397,6 +397,11 @@ class MeetSession {
           break;
         }
       }
+      if (this.page && this.descriptor.platform === "teams") {
+        try {
+          await this.captureTeamsOnce();
+        } catch { /* tail drain is best-effort; leaving still runs */ }
+      }
       await this.finalize(this.current === "skipped" ? "skipped" : endedIdle ? idleFinalStatus : this.stopped ? "partial" : "completed");
     } catch (e) {
       this.error = describeJoinFailure(e);
@@ -463,23 +468,23 @@ class MeetSession {
     } catch {
       /* hints are best-effort: audio still transcribes, unattributed */
     }
-    if (drain.count < 16_000) return; // <1s of audio; let it accumulate
-
+    if (drain.count < (drain.sampleRate > 0 ? drain.sampleRate : 16_000)) return; // <1s of audio; dropped as not worth an STT call
+    const rate = drain.sampleRate > 0 ? drain.sampleRate : 16_000;
     const pcm = Buffer.from(drain.b64, "base64");
     const transitions = hints
       .filter((h) => h.fromMs > drain.fromMs && h.fromMs < drain.toMs)
       .map((h) => h.fromMs);
     const slices = splitAtTransitions(
-      { fromMs: drain.fromMs, toMs: drain.toMs, count: drain.count, sampleRate: drain.sampleRate },
+      { fromMs: drain.fromMs, toMs: drain.toMs, count: drain.count, sampleRate: rate },
       transitions,
     );
 
     for (const slice of slices) {
       const bytes = pcm.subarray(slice.startSample * 2, slice.endSample * 2);
-      if (bytes.length < 16_000) continue; // <0.5s after a split: not worth a call
+      if (bytes.length < rate) continue; // <0.5s after a split; dropped as not worth a call
       let text = "";
       try {
-        const out = await this.stt.transcribe(pcm16ToWav(bytes));
+        const out = await this.stt.transcribe(pcm16ToWav(bytes, rate));
         text = out.text.trim();
       } catch (e) {
         this.error = e instanceof Error ? e.message.slice(0, 200) : "stt error";
