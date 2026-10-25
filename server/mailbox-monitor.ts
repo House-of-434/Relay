@@ -1,5 +1,5 @@
 // Native shared-mailbox monitor (Plan 1). Deterministic harness code, not a
-// model routine: every 15 minutes it lists the shared Gmail inbox, skips
+// model routine: once a minute it lists the shared Gmail inbox, skips
 // messages it has already receipted, resolves the sender against the
 // workspace identity directory, and opens one Mercury conversation per new
 // message that runs as that teammate.
@@ -47,7 +47,7 @@ export interface MailboxPerson {
 export interface MailboxMonitorDeps {
   /** Relay's shared address; mail from it is ignored (one-line self rule). */
   address: string;
-  /** Poll interval in ms (clamped by the caller to 5-1440 minutes). */
+  /** Poll interval in ms (clamped by the caller to 1-1440 minutes). */
   pollMs?: number;
   list: () => Promise<MailboxMessageSummary[]>;
   read: (messageId: string) => Promise<MailboxMessage | undefined>;
@@ -198,7 +198,7 @@ export class MailboxMonitor {
   start(): void {
     if (this.timer) return;
     void this.tick();
-    this.timer = setInterval(() => void this.tick(), this.deps.pollMs ?? 15 * 60_000);
+    this.timer = setInterval(() => void this.tick(), this.deps.pollMs ?? 60_000);
     if (typeof this.timer.unref === "function") this.timer.unref();
   }
 

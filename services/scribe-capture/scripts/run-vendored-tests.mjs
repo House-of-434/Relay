@@ -34,6 +34,8 @@ const tests = [
   "gmeet-pipeline/src/confirm-loop.golden.test.ts",
   "gmeet-pipeline/src/count-channelswitch.test.ts",
   "gmeet-pipeline/src/gmeet-compatible-buffer.parity.test.ts",
+  "zoom-capture/src/track-name-resolver.golden.test.ts",
+  "zoom-capture/src/zoom-capture.test.ts",
 ];
 
 let failed = 0;

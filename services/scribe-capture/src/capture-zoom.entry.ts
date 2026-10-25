@@ -66,11 +66,6 @@ interface ZoomConfig {
     mode: "exclusive",
     selfName: cfg.selfName,
     onBind: (channel: number, name: string, votes: number) => {
-      try {
-        g.__scribeZoomBind?.(channel, name, votes);
-      } catch {
-        /* optional host hook */
-      }
       log(`bound ch=${channel} -> ${name} (${votes} votes)`);
     },
   });
@@ -132,11 +127,6 @@ interface ZoomConfig {
         const name = resolver.resolve(index, now);
         if (frames.length < MAX_FRAMES) {
           frames.push({ channel: index, name: name ?? null, energy: peak, ts: now, pcm });
-        }
-        try {
-          g.__scribeZoomNamedAudio?.(index, name, pcm, now);
-        } catch {
-          /* optional hook */
         }
       })
         .then((node: any) => {

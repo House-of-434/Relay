@@ -1,5 +1,13 @@
 # Relay Scribe — STT integration plan (dev-ready)
 
+> **Status: historical.** This plan describes the build as of 2026-10. It is kept
+> as the design record. For what is shipped now, read
+> `third_party/vexa-capture/README.md` and `Relay-notes/scribe.md`. In
+> particular: the pyannote mixed lane (`mixed-pipeline`, `mixed-capture-core`)
+> and Vexa's bot orchestration were deliberately removed; Meet and Zoom use the
+> per-channel lane; Teams uses the mixed track plus page-side speaker hints; and
+> the "copy list" in §9 no longer applies.
+
 Status: **approved, executing**. Builds on the shared-mailbox branch
 `feature/shared-mailbox` (tip `ab573a3`: the four mailbox commits plus the BFF
 fatal logger and the mailbox prompt-parity guard). `feature/meetings-agent`
@@ -969,7 +977,10 @@ Admitted ~22 s, `active`, 3 remote speakers, 155.6 s, 17 mixed segments.
    the VPS (Xvfb + x11vnc on localhost, SSH tunnel to a local VNC viewer),
    sign in as relay@ (Workspace account, complete 2FA), open Meet once to
    confirm, close the browser. Cookies persist in the profile; the worker
-   runs headless after. Proven 2026-10-10: manual VNC login → cookies
+   also signs in to Zoom once (relay's Zoom session is what gets admitted; a
+   guest profile is walled with "automated bots aren't allowed"). The worker
+   then runs HEADFUL under Xvfb permanently — Zoom rejects headless — so keep
+   `RELAY_SCRIBE_HEADLESS=0`. Proven 2026-10-10: manual VNC login → cookies
    present → headless persistent-context reuse reaches the authenticated
    lobby. The password is typed by a human and never touches the repo, logs,
    or agent context. Liveness is failure-driven (no scheduled probe): the

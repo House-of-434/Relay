@@ -6,8 +6,9 @@
  *  DOM; the mixed tap and the per-channel Meet / per-track Zoom lanes all scan those
  *  elements. Extracted from `capture-init.ts` so all paths install one copy.
  *
- *  Mirrors `third_party/vexa-capture/core/meetings/modules/mixed-capture-core/webrtc-audio-hook.ts`
- *  behaviour; kept inline so the page bundle has no extra dependency. */
+ *  Origin: Vexa's webrtc-audio-hook (UPSTREAM_COMMIT in third_party/vexa-capture;
+ *  the vendored module was removed as unused). Kept inline so the page bundle has
+ *  no extra dependency. */
 export const REMOTE_AUDIO_HOOK = String.raw`
 (function () {
   if (typeof RTCPeerConnection !== "function" || window.__vexaRemoteAudioHookInstalled) return;

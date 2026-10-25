@@ -1,10 +1,8 @@
 /** Single source of truth for meeting-URL/platform identity.
  *
  * Pure, sync, zero-deps. Safe to import from the harness monitor, the capture
- * worker, and the tool layer. All existing host lists (server/scribe-monitor.ts
- * PROVIDER_HOSTS + URL_IN_TEXT, services/scribe-capture/src/urls.ts,
- * server/scribe-intents.ts normalizeMeetingUrlKey) delegate here; no second
- * host list may exist.
+ * worker, and the tool layer. The monitor, the worker's urls facade and the
+ * manual-intent URL key all delegate here; no second host list may exist.
  *
  * Invariants:
  * - Vanity/corp portals are NEVER provider hosts: auto-discovery skips them.
@@ -67,20 +65,18 @@ export function platformForUrl(url: string): ScribePlatform | null {
 
 /** Allowed join hosts per platform — a descriptor URL is validated before use. */
 export function hostAllowed(platform: string, url: string): boolean {
-  const host = lowerHost(url);
-  if (!host) return false;
-  if (platform === "google_meet") return isMeetHost(host);
-  if (platform === "teams") return isTeamsHost(host);
-  if (platform === "zoom") return isZoomHost(host);
-  return false;
+  // The host sets are disjoint, so "does this URL belong to this platform" is
+  // exactly platformForUrl; one predicate instead of a second copy of the table.
+  return platformForUrl(url) === platform;
 }
 
 /** Meet meeting code from a URL (native_id). */
 export function meetCode(url: string): string | null {
+  const host = lowerHost(url);
+  // isMeetHost, not endsWith: "evil-meet.google.com" is not a Meet host.
+  if (!host || !isMeetHost(host)) return null;
   try {
-    const u = new URL(url);
-    if (!u.hostname.toLowerCase().endsWith("meet.google.com")) return null;
-    const code = u.pathname.replace(/^\//, "").split("/")[0];
+    const code = new URL(url).pathname.replace(/^\//, "").split("/")[0];
     return code && code.length > 0 ? code : null;
   } catch {
     return null;
@@ -90,7 +86,10 @@ export function meetCode(url: string): string | null {
 /** Native meeting id per platform, used as native_id and in the live-meeting
  * unique index. Zoom: the /j/<id>, /wc/<id> or /s/<id> segment. Teams: /meet/<id>. */
 export function nativeIdFor(platform: string, url: string): string | null {
+  // A claimed platform that does not own the URL would otherwise mint an id for
+  // a host this module rejects elsewhere (e.g. a Meet link labelled zoom).
   if (platform === "google_meet") return meetCode(url);
+  if (platformForUrl(url) !== platform) return null;
   try {
     const u = new URL(url);
     const seg = u.pathname.split("/").filter(Boolean);
@@ -106,7 +105,7 @@ export function nativeIdFor(platform: string, url: string): string | null {
 /** Provider URL pattern for the description/location fallback scan. Broadened
  * beyond the original (which missed bare zoom.us, zoom.com, and Teams clouds):
  * meet.google.com, bare or subdomain zoom.us/zoom.com, Teams commercial/live/cloud. */
-export const URL_IN_TEXT =
+const URL_IN_TEXT =
   /https?:\/\/(?:meet\.google\.com|(?:[\w-]+\.)?zoom\.(?:us|com)|teams\.microsoft\.com|teams\.live\.com|teams\.cloud\.microsoft)\/[^\s"'<>]+/i;
 
 /** Join URL from a calendar event: video entry point, then hangoutLink, then
@@ -195,19 +194,6 @@ export function meetingUrlKey(platform: string, url: string): string | null {
  * is enforced separately at the route, never inferred from this key. Null
  * unless the URL's own platform matches the claimed one. */
 export function normalizeMeetingUrlKey(platform: ScribePlatform, url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "https:") return null;
-  if (parsed.username || parsed.password) return null;
-  let host = parsed.hostname.toLowerCase();
-  if (host.endsWith(".")) host = host.slice(0, -1);
-  if (!host || host.includes(" ") || host.includes("..")) return null;
   if (platformForUrl(url) !== platform) return null;
-  let path = parsed.pathname.replace(/\/+$/, "");
-  if (!path) path = "/";
-  return `${platform}|${host}${path}`;
+  return meetingUrlKey(platform, url);
 }

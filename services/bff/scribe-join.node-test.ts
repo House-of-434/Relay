@@ -27,9 +27,9 @@ afterEach(async () => {
 /** Signed exactly as the harness signs it. */
 function actorAssertion(issuedAt = Math.floor(Date.now() / 1000)): string {
   const signature = createHmac("sha256", ACTOR_SECRET)
-    .update(JSON.stringify(["relay-actor", USER_ID, issuedAt, BOT_ID, THREAD_ID]))
+    .update(JSON.stringify(["relay-actor", USER_ID, issuedAt, BOT_ID, THREAD_ID, "mercury"]))
     .digest("base64url");
-  return JSON.stringify({ userId: USER_ID, issuedAt, botId: BOT_ID, threadId: THREAD_ID, signature });
+  return JSON.stringify({ userId: USER_ID, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent: "mercury", signature });
 }
 
 interface HarnessCall {

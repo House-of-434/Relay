@@ -11,7 +11,7 @@ import { REMOTE_AUDIO_HOOK } from "./vexa-remote-audio-hook.js";
 import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
 import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
-import { toSegment } from "./gmeet-segment.js";
+import { toSegment, type GmeetSegmentLike } from "./gmeet-segment.js";
 import { hostAllowed, meetingUrlKey, nativeIdFor, redactMeetingUrlSecrets } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
@@ -19,17 +19,6 @@ import { sharedBrowserContext } from "./shared-browser.js";
 import { WORKER_BOOT_ID } from "./boot.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
-/** One confirmed segment from the vendored gmeet pipeline (transcript.v1 view). */
-interface GmeetSeg {
-  speaker: string;
-  speaker_key?: string;
-  text: string;
-  start: number;
-  end: number;
-  language?: string | null;
-  confidence?: number;
-  source?: string;
-}
 interface GmeetPipeline {
   feedAudio(channel: number, glowName: string | undefined, pcm: Float32Array, ts: number): void;
   flush(): Promise<void>;
@@ -41,7 +30,7 @@ interface VexaGmeetModule {
       pcm: Float32Array,
       prompt?: string,
     ) => Promise<{ text: string; language?: string; segments?: Array<{ start: number; end: number; text: string }> }>;
-    sink: { segment: (s: GmeetSeg) => void; draft?: (s: GmeetSeg) => void; finalize: () => void | Promise<void> };
+    sink: { segment: (s: GmeetSegmentLike) => void; draft?: (s: GmeetSegmentLike) => void; finalize: () => void | Promise<void> };
     unknownLabel?: string;
     onError?: (e: unknown) => void;
   }): GmeetPipeline;
@@ -314,8 +303,10 @@ class MeetSession {
         });
         await this.page.addInitScript({ path: bundle });
       } else {
+        // The mixed lane is Teams only (Platform is a closed union), so the tap
+        // and the speaking-tile observer are installed together.
         await this.page.addInitScript({ content: CAPTURE_INIT_SCRIPT });
-        if (this.descriptor.platform === "teams") {
+        {
           // Teams has one mixed track, so attribution comes from the page's
           // speaking-tile observer, stamped on the tap's clock. Observing only:
           // the PCM path above is unchanged.
@@ -373,8 +364,7 @@ class MeetSession {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
         if (lane !== "mixed") await this.channelFeedOnce(laneApi(lane));
-        else if (this.descriptor.platform === "teams") await this.captureTeamsOnce();
-        else await this.captureOnce();
+        else await this.captureTeamsOnce();
         await this.flush(false, "active");
         if (lane === "gmeet" && this.config.gmeetProbe) await this.probeTick();
         // Voice-idle end (per-channel gmeet and zoom lanes; not mixed): no remote voice for 3 minutes means
@@ -416,38 +406,6 @@ class MeetSession {
   /** Read the field without TS control-flow narrowing it to the last assignment. */
   private get current(): CaptureStatus {
     return this.status;
-  }
-
-  private async captureOnce(): Promise<void> {
-    if (!this.page) return;
-    const drain = await this.page.evaluate(() => (window as any).__scribePcm.drain()) as {
-      b64: string; count: number; sampleRate: number;
-    };
-    if (drain.count < 8000) return; // <0.5s of audio; skip silence jitter
-    const pcm = Buffer.from(drain.b64, "base64");
-    const chunkSeconds = drain.count / 16_000;
-    const startAt = this.lastEnd;
-    const endAt = startAt + chunkSeconds;
-    this.lastEnd = endAt;
-    let text = "";
-    try {
-      const out = await this.stt.transcribe(pcm16ToWav(pcm));
-      text = out.text.trim();
-    } catch (e) {
-      this.error = e instanceof Error ? e.message.slice(0, 200) : "stt error";
-      return;
-    }
-    if (!text) return;
-    this.seq += 1;
-    const segment: Segment = {
-      segment_key: `turn:${this.seq}`,
-      speaker: null,
-      start_seconds: Number(startAt.toFixed(2)),
-      end_seconds: Number(endAt.toFixed(2)),
-      text,
-      language: "en",
-    };
-    this.spool.add(segment);
   }
 
   /** Teams: one mixed track plus a speaker timeline from the page.
@@ -523,7 +481,7 @@ class MeetSession {
       return { text, language: "en", segments: text ? [{ start: 0, end: dur, text }] : [] };
     };
     const sink = {
-      segment: (s: GmeetSeg): void => {
+      segment: (s: GmeetSegmentLike): void => {
         const seg = toSegment(s, captureStartSec);
         this.spool.add(seg);
         if (this.config.gmeetProbe) this.probeSegments.push(seg);
@@ -661,7 +619,7 @@ class MeetSession {
       }
       if (this.page && this.descriptor.platform !== "teams") {
         try {
-          const api = this.descriptor.platform === "zoom" ? "__scribeZoom" : "__scribeGmeet";
+          const api = this.descriptor.platform === "zoom" ? laneApi("zoom") : laneApi("gmeet");
           await this.page.evaluate((a) => {
             (window as any)[a]?.stop?.();
           }, api);
