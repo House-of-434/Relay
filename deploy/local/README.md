@@ -69,11 +69,16 @@ address returns the 400 message.
 ## Build and run
 
 ```sh
-docker compose build
-docker compose up -d
-docker compose ps
-docker compose exec app curl -sf http://127.0.0.1:8799/api/health
+deploy/local/up.sh            # build, up -d, verify caddy's network attachment
+deploy/local/up.sh --no-build # config/.env change only
 ```
+
+Use this instead of hand-writing `docker compose up -d <services>`. `caddy`
+shares the app container's network namespace (`network_mode: service:app`), so
+recreating `app` on its own leaves caddy running inside a destroyed namespace:
+no DNS, no ports, and the public site dark while `docker compose ps` still says
+every container is up. The script always brings the whole project up and then
+asserts caddy is attached to the current app container.
 
 Caddy serves `:80` and, with `RELAY_HTTPS_HOST` set, `:443` with automatic
 HTTPS. The app proxies `/auth/*`, `/api/*`, and
@@ -269,9 +274,10 @@ Full steps: `plans/scribe-stt.md` §7.
 ### Deploy order (feature is off by default)
 
 1. Bring up the Tool Layer with the ingest route first (`tools` gains
-   `.env.ingest`): `docker compose up -d tools app`.
+   `.env.ingest`): `deploy/local/up.sh --no-build` (never name a subset that
+   includes `app` but not `caddy` — see Build and run).
 2. Build and start the worker + STT with the feature OFF so nothing arms:
-   `RELAY_SCRIBE_ENABLED=0 docker compose up -d --build scribe stt`.
+   `RELAY_SCRIBE_ENABLED=0 deploy/local/up.sh`.
 3. Verify: `docker compose exec scribe curl -sf http://127.0.0.1:8791/healthz`,
    `docker compose exec stt curl -sf http://127.0.0.1:8090/health`, the one-time
    login, then a manual `POST /join` (bearer from `.env.scribe`) against a test
