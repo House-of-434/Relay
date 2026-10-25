@@ -58,12 +58,13 @@ the public hostname, and the Google OAuth client must register
 ### Lock down sign-ups
 
 Public sign-up must be closed to non-company addresses before the host is
-reachable. Run `supabase/migrations/0005_restrict_signup_domain.sql` in the
-SQL Editor, then wire the hook: **Authentication → Hooks → Before User
+reachable. Run `supabase/migrations/0010_allow_second_signup_domain.sql` in the
+SQL Editor (it supersedes `0005_restrict_signup_domain.sql`), then wire the hook: **Authentication → Hooks → Before User
 Created → Postgres function → `hook_restrict_signup_domain`**. Confirm with
 `select proname from pg_proc where proname = 'hook_restrict_signup_domain';`
-(one row), then call the sign-up endpoint with the anon key and a
-non-`@houseof434.com` address and confirm it returns the 400 message.
+(one row), then call the sign-up endpoint with the anon key and confirm an
+`@houseof434.com` and an `@434vc.com` address pass while a non-company
+address returns the 400 message.
 
 ## Build and run
 
@@ -223,7 +224,7 @@ Two more services, both compose-network only (no published ports):
 
 | Service | Runs | Reachable as | Data |
 |---|---|---|---|
-| `scribe` | Per-channel capture worker (`:8791`): joins relay@'s meetings, taps per-participant audio, writes rows via the Tool Layer | `http://scribe:8791` from `app`/`tools` only | `scribe_data` volume at `/data` (signed-in profile, spool, failures, probes) — mounted ONLY here |
+| `scribe` | Capture worker (`:8791`): joins relay@'s meetings, taps meeting audio, writes rows via the Tool Layer | `http://scribe:8791` from `app`/`tools` only | `scribe_data` volume at `/data` (signed-in profile, spool, failures, probes) — mounted ONLY here |
 | `stt` | Shared Parakeet int8 STT server (`:8090`), 16 kHz WAV → text | `http://stt:8090` from `scribe` only | model baked into the image |
 
 Capabilities live in their own gitignored files (see
@@ -238,11 +239,6 @@ The `scribe` container holds **only** those two; `app` holds the worker
 capability; `tools` holds the ingest capability. The harness monitor arms
 captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
 `RELAY_SCRIBE_ENABLED` gates the whole feature.
-
-`RELAY_SCRIBE_DISCLOSURE` is the one-line notice the bot posts to the **Meet**
-chat once after admission (empty disables it; default "This meeting is
-transcribed by Relay AI."). It is best-effort: Meet selector drift is logged as
-a non-fatal `disclosure_posted=false`, never a capture failure.
 
 Diagnostic retention defaults to **30 days** and sweeps `/app/storage/screenshots`,
 `/data/scribe/failures`, `/data/scribe/status`, and `/data/scribe/probes`.

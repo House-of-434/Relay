@@ -45,7 +45,9 @@ services:
       # because the session store is not a durable user directory.
       RELAY_MAILBOX_ADDRESS: ${RELAY_MAILBOX_ADDRESS:-}
       RELAY_MAILBOX_USER_ID: ${RELAY_MAILBOX_USER_ID:-}
-      RELAY_MAILBOX_POLL_MINUTES: ${RELAY_MAILBOX_POLL_MINUTES:-15}
+      # 1 minute: an emailed live-meeting link is useless with a 15-minute poll.
+      # One tick is a single messages.list plus a read per unseen message.
+      RELAY_MAILBOX_POLL_MINUTES: ${RELAY_MAILBOX_POLL_MINUTES:-1}
       RELAY_MAILBOX_NOTIFY: ${RELAY_MAILBOX_NOTIFY:-1}
       RELAY_SCRIBE_ENABLED: ${RELAY_SCRIBE_ENABLED:-0}
       # The harness monitor arms captures by calling the worker over the compose
@@ -92,7 +94,7 @@ services:
       timeout: 5s
       start_period: 30s
       retries: 5
-  # Scribe: joins relay@'s meetings, captures per-channel audio, transcribes via
+  # Scribe: joins relay@'s meetings, captures meeting audio, transcribes via
   # the shared `stt` service, and writes rows through the Tool Layer ingest
   # route. Holds only .env.scribe (its endpoint capability) and .env.ingest
   # (the ingest capability) — never the BFF secrets. Signed-in profile + spool
@@ -122,9 +124,6 @@ services:
       RELAY_SCRIBE_MAX_CONCURRENT: ${RELAY_SCRIBE_MAX_CONCURRENT:-2}
       RELAY_SCRIBE_MAX_STREAMS: ${RELAY_SCRIBE_MAX_STREAMS:-12}
       RELAY_SCRIBE_SELF_NAME: ${RELAY_SCRIBE_SELF_NAME:-Relay Scribe}
-      # One-line disclosure posted to the Meet chat once after admission; empty
-      # disables it. Best-effort (a UI-drift failure never fails the capture).
-      RELAY_SCRIBE_DISCLOSURE: "${RELAY_SCRIBE_DISCLOSURE:-This meeting is transcribed by Relay AI.}"
       # Headful under Xvfb (the image + start-scribe.sh provide it): Zoom walls
       # a headless browser even with a signed-in profile.
       RELAY_SCRIBE_HEADLESS: ${RELAY_SCRIBE_HEADLESS:-0}

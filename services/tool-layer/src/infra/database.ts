@@ -101,7 +101,12 @@ export function nativeIdFromMeetingRef(ref: string): string | null {
   const host = url.hostname.toLowerCase();
   const seg = url.pathname.split("/").filter(Boolean);
   if (host === "meet.google.com") return seg[0] ?? null;
-  const markers = host === "zoom.us" || host.endsWith(".zoom.us") ? ["j", "wc", "s"] : ["meet"];
+  const isZoom =
+    host === "zoom.us" ||
+    host.endsWith(".zoom.us") ||
+    host === "zoom.com" ||
+    host.endsWith(".zoom.com");
+  const markers = isZoom ? ["j", "wc", "s"] : ["meet", "meeting"];
   const i = seg.findIndex((s) => markers.includes(s));
   return i >= 0 && seg[i + 1] ? seg[i + 1]! : null;
 }
@@ -171,8 +176,10 @@ export class RelayDatabase {
   }
 
   /** The authoritative mapping from a verified email to the canonical Supabase
-   * user id: auth-table lookup, confirmed and non-deleted users only, with the
-   * sign-in domain allowlist applied for defense in depth. Service-role only.
+   * user id: auth-table lookup, confirmed and non-deleted users only.
+   * Membership is established by the Supabase sign-up hook; the optional
+   * allowed-domains argument exists only for a caller that wants extra
+   * narrowing, which Relay does not use. Service-role only.
    * The single resolver the shared-mailbox flow uses to authenticate a
    * sender; an unknown email resolves to null, never a guess. */
   async memberByEmail(candidate: string, allowedDomains?: readonly string[]): Promise<string | null> {

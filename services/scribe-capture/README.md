@@ -1,13 +1,13 @@
 # @relay/scribe-capture
 
-The Scribe capture worker. Slice 1 (Meet): a capability-authed endpoint that
+The Scribe capture worker. A capability-authed endpoint that
 joins a meeting as relay@, taps the remote audio, transcribes it, and writes
 the meeting + segments to Supabase through the Tool Layer ingest route.
 
 ## Shape
 
 ```
-monitor ──POST /join──▶ worker ──join (authenticated, persistent profile)──▶ Meet
+monitor ──POST /join──▶ worker ──join (authenticated, persistent profile)──▶ Meet/Zoom/Teams
                           │  in-page PCM tap ──▶ STT server ──▶ segments
                           └──POST /internal/transcripts──▶ Tool Layer ──▶ Supabase
 ```
@@ -21,7 +21,7 @@ monitor ──POST /join──▶ worker ──join (authenticated, persistent p
 Auth: `Authorization: Bearer $RELAY_SCRIBE_WORKER_CAPABILITY`. No loopback
 requirement; the capability is the boundary.
 
-## Lifecycle (slice 1)
+## Lifecycle
 
 1. `join` → status `joining`.
 2. Admitted → status `active`; meeting row written with `actual_start` = capture
@@ -31,8 +31,10 @@ requirement; the capability is the boundary.
 5. On stop/end → final flush, `completed`; on error → `failed`; on live-meeting
    conflict → `skipped`.
 
-The mixed lane writes `speaker: null`; the per-channel Meet lane binds the
-resolved speaker name per channel.
+The Teams mixed lane attributes the speaker from the stage-tile observer
+(`teams-hints` + `teams-attribution`); any other mixed fallback writes
+`speaker: null`. The per-channel Meet lane and the per-track Zoom lane bind
+the resolved speaker name per channel.
 
 ## Run
 
@@ -53,7 +55,7 @@ The persistent profile must be signed in as relay@ once (see
 ## Landed since slice 1
 
 The calendar monitor (`server/scribe-monitor.ts`), failure/ready notices, the
-per-channel Meet lane, the compose `scribe`/`stt` services, and the
-`.env.ingest` / `.env.scribe` capability wiring — deploy/run owner is
-`deploy/local/README.md` (Scribe section). Remaining: Zoom/Teams capture
-parity (the descriptor already carries `platform`; Meet is the proven path).
+per-channel Meet lane, the per-track Zoom lane, the compose `scribe`/`stt`
+services, and the `.env.ingest` / `.env.scribe` capability wiring —
+deploy/run owner is `deploy/local/README.md` (Scribe section). Remaining:
+chat ingress remains unsupported (Zoom ingress removed; Teams never had it).

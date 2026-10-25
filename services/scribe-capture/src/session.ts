@@ -5,17 +5,18 @@ import { type BrowserContext, type Page } from "playwright";
 
 import type { WorkerConfig } from "./config.js";
 import { CAPTURE_INIT_SCRIPT } from "./capture-init.js";
+import { TEAMS_HINTS_SCRIPT } from "./teams-hints.js";
+import { attributeSegment, splitAtTransitions, type HintInterval } from "./teams-attribution.js";
 import { REMOTE_AUDIO_HOOK } from "./vexa-remote-audio-hook.js";
 import { IngestClient, IngestConflictError } from "./ingest-client.js";
 import { SegmentSpool } from "./spool.js";
 import { HttpSttClient, float32ToPcm16, pcm16ToWav } from "./stt-client.js";
 import { toSegment } from "./gmeet-segment.js";
-import { hostAllowed, meetingUrlKey, nativeIdFor } from "./urls.js";
+import { hostAllowed, meetingUrlKey, nativeIdFor, redactMeetingUrlSecrets } from "./urls.js";
 import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
 import { sharedBrowserContext } from "./shared-browser.js";
 import { WORKER_BOOT_ID } from "./boot.js";
-import { postMeetDisclosure } from "./chat.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
 /** One confirmed segment from the vendored gmeet pipeline (transcript.v1 view). */
@@ -79,9 +80,16 @@ async function loadVexaJoin(): Promise<VexaJoin> {
 
 const VEXA_SCREENSHOT_DIR = "/app/storage/screenshots";
 
+/** Page-side API name for a per-channel lane (installed by its capture bundle). */
+function laneApi(lane: "gmeet" | "zoom"): "__scribeGmeet" | "__scribeZoom" {
+  return lane === "zoom" ? "__scribeZoom" : "__scribeGmeet";
+}
+
 /** Per-channel Meet lane bundle (built by scripts/build-capture.mjs). */
 const HERE = dirname(fileURLToPath(import.meta.url));
 const DEFAULT_GMEET_BUNDLE = joinPath(HERE, "../dist/gmeet-capture.bundle.js");
+/** Per-track Zoom lane bundle (built by scripts/build-capture.mjs). */
+const DEFAULT_ZOOM_BUNDLE = joinPath(HERE, "../dist/zoom-capture.bundle.js");
 
 interface ProbeFrame {
   t: number;
@@ -125,7 +133,8 @@ async function leaveFor(page: Page, platform: string): Promise<void> {
  * heard, or after FIRST_VOICE_TIMEOUT_MS with nothing ever heard (covers
  * waiting for others who never arrive). Pure logic over timestamps — no
  * browser needed, fully unit-testable. maxMeetingMs remains the hard
- * backstop; non-Meet lanes keep maxMeetingMs only (no per-frame energy). */
+ * backstop; the mixed lane keeps maxMeetingMs only (no per-frame energy —
+ * only the per-channel gmeet and zoom lanes feed it). */
 export function voiceIdleExpired(args: {
   captureStartMs: number;
   firstVoiceAt: number | null;
@@ -141,6 +150,10 @@ export function voiceIdleExpired(args: {
 
 /** Leave after 3 minutes without remote voice; 5 minutes without ever
  * hearing any (a room that never produces a single frame never will). */
+export function wallClockDurationSeconds(platform: string, captureStartMs: number, nowMs: number): number | null {
+  if (platform === "teams" || captureStartMs <= 0) return null;
+  return (nowMs - captureStartMs) / 1000;
+}
 const VOICE_IDLE_MS = 3 * 60_000;
 const FIRST_VOICE_TIMEOUT_MS = 5 * 60_000;
 /** Remote-audio energy floor mirroring the capture bundle's silence gate:
@@ -151,8 +164,6 @@ class MeetSession {
   status: CaptureStatus = "joining";
   captureStartedAt: string | null = null;
   error: string | null = null;
-  /** Set once the join disclosure was posted to the meeting chat (once per capture). */
-  disclosurePosted = false;
   private context: BrowserContext | null = null;
   private page: Page | null = null;
   private stopped = false;
@@ -203,7 +214,6 @@ class MeetSession {
       invitees: d.invitees ?? [],
       segment_count: this.spool.added,
       duration_seconds: this.lastEnd > 0 ? this.lastEnd : null,
-      disclosure_posted: this.disclosurePosted,
       ...extra,
     };
   }
@@ -266,19 +276,20 @@ class MeetSession {
       // initial page, redirect hops, subresources, iframes, popups — is
       // validated pre-flight, so aborts never contact their destination.
       await guard.install(this.page);
-      const isMeet = this.descriptor.platform === "google_meet";
-      if (isMeet) {
-        // Per-channel Meet lane: the remote-audio hook (so elements exist even if
-        // Meet hides them — the entry dedupes by audio track id) + the capture
-        // bundle. The mixed tap is NOT installed for Meet. Installed per page
-        // (was: per context) so Meet and non-Meet captures sharing the browser
-        // keep their lanes separate.
+      // Per-channel lanes (Meet, Zoom) tap each participant's own WebRTC track and
+      // bind a name; any other mixed fallback stays speaker-unknown. Installed per
+      // page (not per context) so two captures on one browser keep their lanes apart.
+      const lane: "gmeet" | "zoom" | "mixed" =
+        this.descriptor.platform === "google_meet" ? "gmeet"
+          : this.descriptor.platform === "zoom" ? "zoom"
+            : "mixed";
+      if (lane === "gmeet") {
         const bundle = this.config.gmeetBundlePath ?? DEFAULT_GMEET_BUNDLE;
         if (!existsSync(bundle)) {
           throw new Error(`gmeet capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
         }
         await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
-        await this.page.addInitScript({ path: bundle });
+        // Config before bundle: the bundle reads it synchronously at IIFE evaluation.
         await this.page.addInitScript({
           content: `window.__scribeGmeetConfig = ${JSON.stringify({
             selfName: this.config.selfName,
@@ -286,8 +297,33 @@ class MeetSession {
             debug: false,
           })};`,
         });
+        await this.page.addInitScript({ path: bundle });
+      } else if (lane === "zoom") {
+        const bundle = this.config.zoomBundlePath ?? DEFAULT_ZOOM_BUNDLE;
+        if (!existsSync(bundle)) {
+          throw new Error(`zoom capture bundle missing at ${bundle} — run: pnpm --filter @relay/scribe-capture build:capture`);
+        }
+        await this.page.addInitScript({ content: REMOTE_AUDIO_HOOK });
+        // Config before bundle: the bundle reads it synchronously at IIFE evaluation.
+        await this.page.addInitScript({
+          content: `window.__scribeZoomConfig = ${JSON.stringify({
+            selfName: this.config.selfName,
+            maxStreams: this.config.maxStreams,
+            debug: false,
+          })};`,
+        });
+        await this.page.addInitScript({ path: bundle });
       } else {
         await this.page.addInitScript({ content: CAPTURE_INIT_SCRIPT });
+        if (this.descriptor.platform === "teams") {
+          // Teams has one mixed track, so attribution comes from the page's
+          // speaking-tile observer, stamped on the tap's clock. Observing only:
+          // the PCM path above is unchanged.
+          await this.page.addInitScript({
+            content: `window.__scribeTeamsHintsConfig = ${JSON.stringify({ selfName: this.config.selfName })};`,
+          });
+          await this.page.addInitScript({ content: TEAMS_HINTS_SCRIPT });
+        }
       }
 
       this.status = "joining";
@@ -314,29 +350,20 @@ class MeetSession {
       this.captureStartedAt = new Date().toISOString();
       this.captureStartMs = Date.now();
       this.status = "active";
-
-      // Join disclosure: once, after admission, Meet only, best-effort. A send
-      // failure is recorded (disclosure_posted=false) and never blocks capture.
-      if (isMeet && !this.config.gmeetProbe && this.config.disclosure && this.page) {
-        const outcome = await postMeetDisclosure(this.page, this.config.disclosure, {
-          log: (message) => console.log(message),
-        });
-        this.disclosurePosted = outcome !== "failed";
-        if (outcome === "failed") {
-          try {
-            const dir = joinPath(this.config.dataDir, "failures");
-            mkdirSync(dir, { recursive: true });
-            await this.page.screenshot({ path: joinPath(dir, `disclosure-${this.descriptor.instance_id}.png`) });
-          } catch {
-            /* best effort */
-          }
-        }
+      if (this.descriptor.platform === "teams") {
+        try {
+          await this.page.evaluate(() => {
+            (window as any).__scribePcm?.reset?.();
+            (window as any).__scribeTeamsHints?.reset?.();
+          });
+        } catch { /* best effort: clocks start at first sample anyway */ }
       }
+
       if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
 
-      if (isMeet) {
-        await this.gmeetStart();
-        if (this.config.gmeetProbe) await this.probeStart();
+      if (lane !== "mixed") {
+        await this.channelStart(laneApi(lane));
+        if (lane === "gmeet" && this.config.gmeetProbe) await this.probeStart();
       }
 
       const deadline = Date.now() + this.config.maxMeetingMs;
@@ -345,17 +372,18 @@ class MeetSession {
       while (!this.stopped && Date.now() < deadline) {
         await new Promise((r) => setTimeout(r, 6000));
         if (this.stopped) break;
-        if (isMeet) await this.gmeetFeedOnce();
+        if (lane !== "mixed") await this.channelFeedOnce(laneApi(lane));
+        else if (this.descriptor.platform === "teams") await this.captureTeamsOnce();
         else await this.captureOnce();
         await this.flush(false, "active");
-        if (isMeet && this.config.gmeetProbe) await this.probeTick();
-        // Voice-idle end (Meet only): no remote voice for 3 minutes means
+        if (lane === "gmeet" && this.config.gmeetProbe) await this.probeTick();
+        // Voice-idle end (per-channel gmeet and zoom lanes; not mixed): no remote voice for 3 minutes means
         // the meeting is over whether or not tiles agree; 5 minutes without
         // ever hearing any covers a room that never fills. maxMeetingMs
         // remains the hard backstop. The idle reason is written to error so
         // the row explains why it ended; status stays completed when any
         // segment landed, else partial.
-        if (isMeet && this.status === "active" && voiceIdleExpired({
+        if (lane !== "mixed" && this.status === "active" && voiceIdleExpired({
           captureStartMs: this.captureStartMs,
           firstVoiceAt: this.firstVoiceAt,
           lastVoiceAt: this.lastRemoteAudioAt,
@@ -371,11 +399,16 @@ class MeetSession {
           break;
         }
       }
+      if (this.page && this.descriptor.platform === "teams") {
+        try {
+          await this.captureTeamsOnce();
+        } catch { /* tail drain is best-effort; leaving still runs */ }
+      }
       await this.finalize(this.current === "skipped" ? "skipped" : endedIdle ? idleFinalStatus : this.stopped ? "partial" : "completed");
     } catch (e) {
       this.error = describeJoinFailure(e);
       // Never log full URLs: navigation errors can embed meeting ?pwd=.
-      console.error(`scribe: ${this.descriptor.instance_id} failed: ${this.error.replace(/([?&]pwd=)[^&\s]*/gi, "$1<redacted>")}`);
+      console.error(`scribe: ${this.descriptor.instance_id} failed: ${redactMeetingUrlSecrets(this.error)}`);
       await this.finalize("failed");
     }
   }
@@ -417,9 +450,67 @@ class MeetSession {
     this.spool.add(segment);
   }
 
+  /** Teams: one mixed track plus a speaker timeline from the page.
+   *
+   * Drains the same PCM the other mixed platforms use, then cuts it at confirmed
+   * speaker transitions. Each slice is transcribed on its own and attributed from
+   * the hints covering that slice's audio-clock range; a slice the hints cannot
+   * support stays speaker=null rather than guessing. */
+  private async captureTeamsOnce(): Promise<void> {
+    if (!this.page) return;
+    let drain: { b64: string; count: number; sampleRate: number; fromMs: number; toMs: number };
+    try {
+      drain = await this.page.evaluate(() => (window as any).__scribePcm.drain());
+    } catch {
+      return;
+    }
+    let hints: HintInterval[] = [];
+    try {
+      hints = await this.page.evaluate(() => (window as any).__scribeTeamsHints?.drain?.() ?? []);
+    } catch {
+      /* hints are best-effort: audio still transcribes, unattributed */
+    }
+    if (drain.count < (drain.sampleRate > 0 ? drain.sampleRate : 16_000)) return; // <1s of audio; dropped as not worth an STT call
+    const rate = drain.sampleRate > 0 ? drain.sampleRate : 16_000;
+    const pcm = Buffer.from(drain.b64, "base64");
+    const transitions = hints
+      .filter((h) => h.fromMs > drain.fromMs && h.fromMs < drain.toMs)
+      .map((h) => h.fromMs);
+    const slices = splitAtTransitions(
+      { fromMs: drain.fromMs, toMs: drain.toMs, count: drain.count, sampleRate: rate },
+      transitions,
+    );
+
+    for (const slice of slices) {
+      const bytes = pcm.subarray(slice.startSample * 2, slice.endSample * 2);
+      if (bytes.length < rate) continue; // <0.5s after a split; dropped as not worth a call
+      let text = "";
+      try {
+        const out = await this.stt.transcribe(pcm16ToWav(bytes, rate));
+        text = out.text.trim();
+      } catch (e) {
+        this.error = e instanceof Error ? e.message.slice(0, 200) : "stt error";
+        return;
+      }
+      if (!text) continue;
+      this.seq += 1;
+      const startSeconds = Math.max(0, (slice.fromMs - this.captureStartMs) / 1000);
+      const endSeconds = Math.max(startSeconds, (slice.toMs - this.captureStartMs) / 1000);
+      this.spool.add({
+        segment_key: `teams:${this.seq}`,
+        speaker: attributeSegment(hints, slice.fromMs, slice.toMs).speaker,
+        start_seconds: Number(startSeconds.toFixed(2)),
+        end_seconds: Number(endSeconds.toFixed(2)),
+        text,
+        language: "en",
+      });
+      this.lastEnd = endSeconds;
+    }
+  }
+
   // ── Per-channel Meet lane (vendored gmeet-pipeline) ──
 
-  private async gmeetStart(): Promise<void> {
+  private async channelStart(api: string): Promise<void> {
     if (!this.page) return;
     const mod = await loadGmeetPipeline();
     const captureStartSec = this.captureStartMs / 1000;
@@ -451,16 +542,16 @@ class MeetSession {
         this.error = (e instanceof Error ? e.message : "gmeet pipeline error").slice(0, 200);
       },
     });
-    await this.page.evaluate(async () => {
-      await (window as any).__scribeGmeet?.start?.();
-    });
+    await this.page.evaluate(async (a) => {
+      await (window as any)[a]?.start?.();
+    }, api);
   }
 
-  private async gmeetFeedOnce(): Promise<void> {
+  private async channelFeedOnce(api: string): Promise<void> {
     if (!this.page || !this.gmeet) return;
     let frames: Array<{ channel: number; name: string | null; energy: number; ts: number; pcm?: number[] }>;
     try {
-      frames = await this.page.evaluate(() => (window as any).__scribeGmeet?.drain?.(true) ?? []);
+      frames = await this.page.evaluate((a) => (window as any)[a]?.drain?.(true) ?? [], api);
     } catch {
       return;
     }
@@ -550,8 +641,9 @@ class MeetSession {
 
   private async finalize(status: CaptureStatus): Promise<void> {
     this.status = status;
-    if (this.descriptor.platform === "google_meet" && this.captureStartMs > 0) {
-      this.lastEnd = (Date.now() - this.captureStartMs) / 1000;
+    const wallClock = wallClockDurationSeconds(this.descriptor.platform, this.captureStartMs, Date.now());
+    if (wallClock !== null) {
+      this.lastEnd = wallClock;
     }
     try {
       // Flush every open turn through the lane BEFORE the final spool flush, so
@@ -560,11 +652,19 @@ class MeetSession {
         await this.gmeet.dispose().catch(() => { /* best effort */ });
         this.gmeet = null;
       }
-      if (this.page && this.descriptor.platform === "google_meet") {
+      if (this.page && this.descriptor.platform === "teams") {
         try {
           await this.page.evaluate(() => {
-            (window as any).__scribeGmeet?.stop?.();
+            (window as any).__scribeTeamsHints?.stop?.();
           });
+        } catch { /* best effort */ }
+      }
+      if (this.page && this.descriptor.platform !== "teams") {
+        try {
+          const api = this.descriptor.platform === "zoom" ? "__scribeZoom" : "__scribeGmeet";
+          await this.page.evaluate((a) => {
+            (window as any)[a]?.stop?.();
+          }, api);
         } catch { /* best effort */ }
       }
       if (this.config.gmeetProbe && this.descriptor.platform === "google_meet") {

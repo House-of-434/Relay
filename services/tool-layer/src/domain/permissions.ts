@@ -166,7 +166,7 @@ export function authorizeSearch(agent: Agent, capability: SearchCapability): voi
 }
 
 /** Meeting-capture requests: Mercury only. Asking Scribe to join a meeting
- * is a visible external action (the join is announced in the meeting), so it
+ * is a visible external action (it joins under a visible display name), so it
  * stays with the agent that owns external comms — the same agents that may
  * not even see Gmail or calendar tools must not see this one either. */
 export type ScribeCapability = "join";

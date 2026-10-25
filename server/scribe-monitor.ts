@@ -15,6 +15,13 @@
  * ticking guard, start/stop).
  */
 
+import {
+  isZoomHost,
+  meetingUrlFor as linkMeetingUrlFor,
+  passcodeFor as linkPasscodeFor,
+  platformForUrl as linkPlatformForUrl,
+} from "../packages/meeting-link/src/index.ts";
+
 export interface CalendarEventTime {
   dateTime?: string;
   date?: string;
@@ -171,24 +178,10 @@ export function scribeMonitorConfig(env: NodeJS.ProcessEnv = process.env): Scrib
   };
 }
 
-const PROVIDER_HOSTS: Array<{ platform: ScribeDescriptor["platform"]; test: (host: string) => boolean }> = [
-  { platform: "google_meet", test: (h) => h === "meet.google.com" },
-  { platform: "zoom", test: (h) => h === "zoom.us" || h.endsWith(".zoom.us") },
-  { platform: "teams", test: (h) => h === "teams.microsoft.com" || h === "teams.live.com" },
-];
-
-const URL_IN_TEXT = /https?:\/\/(?:meet\.google\.com|[\w-]+\.zoom\.us|teams\.microsoft\.com|teams\.live\.com)\/[^\s"'<>]+/i;
-
-/** Platform for a meeting URL, or null when the host is not a provider. */
+/** Platform for a meeting URL, or null when the host is not a provider.
+ * Delegates to packages/meeting-link (single source of truth). */
 export function platformForUrl(url: string): ScribeDescriptor["platform"] | null {
-  let host: string;
-  try {
-    host = new URL(url).hostname.toLowerCase();
-  } catch {
-    return null;
-  }
-  for (const p of PROVIDER_HOSTS) if (p.test(host)) return p.platform;
-  return null;
+  return linkPlatformForUrl(url);
 }
 
 /** The provider room code from a meeting URL — the Meet path code, the Zoom
@@ -205,26 +198,17 @@ export function meetingCodeFor(url: string): string | null {
   const host = url2.hostname.toLowerCase();
   const seg = url2.pathname.split("/").filter(Boolean);
   if (host === "meet.google.com") return seg[0] ?? null;
-  const markers = host === "zoom.us" || host.endsWith(".zoom.us") ? ["j", "wc", "s"] : ["meet"];
+  const markers = isZoomHost(host) ? ["j", "wc", "s"] : ["meet"];
   const i = seg.findIndex((s) => markers.includes(s));
   if (i >= 0 && seg[i + 1]) return seg[i + 1]!;
   return seg.length > 0 ? seg[seg.length - 1]! : null;
 }
 
 /** The join URL from a calendar event: video entry point, then hangoutLink,
- * then the first provider URL found in description/location. */
+ * then the first provider URL found in description/location. Delegates to
+ * packages/meeting-link (single source of truth). */
 export function meetingUrlFor(event: CalendarEvent): string | null {
-  const video = event.conferenceData?.entryPoints?.find(
-    (e) => e.entryPointType === "video" && typeof e.uri === "string" && e.uri.startsWith("http"),
-  );
-  if (video?.uri) return video.uri;
-  if (typeof event.hangoutLink === "string" && event.hangoutLink.startsWith("http")) return event.hangoutLink;
-  for (const text of [event.description, event.location]) {
-    if (typeof text !== "string") continue;
-    const match = URL_IN_TEXT.exec(text);
-    if (match) return match[0];
-  }
-  return null;
+  return linkMeetingUrlFor(event);
 }
 
 /** Event start in ms, or null for an all-day / unparseable event. */
@@ -250,18 +234,10 @@ export function armKey(event: CalendarEvent): string | null {
 }
 
 /** Dial-in passcode, if any. Only ever travels in the descriptor — never in a
- * log line or a receipt. */
+ * log line or a receipt. Delegates to packages/meeting-link (single source
+ * of truth; also reads password/passcode params and the fragment). */
 export function passcodeFor(event: CalendarEvent, url: string): string | undefined {
-  const fromEntry = event.conferenceData?.entryPoints?.find(
-    (e) => typeof e.passcode === "string" && e.passcode.length > 0,
-  )?.passcode;
-  if (typeof fromEntry === "string" && fromEntry.length > 0) return fromEntry;
-  try {
-    const pwd = new URL(url).searchParams.get("pwd");
-    return pwd && pwd.length > 0 ? pwd : undefined;
-  } catch {
-    return undefined;
-  }
+  return linkPasscodeFor(event, url);
 }
 
 export function buildDescriptor(event: CalendarEvent, url: string, platform: ScribeDescriptor["platform"]): ScribeDescriptor {

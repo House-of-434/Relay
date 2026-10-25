@@ -28,6 +28,7 @@ export default defineConfig(({ mode }) => {
       "server/**/*.test.ts",
       "src/**/*.test.ts",
       "shared/**/*.test.ts",
+      "packages/**/*.test.ts",
       "scripts/**/*.test.mjs",
       "scripts/**/*.test.ts",
     ],

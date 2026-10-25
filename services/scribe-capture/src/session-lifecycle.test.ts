@@ -7,7 +7,7 @@ import test from "node:test";
 import { WORKER_BOOT_ID } from "./boot.js";
 import { workerConfig } from "./config.js";
 import type { IngestClient } from "./ingest-client.js";
-import { selectRoomDuplicate, SessionController, voiceIdleExpired } from "./session.js";
+import { selectRoomDuplicate, SessionController, voiceIdleExpired, wallClockDurationSeconds } from "./session.js";
 
 const ENABLED = () => ({ ...workerConfig({ RELAY_SCRIBE_ENABLED: "1" } as NodeJS.ProcessEnv), workerCapability: "test-capability-that-is-long-enough-000000" });
 
@@ -87,4 +87,14 @@ test("voiceIdleExpired needs a full quiet window", () => {
   const started = 2_000_000;
   // Voice 10s ago, now 2m59s later: stay.
   assert.equal(voiceIdleExpired({ captureStartMs: started, firstVoiceAt: started + 5_000, lastVoiceAt: started + 5_000, now: started + 184_999 }), false);
+});
+
+test("per-channel lanes report wall-clock duration, mixed lane does not", () => {
+  const started = 2_000_000;
+  const now = started + 1_800_000;
+  assert.equal(wallClockDurationSeconds("google_meet", started, now), 1800);
+  const zoom = wallClockDurationSeconds("zoom", started, now);
+  assert.ok(zoom !== null && zoom > 0, "a zoom capture reports duration");
+  assert.equal(wallClockDurationSeconds("teams", started, now), null);
+  assert.equal(wallClockDurationSeconds("zoom", 0, now), null);
 });

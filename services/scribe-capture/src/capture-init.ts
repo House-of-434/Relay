@@ -17,6 +17,11 @@ export const CAPTURE_INIT_SCRIPT = REMOTE_AUDIO_HOOK + String.raw`
   const CAP_SAMPLES = 16000 * 180;
   let chunks = [];
   let total = 0;
+  // Clock: every accepted sample is counted, and the first one anchors wall
+  // time. Speaker hints are timestamped on this same clock, so audio ranges and
+  // hint ranges cannot drift apart as the buffer drains.
+  let samplesFed = 0;
+  let anchorWallMs = 0;
   let ctx = null, processor = null;
   const tapped = new WeakSet();
 
@@ -30,8 +35,10 @@ export const CAPTURE_INIT_SCRIPT = REMOTE_AUDIO_HOOK + String.raw`
     processor.onaudioprocess = function (e) {
       if (total > CAP_SAMPLES) return;
       const ch = e.inputBuffer.getChannelData(0);
+      if (samplesFed === 0) anchorWallMs = Date.now();
       chunks.push(new Float32Array(ch));
       total += ch.length;
+      samplesFed += ch.length;
     };
     if (ctx.state === "suspended") ctx.resume().catch(function () {});
     return ctx;
@@ -56,10 +63,29 @@ export const CAPTURE_INIT_SCRIPT = REMOTE_AUDIO_HOOK + String.raw`
   scan();
   setInterval(scan, 1000);
 
+  function sampleRate() {
+    return ctx && ctx.sampleRate ? ctx.sampleRate : 16000;
+  }
+
+  /** Session-relative clock shared with the speaker-hint observer. */
+  function nowMs() {
+    if (!anchorWallMs) return Date.now();
+    return anchorWallMs + (samplesFed / sampleRate()) * 1000;
+  }
+
   window.__scribePcm = {
+    nowMs: nowMs,
+    /** Drop everything buffered so far and restart the clock. Called once
+     *  admission is confirmed, so waiting-room audio never lands in a segment. */
+    reset: function () {
+      chunks = [];
+      total = 0;
+      samplesFed = 0;
+      anchorWallMs = 0;
+    },
     drain: function () {
       scan();
-      if (total === 0) return { b64: "", count: 0, sampleRate: ctx ? ctx.sampleRate : 0 };
+      if (total === 0) return { b64: "", count: 0, sampleRate: sampleRate(), fromMs: nowMs(), toMs: nowMs() };
       const all = new Float32Array(total);
       let o = 0;
       for (const c of chunks) { all.set(c, o); o += c.length; }
@@ -75,12 +101,16 @@ export const CAPTURE_INIT_SCRIPT = REMOTE_AUDIO_HOOK + String.raw`
       for (let i = 0; i < bytes.length; i += CH) {
         bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CH));
       }
-      return { b64: btoa(bin), count: n, sampleRate: ctx ? ctx.sampleRate : 0 };
+      const toMs = nowMs();
+      const fromMs = toMs - (n / sampleRate()) * 1000;
+      return { b64: btoa(bin), count: n, sampleRate: sampleRate(), fromMs: fromMs, toMs: toMs };
     },
     state: function () {
       return {
-        sampleRate: ctx ? ctx.sampleRate : 0,
+        sampleRate: sampleRate(),
         pending: total,
+        samplesFed: samplesFed,
+        nowMs: nowMs(),
         audioEls: document.querySelectorAll("audio").length,
         mirrored: (window.__vexaMirroredTrackIds && window.__vexaMirroredTrackIds.size) || 0,
       };

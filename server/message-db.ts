@@ -85,6 +85,7 @@ function open(): DatabaseSync {
       platform TEXT NOT NULL,
       title TEXT,
       organizer_email TEXT,
+      passcode TEXT,
       owner_user_id TEXT NOT NULL,
       bot_id TEXT NOT NULL,
       thread_id TEXT NOT NULL,
@@ -95,6 +96,12 @@ function open(): DatabaseSync {
     CREATE INDEX IF NOT EXISTS scribe_join_intents_active ON scribe_join_intents(url_key, status);
     CREATE INDEX IF NOT EXISTS scribe_join_intents_status ON scribe_join_intents(status, created_at);
   `);
+  // Databases created before the optional passcode column existed need it added;
+  // CREATE TABLE IF NOT EXISTS is a no-op on them.
+  const intentColumns = db.prepare("PRAGMA table_info(scribe_join_intents)").all() as Array<{ name: string }>;
+  if (!intentColumns.some((column) => column.name === "passcode")) {
+    db.exec("ALTER TABLE scribe_join_intents ADD COLUMN passcode TEXT");
+  }
   ensureRecallIndex(db);
   ensureMemoryIndex(db);
   return db;
@@ -358,6 +365,9 @@ export interface ScribeJoinIntent {
   platform: string;
   title: string | null;
   organizerEmail: string | null;
+  /** Carried only until the capture is armed; scrubbed when the intent is
+   *  terminal. Never logged. */
+  passcode: string | null;
   ownerUserId: string;
   botId: string;
   threadId: string;
@@ -375,12 +385,15 @@ export interface ScribeJoinIntentInput {
   platform: string;
   title?: string;
   organizerEmail?: string;
+  /** Optional dial-in passcode from the request (only when it is not already
+   *  encoded in the URL). Carried to the descriptor, never retained. */
+  passcode?: string;
   ownerUserId: string;
   botId: string;
   threadId: string;
 }
 
-const INTENT_COLUMNS = "request_key, instance_id, source, meeting_url, url_key, platform, title, organizer_email, owner_user_id, bot_id, thread_id, status, created_at, updated_at";
+const INTENT_COLUMNS = "request_key, instance_id, source, meeting_url, url_key, platform, title, organizer_email, passcode, owner_user_id, bot_id, thread_id, status, created_at, updated_at";
 
 function rowToIntent(row: Record<string, unknown>): ScribeJoinIntent {
   return {
@@ -392,6 +405,7 @@ function rowToIntent(row: Record<string, unknown>): ScribeJoinIntent {
     platform: row.platform as string,
     title: (row.title as string | null) ?? null,
     organizerEmail: (row.organizer_email as string | null) ?? null,
+    passcode: (row.passcode as string | null) ?? null,
     ownerUserId: row.owner_user_id as string,
     botId: row.bot_id as string,
     threadId: row.thread_id as string,
@@ -423,10 +437,11 @@ export function acceptScribeJoinIntent(
       .get(input.urlKey) as Record<string, unknown> | undefined;
     if (active) return { outcome: "active" as const, intent: rowToIntent(active) };
     database
-      .prepare(`INSERT INTO scribe_join_intents(${INTENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
+      .prepare(`INSERT INTO scribe_join_intents(${INTENT_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)`)
       .run(
         input.requestKey, input.instanceId, input.source, input.meetingUrl, input.urlKey,
         input.platform, input.title ?? null, input.organizerEmail ?? null,
+        input.passcode ?? null,
         input.ownerUserId, input.botId, input.threadId, now, now,
       );
     const created = database
@@ -464,9 +479,16 @@ export function listActiveScribeJoinIntents(): ScribeJoinIntent[] {
 }
 
 export function setScribeJoinIntentStatus(instanceId: string, status: ScribeJoinIntentStatus, now: number): boolean {
-  const result = db()
-    .prepare("UPDATE scribe_join_intents SET status = ?, updated_at = ? WHERE instance_id = ?")
-    .run(status, now, instanceId);
+  // A terminal intent is finished with the meeting, so the passcode is dropped:
+  // the intent row is durable and would otherwise retain a shared secret long
+  // after the capture it was needed for.
+  const result = status === "terminal"
+    ? db()
+      .prepare("UPDATE scribe_join_intents SET status = ?, updated_at = ?, passcode = NULL WHERE instance_id = ?")
+      .run(status, now, instanceId)
+    : db()
+      .prepare("UPDATE scribe_join_intents SET status = ?, updated_at = ? WHERE instance_id = ?")
+      .run(status, now, instanceId);
   return result.changes > 0;
 }
 

@@ -15,7 +15,7 @@ import {
   acceptScribeJoinIntent,
   type ScribeJoinIntent,
 } from "./message-db.ts";
-import { platformForUrl } from "./scribe-monitor.ts";
+import { normalizeMeetingUrlKey as linkNormalizeMeetingUrlKey } from "../packages/meeting-link/src/index.ts";
 import type { JoinRequest } from "./scribe-monitor.ts";
 import type { BotRecord } from "./store.ts";
 import type { MailboxActor } from "./mailbox-bff.ts";
@@ -45,23 +45,10 @@ export function resolveNoticeSender(
 
 /** Normalize a meeting URL into an active-session matching key. Purely
  * syntactic (scheme/host/path shape) — destination safety policy (SSRF) is
- * enforced separately at the route, never inferred from this key. */
+ * enforced separately at the route, never inferred from this key. Delegates
+ * to packages/meeting-link (single source of truth). */
 export function normalizeMeetingUrlKey(platform: ScribePlatform, url: string): string | null {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    return null;
-  }
-  if (parsed.protocol !== "https:") return null;
-  if (parsed.username || parsed.password) return null;
-  let host = parsed.hostname.toLowerCase();
-  if (host.endsWith(".")) host = host.slice(0, -1);
-  if (!host || host.includes(" ") || host.includes("..")) return null;
-  if (platformForUrl(url) !== platform) return null;
-  let path = parsed.pathname.replace(/\/+$/, "");
-  if (!path) path = "/";
-  return `${platform}|${host}${path}`;
+  return linkNormalizeMeetingUrlKey(platform, url);
 }
 
 /** Permanent notice-delivery failures must retire loudly instead of
@@ -95,6 +82,9 @@ export interface ManualJoinInput {
   meetingUrl: string;
   platform: ScribePlatform;
   title?: string;
+  /** Only needed when the passcode is not already encoded in the URL. Carried
+   *  to the worker descriptor and dropped when the intent terminates. */
+  passcode?: string;
   organizerEmail?: string;
   actor: ScribeActor;
   now?: number;
@@ -120,6 +110,7 @@ export function acceptManualJoin(input: ManualJoinInput): {
       platform: input.platform,
       title: input.title,
       organizerEmail: input.organizerEmail,
+      ...(input.passcode ? { passcode: input.passcode } : {}),
       ownerUserId: input.actor.userId,
       botId: input.actor.botId,
       threadId: input.actor.threadId,
@@ -147,6 +138,9 @@ export function joinRequestFromIntent(
       // guessed from a name or a content search.
       organizer_user_id: intent.ownerUserId,
       ...(intent.title ? { title: intent.title } : {}),
+      // Carried from the request so a passcode that is NOT in the URL still
+      // reaches the join; the worker forwards it to the provider.
+      ...(intent.passcode ? { passcode: intent.passcode } : {}),
     },
     dueAtMs: intent.createdAt,
     lateAtMs: intent.createdAt + options.manualLateMs,

@@ -46,7 +46,7 @@ export class RelayScribeJoinClient {
 
   async joinMeeting(
     actorAssertion: string,
-    input: { requestKey: string; meetingUrl: string; title?: string },
+    input: { requestKey: string; meetingUrl: string; title?: string; passcode?: string },
   ): Promise<ScribeJoinResult> {
     if (typeof this.capability !== "string" || Buffer.byteLength(this.capability) < 32) {
       throw new ScribeRequestError(503, "the meeting capture service is not configured");
@@ -65,6 +65,7 @@ export class RelayScribeJoinClient {
           request_key: input.requestKey,
           meeting_url: input.meetingUrl,
           ...(input.title ? { title: input.title } : {}),
+          ...(input.passcode ? { passcode: input.passcode } : {}),
         }),
       });
     } catch {

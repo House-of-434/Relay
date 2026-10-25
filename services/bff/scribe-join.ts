@@ -12,6 +12,9 @@ const joinSchema = z.object({
   request_key: z.string().uuid(),
   meeting_url: z.string().min(1).max(2048),
   title: z.string().trim().min(1).max(200).optional(),
+  /** Dial-in passcode when the invite does not encode it in the URL. The BFF
+   *  proxies it untouched: it derives nothing and decides nothing here. */
+  passcode: z.string().trim().min(1).max(128).optional(),
 }).strict();
 
 export interface InternalScribeJoinOptions {

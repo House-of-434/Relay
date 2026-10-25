@@ -10,5 +10,5 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "exclude": ["src/capture-gmeet.entry.ts"]
+  "exclude": ["src/capture-gmeet.entry.ts", "src/capture-zoom.entry.ts"]
 }
