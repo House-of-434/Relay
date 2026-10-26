@@ -170,18 +170,6 @@ export function mailboxReplyNeedsNoEmail(reply: string | undefined): boolean {
  * that delegates to a teammate and settles waiting is not the end of the
  * work: it is skipped, and the resumed turn — the one that truly answers —
  * sends the mail, once. A no-op reply and a failed turn are never worth one. */
-export function shouldSendMailboxCompletion(input: {
-  routed: boolean;
-  ok: boolean;
-  alreadySent: boolean;
-  awaitingTeammates: boolean;
-  reply: string | undefined;
-}): boolean {
-  if (!input.routed || !input.ok || input.alreadySent || input.awaitingTeammates) return false;
-  const detail = input.reply?.trim();
-  return Boolean(detail) && !mailboxReplyNeedsNoEmail(detail);
-}
-
 /** Set to 0 to disable the notifications entirely. */
 function mailboxNotifyEnabled(): boolean {
   return (process.env.RELAY_MAILBOX_NOTIFY?.trim() || "1") !== "0";
@@ -220,20 +208,26 @@ export function mailboxReplySubject(subject: string | undefined): string {
  * immediately instead of staying silent until it finishes. */
 export async function sendMailboxAcknowledgement(input: {
   capability: string | undefined;
+  mirrorCapability: string | undefined;
   actor: MailboxActor;
   email: string;
   /** The subject of the mail being acknowledged, if any. */
   subject?: string;
+  gmailThreadId: string;
+  sourceMessageId: string;
 }): Promise<MailSendIds | null> {
   if (!mailboxNotifyEnabled()) return null;
   if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return null;
-  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/send", {
-    to: [input.email],
+  return sendMailboxReply({
+    capability: input.capability,
+    mirrorCapability: input.mirrorCapability,
+    actor: input.actor,
+    to: input.email,
     subject: mailboxReplySubject(input.subject),
     body: "Relay received your email and is working on it. You will get a follow-up with the result.\n",
-    mailbox: "relay",
-  }, input.actor);
-  return sentIdsOf(response);
+    gmailThreadId: input.gmailThreadId,
+    sourceMessageId: input.sourceMessageId,
+  });
 }
 
 /** A question the turn needs answered, delivered to an email sender who
@@ -242,6 +236,7 @@ export async function sendMailboxAcknowledgement(input: {
  * answers by replying; that reply starts the next step. */
 export async function sendMailboxQuestionEmail(input: {
   capability: string | undefined;
+  mirrorCapability: string | undefined;
   actor: MailboxActor;
   email: string;
   /** The subject of the mail being answered, if any. */
@@ -251,6 +246,8 @@ export async function sendMailboxQuestionEmail(input: {
   choices?: readonly string[];
   /** Relay's public address, so the reply can link back to the full thread. */
   relayUrl?: string;
+  gmailThreadId: string;
+  sourceMessageId: string;
 }): Promise<MailSendIds | null> {
   if (!canSendMailboxEmail()) return null;
   const question = markdownToPlainText(redactSecretsInText(input.question.trim())).trim().slice(0, 4_000);
@@ -264,42 +261,41 @@ export async function sendMailboxQuestionEmail(input: {
     "Reply to this email with your answer.",
     ...(input.relayUrl ? ["", `Open Relay to see the full thread: ${input.relayUrl}`] : []),
   ].join("\n");
-  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/send", {
-    to: [input.email],
+  return sendMailboxReply({
+    capability: input.capability,
+    mirrorCapability: input.mirrorCapability,
+    actor: input.actor,
+    to: input.email,
     subject: mailboxReplySubject(input.subject),
     body,
-    mailbox: "relay",
-  }, input.actor);
-  return sentIdsOf(response);
+    gmailThreadId: input.gmailThreadId,
+    sourceMessageId: input.sourceMessageId,
+  });
 }
 
-export async function sendMailboxCompletionEmail(input: {
+export async function sendMailboxReply(input: {
   capability: string | undefined;
+  mirrorCapability: string | undefined;
   actor: MailboxActor;
-  email: string;
-  /** The subject of the mail being answered, if any. */
-  subject?: string;
-  detail: string;
-  /** Relay's public address, so the reply can link back to the full thread.
-   * Omitted when this server has no public URL. */
-  relayUrl?: string;
-  /** Files the turn produced (a report, a document). Sent with the reply so a
-   * long deliverable reaches the teammate as an attachment, not pasted text. */
+  to: string;
+  subject: string;
+  body: string;
+  gmailThreadId: string;
+  sourceMessageId: string;
+  /** Persisted deterministic RFC Message-ID for outbox reconciliation. */
+  messageId?: string;
   attachments?: ReadonlyArray<{ filename: string; mimeType: string; data: string }>;
 }): Promise<MailSendIds | null> {
   if (!mailboxNotifyEnabled()) return null;
   if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return null;
-  const excerpt = markdownToPlainText(redactSecretsInText(input.detail.trim())).trim().slice(0, 4_000);
-  const body = [
-    excerpt || "Open Relay to see the result.",
-    ...(input.relayUrl ? ["", `Open Relay to see the full thread: ${input.relayUrl}`] : []),
-  ].join("\n");
-  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/send", {
-    to: [input.email],
-    subject: mailboxReplySubject(input.subject),
-    body,
-    mailbox: "relay",
+  const response = await mailboxBffCall<unknown>(input.capability, "/api/internal/gmail/reply", {
+    to: [input.to],
+    subject: input.subject,
+    body: input.body,
+    gmailThreadId: input.gmailThreadId,
+    sourceMessageId: input.sourceMessageId,
+    ...(input.messageId ? { messageId: input.messageId } : {}),
     ...(input.attachments?.length ? { attachments: input.attachments } : {}),
-  }, input.actor);
+  }, input.actor, input.mirrorCapability);
   return sentIdsOf(response);
 }

@@ -18,6 +18,7 @@ import {
   handleInternalGmail,
   INTERNAL_GMAIL_MESSAGES_GET,
   INTERNAL_GMAIL_MESSAGES_LIST,
+  INTERNAL_GMAIL_REPLY,
   INTERNAL_GMAIL_SEND,
   isInternalGmailPath,
   MESSAGE_CACHE_MAX_ENTRIES,
@@ -30,6 +31,7 @@ const CAPABILITY = "internal-bff-capability-fixture-value-0000000000000000";
 const ACTOR_SECRET = "internal-actor-secret-fixture-value-0000000000000000";
 const WRONG_SECRET = "internal-actor-secret-WRONG-0000000000000000000000";
 const WRONG_CAPABILITY = "internal-bff-capability-WRONG-0000000000000000000";
+const MIRROR_CAPABILITY = "internal-mail-mirror-fixture-value-00000000000000000";
 const TOKEN_KEY = "a".repeat(64);
 const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const OTHER_USER_ID = "f7cd9c1b-5f39-4892-b37e-baf8ae27c0c5";
@@ -138,6 +140,7 @@ async function createFixture(options: {
       listAccounts: (userId) => store.list(userId),
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
+      mirrorCapability: MIRROR_CAPABILITY,
       ...(options.mailbox ? { mailboxAddress: options.mailbox.address, mailboxUserId: options.mailbox.userId } : {}),
     });
   });
@@ -1253,4 +1256,101 @@ test("one unreadable attachment never aborts the rest of the batch", async () =>
   assert.equal(contents[1]!.skipped, "attachment not found");
   assert.match(contents[2]!.text ?? "", /Still here/);
   assert.equal(calls.some((entry) => entry.operation === "attachments.get:att-big"), false);
+});
+
+test("the trusted reply route threads from the source Message-ID and carries the persisted Message-ID", async () => {
+  let sentBody: { raw?: string; threadId?: string } | undefined;
+  let sourceRequested: string | undefined;
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation({
+      users: {
+        messages: {
+          get: async ({ id }: { id: string }) => {
+            sourceRequested = id;
+            return {
+              data: {
+                threadId: "gmail-thread",
+                payload: {
+                  headers: [
+                    { name: "Message-ID", value: "<source@mail.gmail.com>" },
+                    { name: "References", value: "<root@mail.gmail.com>" },
+                  ],
+                },
+              },
+            };
+          },
+          send: async ({ requestBody }: { requestBody?: { raw?: string; threadId?: string } }) => {
+            sentBody = requestBody;
+            return { data: { id: "sent-reply", threadId: "gmail-thread" } };
+          },
+        },
+      },
+    }),
+  } as unknown as GoogleApiGateway;
+  const { call } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: USER_ID },
+    gateway,
+  });
+
+  const response = await call(INTERNAL_GMAIL_REPLY, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID),
+      "x-relay-mail-mirror": `Bearer ${MIRROR_CAPABILITY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Re: Launch",
+      body: "Shipping Friday.",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "source-message",
+      messageId: "<relay-turn@houseof434.com>",
+    }),
+  });
+
+  assert.equal(response.status, 200);
+  const body = await response.json() as { account: { email: string }; sent: { id: string } };
+  assert.equal(body.account.email, SHARED_EMAIL);
+  assert.equal(body.sent.id, "sent-reply");
+  assert.equal(sourceRequested, "source-message");
+  assert.equal(sentBody?.threadId, "gmail-thread");
+  const raw = Buffer.from(sentBody?.raw ?? "", "base64url").toString("utf8");
+  assert.match(raw, /^To: friend@example\.test\r$/m);
+  assert.match(raw, /^Subject: Re: Launch\r$/m);
+  assert.match(raw, /^Message-ID: <relay-turn@houseof434\.com>\r$/m);
+  assert.match(raw, /^In-Reply-To: <source@mail\.gmail\.com>\r$/m);
+  assert.match(raw, /^References: <root@mail\.gmail\.com> <source@mail\.gmail\.com>\r$/m);
+});
+
+test("the reply route refuses a caller without the harness mirror capability", async () => {
+  const { call } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: USER_ID },
+  });
+
+  const response = await call(INTERNAL_GMAIL_REPLY, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Re: Launch",
+      body: "Shipping Friday.",
+      gmailThreadId: "gmail-thread",
+    }),
+  });
+
+  assert.equal(response.status, 401);
 });

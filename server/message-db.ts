@@ -326,6 +326,55 @@ export function upsertCommandReceipt(kind: string, key: string, result: string, 
     .run(kind, key, at, result);
 }
 
+/** Read every receipt of one kind. Used by the routed-reply outbox, which
+ * processes each row under a conditional claim rather than one command. */
+export function listCommandReceipts(kind: string): StoredCommandReceipt[] {
+  return db()
+    .prepare("SELECT kind, key, at, result FROM command_receipts WHERE kind = ? ORDER BY at")
+    .all(kind) as unknown as StoredCommandReceipt[];
+}
+
+/** Conditional receipt update in one IMMEDIATE transaction. `decide` sees
+ * every receipt of the kind (so it can enforce per-conversation ordering) and
+ * returns the next JSON for `key`, or null to leave the row untouched. The
+ * stable payload must carry its own createdAt; the `at` column is last-write
+ * time and must not decide queue order. */
+export function mutateCommandReceipt(
+  kind: string,
+  key: string,
+  decide: (rows: StoredCommandReceipt[]) => string | null,
+  at: number,
+): boolean {
+  const connection = db();
+  connection.exec("PRAGMA synchronous = FULL");
+  try {
+    connection.exec("BEGIN IMMEDIATE");
+    try {
+      const rows = connection
+        .prepare("SELECT kind, key, at, result FROM command_receipts WHERE kind = ?")
+        .all(kind) as unknown as StoredCommandReceipt[];
+      const next = decide(rows);
+      if (next === null) {
+        connection.exec("COMMIT");
+        return false;
+      }
+      connection
+        .prepare(
+          "INSERT INTO command_receipts(kind, key, at, result) VALUES (?, ?, ?, ?) " +
+          "ON CONFLICT(kind, key) DO UPDATE SET at = excluded.at, result = excluded.result",
+        )
+        .run(kind, key, at, next);
+      connection.exec("COMMIT");
+      return true;
+    } catch (error) {
+      connection.exec("ROLLBACK");
+      throw error;
+    }
+  } finally {
+    connection.exec("PRAGMA synchronous = NORMAL");
+  }
+}
+
 /** Run `apply` and record its receipt in ONE transaction on the transcript
  * DB, so a command's rows and the proof that it ran land together or not
  * at all. A receipt already present short-circuits: the stored result is

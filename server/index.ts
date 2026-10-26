@@ -3,7 +3,7 @@
 // folds one SSE event stream; every provider process runs here.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, rmSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, mkdirSync, statSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import { rm as removeDirectory } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -237,6 +237,7 @@ if (RELAY_TOOL_URL) relayToolMcpServer("scout", RELAY_TOOL_URL);
 const heldCapabilities = holdHarnessCapabilities();
 const relayBffCapability = heldCapabilities.bffCapability;
 const scribeWorkerCapability = heldCapabilities.scribeWorkerCapability;
+const relayMailMirrorCapability = heldCapabilities.mailMirrorCapability;
 const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "http://127.0.0.1:8791";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -485,7 +486,7 @@ import {
   type MailboxMessage,
 } from "./mailbox-monitor.ts";
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
-import { reserveRoutedThread } from "./routed-thread.ts";
+import { reserveRoutedThread, resolveMailOrigin } from "./routed-thread.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, createDegradedTracker, meetingCodeFor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
@@ -503,7 +504,8 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { canSendMailboxEmail, deriveMailSubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion, type MailSendReceipt } from "./mailbox-notify.ts";
+import { canSendMailboxEmail, deriveMailSubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxAcknowledgement, sendMailboxQuestionEmail, sendMailboxReply, type MailSendReceipt } from "./mailbox-notify.ts";
+import { createMailReplyRow, drainRoutedReplies } from "./mail-reply-outbox.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -2652,34 +2654,38 @@ function purgeTurnAttachmentsForThread(threadId: string): void {
   }
 }
 
-// Files a routed turn produced with attach_file ride the completion email, so
-// a long deliverable reaches the teammate as an attachment instead of pasted
-// text. Bounded so one turn cannot mail an unbounded payload; the routed
-// thread is opened per email, so every file in it belongs to this run.
+// Files a routed turn produced with attach_file ride that turn's reply, so a
+// long deliverable reaches the teammate as an attachment instead of pasted
+// text. Bounded per turn: a conversation can span many turns, and an earlier
+// turn's files must not ride a later reply.
 const MAX_MAIL_ATTACHMENTS = 10;
 const MAX_MAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_MAIL_TOTAL_BYTES = 25 * 1024 * 1024;
 
-function routedMailAttachments(threadId: string): Array<{ filename: string; mimeType: string; data: string }> {
-  const out: Array<{ filename: string; mimeType: string; data: string }> = [];
+function routedMailAttachmentRefs(
+  threadId: string,
+  turnId: string,
+): Array<{ path: string; filename: string; mimeType: string }> {
+  const out: Array<{ path: string; filename: string; mimeType: string }> = [];
   const attachmentsRoot = `${resolve(ATTACHMENTS_DIR)}${sep}`;
   let total = 0;
   for (const message of store.messagesFor(threadId)) {
+    if (message.turnId !== turnId) continue;
     for (const attachment of message.attachments ?? []) {
       if (attachment.kind !== "file" || out.length >= MAX_MAIL_ATTACHMENTS) continue;
       // The store wrote this path inside ATTACHMENTS_DIR; refuse anything else.
       const resolved = resolve(attachment.path);
       if (!resolved.startsWith(attachmentsRoot)) continue;
-      let bytes: Buffer;
+      let size: number;
       try {
-        bytes = readFileSync(resolved);
+        size = statSync(resolved).size;
       } catch {
         continue;
       }
-      if (bytes.length === 0 || bytes.length > MAX_MAIL_ATTACHMENT_BYTES) continue;
-      total += bytes.length;
+      if (size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) continue;
+      total += size;
       if (total > MAX_MAIL_TOTAL_BYTES) return out;
-      out.push({ filename: attachment.name, mimeType: attachment.mime, data: bytes.toString("base64") });
+      out.push({ path: resolved, filename: attachment.name, mimeType: attachment.mime });
     }
   }
   return out;
@@ -5832,7 +5838,6 @@ const silentCompletionThreads = new Set<string>();
  * not the end of the work when a turn delegates and waits, so the send is
  * keyed to the turn that truly finishes and guarded here against a second
  * settle (a late peer result) mailing the same person twice. */
-const mailCompletionSentThreads = new Set<string>();
 
 /** Routed messages whose receipt acknowledgement has already gone out, so a
  * delivery retry cannot acknowledge the same mail twice. */
@@ -6994,7 +6999,8 @@ bus.subscribe((event: RuntimeEvent) => {
       if (routedThread && asker && event.requestId && !mailSendReceiptSent(commandReceipt("gmail.question", event.requestId)?.result) && !mailSendClaimFresh(commandReceipt("gmail.question", event.requestId)?.result, Date.now())) {
         if (mailboxQuestionInflight.has(event.requestId)) break;
         const mailboxActor = relayMailboxActor();
-        if (mailboxActor && canSendMailboxEmail()) {
+        const questionThreadId = routedThread.gmailThreadId;
+        if (mailboxActor && canSendMailboxEmail() && questionThreadId) {
           const requestId = event.requestId;
           const threadId = event.threadId;
           const instanceId = asker.modelSelection.instanceId;
@@ -7021,12 +7027,15 @@ bus.subscribe((event: RuntimeEvent) => {
             try {
               const sent = await sendMailboxQuestionEmail({
                 capability: relayBffCapability,
+                mirrorCapability: relayMailMirrorCapability,
                 actor: mailboxActor,
                 email: questionEmail,
                 subject: questionSubject,
                 question: questionText,
                 ...(questionChoices ? { choices: questionChoices } : {}),
                 ...(base ? { relayUrl: base } : {}),
+                gmailThreadId: questionThreadId,
+                sourceMessageId: routedThread.messageId,
               });
               if (!sent) {
                 showQuestionCard();
@@ -7320,7 +7329,7 @@ bus.subscribe((event: RuntimeEvent) => {
         // to a teammate and settled waiting on it has not finished, so only the
         // turn that truly answers is the final one. This decides *when* a
         // completion notice fires; each channel separately decides *whether* it
-        // has already been delivered (mailCompletedAt / sent-set for mail).
+        // has already been delivered for its own channel.
         // Work this conversation handed out — not its own root node, which
         // stays open for the whole exchange.
         const awaitingTeammates = roomHandoffs.outstandingDirect(event.threadId).length > 0;
@@ -7336,61 +7345,29 @@ bus.subscribe((event: RuntimeEvent) => {
           const notificationBot = (routineRun && routineSourceOwner(routineRun)?.bot) || bot;
           notify(buildNotification("done", notificationBot, routineReportThread ?? event.threadId, completionDetail, { avatarUrl: notificationBot.avatarUrl }));
         }
-        // Routed mail that finished quietly still reaches its person: the
-        // shared account emails a short result. The send keys off the task's
-        // durable marker, not the one-shot quiet flag: a turn that handed work
-        // to a teammate and settled waiting on it has not finished, so the
-        // handoff is skipped and the resumed turn — the one that truly answers
-        // — mails the sender. The sent-set keeps a late second settle from
-        // mailing twice.
-        {
-          const detail = routineRun ? reply || routineRun.output || "" : reply;
-          const completionReceipt = commandReceipt("gmail.completion", event.threadId)?.result;
-          const shouldSend = shouldSendMailboxCompletion({
-            routed: Boolean(routedMail),
-            ok: event.ok !== false,
-            alreadySent: mailCompletionSentThreads.has(event.threadId) || Boolean(settledTask?.mailCompletedAt) || mailSendReceiptSent(completionReceipt),
-            // The shared gate above: only the turn that truly finished sends.
-            awaitingTeammates,
-            reply: detail,
-          }) && !mailSendClaimFresh(completionReceipt, Date.now());
-          if (shouldSend && routedMail) {
-            const mailboxActor = relayMailboxActor();
-            if (!mailboxActor) {
-              console.warn("[mailbox] completion email skipped: no Mercury bot is registered for Relay's account");
+        // Every unattended parent turn is one message in the mail
+        // conversation. Write the durable reply row before this settle returns;
+        // the mailbox monitor drains it with a lease and a per-turn receipt.
+        if (routedMail && event.ok !== false && completedTurnId && isUnattended(bot.id, event.threadId)) {
+          const terminal = store.markTerminalAssistantMessage(event.threadId, completedTurnId);
+          const text = terminal?.text?.trim() ?? "";
+          // A question turn ends with NO_ACTION; an empty turn has nothing to send.
+          if (text && !mailboxReplyNeedsNoEmail(text)) {
+            const origin = resolveMailOrigin(store, event.threadId, terminal?.requestMessageId);
+            if (!origin) {
+              console.warn("[mailbox] routed reply skipped: the originating email could not be resolved");
             } else {
-              mailCompletionSentThreads.add(event.threadId);
-              const attachments = routedMailAttachments(event.threadId);
-              const base = publicUrl();
-              const completionFingerprint = mailSendFingerprint([
-                routedMail.email,
-                routedMail.subject ?? "",
-                detail,
-                ...attachments.flatMap((attachment) => [attachment.filename, attachment.mimeType, String(attachment.data.length)]),
-              ]);
-              upsertCommandReceipt("gmail.completion", event.threadId, JSON.stringify({ state: "claimed", at: Date.now(), fp: completionFingerprint } satisfies MailSendReceipt), Date.now());
-              void sendMailboxCompletionEmail({
-                capability: relayBffCapability,
-                actor: mailboxActor,
-                email: routedMail.email,
-                // The same subject the receipt used: one email thread, one
-                // subject, whether it comes from the sender or their request.
-                subject: routedMail.subject,
-                detail,
-                ...(base ? { relayUrl: base } : {}),
-                ...(attachments.length ? { attachments } : {}),
-              }).then((sent) => {
-                if (!sent) {
-                  mailCompletionSentThreads.delete(event.threadId);
-                  return;
-                }
-                upsertCommandReceipt("gmail.completion", event.threadId, JSON.stringify({ state: "sent", at: Date.now(), fp: completionFingerprint, sentId: sent.sentId, gmailThreadId: sent.gmailThreadId } satisfies MailSendReceipt), Date.now());
-                // Mark only on success, so a transient failure retries instead
-                // of being recorded as delivered.
-                store.patchTask(bot.id, event.threadId, { mailCompletedAt: new Date().toISOString() });
-              }).catch((error) => {
-                mailCompletionSentThreads.delete(event.threadId);
-                console.warn(`[mailbox] completion email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
+              const domain = RELAY_MAILBOX_ADDRESS?.split("@").pop()?.trim() || "relay.local";
+              createMailReplyRow({
+                turnId: completedTurnId,
+                threadId: event.threadId,
+                gmailThreadId: origin.gmailThreadId,
+                sourceMessageId: origin.gmailMessageId,
+                to: routedMail.email,
+                subject: mailboxReplySubject(routedMail.subject ?? origin.subject),
+                body: redactSecretsInText(text),
+                messageId: `<relay-${completedTurnId}@${domain}>`,
+                attachments: routedMailAttachmentRefs(event.threadId, completedTurnId),
               });
             }
           }
@@ -10044,6 +10021,9 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
   } else {
     const mercuryId = mailboxActor.botId;
     const mailboxUserId = RELAY_MAILBOX_USER_ID;
+    if (!relayMailMirrorCapability) {
+      console.warn("[mailbox] routed replies disabled: RELAY_MAIL_MIRROR_CAPABILITY is missing");
+    }
     mailboxMonitor = new MailboxMonitor({
       address: RELAY_MAILBOX_ADDRESS,
       pollMs: mailboxPollMs,
@@ -10101,9 +10081,12 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
           upsertCommandReceipt("gmail.ack", message.id, JSON.stringify({ state: "claimed", at: Date.now(), fp: ackFingerprint } satisfies MailSendReceipt), Date.now());
           void sendMailboxAcknowledgement({
             capability: relayBffCapability,
+            mirrorCapability: relayMailMirrorCapability,
             actor: mailboxActor,
             email: person.email,
             ...(routedSubject ? { subject: routedSubject } : {}),
+            gmailThreadId: message.threadId?.trim() || message.id,
+            sourceMessageId: message.id,
           }).then((sent) => {
             if (!sent) {
               mailAckSentMessages.delete(message.id);
@@ -10197,6 +10180,37 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
           }
           throw error;
         }
+      },
+      drainReplies: async () => {
+        if (!relayMailMirrorCapability) return;
+        await drainRoutedReplies({
+          send: (input) => sendMailboxReply({
+            capability: relayBffCapability,
+            mirrorCapability: relayMailMirrorCapability,
+            actor: mailboxActor,
+            to: input.to,
+            subject: input.subject,
+            body: input.body,
+            gmailThreadId: input.gmailThreadId,
+            sourceMessageId: input.sourceMessageId,
+            messageId: input.messageId,
+            ...(input.attachments.length ? { attachments: input.attachments } : {}),
+          }),
+          findSent: async (messageId) => {
+            const result = await mailboxBffCall<{ messages: Array<{ id: string }> }>(
+              relayBffCapability,
+              "/api/internal/gmail/messages/list",
+              { query: `rfc822msgid:${messageId}`, maxResults: 10, mailbox: "relay" },
+              mailboxActor,
+            );
+            return (result.messages ?? []).length > 0;
+          },
+          log: (event) => {
+            const line = `[mailbox] ${JSON.stringify(event)}`;
+            if (event.event === "mail-reply.reconciled") console.log(line);
+            else console.warn(line);
+          },
+        });
       },
       log: (event) => {
         const line = `[mailbox] ${JSON.stringify(event)}`;
@@ -15422,6 +15436,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 kind: "text",
                 text: "",
                 attachments: [saved.attachment],
+                ...(liveTurnByThread.get(threadId) ? { turnId: liveTurnByThread.get(threadId)! } : {}),
                 ...(source.group ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
               });
             },

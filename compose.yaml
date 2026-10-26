@@ -28,6 +28,10 @@ services:
       # The harness monitor holds the worker capability to arm captures; the app
       # must never hold the ingest capability (that is tools + scribe only).
       - .env.scribe
+      # Trusted mailbox-reply capability: harness + BFF only. Never mount this
+      # file into tools or scribe.
+      - path: .env.mirror
+        required: false
     environment:
       RELAY_PORT: "8799"
       RELAY_WEBHOOK_PORT: "8800"

@@ -5,12 +5,13 @@
  * task and writing the receipt converges on the same parent instead of
  * opening a second thread. The sender check keeps one mailbox conversation
  * from leaking into another person's parent. */
-import { runCommand } from "./commands.ts";
+import { commandReceipt, runCommand } from "./commands.ts";
 import {
   RoutedMailParentError,
   routedMailThreadId,
   type MailboxMessage,
   type MailboxPerson,
+  type MailOrigin,
 } from "./mailbox-monitor.ts";
 import type { Store } from "./store.ts";
 
@@ -86,4 +87,23 @@ export function reserveRoutedThread(input: ReserveRoutedThreadInput): string {
     });
   }
   return threadId;
+}
+
+/** Resolve the inbound email that started a turn. Immediate turns key the
+ * receipt by the user message; queued turns key it by the durable queue id,
+ * which the drained transcript line retains as `queueId`. */
+export function resolveMailOrigin(
+  store: Store,
+  threadId: string,
+  requestMessageId: string | undefined,
+): MailOrigin | undefined {
+  if (!requestMessageId) return undefined;
+  const direct = commandReceipt<MailOrigin>("gmail.origin", requestMessageId);
+  if (direct?.result) return direct.result;
+  const source = store.messagesFor(threadId).find((message) => message.id === requestMessageId);
+  if (source?.queueId) {
+    const queued = commandReceipt<MailOrigin>("gmail.origin", source.queueId);
+    if (queued?.result) return queued.result;
+  }
+  return undefined;
 }

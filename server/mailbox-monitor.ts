@@ -32,6 +32,17 @@ export interface MailboxAttachment {
   size?: number;
 }
 
+/** The Gmail identity of one inbound email, stored privately against the
+ * Relay user line it created. The reply mirror binds to this, not to the
+ * task's mutable "latest message" pointer. */
+export interface MailOrigin {
+  gmailThreadId: string;
+  gmailMessageId: string;
+  email: string;
+  userId: string;
+  subject?: string;
+}
+
 export interface MailboxMessage {
   id: string;
   /** Gmail conversation id, scoped to the mailbox account. */
@@ -61,6 +72,9 @@ export interface MailboxMonitorDeps {
   hasReceipt: (kind: string, key: string) => boolean;
   recordReceipt: (kind: string, key: string, detail: unknown) => Promise<void>;
   deliver: (message: MailboxMessage, person: MailboxPerson) => Promise<void>;
+  /** Drain the durable routed-reply outbox. Failure is logged and retried on
+   * the next tick; it never blocks inbound mail. */
+  drainReplies?: () => Promise<void>;
   log: (event: Record<string, unknown>) => void;
   now?: () => number;
 }
@@ -269,6 +283,11 @@ export class MailboxMonitor {
     } catch (error) {
       this.deps.log({ event: "mailbox.receipts-unavailable", error: errorText(error) });
       return;
+    }
+    try {
+      await this.deps.drainReplies?.();
+    } catch (error) {
+      this.deps.log({ event: "mailbox.replies-failed", error: errorText(error) });
     }
     let listed = 0;
     let skipped = 0;
