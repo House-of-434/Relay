@@ -166,13 +166,17 @@ export function mailboxReplyNeedsNoEmail(reply: string | undefined): boolean {
   return /^\s*[*_`#>\s]*NO_ACTION\b/i.test(reply ?? "");
 }
 
-/** Whether a settled routed-mail turn should email its sender now. The turn
- * that delegates to a teammate and settles waiting is not the end of the
- * work: it is skipped, and the resumed turn — the one that truly answers —
- * sends the mail, once. A no-op reply and a failed turn are never worth one. */
+/** Each eligible unattended parent turn is mirrored independently, including
+ * a delegation-start turn and a resumed-report turn when each produces an
+ * eligible terminal response. */
 /** Set to 0 to disable the notifications entirely. */
 function mailboxNotifyEnabled(): boolean {
   return (process.env.RELAY_MAILBOX_NOTIFY?.trim() || "1") !== "0";
+}
+
+export function describeMailboxSendSkip(): { reason: string; permanent: boolean } {
+  if (!mailboxNotifyEnabled()) return { reason: "mailbox notifications disabled", permanent: true };
+  return { reason: "shared mailbox is not configured", permanent: false };
 }
 
 /** Whether the question email can be delivered right now: notifications

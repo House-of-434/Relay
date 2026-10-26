@@ -50,6 +50,12 @@ export interface MailReplySent {
   gmailThreadId: string | null;
 }
 
+export interface MailReplySkipped {
+  skipped: true;
+  reason: string;
+  permanent: boolean;
+}
+
 export interface MailReplySendInput {
   to: string;
   subject: string;
@@ -61,7 +67,7 @@ export interface MailReplySendInput {
 }
 
 export interface DrainRoutedRepliesDeps {
-  send: (input: MailReplySendInput) => Promise<MailReplySent | null>;
+  send: (input: MailReplySendInput) => Promise<MailReplySent | MailReplySkipped | null>;
   /** True when the relay mailbox already contains this RFC Message-ID. */
   findSent: (messageId: string) => Promise<boolean>;
   log: (event: Record<string, unknown>) => void;
@@ -109,6 +115,44 @@ function boundedBody(body: string): string {
   if (body.length <= MAX_BODY_LENGTH) return body;
   const marker = "\n\n[message truncated by Relay]";
   return `${body.slice(0, MAX_BODY_LENGTH - marker.length)}${marker}`;
+}
+
+const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
+  "exe", "bat", "cmd", "com", "scr", "msi", "ps1", "ps2", "psm1", "sh", "bash", "zsh", "dll", "jar", "app", "dmg", "pkg",
+  "vbs", "vb", "wsf", "lnk", "iso", "apk", "deb", "rpm", "reg", "hta", "cpl", "msc", "chm",
+  "js", "jse", "vbe", "wsh", "wsc", "sct", "pif",
+]);
+const BLOCKED_ATTACHMENT_MIME = /^(?:application\/(?:x-msdownload|x-executable|x-sh|x-msdos-program|vnd\.microsoft\.portable-executable|x-apple-diskimage|java-archive|javascript|x-javascript|x-vbscript)|text\/(?:javascript|x-vbscript))$/i;
+
+function attachmentExtension(filename: string): string {
+  const normalized = filename.trim().replace(/[. ]+$/, "").toLowerCase();
+  if (!normalized.includes(".")) return "";
+  return normalized.split(".").pop()?.trim() ?? "";
+}
+
+function isBlockedAttachment(filename: string, mimeType: string): boolean {
+  const extension = attachmentExtension(filename);
+  if (BLOCKED_ATTACHMENT_EXTENSIONS.has(extension)) return true;
+  if (BLOCKED_ATTACHMENT_MIME.test(mimeType.trim())) return true;
+  if (!extension) {
+    const mime = mimeType.trim().toLowerCase();
+    if (mime === "" || mime === "application/octet-stream") return true;
+  }
+  return false;
+}
+
+function logDead(
+  log: (event: Record<string, unknown>) => void,
+  claimed: MailReplyRow,
+  error: string,
+): void {
+  log({
+    event: "mail-reply.dead",
+    turnId: claimed.turnId,
+    attempts: claimed.attempts,
+    ambiguous: claimed.ambiguous ?? 0,
+    error: error.slice(0, 200),
+  });
 }
 
 function parseRow(stored: { result: string }): MailReplyRow | undefined {
@@ -267,24 +311,39 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
 
       const attachments: Array<{ filename: string; mimeType: string; data: string }> = [];
       const dropped: MailReplyAttachmentRef[] = [];
+      const unreadable: MailReplyAttachmentRef[] = [];
       let total = 0;
       for (const attachment of claimed.attachments) {
-        try {
-          const bytes = readFileSync(attachment.path);
-          if (bytes.length === 0 || bytes.length > MAX_ATTACHMENT_BYTES) throw new Error("attachment size");
-          total += bytes.length;
-          if (total > MAX_TOTAL_ATTACHMENT_BYTES) throw new Error("attachments too large");
-          attachments.push({
-            filename: attachment.filename,
-            mimeType: attachment.mimeType,
-            data: bytes.toString("base64"),
-          });
-        } catch {
+        if (isBlockedAttachment(attachment.filename, attachment.mimeType)) {
           dropped.push(attachment);
+          continue;
         }
+        let bytes: Buffer;
+        try {
+          bytes = readFileSync(attachment.path);
+        } catch {
+          unreadable.push(attachment);
+          continue;
+        }
+        if (bytes.length === 0 || bytes.length > MAX_ATTACHMENT_BYTES) {
+          dropped.push(attachment);
+          continue;
+        }
+        if (total + bytes.length > MAX_TOTAL_ATTACHMENT_BYTES) {
+          dropped.push(attachment);
+          continue;
+        }
+        total += bytes.length;
+        attachments.push({
+          filename: attachment.filename,
+          mimeType: attachment.mimeType,
+          data: bytes.toString("base64"),
+        });
       }
-      if (dropped.length && claimed.attempts < MAX_ATTEMPTS) {
-        markFailed(claimed, "an attachment could not be read", false, now);
+      if (unreadable.length) {
+        const error = "an attachment could not be read";
+        markFailed(claimed, error, false, now);
+        if (claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, error);
         break;
       }
       const body = dropped.length
@@ -302,8 +361,20 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
           messageId: claimed.messageId,
           attachments,
         });
-        if (!sent) {
-          markFailed(claimed, "the mailbox service did not send the reply", false, now);
+        if (!sent || (typeof sent === "object" && "skipped" in sent)) {
+          const skipped = typeof sent === "object" && sent !== null && "skipped" in sent
+            ? sent as MailReplySkipped
+            : null;
+          const reason = skipped?.reason ?? "the mailbox service did not send the reply";
+          const permanent = skipped?.permanent ?? false;
+          deps.log({
+            event: "mail-reply.skipped",
+            turnId: claimed.turnId,
+            attempts: claimed.attempts,
+            reason: reason.slice(0, 200),
+          });
+          markFailed(claimed, reason, permanent, now);
+          if (permanent || claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, reason);
           break;
         }
         if (dropped.length) {
@@ -319,15 +390,7 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
         const status = errorStatus(error);
         const permanent = status >= 400 && status < 500 && status !== 408 && status !== 429;
         markFailed(claimed, errorText(error), permanent, now);
-        if (permanent || claimed.attempts >= MAX_ATTEMPTS) {
-          deps.log({
-            event: "mail-reply.dead",
-            turnId: claimed.turnId,
-            attempts: claimed.attempts,
-            ambiguous: claimed.ambiguous ?? 0,
-            error: errorText(error),
-          });
-        }
+        if (permanent || claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, errorText(error));
         break;
       }
     }

@@ -1,4 +1,5 @@
-import { mkdirSync, rmSync } from "node:fs";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { commandReceipt } from "./commands.ts";
@@ -161,5 +162,114 @@ describe("routed reply outbox", () => {
     expect(sends).toBe(0);
     expect(row().state).toBe("failed");
     expect(row().attempts).toBe(1);
+  });
+
+  it("sends an oversized attachment's reply immediately without blocking a later reply", async () => {
+    const big = join(DATA_DIR, "big-report.pdf");
+    writeFileSync(big, Buffer.alloc(21 * 1024 * 1024, 1));
+    create({
+      turnId: "turn-1",
+      messageId: "<relay-turn-1@houseof434.com>",
+      attachments: [{ path: big, filename: "big-report.pdf", mimeType: "application/pdf" }],
+    });
+    create({ turnId: "turn-2", messageId: "<relay-turn-2@houseof434.com>" });
+    setRow("turn-1", (current) => ({ ...current, createdAt: 1 }));
+    setRow("turn-2", (current) => ({ ...current, createdAt: 2 }));
+    const bodies: string[] = [];
+    const sentTurns: string[] = [];
+    let attachmentsSeen: number[] = [];
+    await drainRoutedReplies({
+      send: async (input) => {
+        sentTurns.push(input.messageId);
+        bodies.push(input.body);
+        attachmentsSeen.push(input.attachments.length);
+        return sent();
+      },
+      findSent: async () => false,
+      log: () => {},
+      now: () => NOW,
+    });
+    expect(sentTurns).toEqual(["<relay-turn-1@houseof434.com>", "<relay-turn-2@houseof434.com>"]);
+    expect(attachmentsSeen).toEqual([0, 0]);
+    expect(bodies[0]).toContain("Here is the answer.");
+    expect(bodies[0]).toContain("big-report.pdf");
+    expect(row("turn-1").state).toBe("sent");
+    expect(row("turn-2").state).toBe("sent");
+  });
+
+  it("sends a prohibited attachment's reply body instead of killing the reply", async () => {
+    const script = join(DATA_DIR, "report.js");
+    writeFileSync(script, "console.log('report');\n");
+    create({
+      attachments: [{ path: script, filename: "report.js", mimeType: "application/javascript" }],
+    });
+    let sends = 0;
+    let seenAttachments = -1;
+    let seenBody = "";
+    await drainRoutedReplies({
+      send: async (input) => {
+        sends += 1;
+        seenAttachments = input.attachments.length;
+        seenBody = input.body;
+        return sent();
+      },
+      findSent: async () => false,
+      log: () => {},
+      now: () => NOW,
+    });
+    expect(sends).toBe(1);
+    expect(seenAttachments).toBe(0);
+    expect(seenBody).toContain("Here is the answer.");
+    expect(seenBody).toContain("report.js");
+    expect(row().state).toBe("sent");
+  });
+
+  it("dead-ends a permanently skipped send immediately with skipped and dead logs", async () => {
+    create();
+    const logs: Array<Record<string, unknown>> = [];
+    let sends = 0;
+    await drainRoutedReplies({
+      send: async () => {
+        sends += 1;
+        return { skipped: true as const, reason: "mailbox notifications disabled", permanent: true };
+      },
+      findSent: async () => false,
+      log: (event) => logs.push(event),
+      now: () => NOW,
+    });
+    expect(sends).toBe(1);
+    expect(row().state).toBe("dead");
+    expect(row().attempts).toBe(1);
+    const skipped = logs.find((event) => event.event === "mail-reply.skipped");
+    expect(skipped?.turnId).toBe("turn-1");
+    const dead = logs.find((event) => event.event === "mail-reply.dead");
+    expect(dead?.turnId).toBe("turn-1");
+    expect(dead?.attempts).toBe(1);
+    expect(JSON.stringify(logs)).not.toContain("Here is the answer.");
+  });
+
+  it("retries a transiently skipped send and logs dead on exhaustion", async () => {
+    create();
+    const logs: Array<Record<string, unknown>> = [];
+    let now = NOW;
+    const deps = {
+      send: async () => null,
+      findSent: async () => false,
+      log: (event: Record<string, unknown>) => logs.push(event),
+      now: () => now,
+    };
+    await drainRoutedReplies(deps);
+    expect(row().state).toBe("failed");
+    expect(logs.some((event) => event.event === "mail-reply.skipped")).toBe(true);
+    expect(logs.some((event) => event.event === "mail-reply.dead")).toBe(false);
+    for (let attempt = 2; attempt <= 5; attempt += 1) {
+      now += 61 * 60_000;
+      await drainRoutedReplies(deps);
+    }
+    expect(row().state).toBe("dead");
+    expect(row().attempts).toBe(5);
+    const dead = logs.find((event) => event.event === "mail-reply.dead");
+    expect(dead?.turnId).toBe("turn-1");
+    expect(dead?.attempts).toBe(5);
   });
 });

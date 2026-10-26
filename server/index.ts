@@ -504,7 +504,7 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { canSendMailboxEmail, deriveMailSubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxAcknowledgement, sendMailboxQuestionEmail, sendMailboxReply, type MailSendReceipt } from "./mailbox-notify.ts";
+import { canSendMailboxEmail, deriveMailSubject, describeMailboxSendSkip, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxAcknowledgement, sendMailboxQuestionEmail, sendMailboxReply, type MailSendReceipt } from "./mailbox-notify.ts";
 import { createMailReplyRow, drainRoutedReplies } from "./mail-reply-outbox.ts";
 import {
   clearSessionCookie,
@@ -10184,18 +10184,23 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
       drainReplies: async () => {
         if (!relayMailMirrorCapability) return;
         await drainRoutedReplies({
-          send: (input) => sendMailboxReply({
-            capability: relayBffCapability,
-            mirrorCapability: relayMailMirrorCapability,
-            actor: mailboxActor,
-            to: input.to,
-            subject: input.subject,
-            body: input.body,
-            gmailThreadId: input.gmailThreadId,
-            sourceMessageId: input.sourceMessageId,
-            messageId: input.messageId,
-            ...(input.attachments.length ? { attachments: input.attachments } : {}),
-          }),
+          send: async (input) => {
+            const result = await sendMailboxReply({
+              capability: relayBffCapability,
+              mirrorCapability: relayMailMirrorCapability,
+              actor: mailboxActor,
+              to: input.to,
+              subject: input.subject,
+              body: input.body,
+              gmailThreadId: input.gmailThreadId,
+              sourceMessageId: input.sourceMessageId,
+              messageId: input.messageId,
+              ...(input.attachments.length ? { attachments: input.attachments } : {}),
+            });
+            if (result) return result;
+            const skip = describeMailboxSendSkip();
+            return { skipped: true as const, reason: skip.reason, permanent: skip.permanent };
+          },
           findSent: async (messageId) => {
             const result = await mailboxBffCall<{ messages: Array<{ id: string }> }>(
               relayBffCapability,
