@@ -111,6 +111,15 @@ const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
 
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
 function errorText(error: unknown): string {
   const text = error instanceof Error ? error.message : String(error);
   return text.slice(0, 200);
@@ -353,17 +362,22 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
         if (claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, error);
         break;
       }
+      const droppedNames = dropped.map((attachment) => attachment.filename).join(", ").slice(0, 500);
       const body = dropped.length
-        ? `${claimed.body}\n\n[Relay could not include: ${dropped.map((attachment) =>
-            attachment.filename).join(", ").slice(0, 500)}]`
+        ? `${claimed.body}\n\n[Relay could not include: ${droppedNames}]`
         : claimed.body;
+      let html = claimed.html;
+      if (dropped.length && html) {
+        const note = `<p>[Relay could not include: ${escapeHtml(droppedNames)}]</p>`;
+        html = /<\/div>\s*$/.test(html) ? html.replace(/<\/div>\s*$/, `${note}</div>`) : `${html}${note}`;
+      }
 
       try {
         const sent = await deps.send({
           to: claimed.to,
           subject: claimed.subject,
           body,
-          ...(claimed.html ? { html: claimed.html } : {}),
+          ...(html ? { html } : {}),
           gmailThreadId: claimed.gmailThreadId,
           sourceMessageId: claimed.sourceMessageId,
           messageId: claimed.messageId,

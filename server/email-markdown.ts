@@ -327,6 +327,13 @@ export function renderEmailMarkdown(markdown: string): { html: string; text: str
   const definitions = collectDefinitions(tree);
   const body = (tree.children ?? []).map((child) => renderBlock(child, definitions)).join("");
   const text = renderText(tree, definitions);
+  if (!body && !text) {
+    const escaped = escapeHtml(markdown);
+    return {
+      html: `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:#1f2328;max-width:680px;"><p style="margin:0 0 12px;">${escaped}</p></div>`,
+      text: markdown,
+    };
+  }
   const html = body
     ? `<div style="font-family:${FONT};font-size:15px;line-height:1.55;color:#1f2328;max-width:680px;">${body}</div>`
     : "";
