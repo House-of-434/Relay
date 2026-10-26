@@ -30,9 +30,17 @@ export interface SharedBrowserOptions {
 }
 
 let shared: Promise<BrowserContext> | null = null;
+let sharedContext: BrowserContext | null = null;
 
-export function sharedBrowserContext(options: SharedBrowserOptions): Promise<BrowserContext> {
-  shared ??= (async () => {
+export async function sharedBrowserContext(options: SharedBrowserOptions): Promise<BrowserContext> {
+  // The persistent profile is single-instance, so one context is shared by
+  // every capture. A manual login closes that same browser; the close listener
+  // clears the cache so the next join launches fresh instead of inheriting a
+  // dead context (the production incident this guards).
+  if (shared) return await shared;
+
+  sharedContext = null;
+  const launching = (async () => {
     try {
       const launch = options.launch ?? ((launchOptions) => chromium.launchPersistentContext(
         launchOptions.profileDir,
@@ -42,18 +50,30 @@ export function sharedBrowserContext(options: SharedBrowserOptions): Promise<Bro
           locale: launchOptions.locale,
         },
       ));
-      return await launch({
+      const context = await launch({
         profileDir: options.profileDir,
         headless: options.headless,
         args: options.args,
         locale: options.locale,
       });
+      sharedContext = context;
+      context.on("close", () => {
+        // Only the current context may clear the cache; a stale close must
+        // never discard a newer launch.
+        if (sharedContext === context) {
+          shared = null;
+          sharedContext = null;
+        }
+      });
+      return context;
     } catch (error) {
       shared = null;
+      sharedContext = null;
       throw error;
     }
   })();
-  return shared;
+  shared = launching;
+  return launching;
 }
 
 /** Test seam only: drop the cached context between tests. */
