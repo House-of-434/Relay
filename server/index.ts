@@ -10133,7 +10133,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         const prompt = routedMailPrompt();
         const text = routedMailText(message, person);
         // The sender's subject when they gave one, else the first line of the
-        // request: the receipt replies under it, and it is the fallback when
+        // request: the reply goes out under it, and it is the fallback when
         // the answering turn does not name its own subject.
         const routedSubject = deriveMailSubject(message.subject, message.body);
         // The sender's own bot does the work when they have (or can be seeded

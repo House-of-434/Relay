@@ -78,8 +78,8 @@ export function mailboxReplyNeedsNoEmail(reply: string | undefined): boolean {
 
 /** Each eligible unattended parent turn is mirrored independently, including
  * a delegation-start turn and a resumed-report turn when each produces an
- * eligible terminal response. */
-/** Set to 0 to disable the notifications entirely. */
+ * eligible terminal response. Set RELAY_MAILBOX_NOTIFY=0 to disable the
+ * notifications entirely. */
 function mailboxNotifyEnabled(): boolean {
   return (process.env.RELAY_MAILBOX_NOTIFY?.trim() || "1") !== "0";
 }
@@ -96,9 +96,9 @@ export function canSendMailboxEmail(): boolean {
     && Boolean(process.env.RELAY_MAILBOX_ADDRESS?.trim() && process.env.RELAY_MAILBOX_USER_ID?.trim());
 }
 
-/** The subject to reply under, before any answer exists (the receipt email):
- * the sender's own subject, else the first meaningful line of their request,
- * else undefined so the caller falls back to a plain line. */
+/** The subject to reply under, before any answer exists: the sender's own
+ * subject, else the first meaningful line of their request, else undefined
+ * so the caller falls back to a plain line. */
 export function deriveMailSubject(subject: string | undefined, body: string | undefined): string | undefined {
   const trimmed = subject?.trim();
   if (trimmed) return trimmed.slice(0, 250);
