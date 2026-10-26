@@ -524,6 +524,8 @@ export function _loadPending(): void {
         if (!Number.isFinite(finishedAt) || now - finishedAt! > RECEIPT_MAX_AGE_MS) continue;
         const receipt: DelegationReceipt = { id, sourceThreadId, toBotId, toBotName, status, finishedAt: finishedAt! };
         if (typeof result === "string") receipt.result = result;
+        const attachments = cleanAttachments(candidate.attachments);
+        if (attachments) receipt.attachments = attachments;
         if (candidate.approvalOutcome === "deny" || candidate.approvalOutcome === "expired" || candidate.approvalOutcome === "cancelled") {
           receipt.approvalOutcome = candidate.approvalOutcome;
           receipt.approvalSource = peerApprovalFailure(candidate.approvalOutcome).approvalSource;

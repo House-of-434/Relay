@@ -916,6 +916,12 @@ describe("delegations survive a restart", () => {
     expect(receiptsForSourceThread("source-1", 0)).toHaveLength(1);
     expect(receiptsForSourceThread("source-1", Date.now() + 1)).toHaveLength(0);
     expect(receiptsForSourceThread("other", 0)).toHaveLength(0);
+    _resetPending();
+    _loadPending();
+    expect(findDelegationReceipt("task-1")?.attachments).toEqual([
+      { path: "/a.md", filename: "a.md", mimeType: "text/markdown" },
+    ]);
+    expect(receiptsForSourceThread("source-1", 0)).toHaveLength(1);
   });
 
   it("drops corrupt watch and wake entries instead of trusting them", () => {
