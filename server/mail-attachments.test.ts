@@ -26,7 +26,7 @@ describe("routed reply attachment refs", () => {
     expect(refs).toEqual([{ path: childFile, filename: "report.md", mimeType: "text/markdown" }]);
   });
 
-  it("ignores other turns, non-file attachments, out-of-store paths, and empty files", () => {
+  it("ignores other turns, non-file attachments, and out-of-store paths", () => {
     const good = join(root, "good.txt");
     writeFileSync(good, "hello");
     const empty = join(root, "empty.txt");
@@ -42,7 +42,10 @@ describe("routed reply attachment refs", () => {
         { kind: "file", path: good, name: "good.txt", mime: "text/plain" },
       ] },
     ], "turn-1", root);
-    expect(refs).toEqual([{ path: good, filename: "good.txt", mimeType: "text/plain" }]);
+    expect(refs).toEqual([
+      { path: empty, filename: "empty.txt", mimeType: "text/plain" },
+      { path: good, filename: "good.txt", mimeType: "text/plain" },
+    ]);
   });
 
   it("merges parent and child refs without duplicates", () => {

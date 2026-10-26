@@ -334,6 +334,10 @@ export function listCommandReceipts(kind: string): StoredCommandReceipt[] {
     .all(kind) as unknown as StoredCommandReceipt[];
 }
 
+export function deleteCommandReceipt(kind: string, key: string): void {
+  db().prepare("DELETE FROM command_receipts WHERE kind = ? AND key = ?").run(kind, key);
+}
+
 /** Conditional receipt update in one IMMEDIATE transaction. `decide` sees
  * every receipt of the kind (so it can enforce per-conversation ordering) and
  * returns the next JSON for `key`, or null to leave the row untouched. The

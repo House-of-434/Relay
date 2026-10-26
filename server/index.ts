@@ -2672,13 +2672,14 @@ function routedMailAttachmentRefs(threadId: string, turnId: string): MailAttachm
 
 /** Merge parent-turn and delegated-turn artifacts for one reply. The child
  * refs arrive through a persisted delegation receipt, so the shared helper
- * re-applies the attachment-store containment and size checks. */
+ * re-applies attachment-store containment and dedup; size checks live in
+ * the outbox drain so drops are disclosed. */
 function mergeMailAttachments(groups: ReadonlyArray<ReadonlyArray<MailAttachmentRef>>): MailAttachmentRef[] {
   return mergeMailAttachmentRefs(groups, ATTACHMENTS_DIR);
 }
 
 /** Metadata-only dedupe for artifacts carried by parked wakes. The final
- * merge re-checks containment and size before anything is read. */
+ * merge re-checks containment before anything is read. */
 function mergeAttachmentLists(
   ...lists: Array<readonly DelegationAttachmentRef[] | undefined>
 ): DelegationAttachmentRef[] | undefined {

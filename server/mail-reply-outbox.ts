@@ -10,7 +10,7 @@ import { randomUUID } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 import { runCommand } from "./commands.ts";
-import { listCommandReceipts, mutateCommandReceipt } from "./message-db.ts";
+import { deleteCommandReceipt, listCommandReceipts, mutateCommandReceipt } from "./message-db.ts";
 
 export interface MailReplyAttachmentRef {
   path: string;
@@ -104,6 +104,8 @@ export function shouldMirrorRoutedTurn(input: {
 
 const KIND = "gmail.reply";
 const MAX_ATTEMPTS = 5;
+const MAX_ATTACHMENTS = 10;
+const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** Must exceed the BFF send timeout; a stale lease is reclaimed by the next
  * drain and reconciled before any resend. */
 const LEASE_MS = 2 * 60_000;
@@ -188,6 +190,14 @@ function listRows(): MailReplyRow[] {
     const row = parseRow(stored);
     return row ? [row] : [];
   });
+}
+
+function pruneTerminalRows(now: number): void {
+  for (const row of listRows()) {
+    if ((row.state === "sent" || row.state === "dead") && now - row.createdAt > TERMINAL_RETENTION_MS) {
+      deleteCommandReceipt(KIND, row.turnId);
+    }
+  }
 }
 
 export function createMailReplyRow(input: CreateMailReplyInput): void {
@@ -293,6 +303,7 @@ function markFailed(row: MailReplyRow, error: string, permanent: boolean, now: n
 
 export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<void> {
   const now = deps.now?.() ?? Date.now();
+  pruneTerminalRows(now);
   const rows = listRows().sort((a, b) =>
     a.createdAt - b.createdAt || a.turnId.localeCompare(b.turnId));
   const groups = new Map<string, MailReplyRow[]>();
@@ -331,6 +342,10 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
       let total = 0;
       for (const attachment of claimed.attachments) {
         if (isBlockedAttachment(attachment.filename, attachment.mimeType)) {
+          dropped.push(attachment);
+          continue;
+        }
+        if (attachments.length >= MAX_ATTACHMENTS) {
           dropped.push(attachment);
           continue;
         }
