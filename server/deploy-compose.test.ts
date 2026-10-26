@@ -12,14 +12,15 @@ import { parse } from "yaml";
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 
 interface ComposeService {
-  env_file?: string[];
+  env_file?: Array<string | { path: string; required?: boolean }>;
   environment?: Record<string, string>;
 }
 const compose = parse(readFileSync(join(ROOT, "compose.yaml"), "utf8")) as {
   services: Record<string, ComposeService>;
 };
 
-const envFiles = (service: string): string[] => compose.services[service]?.env_file ?? [];
+const envFiles = (service: string): string[] =>
+  (compose.services[service]?.env_file ?? []).map((entry) => typeof entry === "string" ? entry : entry.path);
 
 describe("deploy compose — capability separation", () => {
   it("the harness (app) never loads the ingest capability", () => {
@@ -36,6 +37,14 @@ describe("deploy compose — capability separation", () => {
     expect(envFiles("app")).toContain(".env.workspace");
     expect(envFiles("tools")).not.toContain(".env.workspace");
     expect(envFiles("scribe")).not.toContain(".env.workspace");
+  });
+
+  it("the workspace token file is optional so token-less environments still boot", () => {
+    // CI smoke and fresh clones boot without .env.workspace; compose aborts
+    // the boot on a missing required env file, so optionality is pinned here.
+    const raw = compose.services.app.env_file ?? [];
+    const entry = raw.find((candidate) => (typeof candidate === "string" ? candidate : candidate.path) === ".env.workspace");
+    expect(entry).toMatchObject({ path: ".env.workspace", required: false });
   });
 
   it("the harness loads the worker capability (to arm captures)", () => {
