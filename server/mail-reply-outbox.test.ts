@@ -343,6 +343,29 @@ describe("routed reply outbox", () => {
     expect(seen).not.toContain("truncated by Relay");
   });
 
+  it("drops a BFF-rejectable attachment with a note instead of dead-lettering", async () => {
+    const file = join(DATA_DIR, "notes.txt");
+    writeFileSync(file, "hello");
+    create({
+      attachments: [{ path: file, filename: "notes.txt", mimeType: "text/plain; charset=utf-8" }],
+      html: "<div><p>Here is the answer.</p></div>",
+    });
+    let seen: { attachments: unknown[]; body: string; html?: string } | undefined;
+    await drainRoutedReplies({
+      send: async (input) => {
+        seen = input;
+        return sent();
+      },
+      findSent: async () => false,
+      log: () => {},
+      now: () => NOW,
+    });
+    expect(row().state).toBe("sent");
+    expect(seen?.attachments).toEqual([]);
+    expect(seen?.body).toContain("notes.txt");
+    expect(seen?.html).toContain("notes.txt");
+  });
+
   it("dead-letters an oversized reply on a permanent 413", async () => {
     create({ body: "x".repeat(300_000) });
     const logs: Array<Record<string, unknown>> = [];

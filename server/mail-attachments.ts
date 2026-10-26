@@ -32,6 +32,28 @@ export interface MailAttachmentMessage {
 export const MAX_MAIL_ATTACHMENTS = 10;
 export const MAX_MAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_MAIL_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_NAME_CHARS = 255;
+const MAX_ATTACHMENT_MIME_CHARS = 255;
+const ATTACHMENT_MIME = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
+
+/** The BFF rejects header-breaking, over-length, or malformed filename/MIME
+ * shapes with a permanent 400. Normalize them at settle (and re-check old
+ * rows at drain) so one bad file becomes a disclosed omission instead of
+ * dead-lettering the whole reply. */
+function cleanFilename(value: string | undefined, fallback: string): string {
+  const name = (value ?? "").replace(/[\r\n]+/g, " ").trim() || fallback;
+  return name.slice(0, MAX_ATTACHMENT_NAME_CHARS);
+}
+
+function cleanMime(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim().slice(0, MAX_ATTACHMENT_MIME_CHARS);
+}
+
+export function isSendableAttachmentShape(ref: Pick<MailAttachmentRef, "filename" | "mimeType">): boolean {
+  return ref.filename.length > 0 && ref.filename.length <= MAX_ATTACHMENT_NAME_CHARS &&
+    ref.mimeType.length > 0 && ref.mimeType.length <= MAX_ATTACHMENT_MIME_CHARS &&
+    ATTACHMENT_MIME.test(ref.mimeType);
+}
 
 function settleCandidates(candidates: MailAttachmentRef[]): SettledMailAttachments {
   const refs: MailAttachmentRef[] = [];
@@ -39,6 +61,10 @@ function settleCandidates(candidates: MailAttachmentRef[]): SettledMailAttachmen
   let total = 0;
   for (const candidate of candidates) {
     if (refs.length >= MAX_MAIL_ATTACHMENTS) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    if (!isSendableAttachmentShape(candidate)) {
       omitted.push(candidate.filename);
       continue;
     }
@@ -82,8 +108,8 @@ export function mailAttachmentCandidatesForTurn(
       if (!resolved.startsWith(attachmentsRoot)) continue;
       candidates.push({
         path: resolved,
-        filename: attachment.name?.trim() || resolved.split(/[\\/]/).pop() || "attachment",
-        mimeType: attachment.mime,
+        filename: cleanFilename(attachment.name, resolved.split(/[\\/]/).pop() || "attachment"),
+        mimeType: cleanMime(attachment.mime),
       });
     }
   }
@@ -117,7 +143,11 @@ export function mergeMailAttachmentRefs(
       const resolved = resolve(ref.path);
       if (!resolved.startsWith(attachmentsRoot) || seen.has(resolved)) continue;
       seen.add(resolved);
-      candidates.push({ path: resolved, filename: ref.filename, mimeType: ref.mimeType });
+      candidates.push({
+        path: resolved,
+        filename: cleanFilename(ref.filename, resolved.split(/[\\/]/).pop() || "attachment"),
+        mimeType: cleanMime(ref.mimeType),
+      });
     }
   }
   return settleCandidates(candidates);

@@ -11,6 +11,7 @@ import { readFileSync, statSync } from "node:fs";
 
 import { runCommand } from "./commands.ts";
 import {
+  isSendableAttachmentShape,
   MAX_MAIL_ATTACHMENTS,
   MAX_MAIL_ATTACHMENT_BYTES,
   MAX_MAIL_TOTAL_BYTES,
@@ -351,7 +352,8 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
       const dropped: MailReplyAttachmentRef[] = [];
       let total = 0;
       for (const attachment of claimed.attachments) {
-        if (isBlockedAttachment(attachment.filename, attachment.mimeType)) {
+        if (!isSendableAttachmentShape(attachment) ||
+            isBlockedAttachment(attachment.filename, attachment.mimeType)) {
           dropped.push(attachment);
           continue;
         }

@@ -57,6 +57,29 @@ describe("routed reply attachment refs", () => {
     expect(settled.omitted).toEqual(["missing.pdf"]);
   });
 
+  it("cleans and truncates a filename to the BFF's limit", () => {
+    const file = join(root, "long.txt");
+    writeFileSync(file, "hello");
+    const name = `${"x".repeat(300)}.txt`;
+    const settled = mailAttachmentRefsForTurn([
+      { turnId: "turn-1", attachments: [{ kind: "file", path: file, name: `evil\r\n${name}`, mime: "text/plain" }] },
+    ], "turn-1", root);
+    expect(settled.omitted).toEqual([]);
+    expect(settled.refs[0]!.filename.length).toBe(255);
+    expect(settled.refs[0]!.filename).not.toContain("\n");
+    expect(settled.refs[0]!.filename).not.toContain("\r");
+  });
+
+  it("omits a malformed MIME at settle instead of dead-lettering at the BFF", () => {
+    const file = join(root, "notes.txt");
+    writeFileSync(file, "hello");
+    const settled = mailAttachmentRefsForTurn([
+      { turnId: "turn-1", attachments: [{ kind: "file", path: file, name: "notes.txt", mime: "text/plain; charset=utf-8" }] },
+    ], "turn-1", root);
+    expect(settled.refs).toEqual([]);
+    expect(settled.omitted).toEqual(["notes.txt"]);
+  });
+
   it("keeps delegation candidates ungated so the parent merge discloses drops once", () => {
     const childFile = join(root, "child-report.md");
     writeFileSync(childFile, "# Report\n");
