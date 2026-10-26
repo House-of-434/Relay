@@ -105,25 +105,64 @@ test("members are read-only and the Tool Layer is the only elevated writer", () 
   assert.match(stores, /grant all privileges on all tables in schema app, logs, history to service_role/);
 });
 
+const uncommented = (sql: string): string =>
+  sql
+    .split("\n")
+    .map((line) => line.replace(/--.*$/, ""))
+    .join("\n");
+const oneLine = (sql: string): string => uncommented(sql).replace(/\s+/g, " ").trim();
+const addedColumnTypes = (sql: string): Map<string, string> => {
+  const normalized = oneLine(sql);
+  const entries = [...normalized.matchAll(/add column if not exists ([a-z_][a-z0-9_]*) ([a-z]+(?:\[\])?)/gi)].map(
+    (match) => [match[1]!.toLowerCase(), match[2]!.toLowerCase()] as const,
+  );
+  return new Map(entries);
+};
+const functionBody = (sql: string): string => {
+  const match = /as \$\$(.+)\$\$/.exec(uncommented(sql).replace(/\s+/g, " "));
+  assert.ok(match, "function body not found");
+  return match[1]!;
+};
+const returnsColumns = (sql: string): Array<{ name: string; type: string }> => {
+  const normalized = oneLine(sql);
+  const match = /returns table \(([^)]*)\)/i.exec(normalized);
+  assert.ok(match, "returns table clause not found");
+  return match[1]!.split(",").map((column) => {
+    const parts = column.trim().split(/\s+/);
+    assert.equal(parts.length, 2);
+    return { name: parts[0]!.toLowerCase(), type: parts[1]!.toLowerCase() };
+  });
+};
+
 test("the event content tracker adds its fields without changing the event model", () => {
-  for (const field of ["hosted", "city", "speakers", "media_url", "cover_image_url", "notes"]) {
-    assert.match(eventTracker, new RegExp(`add column if not exists ${field}\\s+text`), field);
-  }
-  assert.match(eventTracker, /alter table app\.events alter column type set default 'gathering'/);
-  assert.match(eventTracker, /notify pgrst, 'reload schema'/);
+  const columns = addedColumnTypes(eventTracker);
+  assert.deepEqual(
+    [...columns.keys()].sort(),
+    ["city", "cover_image_url", "hosted", "media_url", "notes", "speakers"],
+  );
+  for (const column of columns.values()) assert.equal(column, "text");
+  const normalized = oneLine(eventTracker);
+  assert.match(normalized, /alter table app\.events alter column type set default 'gathering'/i);
+  assert.match(normalized, /notify pgrst, 'reload schema'/i);
 });
 
 test("the member directory is service-role-only and skips inactive accounts", () => {
-  assert.match(memberDirectory, /create or replace function app\.search_members\(candidate text, max_rows integer default 20\)/);
-  assert.match(memberDirectory, /security definer/);
-  assert.match(memberDirectory, /set search_path = ''/);
-  assert.match(memberDirectory, /from auth\.users u/);
-  assert.match(memberDirectory, /length\(btrim\(candidate\)\) >= 2/);
-  assert.match(memberDirectory, /u\.email_confirmed_at is not null/);
-  assert.match(memberDirectory, /u\.deleted_at is null/);
-  assert.match(memberDirectory, /u\.banned_until is null or u\.banned_until < now\(\)/);
-  assert.match(memberDirectory, /revoke execute on function app\.search_members\(text, integer\) from public, anon, authenticated/);
-  assert.match(memberDirectory, /grant execute on function app\.search_members\(text, integer\) to service_role/);
-  // The directory returns addresses and names, never auth ids or metadata.
-  assert.doesNotMatch(memberDirectory, /returns table \([^)]*\bid\b/);
+  const normalized = oneLine(memberDirectory);
+  assert.match(normalized, /create or replace function app\.search_members\(candidate text, max_rows integer default 20\)/i);
+  assert.match(normalized, /language sql/i);
+  assert.match(normalized, /\bstable\b/i);
+  assert.match(normalized, /security definer/i);
+  assert.match(normalized, /set search_path = ''/);
+  assert.deepEqual(returnsColumns(memberDirectory), [
+    { name: "email", type: "text" },
+    { name: "display_name", type: "text" },
+  ]);
+  const body = functionBody(memberDirectory);
+  assert.match(body, /from auth\.users u/i);
+  assert.match(body, /length\(btrim\(candidate\)\) >= 2/i);
+  assert.match(body, /u\.email_confirmed_at is not null/i);
+  assert.match(body, /u\.deleted_at is null/i);
+  assert.match(body, /u\.banned_until is null or u\.banned_until < now\(\)/i);
+  assert.match(normalized, /revoke execute on function app\.search_members\(text, integer\) from public, anon, authenticated/i);
+  assert.match(normalized, /grant execute on function app\.search_members\(text, integer\) to service_role/i);
 });

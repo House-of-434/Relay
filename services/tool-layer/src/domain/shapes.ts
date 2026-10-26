@@ -94,6 +94,7 @@ export const SHAPES: Record<string, Shape> = {
       { f: "source_url", r: "url" },
     ],
     validate: [
+      { f: "attendee_ids", r: "uuid[]" },
       { f: "media_url", r: "url" },
       { f: "cover_image_url", r: "url" },
     ],
