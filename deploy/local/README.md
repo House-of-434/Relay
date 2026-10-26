@@ -235,7 +235,7 @@ cp .env.scribe.example .env.scribe   # RELAY_SCRIBE_WORKER_CAPABILITY (app + scr
 cp .env.workspace.example .env.workspace # RELAY_GITHUB_WORKSPACE_TOKEN (app only)
 ```
 
-The `scribe` container holds **only** those two; `app` holds the worker
+The `scribe` container holds **only** the ingest and scribe files; `app` holds the worker
 capability and the GitHub workspace token; `tools` holds the ingest capability. The harness monitor arms
 captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
 `RELAY_SCRIBE_ENABLED` gates the whole feature.
