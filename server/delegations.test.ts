@@ -34,6 +34,7 @@ import {
   recordDelegationReceipt,
   recordDelegationWake,
   recordDelegationWatch,
+  receiptsForSourceThread,
   releaseDelegationsWaitingOn,
   summarizeDelegatedActivity,
   threadsWaitingOn,
@@ -874,6 +875,53 @@ describe("delegations survive a restart", () => {
     expect(loadDelegationWatches().watches).toHaveLength(1);
     clearDelegationWatch("target-1");
     expect(loadDelegationWatches().watches).toEqual([]);
+  });
+
+  it("merges pending child artifacts per source wake and persists receipt artifacts", () => {
+    recordDelegationWake("source-1", {
+      botId: "bot-a",
+      targetName: "Scout",
+      attachments: [{ path: "/a.md", filename: "a.md", mimeType: "text/markdown" }],
+    });
+    recordDelegationWake("source-1", {
+      botId: "bot-a",
+      targetName: "Writer",
+      attachments: [
+        { path: "/b.md", filename: "b.md", mimeType: "text/markdown" },
+        { path: "/a.md", filename: "a.md", mimeType: "text/markdown" },
+      ],
+    });
+    expect(loadDelegationWatches().wakes).toEqual([{
+      threadId: "source-1",
+      botId: "bot-a",
+      targetName: "Writer",
+      attachments: [
+        { path: "/a.md", filename: "a.md", mimeType: "text/markdown" },
+        { path: "/b.md", filename: "b.md", mimeType: "text/markdown" },
+      ],
+    }]);
+
+    recordDelegationReceipt({
+      id: "task-1",
+      sourceThreadId: "source-1",
+      toBotId: "bot-b",
+      toBotName: "Scout",
+      status: "done",
+      result: "ok",
+      attachments: [{ path: "/a.md", filename: "a.md", mimeType: "text/markdown" }],
+    });
+    expect(findDelegationReceipt("task-1")?.attachments).toEqual([
+      { path: "/a.md", filename: "a.md", mimeType: "text/markdown" },
+    ]);
+    expect(receiptsForSourceThread("source-1", 0)).toHaveLength(1);
+    expect(receiptsForSourceThread("source-1", Date.now() + 1)).toHaveLength(0);
+    expect(receiptsForSourceThread("other", 0)).toHaveLength(0);
+    _resetPending();
+    _loadPending();
+    expect(findDelegationReceipt("task-1")?.attachments).toEqual([
+      { path: "/a.md", filename: "a.md", mimeType: "text/markdown" },
+    ]);
+    expect(receiptsForSourceThread("source-1", 0)).toHaveLength(1);
   });
 
   it("drops corrupt watch and wake entries instead of trusting them", () => {

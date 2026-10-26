@@ -9,6 +9,7 @@ const AGENTS = new Set<RelayAgent>(["scout", "mercury", "curator"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const ASSERTION_KEYS = "agent,botId,issuedAt,signature,threadId,userId";
+const ASSERTION_KEYS_WITH_MAIL = "agent,botId,issuedAt,mailRouted,signature,threadId,userId";
 /** Assertions older than this are rejected. Must match services/tool-layer. */
 const ASSERTION_MAX_SKEW_SECONDS = 5 * 60;
 
@@ -20,14 +21,31 @@ export const RELAY_TOOL_PROXY_MARKER = "RELAY_RELAY_TOOL_PROXY";
 /** Fixed HMAC input prefix. Must match services/tool-layer and services/bff. */
 const ACTOR_ASSERTION_PURPOSE = "relay-actor";
 
+function signingBytes(
+  userId: string,
+  issuedAt: number,
+  botId: string,
+  threadId: string,
+  agent: string,
+  mailRouted?: true,
+): string {
+  return JSON.stringify([
+    ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent,
+    ...(mailRouted ? [true] : []),
+  ]);
+}
+
 /** Sign the owner's actor context for the Tool Layer. Email is deliberately
  * absent: the owner key is the Supabase UUID, and the sign-in domain allow-list
  * is enforced where the session is issued, not here. The agent role travels
- * signed so the Tool Layer and BFF can both bind a call to its route. */
+ * signed so the Tool Layer and BFF can both bind a call to its route. The
+ * `mailRouted` marker means "this turn may not invoke agent-initiated mail";
+ * it is never an authorization to send. */
 export function signedActorContext(
   actor: { userId: string; botId: string; threadId: string; agent: RelayAgent },
   secret: string | undefined,
   issuedAt = Math.floor(Date.now() / 1000),
+  options?: { mailRouted?: true },
 ): string {
   const userId = actor.userId.trim().toLowerCase();
   const botId = actor.botId.trim().toLowerCase();
@@ -39,10 +57,15 @@ export function signedActorContext(
   if (!secret || Buffer.byteLength(secret) < 32) {
     throw new Error("RELAY_TOOL_ACTOR_SECRET must contain at least 32 bytes");
   }
+  const mailRouted = options?.mailRouted === true;
   const signature = createHmac("sha256", secret)
-    .update(JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, actor.agent]))
+    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent, mailRouted ? true : undefined))
     .digest("base64url");
-  return JSON.stringify({ userId, issuedAt, botId, threadId, agent: actor.agent, signature });
+  return JSON.stringify({
+    userId, issuedAt, botId, threadId, agent: actor.agent,
+    ...(mailRouted ? { mailRouted: true } : {}),
+    signature,
+  });
 }
 
 /** Verify an actor assertion the harness (or BFF) signed. Same scheme the
@@ -54,7 +77,7 @@ export function verifyActorAssertion(
   value: string | undefined,
   secret: string | undefined,
   now = Date.now(),
-): { userId: string; botId: string; threadId: string; agent: RelayAgent } {
+): { userId: string; botId: string; threadId: string; agent: RelayAgent; mailRouted?: true } {
   if (!secret || Buffer.byteLength(secret) < 32) {
     throw new Error("actor assertion secret is not configured");
   }
@@ -71,7 +94,10 @@ export function verifyActorAssertion(
     throw new Error("actor assertion is invalid");
   }
   const assertion = parsed as Record<string, unknown>;
-  if (Object.keys(assertion).sort().join(",") !== ASSERTION_KEYS ||
+  const keys = Object.keys(assertion).sort().join(",");
+  const mailRouted = keys === ASSERTION_KEYS_WITH_MAIL;
+  if ((keys !== ASSERTION_KEYS && !mailRouted) ||
+      (mailRouted && assertion.mailRouted !== true) ||
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
@@ -84,13 +110,26 @@ export function verifyActorAssertion(
     throw new Error("actor assertion is expired or outside allowed clock skew");
   }
   const expected = createHmac("sha256", secret)
-    .update(JSON.stringify([ACTOR_ASSERTION_PURPOSE, assertion.userId, assertion.issuedAt, assertion.botId, assertion.threadId, assertion.agent]))
+    .update(signingBytes(
+      assertion.userId,
+      assertion.issuedAt,
+      assertion.botId,
+      assertion.threadId,
+      assertion.agent,
+      mailRouted ? true : undefined,
+    ))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
     throw new Error("actor assertion signature is invalid");
   }
-  return { userId: assertion.userId, botId: assertion.botId, threadId: assertion.threadId, agent: assertion.agent as RelayAgent };
+  return {
+    userId: assertion.userId,
+    botId: assertion.botId,
+    threadId: assertion.threadId,
+    agent: assertion.agent as RelayAgent,
+    ...(mailRouted ? { mailRouted: true as const } : {}),
+  };
 }
 
 /** Validate RELAY_TOOL_URL as a bare http(s) origin and return it, so both the

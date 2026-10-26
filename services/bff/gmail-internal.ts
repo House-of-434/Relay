@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import type { RelayActor } from "./actor-assertion.ts";
-import { verifyInternalRequest } from "./internal-request.ts";
+import { requestHasCapability, verifyInternalRequest } from "./internal-request.ts";
 import { extractDocumentText } from "./document-text.ts";
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway, type GoogleApiClientFor } from "./google-api.ts";
 import type { GoogleConnectionMetadata } from "./google-connections.ts";
@@ -11,12 +11,14 @@ import type { GoogleConnectionMetadata } from "./google-connections.ts";
 export const INTERNAL_GMAIL_MESSAGES_LIST = "/api/internal/gmail/messages/list";
 export const INTERNAL_GMAIL_MESSAGES_GET = "/api/internal/gmail/messages/get";
 export const INTERNAL_GMAIL_SEND = "/api/internal/gmail/send";
+export const INTERNAL_GMAIL_REPLY = "/api/internal/gmail/reply";
 export const INTERNAL_GMAIL_ATTACHMENT_GET = "/api/internal/gmail/attachments/get";
 
 const INTERNAL_GMAIL_PATHS = [
   INTERNAL_GMAIL_MESSAGES_LIST,
   INTERNAL_GMAIL_MESSAGES_GET,
   INTERNAL_GMAIL_SEND,
+  INTERNAL_GMAIL_REPLY,
   INTERNAL_GMAIL_ATTACHMENT_GET,
 ] as const;
 
@@ -25,6 +27,11 @@ const MAX_MESSAGE_ID_LENGTH = 512;
 const MAX_SUBJECT_LENGTH = 250;
 const MAX_ADDRESS_LENGTH = 320;
 const MAX_BODY_LENGTH = 20_000;
+/** A trusted routed reply carries the report in the body, so its limits are
+ * separate from agent-composed mail. Both are enforced as UTF-8 bytes at the
+ * boundary; MIME framing and attachments have their own caps. */
+const MAX_REPLY_BODY_BYTES = 256_000;
+const MAX_REPLY_HTML_BYTES = 1_000_000;
 const MAX_LIST_RESULTS = 50;
 /** Extracted mail text is bounded: enough for a deck-evaluation thread,
  * never the whole mailbox. */
@@ -41,6 +48,11 @@ const MAX_MIME_LENGTH = 255;
 const MAX_OUTBOUND_ATTACHMENTS = 10;
 const MAX_OUTBOUND_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_OUTBOUND_TOTAL_BYTES = 25 * 1024 * 1024;
+/** Reply body and HTML ride the same JSON request as base64 attachments. This
+ * reserve is charged separately from the attachment cap so a max-size payload
+ * is not rejected by HTTP framing; MIME boundaries/headers are negligible and
+ * bounded by the raw-message size. */
+const REPLY_JSON_OVERHEAD_BYTES = MAX_REPLY_BODY_BYTES + MAX_REPLY_HTML_BYTES + 1024 * 1024;
 const MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH = Math.ceil(MAX_OUTBOUND_ATTACHMENT_BYTES / 3) * 4;
 
 /** Files an outbound message may never carry. Gmail rejects some itself and
@@ -112,11 +124,36 @@ const sendSchema = z.object({
   mailbox: MAILBOX_INPUT,
 }).strict();
 
+const replyAttachmentSchema = z.object({
+  filename: z.string().min(1).max(MAX_FILENAME_LENGTH),
+  mimeType: z.string().min(1).max(MAX_MIME_LENGTH),
+  data: z.string().min(1).max(MAX_OUTBOUND_ATTACHMENT_BASE64_LENGTH),
+}).strict();
+
+/** The harness-owned reply path: one recipient, relay mailbox only, optional
+ * threading metadata. It never accepts cc/bcc or a caller-chosen mailbox. */
+const replySchema = z.object({
+  to: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).length(1),
+  subject: z.string().max(MAX_SUBJECT_LENGTH),
+  // Coarse code-unit guards only. The authoritative limits are the UTF-8 byte
+  // checks below, which can return a useful 413 instead of a generic 400.
+  body: z.string().max(MAX_REPLY_BODY_BYTES * 4),
+  /** Rendered HTML alternative. Questions omit it; routed replies send both. */
+  html: z.string().max(MAX_REPLY_HTML_BYTES * 4).optional(),
+  gmailThreadId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH),
+  sourceMessageId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH).optional(),
+  messageId: z.string().min(1).max(MAX_MESSAGE_ID_LENGTH).regex(/^<[^<>\s]+@[^<>\s]+>$/).optional(),
+  attachments: z.array(replyAttachmentSchema).max(MAX_OUTBOUND_ATTACHMENTS).optional(),
+}).strict();
+
 export interface InternalGmailOptions {
   googleApi: GoogleApiGateway;
   listAccounts: (userId: string) => Promise<GoogleConnectionMetadata[]>;
   capability: string;
   actorSecret: string | undefined;
+  /** Second capability, held only by the Harness and BFF, for the trusted
+   * reply path. Missing means every /reply call fails closed. */
+  mirrorCapability?: string;
   /** Relay's shared mailbox: address plus the Supabase user id owning its
    * connection. Required only for `mailbox: "relay"`, which fails closed
    * when either is missing. */
@@ -177,17 +214,51 @@ function buildRawEmail(input: {
   bcc: string[];
   subject: string;
   body: string;
+  /** Optional HTML alternative for the same body. Agent-composed mail omits
+   * it; the trusted routed reply always renders it. */
+  html?: string;
   attachments: Array<{ filename: string; mimeType: string; data: string }>;
+  /** RFC headers for a threaded reply. Gmail's threadId places the message in
+   * the conversation; these make it render as a reply there. */
+  messageId?: string;
+  inReplyTo?: string;
+  references?: string;
 }): string {
   const headers = [
     `To: ${input.to.join(", ")}`,
     ...(input.cc.length ? [`Cc: ${input.cc.join(", ")}`] : []),
     ...(input.bcc.length ? [`Bcc: ${input.bcc.join(", ")}`] : []),
     `Subject: ${headerValue(input.subject)}`,
+    ...(input.messageId ? [`Message-ID: ${headerValue(input.messageId)}`] : []),
+    ...(input.inReplyTo ? [`In-Reply-To: ${headerValue(input.inReplyTo)}`] : []),
+    ...(input.references ? [`References: ${headerValue(input.references)}`] : []),
     "MIME-Version: 1.0",
   ];
+  const alternative = input.html
+    ? (boundary: string): string[] => [
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        "",
+        input.body,
+        `--${boundary}`,
+        'Content-Type: text/html; charset="UTF-8"',
+        "",
+        input.html!,
+        `--${boundary}--`,
+        "",
+      ]
+    : undefined;
   if (input.attachments.length === 0) {
-    return [...headers, 'Content-Type: text/plain; charset="UTF-8"', "", input.body].join("\r\n");
+    if (!alternative) {
+      return [...headers, 'Content-Type: text/plain; charset="UTF-8"', "", input.body].join("\r\n");
+    }
+    const boundary = `relay_alt_${randomUUID()}`;
+    return [
+      ...headers,
+      `Content-Type: multipart/alternative; boundary="${boundary}"`,
+      "",
+      ...alternative(boundary),
+    ].join("\r\n");
   }
   let total = 0;
   const parts: string[] = [];
@@ -218,14 +289,27 @@ function buildRawEmail(input: {
     );
   }
   parts.push(`--${boundary}--`, "");
+  const bodyPart = alternative
+    ? (() => {
+        const altBoundary = `relay_alt_${randomUUID()}`;
+        return [
+          `--${boundary}`,
+          `Content-Type: multipart/alternative; boundary="${altBoundary}"`,
+          "",
+          ...alternative(altBoundary),
+        ];
+      })()
+    : [
+        `--${boundary}`,
+        'Content-Type: text/plain; charset="UTF-8"',
+        "",
+        input.body,
+      ];
   return [
     ...headers,
     `Content-Type: multipart/mixed; boundary="${boundary}"`,
     "",
-    `--${boundary}`,
-    'Content-Type: text/plain; charset="UTF-8"',
-    "",
-    input.body,
+    ...bodyPart,
     ...parts,
   ].join("\r\n");
 }
@@ -784,20 +868,39 @@ export async function handleInternalGmail(
     capability: options.capability,
     actorSecret: options.actorSecret,
     now: options.now,
-    // A send may carry base64 attachments; every other route stays at the
-    // small default so a body cannot grow unbounded. Allow for base64
-    // expansion plus JSON overhead on top of the decoded total cap.
-    ...(pathname === INTERNAL_GMAIL_SEND
-      ? { maxBodyBytes: Math.ceil(MAX_OUTBOUND_TOTAL_BYTES * 4 / 3) + 1024 * 1024 }
+    // A send or reply may carry base64 attachments; every other route stays
+    // at the small default so a body cannot grow unbounded. Allow for base64
+    // expansion plus JSON overhead on top of the decoded total cap. The reply
+    // route adds its body/HTML reserve on top of the attachment cap.
+    ...(pathname === INTERNAL_GMAIL_SEND || pathname === INTERNAL_GMAIL_REPLY
+      ? {
+          maxBodyBytes: Math.ceil(MAX_OUTBOUND_TOTAL_BYTES * 4 / 3) +
+            (pathname === INTERNAL_GMAIL_REPLY ? REPLY_JSON_OVERHEAD_BYTES : 1024 * 1024),
+        }
       : {}),
   }, pathname);
   if (!verified) return;
+  if (pathname === INTERNAL_GMAIL_REPLY &&
+      !requestHasCapability(req, "x-relay-mail-mirror", options.mirrorCapability)) {
+    json(res, 401, { error: "unauthorized" });
+    return;
+  }
   const actor: RelayActor = verified.actor;
   const raw: unknown = verified.body;
+  if (pathname === INTERNAL_GMAIL_SEND && actor.mailRouted) {
+    json(res, 403, {
+      error: "Relay sends the reply for a routed email; agent-initiated mail is disabled on this turn.",
+    });
+    return;
+  }
 
   let resolved: ResolvedMailbox | undefined;
   try {
-    resolved = await resolveAccount(options, actor, requestedMailbox(raw));
+    resolved = await resolveAccount(
+      options,
+      actor,
+      pathname === INTERNAL_GMAIL_REPLY ? "relay" : requestedMailbox(raw),
+    );
   } catch (error) {
     if (error instanceof RelayMailboxUnavailableError) {
       json(res, 404, { error: error.message });
@@ -986,6 +1089,95 @@ export async function handleInternalGmail(
         }
         throw error;
       }
+    }
+
+    if (pathname === INTERNAL_GMAIL_REPLY) {
+      const parsed = replySchema.safeParse(raw);
+      if (!parsed.success) {
+        json(res, 400, { error: "invalid Gmail reply" });
+        return;
+      }
+      const bodyBytes = Buffer.byteLength(parsed.data.body, "utf8");
+      if (bodyBytes > MAX_REPLY_BODY_BYTES) {
+        json(res, 413, { error: `reply body is ${bodyBytes} bytes; the limit is ${MAX_REPLY_BODY_BYTES}` });
+        return;
+      }
+      const htmlBytes = parsed.data.html === undefined ? 0 : Buffer.byteLength(parsed.data.html, "utf8");
+      if (htmlBytes > MAX_REPLY_HTML_BYTES) {
+        json(res, 413, { error: `reply HTML is ${htmlBytes} bytes; the limit is ${MAX_REPLY_HTML_BYTES}` });
+        return;
+      }
+      const attachments = parsed.data.attachments ?? [];
+      const rfcMessageId = parsed.data.messageId
+        ?? `<relay-${randomUUID()}@${account.email.split("@").pop() || "relay.local"}>`;
+      try {
+        const sent = await options.googleApi.withClient(
+          ownerUserId,
+          "gmail",
+          account.id,
+          [GOOGLE_API_SCOPE_CATALOG.gmail.drafts],
+          async (client) => {
+            let inReplyTo: string | undefined;
+            let references: string | undefined;
+            if (parsed.data.sourceMessageId) {
+              try {
+                const source = await client.users.messages.get({
+                  userId: "me",
+                  id: parsed.data.sourceMessageId,
+                  format: "metadata",
+                  metadataHeaders: ["Message-ID", "References"],
+                });
+                // Headers only when the source really lives in this thread;
+                // otherwise Gmail's threadId is the sole grouping authority.
+                if (!source.data.threadId || source.data.threadId === parsed.data.gmailThreadId) {
+                  const headers = source.data.payload?.headers ?? [];
+                  const header = (name: string): string | undefined => {
+                    const match = headers.find((entry) => entry.name?.toLowerCase() === name);
+                    return typeof match?.value === "string" ? headerValue(match.value) : undefined;
+                  };
+                  const sourceId = header("message-id");
+                  inReplyTo = sourceId
+                    ? (sourceId.startsWith("<") ? sourceId : `<${sourceId}>`)
+                    : undefined;
+                  const prior = header("references");
+                  references = [prior, inReplyTo]
+                    .filter((value): value is string => Boolean(value))
+                    .join(" ")
+                    .slice(0, 2_000) || undefined;
+                }
+              } catch {
+                console.warn(`[gmail] source ${parsed.data.sourceMessageId} could not be read; replying without RFC headers`);
+              }
+            }
+            const rawMessage = buildRawEmail({
+              to: parsed.data.to,
+              cc: [],
+              bcc: [],
+              subject: parsed.data.subject,
+              body: parsed.data.body,
+              ...(parsed.data.html !== undefined ? { html: parsed.data.html } : {}),
+              attachments,
+              messageId: rfcMessageId,
+              ...(inReplyTo ? { inReplyTo } : {}),
+              ...(references ? { references } : {}),
+            });
+            const response = await client.users.messages.send({
+              userId: "me",
+              requestBody: {
+                raw: Buffer.from(rawMessage, "utf8").toString("base64url"),
+                threadId: parsed.data.gmailThreadId,
+              },
+            });
+            return { id: response.data.id, threadId: response.data.threadId };
+          },
+        );
+        json(res, 200, { account: { email: account.email }, sent, to: parsed.data.to, cc: [], bcc: [] });
+      } catch (error) {
+        json(res, error instanceof AttachmentRequestError ? error.status : 502, {
+          error: error instanceof Error ? error.message : "Gmail request failed",
+        });
+      }
+      return;
     }
 
     const parsed = sendSchema.safeParse(raw);

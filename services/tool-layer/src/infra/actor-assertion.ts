@@ -9,6 +9,7 @@ export const ACTOR_ASSERTION_PURPOSE = "relay-actor";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const KEYS = "agent,botId,issuedAt,signature,threadId,userId";
+const KEYS_WITH_MAIL = "agent,botId,issuedAt,mailRouted,signature,threadId,userId";
 
 export const RELAY_AGENT_ROLES = ["scout", "mercury", "curator"] as const;
 export type RelayAgentRole = (typeof RELAY_AGENT_ROLES)[number];
@@ -18,14 +19,25 @@ export type RelayActorAssertion = {
   botId: string;
   threadId: string;
   agent: RelayAgentRole;
+  mailRouted?: true;
   issuedAt: number;
   signature: string;
 };
 
 export type RelayActorContext = Omit<RelayActorAssertion, "signature">;
 
-function signingBytes(userId: string, issuedAt: number, botId: string, threadId: string, agent: string): string {
-  return JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent]);
+function signingBytes(
+  userId: string,
+  issuedAt: number,
+  botId: string,
+  threadId: string,
+  agent: string,
+  mailRouted?: true,
+): string {
+  return JSON.stringify([
+    ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent,
+    ...(mailRouted ? [true] : []),
+  ]);
 }
 
 function secretKey(secret: string | undefined): string {
@@ -43,6 +55,7 @@ export function signActorAssertion(
   actor: { userId: string; botId: string; threadId: string; agent: string },
   secret: string | undefined,
   issuedAt = Math.floor(Date.now() / 1000),
+  options?: { mailRouted?: true },
 ): string {
   const userId = actor.userId.trim().toLowerCase();
   const botId = actor.botId.trim().toLowerCase();
@@ -53,10 +66,15 @@ export function signActorAssertion(
   if (!isAgentRole(actor.agent)) throw new Error("Relay actor agent must be a known role");
   if (!Number.isSafeInteger(issuedAt)) throw new Error("Relay actor assertion timestamp is invalid");
 
+  const mailRouted = options?.mailRouted === true;
   const signature = createHmac("sha256", secretKey(secret))
-    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent))
+    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent, mailRouted ? true : undefined))
     .digest("base64url");
-  return JSON.stringify({ userId, issuedAt, botId, threadId, agent: actor.agent, signature });
+  return JSON.stringify({
+    userId, issuedAt, botId, threadId, agent: actor.agent,
+    ...(mailRouted ? { mailRouted: true } : {}),
+    signature,
+  });
 }
 
 export function verifyActorAssertion(
@@ -77,7 +95,9 @@ export function verifyActorAssertion(
 
   const assertion = parsed as Record<string, unknown>;
   const keys = Object.keys(assertion).sort().join(",");
-  if (keys !== KEYS ||
+  const mailRouted = keys === KEYS_WITH_MAIL;
+  if ((keys !== KEYS && !mailRouted) ||
+      (mailRouted && assertion.mailRouted !== true) ||
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
@@ -93,7 +113,14 @@ export function verifyActorAssertion(
   }
 
   const expected = createHmac("sha256", secretKey(secret))
-    .update(signingBytes(assertion.userId, assertion.issuedAt, assertion.botId, assertion.threadId, assertion.agent))
+    .update(signingBytes(
+      assertion.userId,
+      assertion.issuedAt,
+      assertion.botId,
+      assertion.threadId,
+      assertion.agent,
+      mailRouted ? true : undefined,
+    ))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
@@ -105,6 +132,7 @@ export function verifyActorAssertion(
     botId: assertion.botId,
     threadId: assertion.threadId,
     agent: assertion.agent,
+    ...(mailRouted ? { mailRouted: true as const } : {}),
     issuedAt: assertion.issuedAt,
   };
 }

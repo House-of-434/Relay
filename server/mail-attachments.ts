@@ -1,0 +1,154 @@
+/** Attachment refs that ride a routed reply.
+ *
+ * The lookup is intentionally thread-agnostic: a delegated child thread is not
+ * itself a routed-mail thread, but the artifacts it attached in its completing
+ * turn still belong to the parent reply. The caller supplies the messages and
+ * the attachment store root; nothing here decides whether a thread is routed.
+ */
+import { statSync } from "node:fs";
+import { resolve, sep } from "node:path";
+
+export interface MailAttachmentRef {
+  path: string;
+  filename: string;
+  mimeType: string;
+}
+
+export interface SettledMailAttachments {
+  refs: MailAttachmentRef[];
+  omitted: string[];
+}
+
+export interface MailAttachmentMessage {
+  turnId?: string;
+  attachments?: ReadonlyArray<{
+    kind: string;
+    path: string;
+    name?: string;
+    mime: string;
+  }>;
+}
+
+export const MAX_MAIL_ATTACHMENTS = 10;
+export const MAX_MAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
+export const MAX_MAIL_TOTAL_BYTES = 25 * 1024 * 1024;
+const MAX_ATTACHMENT_NAME_CHARS = 255;
+const MAX_ATTACHMENT_MIME_CHARS = 255;
+const ATTACHMENT_MIME = /^[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*\/[A-Za-z0-9][A-Za-z0-9!#$&^_.+-]*$/;
+
+/** The BFF rejects header-breaking, over-length, or malformed filename/MIME
+ * shapes with a permanent 400. Normalize them at settle (and re-check old
+ * rows at drain) so one bad file becomes a disclosed omission instead of
+ * dead-lettering the whole reply. */
+function cleanFilename(value: string | undefined, fallback: string): string {
+  const name = (value ?? "").replace(/[\r\n]+/g, " ").trim() || fallback;
+  return name.slice(0, MAX_ATTACHMENT_NAME_CHARS);
+}
+
+function cleanMime(value: string): string {
+  return value.replace(/[\r\n]+/g, " ").trim().slice(0, MAX_ATTACHMENT_MIME_CHARS);
+}
+
+export function isSendableAttachmentShape(ref: Pick<MailAttachmentRef, "filename" | "mimeType">): boolean {
+  return ref.filename.length > 0 && ref.filename.length <= MAX_ATTACHMENT_NAME_CHARS &&
+    ref.mimeType.length > 0 && ref.mimeType.length <= MAX_ATTACHMENT_MIME_CHARS &&
+    ATTACHMENT_MIME.test(ref.mimeType);
+}
+
+function settleCandidates(candidates: MailAttachmentRef[]): SettledMailAttachments {
+  const refs: MailAttachmentRef[] = [];
+  const omitted: string[] = [];
+  let total = 0;
+  for (const candidate of candidates) {
+    if (refs.length >= MAX_MAIL_ATTACHMENTS) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    if (!isSendableAttachmentShape(candidate)) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    let stat;
+    try {
+      stat = statSync(candidate.path);
+    } catch {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    const size = stat.size;
+    if (!stat.isFile() || size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    if (total + size > MAX_MAIL_TOTAL_BYTES) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    total += size;
+    refs.push(candidate);
+  }
+  return { refs, omitted };
+}
+
+/** Containment-only candidates for one turn. Delegation receipts persist
+ * these ungated so the parent merge applies the size gates once and the
+ * drain can disclose every drop. */
+export function mailAttachmentCandidatesForTurn(
+  messages: Iterable<MailAttachmentMessage>,
+  turnId: string,
+  attachmentsDir: string,
+): MailAttachmentRef[] {
+  const candidates: MailAttachmentRef[] = [];
+  const attachmentsRoot = `${resolve(attachmentsDir)}${sep}`;
+  for (const message of messages) {
+    if (message.turnId !== turnId) continue;
+    for (const attachment of message.attachments ?? []) {
+      if (attachment.kind !== "file") continue;
+      const resolved = resolve(attachment.path);
+      if (!resolved.startsWith(attachmentsRoot)) continue;
+      candidates.push({
+        path: resolved,
+        filename: cleanFilename(attachment.name, resolved.split(/[\\/]/).pop() || "attachment"),
+        mimeType: cleanMime(attachment.mime),
+      });
+    }
+  }
+  return candidates;
+}
+
+/** Explicit file attachments from one turn, confined to the attachment
+ * store. Existence and size/total gates run here so a dangling or oversized
+ * path never enters the reply row; the dropped names ride the row so the
+ * drain can disclose them. */
+export function mailAttachmentRefsForTurn(
+  messages: Iterable<MailAttachmentMessage>,
+  turnId: string,
+  attachmentsDir: string,
+): SettledMailAttachments {
+  return settleCandidates(mailAttachmentCandidatesForTurn(messages, turnId, attachmentsDir));
+}
+
+/** Merge parent-turn and delegated-turn artifacts for one reply. Delegated
+ * refs come back through a persisted receipt, so containment and dedup are
+ * re-applied here along with the existence and size/total gates. */
+export function mergeMailAttachmentRefs(
+  groups: ReadonlyArray<ReadonlyArray<MailAttachmentRef>>,
+  attachmentsDir: string,
+): SettledMailAttachments {
+  const candidates: MailAttachmentRef[] = [];
+  const seen = new Set<string>();
+  const attachmentsRoot = `${resolve(attachmentsDir)}${sep}`;
+  for (const group of groups) {
+    for (const ref of group) {
+      const resolved = resolve(ref.path);
+      if (!resolved.startsWith(attachmentsRoot) || seen.has(resolved)) continue;
+      seen.add(resolved);
+      candidates.push({
+        path: resolved,
+        filename: cleanFilename(ref.filename, resolved.split(/[\\/]/).pop() || "attachment"),
+        mimeType: cleanMime(ref.mimeType),
+      });
+    }
+  }
+  return settleCandidates(candidates);
+}

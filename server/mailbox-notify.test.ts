@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { deriveMailSubject, MAIL_SEND_CLAIM_TTL_MS, mailboxReplyNeedsNoEmail, mailboxReplySubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, markdownToPlainText, sendMailboxAcknowledgement, sendMailboxCompletionEmail, sendMailboxQuestionEmail, shouldSendMailboxCompletion } from "./mailbox-notify.ts";
+import { deriveMailSubject, MAIL_SEND_CLAIM_TTL_MS, mailboxReplyNeedsNoEmail, mailboxReplySubject, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, markdownToPlainText, sendMailboxQuestionEmail, sendMailboxReply } from "./mailbox-notify.ts";
 import type { MailboxActor } from "./mailbox-bff.ts";
 
 const ACTOR: MailboxActor = {
@@ -59,77 +59,6 @@ describe("reply subject", () => {
   });
 });
 
-describe("receipt acknowledgement", () => {
-  const saved: Record<string, string | undefined> = {};
-  beforeEach(() => {
-    saved.address = process.env.RELAY_MAILBOX_ADDRESS;
-    saved.userId = process.env.RELAY_MAILBOX_USER_ID;
-    saved.secret = process.env.RELAY_TOOL_ACTOR_SECRET;
-    process.env.RELAY_MAILBOX_ADDRESS = "relay@houseof434.com";
-    process.env.RELAY_MAILBOX_USER_ID = ACTOR.userId;
-    process.env.RELAY_TOOL_ACTOR_SECRET = "actor-secret-that-is-at-least-thirty-two-bytes";
-  });
-  afterEach(() => {
-    for (const [key, value] of Object.entries({
-      RELAY_MAILBOX_ADDRESS: saved.address,
-      RELAY_MAILBOX_USER_ID: saved.userId,
-      RELAY_TOOL_ACTOR_SECRET: saved.secret,
-    })) {
-      if (value === undefined) delete process.env[key];
-      else process.env[key] = value;
-    }
-    vi.restoreAllMocks();
-  });
-
-  it("answers as a reply and says only that the mail arrived", async () => {
-    const bodies: string[] = [];
-    vi.stubGlobal("fetch", async (_url: string | URL, init?: RequestInit) => {
-      bodies.push(String(init?.body));
-      return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
-    });
-
-    await sendMailboxAcknowledgement({
-      capability: "x".repeat(40),
-      actor: ACTOR,
-      email: "friend@example.test",
-      subject: "Find the post",
-    });
-
-    const payload = JSON.parse(bodies[0]!) as { subject: string; body: string; mailbox?: string };
-    expect(payload.mailbox).toBe("relay");
-    expect(payload.subject).toBe("Re: Find the post");
-    expect(payload.body).toContain("received your email");
-    // The receipt is not the result and must not claim one.
-    expect(payload.body).not.toContain("finished");
-  });
-});
-
-describe("when to send the completion email", () => {
-  const base = { routed: true, ok: true, alreadySent: false, awaitingTeammates: false, reply: "Here is the answer." };
-
-  it("sends once the work truly finishes, citing the answer", () => {
-    expect(shouldSendMailboxCompletion(base)).toBe(true);
-  });
-
-  it("skips the turn that delegated and is still waiting on a teammate", () => {
-    // The bug this guards: the handoff turn settled first and mailed a
-    // premature "delegated" note; the resumed turn then had nothing left.
-    expect(shouldSendMailboxCompletion({ ...base, awaitingTeammates: true })).toBe(false);
-  });
-
-  it("never sends twice for one routed thread", () => {
-    expect(shouldSendMailboxCompletion({ ...base, alreadySent: true })).toBe(false);
-  });
-
-  it("stays silent for non-routed turns, failures, and no-op replies", () => {
-    expect(shouldSendMailboxCompletion({ ...base, routed: false })).toBe(false);
-    expect(shouldSendMailboxCompletion({ ...base, ok: false })).toBe(false);
-    expect(shouldSendMailboxCompletion({ ...base, reply: "NO_ACTION" })).toBe(false);
-    expect(shouldSendMailboxCompletion({ ...base, reply: "  " })).toBe(false);
-    expect(shouldSendMailboxCompletion({ ...base, reply: undefined })).toBe(false);
-  });
-});
-
 describe("completion email structure", () => {
   const saved: Record<string, string | undefined> = {};
   beforeEach(() => {
@@ -165,11 +94,14 @@ describe("completion email structure", () => {
     const bodies = capture();
     await sendMailboxQuestionEmail({
       capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
       actor: ACTOR,
       email: "friend@example.test",
       subject: "Update Social Gear",
       question: "Which company's page should I update?",
       choices: ["Social Gear", "A different company"],
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
     });
     const payload = JSON.parse(bodies[0]!) as { subject: string; body: string };
     expect(payload.subject).toBe("Re: Update Social Gear");
@@ -183,10 +115,13 @@ describe("completion email structure", () => {
     const bodies = capture();
     await sendMailboxQuestionEmail({
       capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
       actor: ACTOR,
       email: "friend@example.test",
       subject: "Update Social Gear",
       question: "Which model?\n- Opus\n- Sonnet\n\nWhich stores?\n- Instamart\n- Blinkit",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
     });
     const payload = JSON.parse(bodies[0]!) as { subject: string; body: string };
     expect(payload.body).toContain("Which model?");
@@ -197,52 +132,56 @@ describe("completion email structure", () => {
     expect(payload.body).toContain("- Blinkit");
   });
 
-  it("receipt and result share one subject so the two emails thread", async () => {
+  it("replies under the subject derived from the sender's request", async () => {
     const bodies = capture();
-    // One subject, derived once from the sender's request, used by both sends.
-    const derived = deriveMailSubject("", "Find the latest Anthropic post");
-    await sendMailboxAcknowledgement({ capability: "x".repeat(40), actor: ACTOR, email: "friend@example.test", subject: derived });
-    await sendMailboxCompletionEmail({
+    const subject = mailboxReplySubject(deriveMailSubject("", "Find the latest Anthropic post"));
+    await sendMailboxReply({
       capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
       actor: ACTOR,
-      email: "friend@example.test",
-      subject: derived,
-      detail: "Here it is.",
+      to: "friend@example.test",
+      subject,
+      body: "Here it is.",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
     });
-    const ack = (JSON.parse(bodies[0]!) as { subject: string }).subject;
-    const result = (JSON.parse(bodies[1]!) as { subject: string }).subject;
-    expect(ack).toBe("Re: Find the latest Anthropic post");
-    expect(result).toBe(ack);
+    const payload = JSON.parse(bodies[0]!) as { subject: string };
+    expect(payload.subject).toBe("Re: Find the latest Anthropic post");
   });
 
-  it("sends the reply as the body, with the link only when a URL exists", async () => {
+  it("forwards the rendered HTML alternative with the plain-text body", async () => {
     const bodies = capture();
-    await sendMailboxCompletionEmail({
+    await sendMailboxReply({
       capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
       actor: ACTOR,
-      email: "friend@example.test",
-      subject: "Find the post",
-      detail: "Here is the link: https://example.test/post",
-      relayUrl: "https://relay.example.test",
+      to: "friend@example.test",
+      subject: "Re: Find the post",
+      body: "Here it is.",
+      html: "<div><p>Here it is.</p></div>",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
+    });
+    const payload = JSON.parse(bodies[0]!) as { body: string; html?: string };
+    expect(payload.body).toBe("Here it is.");
+    expect(payload.html).toBe("<div><p>Here it is.</p></div>");
+  });
+
+  it("sends the provided body as the reply", async () => {
+    const bodies = capture();
+    await sendMailboxReply({
+      capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
+      actor: ACTOR,
+      to: "friend@example.test",
+      subject: "Re: Find the post",
+      body: "Here is the link: https://example.test/post",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
     });
     const payload = JSON.parse(bodies[0]!) as { subject: string; body: string };
     expect(payload.subject).toBe("Re: Find the post");
     expect(payload.body).toContain("Here is the link: https://example.test/post");
-    expect(payload.body).toContain("https://relay.example.test");
-    expect(payload.body).not.toContain("finished");
-  });
-
-  it("drops the Relay footer when the server has no public URL", async () => {
-    const bodies = capture();
-    await sendMailboxCompletionEmail({
-      capability: "x".repeat(40),
-      actor: ACTOR,
-      email: "friend@example.test",
-      subject: "Question",
-      detail: "The answer.",
-    });
-    const payload = JSON.parse(bodies[0]!) as { body: string };
-    expect(payload.body).toBe("The answer.");
     expect(payload.body).not.toContain("Open Relay");
   });
 });
@@ -276,17 +215,20 @@ describe("completion email attachments", () => {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
 
-    await sendMailboxCompletionEmail({
+    await sendMailboxReply({
       capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
       actor: ACTOR,
-      email: "friend@example.test",
-      subject: "Research",
-      detail: "Your deep research has finished.",
+      to: "friend@example.test",
+      subject: "Re: Research",
+      body: "Your deep research has finished.",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
       attachments: [{ filename: "report.md", mimeType: "text/markdown", data: "cmVwb3J0" }],
     });
 
     const payload = JSON.parse(bodies[0]!) as { mailbox?: string; attachments?: unknown };
-    expect(payload.mailbox).toBe("relay");
+    expect(payload.mailbox).toBeUndefined();
     expect(payload.attachments).toEqual([{ filename: "report.md", mimeType: "text/markdown", data: "cmVwb3J0" }]);
   });
 
@@ -297,12 +239,15 @@ describe("completion email attachments", () => {
       return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
     });
 
-    await sendMailboxCompletionEmail({
+    await sendMailboxReply({
       capability: "x".repeat(40),
+      mirrorCapability: "m".repeat(40),
       actor: ACTOR,
-      email: "friend@example.test",
-      subject: "Question",
-      detail: "Here is the answer.",
+      to: "friend@example.test",
+      subject: "Re: Question",
+      body: "Here is the answer.",
+      gmailThreadId: "gmail-thread",
+      sourceMessageId: "gmail-message",
     });
 
     const payload = JSON.parse(bodies[0]!) as Record<string, unknown>;

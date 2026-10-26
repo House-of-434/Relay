@@ -42,11 +42,28 @@ function hash(value: string): Buffer {
   return createHash("sha256").update(value).digest();
 }
 
-function capabilityMatches(req: IncomingMessage, expectedHash: Buffer): boolean {
-  const authorization = req.headers.authorization;
-  const match = typeof authorization === "string" ? /^Bearer\s+(\S+)$/i.exec(authorization.trim()) : null;
+function bearerMatches(value: string | undefined, expectedHash: Buffer): boolean {
+  const match = value ? /^Bearer\s+(\S+)$/i.exec(value.trim()) : null;
   if (!match || Buffer.byteLength(match[1]!) > 4096) return false;
   return timingSafeEqual(hash(match[1]!), expectedHash);
+}
+
+function capabilityMatches(req: IncomingMessage, expectedHash: Buffer): boolean {
+  const authorization = req.headers.authorization;
+  return bearerMatches(typeof authorization === "string" ? authorization : undefined, expectedHash);
+}
+
+/** A second, route-specific capability carried on its own header. Used where a
+ * shared BFF capability is not enough to separate the caller (the Harness's
+ * trusted mailbox replies from the agent-facing send route). */
+export function requestHasCapability(
+  req: IncomingMessage,
+  headerName: string,
+  expected: string | undefined,
+): boolean {
+  if (typeof expected !== "string" || Buffer.byteLength(expected) < 32) return false;
+  const value = req.headers[headerName.toLowerCase()];
+  return bearerMatches(typeof value === "string" ? value : undefined, hash(expected));
 }
 
 async function readJson(req: IncomingMessage, maxBodyBytes: number): Promise<unknown> {

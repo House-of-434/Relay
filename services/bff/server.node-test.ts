@@ -496,9 +496,10 @@ test("requires BFF capability and Supabase configuration instead of starting a d
     SUPABASE_ANON_KEY,
     RELAY_BFF_CAPABILITY: BFF_CAPABILITY,
   });
-  const { googleOAuthClients, googleRedirectUri, googleTokenEncryptionKey, relayToolActorSecret, relayMailboxAddress, relayMailboxUserId, dataDir, ...baseConfig } = defaultConfig;
+  const { googleOAuthClients, googleRedirectUri, googleTokenEncryptionKey, relayToolActorSecret, relayMailMirrorCapability, relayMailboxAddress, relayMailboxUserId, dataDir, ...baseConfig } = defaultConfig;
   assert.deepEqual(baseConfig, CONFIG);
   assert.equal(relayToolActorSecret, undefined);
+  assert.equal(relayMailMirrorCapability, undefined);
   assert.equal(relayMailboxAddress, undefined);
   assert.equal(relayMailboxUserId, undefined);
   assert.equal(configFromEnvironment({
@@ -507,6 +508,18 @@ test("requires BFF capability and Supabase configuration instead of starting a d
     RELAY_BFF_CAPABILITY: BFF_CAPABILITY,
     RELAY_TOOL_ACTOR_SECRET: "actor-secret-fixture-value-000000000000000000",
   }).relayToolActorSecret, "actor-secret-fixture-value-000000000000000000");
+  assert.equal(configFromEnvironment({
+    SUPABASE_PROJECT_URL: PROJECT_URL,
+    SUPABASE_ANON_KEY,
+    RELAY_BFF_CAPABILITY: BFF_CAPABILITY,
+    RELAY_MAIL_MIRROR_CAPABILITY: `  ${"m".repeat(40)}  `,
+  }).relayMailMirrorCapability, "m".repeat(40));
+  assert.throws(() => configFromEnvironment({
+    SUPABASE_PROJECT_URL: PROJECT_URL,
+    SUPABASE_ANON_KEY,
+    RELAY_BFF_CAPABILITY: BFF_CAPABILITY,
+    RELAY_MAIL_MIRROR_CAPABILITY: "too-short",
+  }), /RELAY_MAIL_MIRROR_CAPABILITY must be at least 32 bytes/);
   assert.deepEqual(googleOAuthClients, {
     gmail: { clientId: undefined, clientSecret: undefined },
     "google-calendar": { clientId: undefined, clientSecret: undefined },

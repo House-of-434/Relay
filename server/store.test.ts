@@ -39,6 +39,16 @@ describe("Store", () => {
     expect(store.bot(bot.id)!.tasks?.[0]?.modelSelection).toEqual(selection());
   });
 
+  it("reuses a task reserved with an explicit thread id", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const threadId = "11111111-1111-5111-8111-111111111111";
+    const first = store.createTask(bot.id, "Reserved", false, undefined, undefined, undefined, threadId)!;
+    const second = store.createTask(bot.id, "Ignored", false, undefined, undefined, undefined, threadId)!;
+    expect(second).toBe(first);
+    expect(store.tasks(bot.id).filter((task) => task.threadId === threadId)).toHaveLength(1);
+  });
+
   it("never overwrites an explicit model selection while healing", () => {
     const store = new Store(selection);
     const chosen = store.createBot({ name: "Custom", modelSelection: { instanceId: "codex", model: "gpt-x" } });

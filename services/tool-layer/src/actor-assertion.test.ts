@@ -30,6 +30,29 @@ test("the HMAC covers a fixed purpose string", () => {
   assert.equal(ACTOR_ASSERTION_PURPOSE, "relay-actor");
 });
 
+test("the mail-routed marker is literal true and covered by the HMAC", () => {
+  const marked = signActorAssertion(ACTOR, SECRET, NOW / 1000, { mailRouted: true });
+  assert.deepEqual(verifyActorAssertion(marked, SECRET, NOW), {
+    userId: USER_ID,
+    botId: BOT_ID,
+    threadId: THREAD_ID,
+    agent: "scout",
+    mailRouted: true,
+    issuedAt: NOW / 1000,
+  });
+
+  const parsed = JSON.parse(marked) as Record<string, unknown>;
+  assert.throws(() => verifyActorAssertion(
+    JSON.stringify({ ...parsed, mailRouted: false }), SECRET, NOW), /invalid/);
+  assert.throws(() => verifyActorAssertion(
+    JSON.stringify({ ...parsed, mailRouted: "true" }), SECRET, NOW), /invalid/);
+  const { mailRouted: _mailRouted, ...sixKeyShape } = parsed;
+  assert.throws(() => verifyActorAssertion(
+    JSON.stringify(sixKeyShape), SECRET, NOW), /signature is invalid/);
+  assert.throws(() => verifyActorAssertion(
+    JSON.stringify({ ...parsed, extra: true }), SECRET, NOW), /invalid/);
+});
+
 test("spoofed, unsigned, malformed, expired, and invalid-signature assertions are rejected", () => {
   const valid = JSON.parse(signActorAssertion(ACTOR, SECRET, NOW / 1000)) as Record<string, unknown>;
 

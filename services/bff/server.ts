@@ -72,6 +72,9 @@ export interface RelayBffConfig {
   googleRedirectUri?: string;
   googleTokenEncryptionKey?: string;
   relayToolActorSecret?: string;
+  /** Harness-only capability for the trusted mailbox reply route. The Tool
+   * Layer never receives it; missing means /reply fails closed. */
+  relayMailMirrorCapability?: string;
   /** Relay's own shared Gmail account: the address and the Supabase user id
    * that owns its connection. Both are required for `mailbox: "relay"`. */
   relayMailboxAddress?: string;
@@ -155,6 +158,7 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     supabaseAnonKey: env.SUPABASE_ANON_KEY!,
     relayBffCapability: env.RELAY_BFF_CAPABILITY!,
     relayToolActorSecret: env.RELAY_TOOL_ACTOR_SECRET,
+    relayMailMirrorCapability: env.RELAY_MAIL_MIRROR_CAPABILITY?.trim(),
     relayMailboxAddress: env.RELAY_MAILBOX_ADDRESS?.trim(),
     relayMailboxUserId: env.RELAY_MAILBOX_USER_ID?.trim(),
     relayBffPublicUrl: env.RELAY_BFF_PUBLIC_URL?.trim() || `http://localhost:${bffPort}`,
@@ -209,6 +213,10 @@ function validateConfig(config: RelayBffConfig): RelayBffConfig {
   if (!config.supabaseAnonKey.trim()) throw new Error("SUPABASE_ANON_KEY is required");
   if (Buffer.byteLength(config.relayBffCapability) < 32) {
     throw new Error("RELAY_BFF_CAPABILITY must be at least 32 bytes");
+  }
+  if (config.relayMailMirrorCapability !== undefined &&
+      Buffer.byteLength(config.relayMailMirrorCapability) < 32) {
+    throw new Error("RELAY_MAIL_MIRROR_CAPABILITY must be at least 32 bytes");
   }
   for (const [name, port] of [["RELAY_BFF_PORT", config.bffPort], ["RELAY_PORT", config.ombPort], ["RELAY_UI_PORT", config.uiPort]] as const) {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(`${name} must be a valid TCP port`);
@@ -1791,6 +1799,7 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         listAccounts: (userId) => googleStore.list(userId),
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
+        mirrorCapability: config.relayMailMirrorCapability,
         mailboxAddress: config.relayMailboxAddress,
         mailboxUserId: config.relayMailboxUserId,
         now,

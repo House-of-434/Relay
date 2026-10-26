@@ -20,13 +20,30 @@ export interface MailboxActor {
   agent: "mercury";
 }
 
-export async function mailboxBffCall<T>(capability: string | undefined, path: string, payload: unknown, actor: MailboxActor): Promise<T> {
+export class MailboxBffError extends Error {
+  readonly status: number;
+
+  constructor(status: number, message: string) {
+    super(message);
+    this.name = "MailboxBffError";
+    this.status = status;
+  }
+}
+
+export async function mailboxBffCall<T>(
+  capability: string | undefined,
+  path: string,
+  payload: unknown,
+  actor: MailboxActor,
+  mirrorCapability?: string,
+): Promise<T> {
   const assertion = signedActorContext(actor, process.env.RELAY_TOOL_ACTOR_SECRET);
   const response = await fetch(new URL(path, mailboxBffBase()), {
     method: "POST",
     redirect: "error",
     headers: {
       ...(capability ? { authorization: `Bearer ${capability}` } : {}),
+      ...(mirrorCapability ? { "x-relay-mail-mirror": `Bearer ${mirrorCapability}` } : {}),
       "x-relay-actor-user": assertion,
       "content-type": "application/json",
     },
@@ -40,7 +57,7 @@ export async function mailboxBffCall<T>(capability: string | undefined, path: st
     } catch {
       // status-only message is enough
     }
-    throw new Error(`shared mailbox call failed (${response.status})${detail ? `: ${detail}` : ""}`);
+    throw new MailboxBffError(response.status, `shared mailbox call failed (${response.status})${detail ? `: ${detail}` : ""}`);
   }
   return await response.json() as T;
 }
