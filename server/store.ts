@@ -104,7 +104,7 @@ export interface TaskRecord extends WireTask {
    * is, which message opened it, and that message's subject (the reply's
    * subject is derived from it). The settle path emails that person once the
    * work truly finishes — not while a teammate is still working on it. */
-  mailRouted?: { userId: string; email: string; messageId: string; subject?: string };
+  mailRouted?: { userId: string; email: string; messageId: string; gmailThreadId?: string; subject?: string };
   /** When the routed-mail result email was sent, so a restart or a late
    * second settle cannot mail the same sender twice. */
   mailCompletedAt?: string;
@@ -2533,13 +2533,20 @@ export class Store {
 
   /** A fresh context on the same bot: new thread, new session, same
    * persona/tools/computer. Becomes the active task. */
-  createTask(botId: string, title?: string, activate = true, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full"): TaskRecord | null {
+  createTask(botId: string, title?: string, activate = true, projectId?: string, openedBy?: TaskOpenedBy, approvalMode?: "ask" | "full", threadId?: string): TaskRecord | null {
     const bot = this.bot(botId);
     if (!bot) return null;
     if (projectId !== undefined && !this.project(botId, projectId)) return null;
+    // An explicit id makes a reserved task idempotent: callers that derive the
+    // id from their own durable key can retry after a crash without creating a
+    // second thread.
+    if (threadId) {
+      const existing = this.taskByThread(botId, threadId);
+      if (existing) return existing;
+    }
     const createdAt = Date.now();
     const task: TaskRecord = {
-      threadId: newId(),
+      threadId: threadId ?? newId(),
       title: threadTitleFrom(title),
       createdAt,
       updatedAt: createdAt,

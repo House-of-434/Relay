@@ -7,6 +7,7 @@ import {
   deliverRoutedMail,
   routedMailPrompt,
   routedMailText,
+  routedMailThreadId,
   routedMailTitle,
   senderAddress,
   type MailboxMessage,
@@ -44,6 +45,50 @@ describe("sender parsing", () => {
 });
 
 describe("routed mail delivery", () => {
+  it("derives a stable UUID per mailbox conversation", () => {
+    const first = routedMailThreadId("mailbox-account", "gmail-thread");
+    expect(first).toBe(routedMailThreadId("mailbox-account", "gmail-thread"));
+    expect(first).not.toBe(routedMailThreadId("mailbox-account", "other-thread"));
+    expect(first).not.toBe(routedMailThreadId("other-account", "gmail-thread"));
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+  });
+
+  it("checks the routed thread itself before starting a turn", async () => {
+    const seen: Array<[string, string]> = [];
+    await deliverRoutedMail({
+      botId: "mercury",
+      threadFor: async () => "thread-b",
+      isBlocked: (botId, threadId) => {
+        seen.push([botId, threadId]);
+        return true;
+      },
+      queue: () => {},
+      run: async () => {},
+    }, { message: message(), person: BOB, personKey: "p_bob", text: "t", prompt: "p" });
+    expect(seen).toEqual([["mercury", "thread-b"]]);
+  });
+
+  it("reserves by the conversation and passes its Gmail thread id to the sender", async () => {
+    let seen: { id?: string; threadId?: string; email?: string } | undefined;
+    await deliverRoutedMail({
+      botId: "mercury",
+      threadFor: async (inbound, sender) => {
+        seen = { id: inbound.id, threadId: inbound.threadId, email: sender.email };
+        return "thread-b";
+      },
+      isBlocked: () => false,
+      queue: () => {},
+      run: async () => {},
+    }, {
+      message: message({ threadId: "gmail-thread" }),
+      person: BOB,
+      personKey: "p_bob",
+      text: "t",
+      prompt: "p",
+    });
+    expect(seen).toEqual({ id: "message-1", threadId: "gmail-thread", email: BOB.email });
+  });
+
   it("queues B's mail on B's own thread with B's sender when the bot is busy with A", async () => {
     const queued: RoutedMailDelivery[] = [];
     const ran: RoutedMailDelivery[] = [];

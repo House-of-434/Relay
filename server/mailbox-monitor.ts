@@ -10,6 +10,8 @@
 // messages are listed, receipted ids are skipped cheaply, and at most 10 new
 // messages are handled per tick, so an old unhandled message cannot be
 // starved by a pile of already-processed ones.
+import { createHash } from "node:crypto";
+
 import type { ResolvedSender } from "../shared/wire.ts";
 
 /** One plain query; no invite/category exclusions. Sent mail is excluded by
@@ -20,6 +22,8 @@ export const MAILBOX_HANDLE_LIMIT = 10;
 
 export interface MailboxMessageSummary {
   id: string;
+  /** Gmail conversation id, scoped to the mailbox account. */
+  threadId?: string;
 }
 
 export interface MailboxAttachment {
@@ -30,6 +34,8 @@ export interface MailboxAttachment {
 
 export interface MailboxMessage {
   id: string;
+  /** Gmail conversation id, scoped to the mailbox account. */
+  threadId?: string;
   from?: string;
   subject?: string;
   date?: string;
@@ -70,9 +76,10 @@ export interface RoutedMailDelivery {
 export interface RoutedMailDeliveryDeps {
   botId: string;
   /** Create-or-reuse the routed conversation and stamp its thread starter.
-   * Reservation is by message id, so a retry never opens a second thread. */
-  threadFor: (messageId: string) => Promise<string>;
-  isBlocked: (botId: string) => boolean;
+   * Reservation is by the mailbox-scoped Gmail conversation, so a retry or a
+   * follow-up never opens a second parent thread. */
+  threadFor: (message: MailboxMessage, person: MailboxPerson) => Promise<string>;
+  isBlocked: (botId: string, threadId: string) => boolean;
   queue: (delivery: RoutedMailDelivery) => void;
   run: (delivery: RoutedMailDelivery) => Promise<void>;
   isAdmissionBlocked?: (error: unknown) => boolean;
@@ -85,6 +92,28 @@ export function senderAddress(from: string | undefined): string | undefined {
   const angled = /<([^<>\s]+@[^<>\s]+)>/.exec(from);
   const candidate = (angled?.[1] ?? from.trim()).toLowerCase();
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(candidate) ? candidate : undefined;
+}
+
+/** A routed message that cannot join the parent conversation. The caller
+ * receipts it as ignored instead of retrying forever. */
+export class RoutedMailParentError extends Error {
+  constructor(readonly reason: "different-sender" | "missing-parent") {
+    super(reason === "different-sender"
+      ? "the routed conversation belongs to a different sender"
+      : "the routed conversation is missing");
+    this.name = "RoutedMailParentError";
+  }
+}
+
+/** Stable Relay thread id for a mailbox conversation. UUIDv5-shaped: the same
+ * mailbox + Gmail thread always names the same parent, so a retry or a crash
+ * between task creation and the receipt converges instead of creating twice. */
+export function routedMailThreadId(mailboxAccount: string, gmailThreadId: string): string {
+  const bytes = createHash("sha1").update(`relay-routed-mail:${mailboxAccount}:${gmailThreadId}`).digest();
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.subarray(0, 16).toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20, 32)}`;
 }
 
 /** One-line, bounded conversation title from the subject. */
@@ -169,7 +198,7 @@ export async function deliverRoutedMail(
     prompt: string;
   },
 ): Promise<void> {
-  const threadId = await deps.threadFor(input.message.id);
+  const threadId = await deps.threadFor(input.message, input.person);
   const sender: ResolvedSender = {
     name: input.person.name?.trim() || input.person.email,
     ...(input.personKey ? { id: input.personKey } : {}),
@@ -183,7 +212,7 @@ export async function deliverRoutedMail(
     prompt: input.prompt,
     sender,
   };
-  if (deps.isBlocked(deps.botId)) {
+  if (deps.isBlocked(deps.botId, threadId)) {
     deps.queue(delivery);
     return;
   }

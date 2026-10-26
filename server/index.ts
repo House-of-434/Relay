@@ -478,12 +478,14 @@ import {
   MAILBOX_LIST_LIMIT,
   MAILBOX_POLL_QUERY,
   MailboxMonitor,
+  RoutedMailParentError,
   routedMailPrompt,
   routedMailText,
   routedMailTitle,
   type MailboxMessage,
 } from "./mailbox-monitor.ts";
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
+import { reserveRoutedThread } from "./routed-thread.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 import { ScribeMonitor, createDegradedTracker, meetingCodeFor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
@@ -10041,11 +10043,12 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
     console.warn("[mailbox] shared mailbox disabled: no Mercury bot is registered for Relay's account");
   } else {
     const mercuryId = mailboxActor.botId;
+    const mailboxUserId = RELAY_MAILBOX_USER_ID;
     mailboxMonitor = new MailboxMonitor({
       address: RELAY_MAILBOX_ADDRESS,
       pollMs: mailboxPollMs,
       list: async () => {
-        const result = await mailboxBffCall<{ messages: Array<{ id: string }> }>(
+        const result = await mailboxBffCall<{ messages: Array<{ id: string; threadId?: string }> }>(
           relayBffCapability,
           "/api/internal/gmail/messages/list",
           { query: MAILBOX_POLL_QUERY, maxResults: MAILBOX_LIST_LIMIT, mailbox: "relay" },
@@ -10117,55 +10120,83 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         // sender with no resolvable account. Ownership follows the bot, so the
         // thread is visible to the sender and tools run as them.
         const workBotId = ensureOwnerMercury(person.userId) ?? mercuryId;
-        await deliverRoutedMail({
-          botId: workBotId,
-          // Reservation by message id: a retry lands in the same conversation.
-          threadFor: async (messageId) => {
-            const reserved = commandReceipt<{ threadId?: string }>("gmail.thread", messageId);
-            if (reserved?.result?.threadId) return reserved.result.threadId;
-            const task = store.createTask(workBotId, title, false);
-            if (!task) throw new Error("could not open the routed conversation");
-            if (personKey) threadStarters.set(task.threadId, personKey);
-            store.patchTask(workBotId, task.threadId, {
-              mailRouted: { userId: person.userId, email: person.email, messageId, ...(routedSubject ? { subject: routedSubject } : {}) },
-            });
-            runCommand({ kind: "gmail.thread", key: messageId }, () => ({ threadId: task.threadId }));
-            return task.threadId;
-          },
-          isBlocked: () => botAtThreadCapacity(workBotId) || Boolean(activeGroupTurnForBot(workBotId)),
-          queue: (delivery) => {
-            // The queue is keyed by the routed thread and carries the
-            // teammate's sender stamp, so the wait can never move their mail
-            // onto another person's running conversation.
-            queueSteeredMessage(workBotId, delivery.threadId, delivery.text, {
-              prompt: delivery.prompt,
-              reason: activeGroupTurnForBot(workBotId) ? "group-turn" : "capacity",
-              sender: delivery.sender,
-              unattended: true,
-              silentCompletion: true,
-            });
-          },
-          run: async (delivery) => {
-            // Idempotent across retries: reuse an appended copy rather than
-            // posting the same mail twice into the reserved thread.
-            const existing = store.messagesFor(delivery.threadId)
-              .findLast((entry) => entry.role === "user" && entry.text === delivery.text);
-            const message = existing ?? store.appendMessage(delivery.threadId, {
-              role: "user",
-              kind: "text",
-              text: delivery.text,
-              sender: delivery.sender,
-            });
-            await startTurn(workBotId, delivery.prompt, {
-              threadId: delivery.threadId,
-              userMessage: message,
-              sender: delivery.sender,
-              unattended: true,
-              silentCompletion: true,
-            });
-          },
-          isAdmissionBlocked: (error) => isTurnAdmissionBlocked(error),
-        }, { message, person, personKey, text, prompt });
+        const mailOrigin = {
+          gmailThreadId: message.threadId?.trim() || message.id,
+          gmailMessageId: message.id,
+          email: person.email,
+          userId: person.userId,
+          ...(routedSubject ? { subject: routedSubject } : {}),
+        };
+        try {
+          await deliverRoutedMail({
+            botId: workBotId,
+            // Reservation by the mailbox-scoped Gmail conversation. The command
+            // receipt's unique (kind, key) is the atomic claim; the deterministic
+            // thread id makes a crash between task creation and the receipt
+            // converge on the same parent instead of creating a second one.
+            threadFor: async (inbound, sender) => {
+              const threadId = reserveRoutedThread({
+                store,
+                mailboxAccount: mailboxUserId,
+                workBotId,
+                title,
+                inbound,
+                sender,
+                ...(routedSubject ? { routedSubject } : {}),
+              });
+              if (personKey) threadStarters.set(threadId, personKey);
+              return threadId;
+            },
+            isBlocked: (botId, threadId) =>
+              threadBusy(botId, threadId) || botAtThreadCapacity(botId) ||
+              Boolean(activeGroupTurnForBot(botId)) || parksBehindCoordination(botId, threadId),
+            queue: (delivery) => {
+              // The queue is keyed by the routed thread and carries the
+              // teammate's sender stamp, so the wait can never move their mail
+              // onto another person's running conversation.
+              const queued = queueSteeredMessage(workBotId, delivery.threadId, delivery.text, {
+                prompt: delivery.prompt,
+                reason: activeGroupTurnForBot(workBotId) ? "group-turn" : "capacity",
+                sender: delivery.sender,
+                unattended: true,
+                silentCompletion: true,
+              });
+              // The queued line receives a fresh transcript id when it drains;
+              // key its origin by the durable queue id and resolve that id from
+              // the transcript line's queueId at mirror time.
+              runCommand({ kind: "gmail.origin", key: queued.id }, () => mailOrigin);
+            },
+            run: async (delivery) => {
+              // Idempotent across retries: reuse an appended copy rather than
+              // posting the same mail twice into the reserved thread.
+              const existing = store.messagesFor(delivery.threadId)
+                .findLast((entry) => entry.role === "user" && entry.text === delivery.text);
+              const userMessage = existing ?? store.appendMessage(delivery.threadId, {
+                role: "user",
+                kind: "text",
+                text: delivery.text,
+                sender: delivery.sender,
+              });
+              // The mirror needs the inbound message's Gmail identity, not the
+              // task's mutable latest pointer. One receipt per Relay user line.
+              runCommand({ kind: "gmail.origin", key: userMessage.id }, () => mailOrigin);
+              await startTurn(workBotId, delivery.prompt, {
+                threadId: delivery.threadId,
+                userMessage,
+                sender: delivery.sender,
+                unattended: true,
+                silentCompletion: true,
+              });
+            },
+            isAdmissionBlocked: (error) => isTurnAdmissionBlocked(error),
+          }, { message, person, personKey, text, prompt });
+        } catch (error) {
+          if (error instanceof RoutedMailParentError) {
+            runCommand({ kind: "gmail.route", key: message.id }, () => ({ ignored: error.reason }));
+            return;
+          }
+          throw error;
+        }
       },
       log: (event) => {
         const line = `[mailbox] ${JSON.stringify(event)}`;
