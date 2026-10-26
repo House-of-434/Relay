@@ -45,12 +45,19 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["arxiv_get", "arxiv_search", "browser_extract", "browser_open", "browser_read", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_fetch", "web_search"]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["arxiv_get", "arxiv_search", "browser_extract", "browser_open", "browser_read", "find_teammate", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_fetch", "web_search"]);
 
     const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
     assert.equal(read.isError, undefined);
     assert.equal(calls[0]?.method, "read");
     assert.equal(calls[0]?.args[0], "relay");
+
+    const applications = await client.callTool({
+      name: "relay_read",
+      arguments: { table: "public.applications", filters: { role: "founder" }, limit: 3 },
+    });
+    assert.equal(applications.isError, undefined);
+    assert.equal(calls.at(-1)?.args[0], "newsletter");
 
     failRead = true;
     const readFailure = await client.callTool({ name: "relay_read", arguments: { table: "app.companies" } });
@@ -80,10 +87,57 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
         arguments: { table: "public.suppressed_emails", filters: { email: "recipient@example.com" } },
       });
       assert.equal(safetyRead.isError, true);
-      assert.equal(calls.filter((call) => call.method === "read").length, 2);
+      assert.equal(calls.filter((call) => call.method === "read").length, 3);
     } finally {
       await mercuryClient.close();
     }
+  } finally {
+    await client.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+  }
+});
+
+test("find_teammate resolves a name to an email and returns no invented match", async () => {
+  const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent: "curator" }, SECRET);
+  const calls: Array<{ candidate: string; maxRows: number }> = [];
+  const database = {
+    async verifyRelayProject() {},
+    authenticateActorAssertion(value: string) {
+      return JSON.parse(value) as { userId: string; botId: string; threadId: string; issuedAt: number };
+    },
+    async searchMembers(candidate: string, maxRows: number) {
+      calls.push({ candidate, maxRows });
+      return candidate.toLowerCase() === "jay"
+        ? [{ email: "jay@houseof434.com", display_name: "Jay Patel" }]
+        : [];
+    },
+  } as unknown as RelayDatabase;
+
+  const server = await createRelayToolServer(database, 0);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const client = new Client({ name: "relay-directory-test", version: "0.1.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/curator`), {
+    requestInit: { headers: { "x-relay-actor-user": assertion } },
+  });
+
+  const members = (result: Awaited<ReturnType<typeof client.callTool>>) =>
+    JSON.parse((result.content as Array<{ type: "text"; text: string }>)[0]!.text) as {
+      members: Array<{ email: string; display_name: string | null }>;
+    };
+
+  try {
+    await client.connect(transport);
+
+    const found = await client.callTool({ name: "find_teammate", arguments: { query: "Jay" } });
+    assert.equal(found.isError, undefined);
+    assert.deepEqual(members(found), { members: [{ email: "jay@houseof434.com", display_name: "Jay Patel" }] });
+    assert.deepEqual(calls, [{ candidate: "Jay", maxRows: 20 }]);
+
+    const missing = await client.callTool({ name: "find_teammate", arguments: { query: "Nobody" } });
+    assert.equal(missing.isError, undefined);
+    assert.deepEqual(members(missing), { members: [] });
   } finally {
     await client.close();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -206,6 +260,7 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
     "browser_extract",
     "browser_open",
     "browser_read",
+    "find_teammate",
     "get_meeting_transcript",
     "relay_read",
     "relay_write",
@@ -213,7 +268,7 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
     "web_fetch",
     "web_search",
   ]);
-  assert.deepEqual(await names("curator"), ["get_meeting_transcript", "relay_read", "relay_write", "search_meetings"], "curator");
+  assert.deepEqual(await names("curator"), ["find_teammate", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings"], "curator");
 });
 
 test("the Gmail send schema stays flat so engines cannot flatten it away", async () => {

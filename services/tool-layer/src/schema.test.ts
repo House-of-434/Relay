@@ -10,6 +10,8 @@ const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const transcripts = source("../../../supabase/migrations/0006_transcripts.sql");
 const serviceActors = source("../../../supabase/migrations/0007_service_actors.sql");
+const eventTracker = source("../../../supabase/migrations/0010_event_content_tracker.sql");
+const memberDirectory = source("../../../supabase/migrations/0011_member_directory.sql");
 const migrations = `${init}\n${stores}\n${ownership}\n${transcripts}\n${serviceActors}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
@@ -101,4 +103,27 @@ test("members are read-only and the Tool Layer is the only elevated writer", () 
     /revoke insert, update, delete, truncate, references, trigger\s+on all tables in schema app, history from public, anon, authenticated/,
   );
   assert.match(stores, /grant all privileges on all tables in schema app, logs, history to service_role/);
+});
+
+test("the event content tracker adds its fields without changing the event model", () => {
+  for (const field of ["hosted", "city", "speakers", "media_url", "cover_image_url", "notes"]) {
+    assert.match(eventTracker, new RegExp(`add column if not exists ${field}\\s+text`), field);
+  }
+  assert.match(eventTracker, /alter table app\.events alter column type set default 'gathering'/);
+  assert.match(eventTracker, /notify pgrst, 'reload schema'/);
+});
+
+test("the member directory is service-role-only and skips inactive accounts", () => {
+  assert.match(memberDirectory, /create or replace function app\.search_members\(candidate text, max_rows integer default 20\)/);
+  assert.match(memberDirectory, /security definer/);
+  assert.match(memberDirectory, /set search_path = ''/);
+  assert.match(memberDirectory, /from auth\.users u/);
+  assert.match(memberDirectory, /length\(btrim\(candidate\)\) >= 2/);
+  assert.match(memberDirectory, /u\.email_confirmed_at is not null/);
+  assert.match(memberDirectory, /u\.deleted_at is null/);
+  assert.match(memberDirectory, /u\.banned_until is null or u\.banned_until < now\(\)/);
+  assert.match(memberDirectory, /revoke execute on function app\.search_members\(text, integer\) from public, anon, authenticated/);
+  assert.match(memberDirectory, /grant execute on function app\.search_members\(text, integer\) to service_role/);
+  // The directory returns addresses and names, never auth ids or metadata.
+  assert.doesNotMatch(memberDirectory, /returns table \([^)]*\bid\b/);
 });

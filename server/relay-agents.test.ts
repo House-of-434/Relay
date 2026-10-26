@@ -4,6 +4,8 @@ import { RELAY_AGENT_SEEDS } from "./relay-agents.ts";
 
 const scout = RELAY_AGENT_SEEDS.find((seed) => seed.role === "scout");
 if (!scout) throw new Error("scout seed missing");
+const mercury = RELAY_AGENT_SEEDS.find((seed) => seed.role === "mercury");
+if (!mercury) throw new Error("mercury seed missing");
 
 describe("scout capability manifest", () => {
   it("states the tool-selection policy instead of enumerating every tool", () => {
@@ -42,5 +44,25 @@ describe("scout capability manifest", () => {
     }
     expect(scout.profile.soul).toMatch(/corroborat/);
     expect(scout.profile.soul).toMatch(/infer/);
+  });
+});
+
+describe("repository delegation prompts", () => {
+  it("points Scout at validated relay-git operations instead of a generic shell", () => {
+    expect(scout.profile.soul).toContain("repo-changes skill");
+    expect(scout.profile.soul).toContain("validated relay-git operations");
+    expect(scout.profile.soul).toContain("relay/ branch");
+    expect(scout.profile.soul).toContain("never push to main");
+  });
+
+  it("tells Mercury to route repository work to Scout with the request and link", () => {
+    expect(mercury.profile.soul).toContain("coordinate_bots");
+    expect(mercury.profile.soul).toContain("Scout");
+    expect(mercury.profile.soul).toContain("pull-request URL");
+  });
+
+  it("tells Mercury to resolve a named teammate before inviting them", () => {
+    expect(mercury.profile.soul).toContain("find_teammate");
+    expect(mercury.profile.soul).toMatch(/never invent an address/i);
   });
 });

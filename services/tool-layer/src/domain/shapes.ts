@@ -75,18 +75,27 @@ export const SHAPES: Record<string, Shape> = {
       "type", "title", "summary", "occurred_at", "company_id", "tags", "attendee_ids",
       "investor_names", "round", "amount", "source", "source_url", "observed_at",
       "confidence", "external_source", "external_source_id",
+      // Event Content Tracker fields (migration 0010). hosted stays plain text:
+      // the tracker's options evolve, so no app-side enum rejects a valid value.
+      "hosted", "city", "speakers", "media_url", "cover_image_url", "notes",
     ],
     serverSet: [
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
       "owner_user_id", "scope",
     ],
-    filterable: ["title", "type", "company_id", "tags", "occurred_at", "actor_user", "owner_user_id", "scope"],
+    filterable: [
+      "title", "type", "company_id", "tags", "occurred_at", "hosted", "city",
+      "actor_user", "owner_user_id", "scope",
+    ],
     valueEnums: { type: ["meeting", "gathering", "fundraising", "talk", "demo_day"] },
     require: [
       { f: "title", r: "nonempty" },
       { f: "occurred_at", r: "nonempty" },
-      { f: "attendee_ids", r: "uuid[]" },
       { f: "source_url", r: "url" },
+    ],
+    validate: [
+      { f: "media_url", r: "url" },
+      { f: "cover_image_url", r: "url" },
     ],
   },
   // Conversation history is read-only for agents: a conversation belongs to the
@@ -123,6 +132,19 @@ export const SHAPES: Record<string, Shape> = {
       platform: ["google_meet", "zoom", "teams"],
       status: ["joining", "awaiting_admission", "active", "completed", "partial", "failed", "skipped"],
     },
+    require: [],
+  },
+  // Membership applications live in the separate newsletter/site project. The
+  // connector is read-only, so no write path is configured; the shape exists
+  // only to expose a reviewed, filterable column set to Scout and Mercury.
+  "public.applications": {
+    writable: [],
+    serverSet: [
+      "id", "name", "email", "linkedin", "location", "role", "entity", "website",
+      "story", "looking_for", "brings", "learn", "referrer", "role_details",
+      "attribution", "created_at",
+    ],
+    filterable: ["name", "email", "role", "entity", "location", "referrer", "created_at"],
     require: [],
   },
 };

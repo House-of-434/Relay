@@ -27,6 +27,11 @@ export type CommandRunner = (
 ) => Promise<{ stdout: string }>;
 
 export const CUA_DRIVER_VERSION = "0.20.0";
+export const BUN_VERSION = "1.4.0";
+export const BUN_LINUX_SHA256 = {
+  x86_64: "2d03fb5fb83ac8b567aca0a281b2ce1a1a19d488f56c2968d88c3f25e92fe452",
+  aarch64: "4b1a332ee861983eb93bcfe6f770fff94e3e31b2c388bdaea3c8ed35e58eed0e",
+} as const;
 export const BASE_IMAGE_REPOSITORY = "docker.io/trycua/xfce-cua";
 // Official multi-architecture Cua XFCE 0.1.0 manifest (amd64 + arm64).
 export const BASE_IMAGE_DIGEST = "sha256:274eb636f5cf3fc58f705916ee72b7a701270b3877369d08533a385c5325be9b";
@@ -37,7 +42,7 @@ export const BASE_IMAGE = `${BASE_IMAGE_REPOSITORY}@${BASE_IMAGE_DIGEST}`;
 // Image and container labels below remain the authoritative compatibility
 // check, not the mutable tag.
 export const IMAGE_REPOSITORY = "localhost/relay/cua-local-vm";
-export const IMAGE_LAYER_VERSION = "5";
+export const IMAGE_LAYER_VERSION = "6";
 export const IMAGE_LAYER_LABEL = "com.openmausbot.image-layer";
 export const IMAGE = `${IMAGE_REPOSITORY}:driver-${CUA_DRIVER_VERSION}-v${IMAGE_LAYER_VERSION}`;
 export const CONTAINER = "relay-computer";
@@ -164,6 +169,33 @@ RUN set -eux; \\
     install -D -m 0755 "$driver_bin" ${CUA_EXECUTABLE}; \\
     install -d -o cua -g cua -m 0700 ${VM_WORKSPACE_GUEST}; \\
     test "$(${CUA_EXECUTABLE} --version)" = "cua-driver ${CUA_DRIVER_VERSION}"
+RUN set -eux; \\
+    apt-get update; \\
+    apt-get install -y --no-install-recommends ca-certificates curl git unzip; \\
+    install -d -m 0755 /etc/apt/keyrings; \\
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg; \\
+    chmod go+r /usr/share/keyrings/githubcli-archive-keyring.gpg; \\
+    echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list; \\
+    apt-get update; \\
+    apt-get install -y --no-install-recommends gh; \\
+    rm -rf /var/lib/apt/lists/*; \\
+    bun_arch=""; \\
+    bun_sha=""; \\
+    case "$arch" in \\
+      x86_64) bun_arch='x64'; bun_sha='${BUN_LINUX_SHA256.x86_64}' ;; \\
+      aarch64|arm64) bun_arch='aarch64'; bun_sha='${BUN_LINUX_SHA256.aarch64}' ;; \\
+      *) echo "unsupported architecture: $arch" >&2; exit 1 ;; \\
+    esac; \\
+    curl -fsSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-$bun_arch.zip" -o /tmp/bun.zip; \\
+    echo "$bun_sha  /tmp/bun.zip" | sha256sum -c -; \\
+    rm -rf /tmp/bun; \\
+    unzip -q -o /tmp/bun.zip -d /tmp/bun; \\
+    install -m 0755 /tmp/bun/bun-linux-"$bun_arch"/bun /usr/local/bin/bun; \\
+    rm -rf /tmp/bun /tmp/bun.zip; \\
+    test "$(bun --version)" = "${BUN_VERSION}"; \\
+    command -v git; \\
+    command -v gh; \\
+    command -v bun
 # Install before XFCE starts so the panel and window manager see the font too.
 # Noto Sans CJK JP is distributed under the SIL Open Font License 1.1.
 RUN set -eux; \\
@@ -1159,15 +1191,55 @@ export interface ContainerExecResult {
   timedOut: boolean;
 }
 
-type ContainerExecRunner = (
+export type ContainerExecRunner = (
   command: string,
   args: string[],
   options: { timeout: number },
 ) => Promise<{ stdout: string; stderr: string; code: number }>;
 
+export interface ContainerExecOptions {
+  timeoutSeconds?: number;
+  runtime?: Runtime;
+  exec?: ContainerExecRunner;
+  secretEnv?: Record<string, string>;
+  writeSecretEnvFile?: (path: string, contents: string) => Promise<void>;
+  removeSecretEnvFile?: (path: string) => Promise<void>;
+  secretEnvDirectory?: string;
+}
+
 const EXEC_DEFAULT_SECONDS = 60;
 const EXEC_MAX_SECONDS = 300;
 const EXEC_OUTPUT_LIMIT = 20_000;
+const SECRET_ENV_NAME = /^[A-Z_][A-Z0-9_]*$/;
+
+function validateSecretEnv(secretEnv: Record<string, string>): Array<[string, string]> {
+  const entries = Object.entries(secretEnv);
+  for (const [name, value] of entries) {
+    if (!SECRET_ENV_NAME.test(name)) throw Object.assign(new Error("secret environment names must use A-Z, 0-9, and _"), { status: 400 });
+    if (value.length === 0 || /[\r\n]/.test(value)) throw Object.assign(new Error("secret environment values must be single-line values"), { status: 400 });
+  }
+  return entries;
+}
+
+function redactContainerSecrets(text: string, secrets: readonly string[]): string {
+  let redacted = text;
+  for (const secret of secrets) {
+    if (secret.length > 0) redacted = redacted.split(secret).join("[redacted-secret]");
+  }
+  return redacted;
+}
+
+function redactContainerExecError(error: unknown, secrets: readonly string[]): unknown {
+  if (error instanceof Error) {
+    error.message = redactContainerSecrets(error.message, secrets);
+    if (typeof error.stack === "string") error.stack = redactContainerSecrets(error.stack, secrets);
+    const fields = error as unknown as Record<string, unknown>;
+    for (const name of ["stdout", "stderr"] as const) {
+      if (typeof fields[name] === "string") fields[name] = redactContainerSecrets(fields[name] as string, secrets);
+    }
+  }
+  return error;
+}
 
 /** Keep the start and the end: a failure message is nearly always at the end. */
 export function clipExecOutput(text: string, limit = EXEC_OUTPUT_LIMIT): string {
@@ -1204,32 +1276,67 @@ const defaultExecRunner: ContainerExecRunner = async (command, args, options) =>
 export async function containerExec(
   target: LocalVmTarget,
   command: string,
-  options: { timeoutSeconds?: number; runtime?: Runtime; exec?: ContainerExecRunner } = {},
+  options: ContainerExecOptions = {},
 ): Promise<ContainerExecResult> {
   if (!command.trim()) throw Object.assign(new Error("command is required"), { status: 400 });
   if (command.length > 20_000) throw Object.assign(new Error("command is too long"), { status: 400 });
   if (options.timeoutSeconds !== undefined && !Number.isFinite(options.timeoutSeconds)) {
     throw Object.assign(new Error("timeout_seconds must be finite"), { status: 400 });
   }
+  const secretEntries = options.secretEnv ? validateSecretEnv(options.secretEnv) : [];
+  const secretValues = secretEntries.map((entry) => entry[1]);
   const runtime = options.runtime ?? (await containerRuntimeStatus()).runtime;
   if (!runtime) throw Object.assign(new Error("No container runtime is available for the Local VM"), { status: 409 });
   const seconds = Math.min(Math.max(Math.floor(options.timeoutSeconds ?? EXEC_DEFAULT_SECONDS), 1), EXEC_MAX_SECONDS);
-  const result = await (options.exec ?? defaultExecRunner)(
-    runtime,
-    [
+  const writeSecretEnvFile = options.writeSecretEnvFile ?? (async (path: string, contents: string) => {
+    await writeFile(path, contents, { mode: 0o600 });
+  });
+  const removeSecretEnvFile = options.removeSecretEnvFile ?? (async (path: string) => {
+    await rm(path, { force: true });
+  });
+  let secretFile: string | undefined;
+  try {
+    const args = [
       "exec",
       "-u", "cua",
       "-w", VM_WORKSPACE_GUEST,
       "-e", "HOME=/home/cua",
       "-e", `DISPLAY=${DISPLAY}`,
+    ];
+    if (secretEntries.length > 0) {
+      secretFile = join(
+        options.secretEnvDirectory ?? tmpdir(),
+        `relay-git-env-${randomBytes(8).toString("hex")}`,
+      );
+      const contents = `${secretEntries.map(([name, value]) => `${name}=${value}`).join("\n")}\n`;
+      await writeSecretEnvFile(secretFile, contents);
+      args.push("--env-file", secretFile);
+    }
+    args.push(
       target.containerName,
       "timeout", "-k", "5", String(seconds),
       "sh", "-lc", command,
-    ],
-    { timeout: (seconds + 20) * 1000 },
-  );
-  const timedOut = result.code === 124 || result.code === 137;
-  return { exitCode: result.code, stdout: clipExecOutput(result.stdout), stderr: clipExecOutput(result.stderr), timedOut };
+    );
+    let result;
+    try {
+      result = await (options.exec ?? defaultExecRunner)(
+        runtime,
+        args,
+        { timeout: (seconds + 20) * 1000 },
+      );
+    } catch (error) {
+      throw redactContainerExecError(error, secretValues);
+    }
+    const timedOut = result.code === 124 || result.code === 137;
+    return {
+      exitCode: result.code,
+      stdout: clipExecOutput(redactContainerSecrets(result.stdout, secretValues)),
+      stderr: clipExecOutput(redactContainerSecrets(result.stderr, secretValues)),
+      timedOut,
+    };
+  } finally {
+    if (secretFile) await removeSecretEnvFile(secretFile);
+  }
 }
 
 /** Spawn contract handed directly to agent runtimes. The tiny host wrapper

@@ -118,6 +118,7 @@ test("scout gets the full research loop; others get no search or browser", async
       "browser_extract",
       "browser_open",
       "browser_read",
+      "find_teammate",
       "get_meeting_transcript",
       "relay_read",
       "relay_write",

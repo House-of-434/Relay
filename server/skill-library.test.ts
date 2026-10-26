@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, type BundledSkill } from "./skill-library.ts";
 
@@ -67,8 +68,7 @@ describe("bundled skill library", () => {
 });
 
 describe("bundled verification skill", () => {
-  // skills/ is not tracked in the repo, so loadBundledSkills(process.cwd())
-  // reads nothing. Build the reviewed authoring adapter inline in a tmp dir.
+  // Build the reviewed authoring adapter inline in a tmp dir.
   const bundledRoot = mkdtempSync(join(tmpdir(), "relay-bundled-skills-"));
   const adapterDir = join(bundledRoot, "create-verification-skill");
   mkdirSync(adapterDir);
@@ -121,6 +121,35 @@ describe("bundled verification skill", () => {
       "create a feature map for my app",
     ]) {
       expect(selectBundledSkills(text, ["skillAuthoring"], skills)).toEqual([]);
+    }
+  });
+});
+
+describe("repo changes skill", () => {
+  const skills = loadBundledSkills(join(dirname(fileURLToPath(import.meta.url)), "..", "skills"));
+  const skill = skills.find((candidate) => candidate.manifest.id === "repo-changes");
+  if (!skill) throw new Error("repo-changes skill missing");
+
+  it("loads the tracked skill with a valid manifest and frontmatter", () => {
+    expect(skill.manifest.version).toBe("1.0.0");
+    expect(skill.manifest.defaultEnabled).toBe(true);
+    expect(skill.instructions).toMatch(/^---\nname: repo-changes\n/);
+    expect(skill.instructions).toContain("relay-git checkout relay/");
+    expect(skill.instructions).toContain("relay-git push relay/");
+  });
+
+  it("selects repository work and ignores nearby false positives", () => {
+    for (const text of [
+      "Please update the website events page from this Luma link",
+      "Open a pull request for the git repo",
+    ]) {
+      expect(selectBundledSkills(text, [], skills).map((candidate) => candidate.manifest.id)).toContain("repo-changes");
+    }
+    for (const text of [
+      "Write a poem",
+      "Please send the quarterly report",
+    ]) {
+      expect(selectBundledSkills(text, [], skills).map((candidate) => candidate.manifest.id)).not.toContain("repo-changes");
     }
   });
 });

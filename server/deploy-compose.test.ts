@@ -29,6 +29,15 @@ describe("deploy compose — capability separation", () => {
     expect(envFiles("app")).not.toContain(".env.ingest");
   });
 
+  it("the workspace token is app-only, not shared with tools or scribe", () => {
+    // The token authorizes Scout repository writes. Tools calling the public
+    // API and scribe's capture worker must never be able to read it from
+    // their service environment, so it gets its own app-only env file.
+    expect(envFiles("app")).toContain(".env.workspace");
+    expect(envFiles("tools")).not.toContain(".env.workspace");
+    expect(envFiles("scribe")).not.toContain(".env.workspace");
+  });
+
   it("the harness loads the worker capability (to arm captures)", () => {
     expect(envFiles("app")).toContain(".env.scribe");
   });
