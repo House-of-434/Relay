@@ -157,20 +157,39 @@ describe("routed reply outbox", () => {
     expect(row("turn-2").state).toBe("pending");
   });
 
-  it("retries a missing attachment before sending the text without it", async () => {
+  it("sends a missing attachment's reply immediately with a note instead of retrying", async () => {
     create({
       attachments: [{ path: "/definitely/not/here/report.pdf", filename: "report.pdf", mimeType: "application/pdf" }],
     });
     let sends = 0;
+    let seenBody = "";
     await drainRoutedReplies({
-      send: async () => { sends += 1; return sent(); },
+      send: async (input) => { sends += 1; seenBody = input.body; return sent(); },
       findSent: async () => false,
       log: () => {},
       now: () => NOW,
     });
-    expect(sends).toBe(0);
-    expect(row().state).toBe("failed");
-    expect(row().attempts).toBe(1);
+    expect(sends).toBe(1);
+    expect(seenBody).toContain("report.pdf");
+    expect(row().state).toBe("sent");
+  });
+
+  it("discloses settle-time omissions in both the text and HTML alternatives", async () => {
+    create({
+      html: "<div><p>Here is the answer.</p></div>",
+      omittedAttachments: ["big-report.pdf"],
+    });
+    let seenBody = "";
+    let seenHtml: string | undefined;
+    await drainRoutedReplies({
+      send: async (input) => { seenBody = input.body; seenHtml = input.html; return sent(); },
+      findSent: async () => false,
+      log: () => {},
+      now: () => NOW,
+    });
+    expect(row().state).toBe("sent");
+    expect(seenBody).toContain("big-report.pdf");
+    expect(seenHtml).toContain("big-report.pdf");
   });
 
   it("sends an oversized attachment's reply immediately without blocking a later reply", async () => {

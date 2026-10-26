@@ -507,7 +507,7 @@ import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
 import { canSendMailboxEmail, deriveMailSubject, describeMailboxSendSkip, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxQuestionEmail, sendMailboxReply, type MailSendReceipt } from "./mailbox-notify.ts";
 import { renderEmailMarkdown } from "./email-markdown.ts";
 import { createMailReplyRow, drainRoutedReplies, shouldMirrorRoutedTurn } from "./mail-reply-outbox.ts";
-import { mailAttachmentRefsForTurn, mergeMailAttachmentRefs, type MailAttachmentRef } from "./mail-attachments.ts";
+import { mailAttachmentCandidatesForTurn, mailAttachmentRefsForTurn, mergeMailAttachmentRefs, type MailAttachmentRef, type SettledMailAttachments } from "./mail-attachments.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -2666,15 +2666,15 @@ function purgeTurnAttachmentsForThread(threadId: string): void {
 // long deliverable reaches the teammate as an attachment instead of pasted
 // text. Bounded per turn: a conversation can span many turns, and an earlier
 // turn's files must not ride a later reply.
-function routedMailAttachmentRefs(threadId: string, turnId: string): MailAttachmentRef[] {
+function routedMailAttachmentRefs(threadId: string, turnId: string): SettledMailAttachments {
   return mailAttachmentRefsForTurn(store.messagesFor(threadId), turnId, ATTACHMENTS_DIR);
 }
 
 /** Merge parent-turn and delegated-turn artifacts for one reply. The child
  * refs arrive through a persisted delegation receipt, so the shared helper
- * re-applies attachment-store containment and dedup; size checks live in
- * the outbox drain so drops are disclosed. */
-function mergeMailAttachments(groups: ReadonlyArray<ReadonlyArray<MailAttachmentRef>>): MailAttachmentRef[] {
+ * re-applies attachment-store containment, dedup, and the size gates; drops
+ * ride the row so the drain discloses them. */
+function mergeMailAttachments(groups: ReadonlyArray<ReadonlyArray<MailAttachmentRef>>): SettledMailAttachments {
   return mergeMailAttachmentRefs(groups, ATTACHMENTS_DIR);
 }
 
@@ -7378,6 +7378,13 @@ bus.subscribe((event: RuntimeEvent) => {
             } else {
               const domain = RELAY_MAILBOX_ADDRESS?.split("@").pop()?.trim() || "relay.local";
               const rendered = renderEmailMarkdown(redactSecretsInText(text));
+              const parentSettled = routedMailAttachmentRefs(event.threadId, completedTurnId);
+              const merged = mergeMailAttachments([
+                parentSettled.refs,
+                inheritedMailAttachments,
+                concurrentMailAttachments,
+              ]);
+              const omitted = [...parentSettled.omitted, ...merged.omitted];
               createMailReplyRow({
                 turnId: completedTurnId,
                 threadId: event.threadId,
@@ -7388,11 +7395,8 @@ bus.subscribe((event: RuntimeEvent) => {
                 body: rendered.text,
                 html: rendered.html,
                 messageId: `<relay-${completedTurnId}@${domain}>`,
-                attachments: mergeMailAttachments([
-                  routedMailAttachmentRefs(event.threadId, completedTurnId),
-                  inheritedMailAttachments,
-                  concurrentMailAttachments,
-                ]),
+                attachments: merged.refs,
+                ...(omitted.length ? { omittedAttachments: omitted } : {}),
               });
             }
           }
@@ -7859,7 +7863,7 @@ function finalizeDelegationWatch(
     failureName = "Result withheld: team or peer access changed while the teammate was working";
   }
   // A withheld or failed result contributes no artifacts to the parent reply.
-  const attachments = ok && completedTurnId ? routedMailAttachmentRefs(threadId, completedTurnId) : [];
+  const attachments = ok && completedTurnId ? mailAttachmentCandidatesForTurn(store.messagesFor(threadId), completedTurnId, ATTACHMENTS_DIR) : [];
   // The receipt is written before any mirror short-circuits: the delegating
   // bot's check/wait_delegation must see a terminal state even when the
   // channel or target is gone.

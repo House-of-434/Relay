@@ -5,12 +5,18 @@
  * turn still belong to the parent reply. The caller supplies the messages and
  * the attachment store root; nothing here decides whether a thread is routed.
  */
+import { statSync } from "node:fs";
 import { resolve, sep } from "node:path";
 
 export interface MailAttachmentRef {
   path: string;
   filename: string;
   mimeType: string;
+}
+
+export interface SettledMailAttachments {
+  refs: MailAttachmentRef[];
+  omitted: string[];
 }
 
 export interface MailAttachmentMessage {
@@ -27,15 +33,45 @@ export const MAX_MAIL_ATTACHMENTS = 10;
 export const MAX_MAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 export const MAX_MAIL_TOTAL_BYTES = 25 * 1024 * 1024;
 
-/** Explicit file attachments from one turn, confined to the attachment
- * store. Size and total checks live in the outbox drain so every
- * deterministic drop is disclosed in the sent reply. */
-export function mailAttachmentRefsForTurn(
+function settleCandidates(candidates: MailAttachmentRef[]): SettledMailAttachments {
+  const refs: MailAttachmentRef[] = [];
+  const omitted: string[] = [];
+  let total = 0;
+  for (const candidate of candidates) {
+    if (refs.length >= MAX_MAIL_ATTACHMENTS) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    let size: number;
+    try {
+      size = statSync(candidate.path).size;
+    } catch {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    if (size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    if (total + size > MAX_MAIL_TOTAL_BYTES) {
+      omitted.push(candidate.filename);
+      continue;
+    }
+    total += size;
+    refs.push(candidate);
+  }
+  return { refs, omitted };
+}
+
+/** Containment-only candidates for one turn. Delegation receipts persist
+ * these ungated so the parent merge applies the size gates once and the
+ * drain can disclose every drop. */
+export function mailAttachmentCandidatesForTurn(
   messages: Iterable<MailAttachmentMessage>,
   turnId: string,
   attachmentsDir: string,
 ): MailAttachmentRef[] {
-  const out: MailAttachmentRef[] = [];
+  const candidates: MailAttachmentRef[] = [];
   const attachmentsRoot = `${resolve(attachmentsDir)}${sep}`;
   for (const message of messages) {
     if (message.turnId !== turnId) continue;
@@ -43,24 +79,36 @@ export function mailAttachmentRefsForTurn(
       if (attachment.kind !== "file") continue;
       const resolved = resolve(attachment.path);
       if (!resolved.startsWith(attachmentsRoot)) continue;
-      out.push({
+      candidates.push({
         path: resolved,
         filename: attachment.name?.trim() || resolved.split(/[\\/]/).pop() || "attachment",
         mimeType: attachment.mime,
       });
     }
   }
-  return out;
+  return candidates;
+}
+
+/** Explicit file attachments from one turn, confined to the attachment
+ * store. Existence and size/total gates run here so a dangling or oversized
+ * path never enters the reply row; the dropped names ride the row so the
+ * drain can disclose them. */
+export function mailAttachmentRefsForTurn(
+  messages: Iterable<MailAttachmentMessage>,
+  turnId: string,
+  attachmentsDir: string,
+): SettledMailAttachments {
+  return settleCandidates(mailAttachmentCandidatesForTurn(messages, turnId, attachmentsDir));
 }
 
 /** Merge parent-turn and delegated-turn artifacts for one reply. Delegated
  * refs come back through a persisted receipt, so containment and dedup are
- * re-applied here; size and total checks live in the outbox drain. */
+ * re-applied here along with the existence and size/total gates. */
 export function mergeMailAttachmentRefs(
   groups: ReadonlyArray<ReadonlyArray<MailAttachmentRef>>,
   attachmentsDir: string,
-): MailAttachmentRef[] {
-  const out: MailAttachmentRef[] = [];
+): SettledMailAttachments {
+  const candidates: MailAttachmentRef[] = [];
   const seen = new Set<string>();
   const attachmentsRoot = `${resolve(attachmentsDir)}${sep}`;
   for (const group of groups) {
@@ -68,8 +116,8 @@ export function mergeMailAttachmentRefs(
       const resolved = resolve(ref.path);
       if (!resolved.startsWith(attachmentsRoot) || seen.has(resolved)) continue;
       seen.add(resolved);
-      out.push({ path: resolved, filename: ref.filename, mimeType: ref.mimeType });
+      candidates.push({ path: resolved, filename: ref.filename, mimeType: ref.mimeType });
     }
   }
-  return out;
+  return settleCandidates(candidates);
 }

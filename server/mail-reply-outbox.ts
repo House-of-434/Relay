@@ -7,9 +7,14 @@
  * are reconciled by the deterministic RFC Message-ID before a resend; delivery
  * is at-least-once, never exactly-once. */
 import { randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 
 import { runCommand } from "./commands.ts";
+import {
+  MAX_MAIL_ATTACHMENTS,
+  MAX_MAIL_ATTACHMENT_BYTES,
+  MAX_MAIL_TOTAL_BYTES,
+} from "./mail-attachments.ts";
 import { deleteCommandReceipt, listCommandReceipts, mutateCommandReceipt } from "./message-db.ts";
 
 export interface MailReplyAttachmentRef {
@@ -36,6 +41,7 @@ export interface MailReplyRow {
   /** Deterministic RFC 5322 Message-ID, persisted before the first send. */
   messageId: string;
   attachments: MailReplyAttachmentRef[];
+  omittedAttachments?: string[];
   attempts: number;
   nextAt?: number;
   claimId?: string;
@@ -88,6 +94,7 @@ export interface CreateMailReplyInput {
   html?: string;
   messageId: string;
   attachments: MailReplyAttachmentRef[];
+  omittedAttachments?: string[];
 }
 
 /** The MVP reply-eligibility rule. It deliberately keeps the 30-minute
@@ -104,13 +111,11 @@ export function shouldMirrorRoutedTurn(input: {
 
 const KIND = "gmail.reply";
 const MAX_ATTEMPTS = 5;
-const MAX_ATTACHMENTS = 10;
+const MAX_TERMINAL_ROWS = 100;
 const TERMINAL_RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 /** Must exceed the BFF send timeout; a stale lease is reclaimed by the next
  * drain and reconciled before any resend. */
 const LEASE_MS = 2 * 60_000;
-const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-const MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
 
 function escapeHtml(value: string): string {
@@ -197,6 +202,12 @@ function pruneTerminalRows(now: number): void {
     if ((row.state === "sent" || row.state === "dead") && now - row.createdAt > TERMINAL_RETENTION_MS) {
       deleteCommandReceipt(KIND, row.turnId);
     }
+  }
+  const terminal = listRows()
+    .filter((row) => row.state === "sent" || row.state === "dead")
+    .sort((a, b) => a.createdAt - b.createdAt || a.turnId.localeCompare(b.turnId));
+  for (const row of terminal.slice(0, Math.max(0, terminal.length - MAX_TERMINAL_ROWS))) {
+    deleteCommandReceipt(KIND, row.turnId);
   }
 }
 
@@ -345,22 +356,41 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
           dropped.push(attachment);
           continue;
         }
-        if (attachments.length >= MAX_ATTACHMENTS) {
+        if (attachments.length >= MAX_MAIL_ATTACHMENTS) {
+          dropped.push(attachment);
+          continue;
+        }
+        let size: number;
+        try {
+          size = statSync(attachment.path).size;
+        } catch {
+          dropped.push(attachment);
+          continue;
+        }
+        if (size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
+          dropped.push(attachment);
+          continue;
+        }
+        if (total + size > MAX_MAIL_TOTAL_BYTES) {
           dropped.push(attachment);
           continue;
         }
         let bytes: Buffer;
         try {
           bytes = readFileSync(attachment.path);
-        } catch {
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+            dropped.push(attachment);
+            continue;
+          }
           unreadable.push(attachment);
           continue;
         }
-        if (bytes.length === 0 || bytes.length > MAX_ATTACHMENT_BYTES) {
+        if (bytes.length === 0 || bytes.length > MAX_MAIL_ATTACHMENT_BYTES) {
           dropped.push(attachment);
           continue;
         }
-        if (total + bytes.length > MAX_TOTAL_ATTACHMENT_BYTES) {
+        if (total + bytes.length > MAX_MAIL_TOTAL_BYTES) {
           dropped.push(attachment);
           continue;
         }
@@ -377,12 +407,13 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
         if (claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, error);
         break;
       }
-      const droppedNames = dropped.map((attachment) => attachment.filename).join(", ").slice(0, 500);
-      const body = dropped.length
+      const omittedNames = [...(claimed.omittedAttachments ?? []), ...dropped.map((attachment) => attachment.filename)];
+      const droppedNames = omittedNames.join(", ").slice(0, 500);
+      const body = omittedNames.length
         ? `${claimed.body}\n\n[Relay could not include: ${droppedNames}]`
         : claimed.body;
       let html = claimed.html;
-      if (dropped.length && html) {
+      if (omittedNames.length && html) {
         const note = `<p>[Relay could not include: ${escapeHtml(droppedNames)}]</p>`;
         html = /<\/div>\s*$/.test(html) ? html.replace(/<\/div>\s*$/, `${note}</div>`) : `${html}${note}`;
       }
@@ -414,7 +445,7 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
           if (permanent || claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, reason);
           break;
         }
-        if (dropped.length) {
+        if (omittedNames.length) {
           deps.log({
             event: "mail-reply.attachments-dropped",
             turnId: claimed.turnId,
