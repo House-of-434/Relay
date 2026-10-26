@@ -10,8 +10,8 @@ const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const transcripts = source("../../../supabase/migrations/0006_transcripts.sql");
 const serviceActors = source("../../../supabase/migrations/0007_service_actors.sql");
-const eventTracker = source("../../../supabase/migrations/0010_event_content_tracker.sql");
-const memberDirectory = source("../../../supabase/migrations/0011_member_directory.sql");
+const eventTracker = source("../../../supabase/migrations/0011_event_content_tracker.sql");
+const memberDirectory = source("../../../supabase/migrations/0012_member_directory.sql");
 const migrations = `${init}\n${stores}\n${ownership}\n${transcripts}\n${serviceActors}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data

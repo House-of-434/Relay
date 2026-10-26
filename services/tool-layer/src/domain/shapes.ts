@@ -75,7 +75,7 @@ export const SHAPES: Record<string, Shape> = {
       "type", "title", "summary", "occurred_at", "company_id", "tags", "attendee_ids",
       "investor_names", "round", "amount", "source", "source_url", "observed_at",
       "confidence", "external_source", "external_source_id",
-      // Event Content Tracker fields (migration 0010). hosted stays plain text:
+      // Event Content Tracker fields (migration 0011). hosted stays plain text:
       // the tracker's options evolve, so no app-side enum rejects a valid value.
       "hosted", "city", "speakers", "media_url", "cover_image_url", "notes",
     ],
