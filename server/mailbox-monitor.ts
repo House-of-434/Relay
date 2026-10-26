@@ -111,11 +111,14 @@ export function senderAddress(from: string | undefined): string | undefined {
 /** A routed message that cannot join the parent conversation. The caller
  * receipts it as ignored instead of retrying forever. */
 export class RoutedMailParentError extends Error {
-  constructor(readonly reason: "different-sender" | "missing-parent") {
+  readonly reason: "different-sender" | "missing-parent";
+
+  constructor(reason: "different-sender" | "missing-parent") {
     super(reason === "different-sender"
       ? "the routed conversation belongs to a different sender"
       : "the routed conversation is missing");
     this.name = "RoutedMailParentError";
+    this.reason = reason;
   }
 }
 
