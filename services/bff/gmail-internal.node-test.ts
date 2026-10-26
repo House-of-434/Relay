@@ -54,6 +54,21 @@ function actorAssertion(userId: string, _email?: string, issuedAt = Math.floor(D
   return JSON.stringify({ userId, issuedAt, botId: BOT_ID, threadId: THREAD_ID, agent: "mercury", signature });
 }
 
+function mailRoutedAssertion(issuedAt = Math.floor(Date.now() / 1000)): string {
+  const signature = createHmac("sha256", ACTOR_SECRET)
+    .update(JSON.stringify(["relay-actor", USER_ID, issuedAt, BOT_ID, THREAD_ID, "mercury", true]))
+    .digest("base64url");
+  return JSON.stringify({
+    userId: USER_ID,
+    issuedAt,
+    botId: BOT_ID,
+    threadId: THREAD_ID,
+    agent: "mercury",
+    mailRouted: true,
+    signature,
+  });
+}
+
 interface GmailCall {
   userId: string;
   accountId: string;
@@ -1353,4 +1368,45 @@ test("the reply route refuses a caller without the harness mirror capability", a
   });
 
   assert.equal(response.status, 401);
+});
+
+test("a mail-routed assertion is refused by the agent send route before Gmail", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." }),
+  });
+
+  assert.equal(response.status, 403);
+  assert.equal(calls.some((call) => call.operation === "messages.send"), false);
+});
+
+test("a forged or false mail marker is rejected before the send route", async () => {
+  const { call } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const signed = JSON.parse(mailRoutedAssertion()) as Record<string, unknown>;
+  const falseMarker = { ...signed, mailRouted: false };
+  const extraMarker = { ...signed, extra: true };
+
+  for (const assertion of [falseMarker, extraMarker]) {
+    const response = await call(INTERNAL_GMAIL_SEND, {
+      method: "POST",
+      headers: {
+        authorization: `Bearer ${CAPABILITY}`,
+        "x-relay-actor-user": JSON.stringify(assertion),
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." }),
+    });
+    assert.equal(response.status, 401);
+  }
 });

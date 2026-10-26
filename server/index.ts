@@ -15136,11 +15136,16 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 403, { error: "this conversation has no signed owner for the Relay tools" });
         }
         requireActiveInternalCapability();
+        const task = store.taskByThread(internalSender.id, internalCapability.threadId);
+        const mailRouted = Boolean(task?.mailRouted) &&
+          isUnattended(internalSender.id, internalCapability.threadId);
         let assertion: string;
         try {
           assertion = signedActorContext(
             { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent },
             process.env.RELAY_TOOL_ACTOR_SECRET,
+            undefined,
+            mailRouted ? { mailRouted: true } : undefined,
           );
         } catch {
           return json(res, 500, { error: "the Relay tool call could not be signed" });

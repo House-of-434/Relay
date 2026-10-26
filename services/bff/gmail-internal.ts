@@ -830,6 +830,12 @@ export async function handleInternalGmail(
   }
   const actor: RelayActor = verified.actor;
   const raw: unknown = verified.body;
+  if (pathname === INTERNAL_GMAIL_SEND && actor.mailRouted) {
+    json(res, 403, {
+      error: "Relay sends the reply for a routed email; agent-initiated mail is disabled on this turn.",
+    });
+    return;
+  }
 
   let resolved: ResolvedMailbox | undefined;
   try {

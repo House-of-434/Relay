@@ -7,9 +7,44 @@ import {
   relaySigningOwner,
   relayToolMcpServer,
   relayToolProxySpec,
+  signedActorContext,
+  verifyActorAssertion,
 } from "./relay-mcp.ts";
 
 const PROXY_PATH = "/opt/relay/relay-tool-proxy.js";
+const ACTOR = {
+  userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
+  botId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
+  threadId: "9c858901-8a57-4791-81fe-4c455b099bc9",
+  agent: "scout" as const,
+};
+const ACTOR_SECRET = "relay-tool-actor-secret-test-value-over-32-bytes";
+const ISSUED_AT = 1_700_000_000;
+const NOW = ISSUED_AT * 1000;
+
+describe("signed actor assertions", () => {
+  it("signs a literal mail-routed marker and verifies it", () => {
+    const marked = signedActorContext(ACTOR, ACTOR_SECRET, ISSUED_AT, { mailRouted: true });
+    expect(verifyActorAssertion(marked, ACTOR_SECRET, NOW)).toEqual({
+      ...ACTOR,
+      mailRouted: true,
+    });
+    const plain = signedActorContext(ACTOR, ACTOR_SECRET, ISSUED_AT);
+    expect(verifyActorAssertion(plain, ACTOR_SECRET, NOW)).not.toHaveProperty("mailRouted");
+  });
+
+  it("rejects false, extra, or improperly stripped markers", () => {
+    const marked = signedActorContext(ACTOR, ACTOR_SECRET, ISSUED_AT, { mailRouted: true });
+    const parsed = JSON.parse(marked) as Record<string, unknown>;
+    expect(() => verifyActorAssertion(
+      JSON.stringify({ ...parsed, mailRouted: false }), ACTOR_SECRET, NOW)).toThrow(/invalid/);
+    expect(() => verifyActorAssertion(
+      JSON.stringify({ ...parsed, extra: true }), ACTOR_SECRET, NOW)).toThrow(/invalid/);
+    const { mailRouted: _mailRouted, ...sixKeyShape } = parsed;
+    expect(() => verifyActorAssertion(
+      JSON.stringify(sixKeyShape), ACTOR_SECRET, NOW)).toThrow(/signature is invalid/);
+  });
+});
 
 const proxySpec = relayToolProxySpec({
   agent: "scout",

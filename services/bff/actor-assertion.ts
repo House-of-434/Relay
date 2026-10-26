@@ -10,6 +10,7 @@ export const ACTOR_ASSERTION_PURPOSE = "relay-actor";
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const KEYS = "agent,botId,issuedAt,signature,threadId,userId";
+const KEYS_WITH_MAIL = "agent,botId,issuedAt,mailRouted,signature,threadId,userId";
 
 export const RELAY_AGENT_ROLES = ["scout", "mercury", "curator"] as const;
 export type RelayAgentRole = (typeof RELAY_AGENT_ROLES)[number];
@@ -19,6 +20,9 @@ export interface RelayActor {
   botId: string;
   threadId: string;
   agent: RelayAgentRole;
+  /** This turn is forbidden from the agent-facing send route. Never an
+   * authorization to send. */
+  mailRouted?: true;
 }
 
 export class ActorAssertionError extends Error {
@@ -28,8 +32,18 @@ export class ActorAssertionError extends Error {
   }
 }
 
-function signingBytes(userId: string, issuedAt: number, botId: string, threadId: string, agent: string): string {
-  return JSON.stringify([ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent]);
+function signingBytes(
+  userId: string,
+  issuedAt: number,
+  botId: string,
+  threadId: string,
+  agent: string,
+  mailRouted?: true,
+): string {
+  return JSON.stringify([
+    ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent,
+    ...(mailRouted ? [true] : []),
+  ]);
 }
 
 function secretKey(secret: string): string {
@@ -73,7 +87,9 @@ export function verifyActorAssertion(
 
   const assertion = parsed as Record<string, unknown>;
   const keys = Object.keys(assertion).sort().join(",");
-  if (keys !== KEYS ||
+  const mailRouted = keys === KEYS_WITH_MAIL;
+  if ((keys !== KEYS && !mailRouted) ||
+      (mailRouted && assertion.mailRouted !== true) ||
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
@@ -88,7 +104,14 @@ export function verifyActorAssertion(
   }
 
   const expected = createHmac("sha256", secretKey(secret))
-    .update(signingBytes(assertion.userId, assertion.issuedAt, assertion.botId, assertion.threadId, assertion.agent))
+    .update(signingBytes(
+      assertion.userId,
+      assertion.issuedAt,
+      assertion.botId,
+      assertion.threadId,
+      assertion.agent,
+      mailRouted ? true : undefined,
+    ))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
   if (received.length !== expected.length || !timingSafeEqual(received, expected)) {
@@ -100,5 +123,6 @@ export function verifyActorAssertion(
     botId: assertion.botId,
     threadId: assertion.threadId,
     agent: assertion.agent,
+    ...(mailRouted ? { mailRouted: true as const } : {}),
   };
 }
