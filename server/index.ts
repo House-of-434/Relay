@@ -3,12 +3,12 @@
 // folds one SSE event stream; every provider process runs here.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, rmSync, mkdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, realpathSync, rmSync, mkdirSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import { rm as removeDirectory } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { basename, extname, join, resolve, sep } from "node:path";
+import { basename, extname, join } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
 
 import { z } from "zod";
@@ -258,7 +258,7 @@ import {
 } from "./aside-queue.ts";
 import { promptWithReply, transcriptText } from "./replies.ts";
 import { admit, DRAIN_COALESCE_MAX_ITEMS } from "./admission.ts";
-import { _loadPending, buildDelegationFailurePrompt, buildDelegationRevivalPrompt, clearDelegationWake, clearDelegationWatch, DELEGATION_TTL_MS, DelegationWakeBudget, discardDelegations, drainDelegations, expireStaleDelegations, findDelegationReceipt, findDurableDelegationWatchByTaskId, loadDelegationWatches, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, recordDelegationWake, recordDelegationWatch, releaseDelegationsWaitingOn, summarizeDelegatedActivity, type DelegationReceipt, type QueueResult } from "./delegations.ts";
+import { _loadPending, buildDelegationFailurePrompt, buildDelegationRevivalPrompt, clearDelegationWake, clearDelegationWatch, DELEGATION_TTL_MS, DelegationWakeBudget, discardDelegations, drainDelegations, expireStaleDelegations, findDelegationReceipt, findDurableDelegationWatchByTaskId, loadDelegationWatches, pendingDelegationInfo, pendingDelegationSnapshot, pendingThreads, queueDelegation, recordDelegationReceipt, recordDelegationWake, recordDelegationWatch, releaseDelegationsWaitingOn, receiptsForSourceThread, summarizeDelegatedActivity, type DelegationAttachmentRef, type DelegationReceipt, type QueueResult } from "./delegations.ts";
 import {
   cancelSteeredMessage,
   drainSteeredMessages,
@@ -504,8 +504,10 @@ import { applyPendingWorkspaceRestore, readLastWorkspaceRestore, type WorkspaceR
 import { createCustomDomainVerifier, customDomainIpv4, normalizeCustomDomain } from "./custom-domain.ts";
 import { allowedScopes, createEmailSignIn, parseAllowList } from "./account-signin.ts";
 import { ProviderAuthSessions } from "./provider-auth-sessions.ts";
-import { canSendMailboxEmail, deriveMailSubject, describeMailboxSendSkip, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxAcknowledgement, sendMailboxQuestionEmail, sendMailboxReply, type MailSendReceipt } from "./mailbox-notify.ts";
-import { createMailReplyRow, drainRoutedReplies } from "./mail-reply-outbox.ts";
+import { canSendMailboxEmail, deriveMailSubject, describeMailboxSendSkip, mailSendClaimFresh, mailSendFingerprint, mailSendReceiptSent, mailboxReplyNeedsNoEmail, mailboxReplySubject, sendMailboxQuestionEmail, sendMailboxReply, type MailSendReceipt } from "./mailbox-notify.ts";
+import { renderEmailMarkdown } from "./email-markdown.ts";
+import { createMailReplyRow, drainRoutedReplies, shouldMirrorRoutedTurn } from "./mail-reply-outbox.ts";
+import { mailAttachmentRefsForTurn, mergeMailAttachmentRefs, type MailAttachmentRef } from "./mail-attachments.ts";
 import {
   clearSessionCookie,
   clientBotPatchViolation,
@@ -1886,6 +1888,10 @@ type InternalCapability = {
   ownThreadCreation?: boolean;
   /** attach_file calls this turn has made, capped so one turn cannot flood the chat. */
   attachedFiles?: number;
+  /** Explicit per-turn policy: this turn is part of a routed-mail request and
+   * must not call the agent-facing Gmail send route. True or false is
+   * authoritative; absent is the legacy fallback for old/test capabilities. */
+  mailRouted?: boolean;
   externalRuntime?: ExternalRuntimeGrant;
 };
 const MAX_ATTACHED_FILES_PER_TURN = 10;
@@ -1987,6 +1993,7 @@ function revokeInternalCapabilityGeneration(threadId: string, generation: string
   if (activeInternalGenerationByThread.get(threadId) === generation) {
     activeInternalGenerationByThread.delete(threadId);
   }
+  inheritedMailAttachmentsByGeneration.delete(generation);
   internalGenerationByProviderTurn.deleteGeneration(threadId, generation);
 }
 
@@ -2010,6 +2017,7 @@ function revokeAllInternalCapabilities(): void {
   // generation by id) is what judges it (server/lending-memory.ts).
   activeInternalGenerationByThread.clear();
   internalGenerationByProviderTurn.clear();
+  inheritedMailAttachmentsByGeneration.clear();
 }
 
 function bindInternalCapabilityToProviderTurn(threadId: string, generation: string, turnId?: string): void {
@@ -2658,37 +2666,33 @@ function purgeTurnAttachmentsForThread(threadId: string): void {
 // long deliverable reaches the teammate as an attachment instead of pasted
 // text. Bounded per turn: a conversation can span many turns, and an earlier
 // turn's files must not ride a later reply.
-const MAX_MAIL_ATTACHMENTS = 10;
-const MAX_MAIL_ATTACHMENT_BYTES = 20 * 1024 * 1024;
-const MAX_MAIL_TOTAL_BYTES = 25 * 1024 * 1024;
+function routedMailAttachmentRefs(threadId: string, turnId: string): MailAttachmentRef[] {
+  return mailAttachmentRefsForTurn(store.messagesFor(threadId), turnId, ATTACHMENTS_DIR);
+}
 
-function routedMailAttachmentRefs(
-  threadId: string,
-  turnId: string,
-): Array<{ path: string; filename: string; mimeType: string }> {
-  const out: Array<{ path: string; filename: string; mimeType: string }> = [];
-  const attachmentsRoot = `${resolve(ATTACHMENTS_DIR)}${sep}`;
-  let total = 0;
-  for (const message of store.messagesFor(threadId)) {
-    if (message.turnId !== turnId) continue;
-    for (const attachment of message.attachments ?? []) {
-      if (attachment.kind !== "file" || out.length >= MAX_MAIL_ATTACHMENTS) continue;
-      // The store wrote this path inside ATTACHMENTS_DIR; refuse anything else.
-      const resolved = resolve(attachment.path);
-      if (!resolved.startsWith(attachmentsRoot)) continue;
-      let size: number;
-      try {
-        size = statSync(resolved).size;
-      } catch {
-        continue;
-      }
-      if (size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) continue;
-      total += size;
-      if (total > MAX_MAIL_TOTAL_BYTES) return out;
-      out.push({ path: resolved, filename: attachment.name, mimeType: attachment.mime });
+/** Merge parent-turn and delegated-turn artifacts for one reply. The child
+ * refs arrive through a persisted delegation receipt, so the shared helper
+ * re-applies the attachment-store containment and size checks. */
+function mergeMailAttachments(groups: ReadonlyArray<ReadonlyArray<MailAttachmentRef>>): MailAttachmentRef[] {
+  return mergeMailAttachmentRefs(groups, ATTACHMENTS_DIR);
+}
+
+/** Metadata-only dedupe for artifacts carried by parked wakes. The final
+ * merge re-checks containment and size before anything is read. */
+function mergeAttachmentLists(
+  ...lists: Array<readonly DelegationAttachmentRef[] | undefined>
+): DelegationAttachmentRef[] | undefined {
+  const out: DelegationAttachmentRef[] = [];
+  const seen = new Set<string>();
+  for (const list of lists) {
+    for (const ref of list ?? []) {
+      if (seen.has(ref.path)) continue;
+      seen.add(ref.path);
+      out.push(ref);
+      if (out.length >= 10) return out;
     }
   }
-  return out;
+  return out.length ? out : undefined;
 }
 
 function markCancelledProviderHandshake(threadId: string, ownerId: string): void {
@@ -4409,6 +4413,7 @@ const roomHandoffs = new RoomHandoffs(join(DATA_DIR, "room-handoffs.json"), {
         requestMessageId: directRequestOwners.get(node.threadId)?.generations.has(node.rootId)
           ? directRequestOwners.get(node.threadId)?.messageId : undefined,
         unattended: isUnattended(bot.id, node.threadId),
+        mailRouted: Boolean(store.taskByThread(bot.id, node.threadId)?.mailRouted),
         coordination: { id: node.id, resumed, settle: finish },
         onDispatchError: error => finish({ ok: false, text: error }),
       }).catch(error => finish({ ok: false, text: String(error) }));
@@ -5614,6 +5619,14 @@ bus.subscribe((event: RuntimeEvent) => {
 // and the checkpoint taken at dispatch (hash + folder) so settle can diff.
 const turnStartedAt = new Map<string, number>();
 const turnCheckpoints = new Map<string, { cwd: string; hash: string }>();
+/** Artifacts inherited from delegated turns, keyed by the parent turn's
+ * generation so concurrent delegations can never mix or clear each other. */
+const inheritedMailAttachmentsByGeneration = new Map<string, {
+  attachments: DelegationAttachmentRef[];
+  /** Parent-turn dispatch time; receipts finalized after it are aggregated
+   * too, so concurrent delegations all contribute to the same reply. */
+  startedAt: number;
+}>();
 // The turn a thread is in, from the last event that named one. Not every
 // driver stamps every item with a turnId (ACP fakes, some ACP agents), and
 // a digest can only count activity it can attribute — so an unstamped tool
@@ -5833,15 +5846,6 @@ function isInternalTurn(threadId: string): boolean {
 // app; only the notification is withheld. Rewritten at every dispatch like
 // the internal flag, so a dead turn cannot silence the next one.
 const silentCompletionThreads = new Set<string>();
-
-/** Routed-mail threads whose result email has already gone out. The thread is
- * not the end of the work when a turn delegates and waits, so the send is
- * keyed to the turn that truly finishes and guarded here against a second
- * settle (a late peer result) mailing the same person twice. */
-
-/** Routed messages whose receipt acknowledgement has already gone out, so a
- * delivery retry cannot acknowledge the same mail twice. */
-const mailAckSentMessages = new Set<string>();
 
 function markSilentCompletion(threadId: string) {
   silentCompletionThreads.add(threadId);
@@ -7225,6 +7229,15 @@ bus.subscribe((event: RuntimeEvent) => {
       if (bot) {
         const resourceOwner = turnResourceOwners.get(event.threadId);
         const generation = directTurnGenerationByThread.get(event.threadId);
+        const inheritedMailArtifacts = generation
+          ? inheritedMailAttachmentsByGeneration.get(generation)
+          : undefined;
+        if (generation) inheritedMailAttachmentsByGeneration.delete(generation);
+        const inheritedMailAttachments = inheritedMailArtifacts?.attachments ?? [];
+        const concurrentMailAttachments = inheritedMailArtifacts
+          ? receiptsForSourceThread(event.threadId, inheritedMailArtifacts.startedAt)
+            .flatMap((receipt) => receipt.attachments ?? [])
+          : [];
         const isCurrent = () => directTurnGenerationByThread.get(event.threadId) === generation &&
           Boolean(store.taskByThread(bot.id, event.threadId));
         const settleDirectTurn = (resumeQueued = false) => {
@@ -7348,7 +7361,12 @@ bus.subscribe((event: RuntimeEvent) => {
         // Every unattended parent turn is one message in the mail
         // conversation. Write the durable reply row before this settle returns;
         // the mailbox monitor drains it with a lease and a per-turn receipt.
-        if (routedMail && event.ok !== false && completedTurnId && isUnattended(bot.id, event.threadId)) {
+        if (routedMail && completedTurnId && shouldMirrorRoutedTurn({
+          mailRouted: true,
+          ok: event.ok !== false,
+          completedTurnId,
+          unattended: isUnattended(bot.id, event.threadId),
+        })) {
           const terminal = store.markTerminalAssistantMessage(event.threadId, completedTurnId);
           const text = terminal?.text?.trim() ?? "";
           // A question turn ends with NO_ACTION; an empty turn has nothing to send.
@@ -7358,6 +7376,7 @@ bus.subscribe((event: RuntimeEvent) => {
               console.warn("[mailbox] routed reply skipped: the originating email could not be resolved");
             } else {
               const domain = RELAY_MAILBOX_ADDRESS?.split("@").pop()?.trim() || "relay.local";
+              const rendered = renderEmailMarkdown(redactSecretsInText(text));
               createMailReplyRow({
                 turnId: completedTurnId,
                 threadId: event.threadId,
@@ -7365,9 +7384,14 @@ bus.subscribe((event: RuntimeEvent) => {
                 sourceMessageId: origin.gmailMessageId,
                 to: routedMail.email,
                 subject: mailboxReplySubject(routedMail.subject ?? origin.subject),
-                body: redactSecretsInText(text),
+                body: rendered.text,
+                html: rendered.html,
                 messageId: `<relay-${completedTurnId}@${domain}>`,
-                attachments: routedMailAttachmentRefs(event.threadId, completedTurnId),
+                attachments: mergeMailAttachments([
+                  routedMailAttachmentRefs(event.threadId, completedTurnId),
+                  inheritedMailAttachments,
+                  concurrentMailAttachments,
+                ]),
               });
             }
           }
@@ -7433,7 +7457,7 @@ bus.subscribe((event: RuntimeEvent) => {
       const delegationFailureName = !event.ok && event.stopReason?.trim()
         ? `Delegated turn did not finish — ${event.stopReason.trim().slice(0, 120)}`
         : undefined;
-      finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName);
+      finalizeDelegationWatch(event.threadId, event.ok, reply, delegationFailureName, completedTurnId);
       // group busy/unread settle in the group turn engine, which knows
       // whether more member turns are queued behind this one
       break;
@@ -7463,7 +7487,7 @@ const delegationWatch = new Map<string, {
 // fold the result in and answer the user instead of sitting idle. Mirrors
 // the cardContinuation resume pattern used for connector/credential cards.
 const delegationWakeBudget = new DelegationWakeBudget();
-const pendingDelegationWakes = new Map<string, { botId: string; targetName: string; failureReason?: string; routineRunId?: string; budgetAcquired?: boolean }>();
+const pendingDelegationWakes = new Map<string, { botId: string; targetName: string; failureReason?: string; routineRunId?: string; budgetAcquired?: boolean; attachments?: DelegationAttachmentRef[] }>();
 
 function activeRoutineRunForThread(threadId: string): RoutineRun | null {
   const run = routines?.runForThread(threadId);
@@ -7474,7 +7498,7 @@ function routineDelegationCanResume(threadId: string, routineRunId?: string): bo
   return !routineRunId || activeRoutineRunForThread(threadId)?.id === routineRunId;
 }
 
-function dispatchDelegationWake(botId: string, threadId: string, targetName: string, failureReason?: string, routineRunId?: string, budgetAcquired = false): void {
+function dispatchDelegationWake(botId: string, threadId: string, targetName: string, failureReason?: string, routineRunId?: string, budgetAcquired = false, inheritedMailAttachments?: readonly DelegationAttachmentRef[]): void {
   // The wake is being dispatched: drop its durable record, plus any watch
   // whose delegation already finalized (its receipt exists, so tracking it
   // further would only resurrect settled work on the next boot).
@@ -7497,6 +7521,8 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
     threadId,
     cardContinuation: true,
     unattended: isUnattended(botId, threadId),
+    mailRouted: Boolean(store.taskByThread(botId, threadId)?.mailRouted),
+    ...(inheritedMailAttachments?.length ? { inheritedMailAttachments: [...inheritedMailAttachments] } : {}),
   })
     .then(() => undefined)
     .catch((error) => {
@@ -7508,8 +7534,16 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
       // Raced with a user turn claiming the bot — retry once it settles.
       // This is the same logical wake, so keep its original budget charge.
       if (isTurnAdmissionBlocked(error)) {
-        pendingDelegationWakes.set(threadId, { botId, targetName, failureReason, routineRunId, budgetAcquired: true });
-        recordDelegationWake(threadId, { botId, targetName, failureReason, routineRunId, budgetAcquired: true });
+        const pending = pendingDelegationWakes.get(threadId);
+        const merged = mergeAttachmentLists(pending?.attachments, inheritedMailAttachments);
+        pendingDelegationWakes.set(threadId, {
+          botId, targetName, failureReason, routineRunId, budgetAcquired: true,
+          ...(merged ? { attachments: merged } : {}),
+        });
+        recordDelegationWake(threadId, {
+          botId, targetName, failureReason, routineRunId, budgetAcquired: true,
+          ...(merged ? { attachments: merged } : {}),
+        });
         return;
       }
       store.appendMessage(threadId, {
@@ -7524,7 +7558,7 @@ function dispatchDelegationWake(botId: string, threadId: string, targetName: str
     });
 }
 
-function wakeDelegationSource(source: BotRecord, threadId: string, targetName: string, failureReason?: string, routineRunId?: string): void {
+function wakeDelegationSource(source: BotRecord, threadId: string, targetName: string, failureReason?: string, routineRunId?: string, attachments?: readonly DelegationAttachmentRef[]): void {
   if (!store.taskByThread(source.id, threadId)) {
     clearDelegationWake(threadId);
     return;
@@ -7536,16 +7570,24 @@ function wakeDelegationSource(source: BotRecord, threadId: string, targetName: s
   // The wake intent is durable from here on: a crash before the dispatch
   // below (or before a parked wake is drained) replays it on boot instead
   // of dropping the handoff. Direct dispatch clears it again on entry.
-  recordDelegationWake(threadId, { botId: source.id, targetName, failureReason, routineRunId });
+  recordDelegationWake(threadId, {
+    botId: source.id, targetName, failureReason, routineRunId,
+    ...(attachments?.length ? { attachments: [...attachments] } : {}),
+  });
   // Busy? Hold the wake until the source settles, then drain it — the
   // delegated reply is already in the thread, so nothing is lost, and the
   // source processes it the moment it is free rather than waiting for the
   // next user nudge.
   if (threadBusy(source.id, threadId) || botAtThreadCapacity(source.id) || activeGroupTurnForBot(source.id)) {
-    pendingDelegationWakes.set(threadId, { botId: source.id, targetName, failureReason, routineRunId });
+    const pending = pendingDelegationWakes.get(threadId);
+    const merged = mergeAttachmentLists(pending?.attachments, attachments);
+    pendingDelegationWakes.set(threadId, {
+      botId: source.id, targetName, failureReason, routineRunId,
+      ...(merged ? { attachments: merged } : {}),
+    });
     return;
   }
-  dispatchDelegationWake(source.id, threadId, targetName, failureReason, routineRunId);
+  dispatchDelegationWake(source.id, threadId, targetName, failureReason, routineRunId, false, attachments);
 }
 
 // ── incidents: a broken run reaches the Chief of Staff ──────────────────
@@ -7647,7 +7689,7 @@ function drainDelegationWakes(): void {
     // could otherwise requeue after the last idle-release drain has run.
     if (threadBusy(entry.botId, threadId) || botAtThreadCapacity(entry.botId) || activeGroupTurnForBot(entry.botId)) continue;
     pendingDelegationWakes.delete(threadId);
-    dispatchDelegationWake(entry.botId, threadId, entry.targetName, entry.failureReason, entry.routineRunId, entry.budgetAcquired);
+    dispatchDelegationWake(entry.botId, threadId, entry.targetName, entry.failureReason, entry.routineRunId, entry.budgetAcquired, entry.attachments);
   }
 }
 
@@ -7655,7 +7697,7 @@ function wakeUndispatchedDelegation(receipt: DelegationReceipt, routineRunId?: s
   const source = store.botByThread(receipt.sourceThreadId);
   if (!source) return;
   markTaskContextExternallyUpdated(source, receipt.sourceThreadId);
-  wakeDelegationSource(source, receipt.sourceThreadId, receipt.toBotName, receipt.result || "the handoff did not run", routineRunId);
+  wakeDelegationSource(source, receipt.sourceThreadId, receipt.toBotName, receipt.result || "the handoff did not run", routineRunId, receipt.attachments);
 }
 
 // Provider-native sessions only know about messages produced inside their
@@ -7800,6 +7842,7 @@ function finalizeDelegationWatch(
   ok: boolean,
   reply = "",
   failureName = "Delegated turn did not finish",
+  completedTurnId?: string,
 ): boolean {
   const watched = delegationWatch.get(threadId);
   if (!watched) return false;
@@ -7814,6 +7857,8 @@ function finalizeDelegationWatch(
     reply = "";
     failureName = "Result withheld: team or peer access changed while the teammate was working";
   }
+  // A withheld or failed result contributes no artifacts to the parent reply.
+  const attachments = ok && completedTurnId ? routedMailAttachmentRefs(threadId, completedTurnId) : [];
   // The receipt is written before any mirror short-circuits: the delegating
   // bot's check/wait_delegation must see a terminal state even when the
   // channel or target is gone.
@@ -7825,6 +7870,7 @@ function finalizeDelegationWatch(
       toBotName: store.bot(watched.toBotId)?.name ?? watched.toBotId,
       status: ok ? "done" : "failed",
       result: ok ? reply : failureName,
+      ...(attachments.length ? { attachments } : {}),
     });
   }
   let channel: GroupRecord | undefined = watched.channelId ? store.group(watched.channelId) : undefined;
@@ -7907,9 +7953,9 @@ function finalizeDelegationWatch(
       // not finish. Idle-checked and burst-capped so a busy source or a
       // re-delegating loop cannot spin up runs.
       if (ok) {
-        wakeDelegationSource(source, watched.sourceThreadId, targetName, undefined, watched.routineRunId);
+        wakeDelegationSource(source, watched.sourceThreadId, targetName, undefined, watched.routineRunId, attachments);
       } else if (!ok) {
-        wakeDelegationSource(source, watched.sourceThreadId, targetName, failureName || "the delegated turn did not finish", watched.routineRunId);
+        wakeDelegationSource(source, watched.sourceThreadId, targetName, failureName || "the delegated turn did not finish", watched.routineRunId, attachments);
       }
     }
   }
@@ -8367,6 +8413,13 @@ async function startTurn(
     automationSource?: RoutineRunTrigger;
     /** the caller was already running unattended, so this turn is too */
     unattended?: boolean;
+    /** Harness-only: this turn is part of a routed email request. The turn's
+     * tool capability carries the send prohibition even after the reply
+     * eligibility window expires. Never a client option. */
+    mailRouted?: boolean;
+    /** Artifacts produced by the delegated turns this wake is resuming. They
+     * ride the parent reply through the existing attachment pipeline. */
+    inheritedMailAttachments?: DelegationAttachmentRef[];
     /** Withhold only the workspace-wide completion banner for this turn's
      * thread (routed mail, Scribe meeting runs). The thread still goes
      * unread; the person finds it in the app. Harness-only, never a client
@@ -8589,6 +8642,13 @@ async function startTurn(
   // in the background — boat provisioning can take ~90s and must never
   // hang the HTTP request
   const dispatchClaimId = randomUUID();
+  if (opts?.mailRouted === true || opts?.inheritedMailAttachments ||
+      (opts?.unattended === true && Boolean(task.mailRouted))) {
+    inheritedMailAttachmentsByGeneration.set(dispatchClaimId, {
+      attachments: opts.inheritedMailAttachments ? [...opts.inheritedMailAttachments] : [],
+      startedAt: Date.now(),
+    });
+  }
   const resourceOwner: TurnOwner = { threadId, generation: dispatchClaimId };
   turnResourceOwners.set(threadId, resourceOwner);
   directTurnGenerationByThread.set(threadId, dispatchClaimId);
@@ -8833,7 +8893,9 @@ async function startTurn(
       // composio — only to a driver that can mount them. Their tools are
       // never pre-allowed, so every call rides the normal permission flow.
       if (instance.adapter.capabilities.customMcp === true) {
-        const custom = engineMcpServers(bot, threadId);
+        const mailRoutedTurn = Boolean(store.taskByThread(bot.id, threadId)?.mailRouted) &&
+          (opts?.mailRouted === true || opts?.unattended === true);
+        const custom = engineMcpServers(bot, threadId, mailRoutedTurn);
         if (Object.keys(custom).length) integrations.custom = custom;
       }
       // CLI engines work inside the bot's own workspace directory rather
@@ -10069,35 +10131,6 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
         // request: the receipt replies under it, and it is the fallback when
         // the answering turn does not name its own subject.
         const routedSubject = deriveMailSubject(message.subject, message.body);
-        // Acknowledge receipt as Mercury reaches the mail, before the work runs,
-        // so the sender is never left wondering whether Relay got it. The
-        // result follows in its own email when the turn that answers settles.
-        // Keyed by message id so a delivery retry cannot send twice. The
-        // claim goes down before the send; a crash between send and finalize
-        // retries once the claim goes stale instead of double-sending.
-        if (!mailAckSentMessages.has(message.id) && !mailSendReceiptSent(commandReceipt("gmail.ack", message.id)?.result) && !mailSendClaimFresh(commandReceipt("gmail.ack", message.id)?.result, Date.now())) {
-          mailAckSentMessages.add(message.id);
-          const ackFingerprint = mailSendFingerprint([person.email, routedSubject ?? "", "ack"]);
-          upsertCommandReceipt("gmail.ack", message.id, JSON.stringify({ state: "claimed", at: Date.now(), fp: ackFingerprint } satisfies MailSendReceipt), Date.now());
-          void sendMailboxAcknowledgement({
-            capability: relayBffCapability,
-            mirrorCapability: relayMailMirrorCapability,
-            actor: mailboxActor,
-            email: person.email,
-            ...(routedSubject ? { subject: routedSubject } : {}),
-            gmailThreadId: message.threadId?.trim() || message.id,
-            sourceMessageId: message.id,
-          }).then((sent) => {
-            if (!sent) {
-              mailAckSentMessages.delete(message.id);
-              return;
-            }
-            upsertCommandReceipt("gmail.ack", message.id, JSON.stringify({ state: "sent", at: Date.now(), fp: ackFingerprint, sentId: sent.sentId, gmailThreadId: sent.gmailThreadId } satisfies MailSendReceipt), Date.now());
-          }).catch((error) => {
-            mailAckSentMessages.delete(message.id);
-            console.warn(`[mailbox] acknowledgement email failed: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}`);
-          });
-        }
         // The sender's own bot does the work when they have (or can be seeded
         // with) one; the mailbox account's Mercury is only a fallback for a
         // sender with no resolvable account. Ownership follows the bot, so the
@@ -10168,6 +10201,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
                 userMessage,
                 sender: delivery.sender,
                 unattended: true,
+                mailRouted: true,
                 silentCompletion: true,
               });
             },
@@ -10192,6 +10226,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
               to: input.to,
               subject: input.subject,
               body: input.body,
+              ...(input.html ? { html: input.html } : {}),
               gmailThreadId: input.gmailThreadId,
               sourceMessageId: input.sourceMessageId,
               messageId: input.messageId,
@@ -14167,7 +14202,7 @@ function configForAccess(status: ReturnType<typeof configStatus>, admin: boolean
 /** The only MCP route a bot ever mounts: the harness-owned Relay Tool Layer
  * route, reached through a stdio proxy that re-signs the actor assertion on
  * every call. Employees cannot plug in their own MCP servers. */
-function engineMcpServers(bot: BotRecord, threadId?: string) {
+function engineMcpServers(bot: BotRecord, threadId?: string, mailRoutedTurn = false) {
   // The proxy's capability is minted from the bot's owner, and only when the
   // thread really belongs to that owner: the bot's own chat or task, or a room
   // this account owns. A thread resolving to another owner (or none) is never
@@ -14189,6 +14224,7 @@ function engineMcpServers(bot: BotRecord, threadId?: string) {
         skillAuthoring: false,
         createdBots: 0,
         openedThreads: 0,
+        mailRouted: mailRoutedTurn,
       })
       : "";
     relaySpec = relayToolProxySpec({
@@ -15039,6 +15075,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         kind: z.enum(["agents", "connectors", "computer", "relay-tool"]).default("agents"),
         depth: z.number().int().min(0).max(MAX_COMMS_DEPTH).default(0),
         skillAuthoring: z.boolean().default(false),
+        mailRouted: z.boolean().optional(),
       }).strict().safeParse(await readBody(req));
       if (!parsed.success || !store.bot(parsed.data.botId)) {
         return json(res, 400, { error: "invalid test capability" });
@@ -15051,6 +15088,34 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         openedThreads: 0,
       });
       return json(res, 201, { token });
+    }
+    if (method === "POST" && path === "/api/testing/mail-routed") {
+      const expected = Buffer.from(process.env.RELAY_TEST_INTERNAL_CAPABILITY_KEY ?? "");
+      const header = req.headers["x-relay-test-capability"];
+      const actual = Buffer.from(Array.isArray(header) ? "" : String(header ?? ""));
+      if (expected.length < 32 || actual.length !== expected.length || !timingSafeEqual(actual, expected)) {
+        return json(res, 404, { error: "not found" });
+      }
+      const parsed = z.object({
+        botId: z.string().regex(/^[\w-]{1,128}$/),
+        threadId: z.string().regex(/^[\w-]{1,128}$/),
+        routed: z.boolean(),
+        unattended: z.boolean().optional(),
+      }).strict().safeParse(await readBody(req));
+      if (!parsed.success || !store.bot(parsed.data.botId) || !store.taskByThread(parsed.data.botId, parsed.data.threadId)) {
+        return json(res, 400, { error: "invalid test mail-routed task" });
+      }
+      store.patchTask(parsed.data.botId, parsed.data.threadId, {
+        mailRouted: parsed.data.routed ? {
+          userId: "00000000-0000-4000-8000-000000000000",
+          email: "sender@example.test",
+          messageId: "test-message",
+          gmailThreadId: "test-gmail-thread",
+        } : undefined,
+      });
+      if (parsed.data.unattended === true) markUnattended(parsed.data.botId, parsed.data.threadId);
+      else if (parsed.data.unattended === false) clearUnattended(parsed.data.threadId);
+      return json(res, 200, { ok: true });
     }
     // ── internal peer-agent comms (localhost + bot capability only) ───
     // The agents-proxy (spawned inside a bot's agent process) calls these to
@@ -15142,8 +15207,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         requireActiveInternalCapability();
         const task = store.taskByThread(internalSender.id, internalCapability.threadId);
+        // Explicit capability policy wins: true keeps the prohibition for the
+        // whole turn even after the reply-eligibility window; false must not be
+        // overridden by a stale unattended mark. Absent is the legacy fallback.
         const mailRouted = Boolean(task?.mailRouted) &&
-          isUnattended(internalSender.id, internalCapability.threadId);
+          (internalCapability.mailRouted ?? isUnattended(internalSender.id, internalCapability.threadId));
         let assertion: string;
         try {
           assertion = signedActorContext(
@@ -23195,7 +23263,7 @@ server.listen(PORT, "127.0.0.1", () => {
     // watch scan below reloads from disk and never replays the same
     // delegation as a failure.
     for (const wake of loadDelegationWatches().wakes) {
-      dispatchDelegationWake(wake.botId, wake.threadId, wake.targetName, wake.failureReason, wake.routineRunId, wake.budgetAcquired);
+      dispatchDelegationWake(wake.botId, wake.threadId, wake.targetName, wake.failureReason, wake.routineRunId, wake.budgetAcquired, wake.attachments);
     }
     for (const watch of loadDelegationWatches().watches) {
       if (!watch.taskId) {
@@ -23206,7 +23274,7 @@ server.listen(PORT, "127.0.0.1", () => {
       if (receipt) {
         const source = (watch.sourceBotId ? store.bot(watch.sourceBotId) : undefined) ?? store.botByThread(watch.sourceThreadId ?? "");
         if (source && watch.sourceThreadId) {
-          wakeDelegationSource(source, watch.sourceThreadId, watch.toBotName ?? receipt.toBotName, undefined, watch.routineRunId);
+          wakeDelegationSource(source, watch.sourceThreadId, watch.toBotName ?? receipt.toBotName, undefined, watch.routineRunId, receipt.attachments);
         } else {
           clearDelegationWatch(watch.targetThreadId);
         }

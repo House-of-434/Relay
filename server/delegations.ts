@@ -72,6 +72,15 @@ interface PendingDelegationItem extends DelegationItem {
  * stopped counting busy periods; nothing produces it any more. */
 export type DelegationOutcome = "done" | "failed" | "denied" | "expired" | "cancelled" | "busy_gave_up" | "dropped" | "error";
 
+/** Files a delegated turn explicitly attached. Metadata only: the bytes stay
+ * in the attachment store and the email outbox applies its own size/type
+ * checks before sending. */
+export interface DelegationAttachmentRef {
+  path: string;
+  filename: string;
+  mimeType: string;
+}
+
 /** The durable terminal record of one handoff: what the delegating bot reads
  * back with check_delegation / wait_delegation. Bounded and pruned — this is
  * a receipt drawer, not a transcript. */
@@ -86,6 +95,8 @@ export interface DelegationReceipt {
   approvalSource?: "user" | "system";
   /** the peer's reply on success; the failure name otherwise (bounded) */
   result?: string;
+  /** Explicit artifacts the delegated turn produced for a routed reply. */
+  attachments?: DelegationAttachmentRef[];
   finishedAt: number;
 }
 
@@ -167,6 +178,8 @@ export interface DelegationWakeRecord {
   failureReason?: string;
   routineRunId?: string;
   budgetAcquired?: boolean;
+  /** Artifacts from every pending child result for this source thread. */
+  attachments?: DelegationAttachmentRef[];
 }
 
 function readWatchesFile(): { watches: Record<string, unknown>; wakes: Record<string, unknown> } {
@@ -195,6 +208,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+function cleanAttachments(value: unknown): DelegationAttachmentRef[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const out: DelegationAttachmentRef[] = [];
+  const seen = new Set<string>();
+  for (const entry of value) {
+    if (!isRecord(entry)) continue;
+    const { path, filename, mimeType } = entry;
+    if (typeof path !== "string" || !path || typeof filename !== "string" || !filename ||
+        typeof mimeType !== "string" || !mimeType || seen.has(path)) continue;
+    seen.add(path);
+    out.push({ path, filename, mimeType });
+    if (out.length >= 10) break;
+  }
+  return out.length ? out : undefined;
+}
+
 function cleanWatchRecord(value: unknown): DelegationWatchRecord | null {
   if (!isRecord(value)) return null;
   const targetThreadId = value.targetThreadId;
@@ -219,12 +248,14 @@ function cleanWakeRecord(value: unknown): DelegationWakeRecord | null {
   };
   if (typeof botId !== "string" || !botId) return null;
   if (typeof targetName !== "string" || !targetName) return null;
+  const attachments = cleanAttachments(value.attachments);
   return {
     botId,
     targetName,
     ...(typeof failureReason === "string" && failureReason ? { failureReason } : {}),
     ...(typeof routineRunId === "string" && routineRunId ? { routineRunId } : {}),
     ...(budgetAcquired === true ? { budgetAcquired: true as const } : {}),
+    ...(attachments ? { attachments } : {}),
   };
 }
 
@@ -297,7 +328,13 @@ export function clearDelegationWatch(targetThreadId: string): void {
 
 export function recordDelegationWake(threadId: string, wake: DelegationWakeRecord): void {
   rewriteWatchesFile((_watches, wakes) => {
-    wakes[threadId] = wake;
+    // A second child can settle before the source runs. Keep every pending
+    // artifact for this source turn instead of replacing the earlier wake.
+    const attachments = cleanAttachments([
+      ...(wakes[threadId]?.attachments ?? []),
+      ...(wake.attachments ?? []),
+    ]);
+    wakes[threadId] = { ...wake, ...(attachments ? { attachments } : {}) };
   });
 }
 
@@ -328,6 +365,8 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
     finishedAt: receipt.finishedAt ?? now,
   };
   if (receipt.result !== undefined) bounded.result = receipt.result.slice(0, RESULT_MAX_CHARS);
+  const attachments = cleanAttachments(receipt.attachments);
+  if (attachments) bounded.attachments = attachments;
   if (receipt.approvalOutcome !== undefined) {
     bounded.approvalOutcome = receipt.approvalOutcome;
     bounded.approvalSource = peerApprovalFailure(receipt.approvalOutcome).approvalSource;
@@ -340,6 +379,14 @@ export function recordDelegationReceipt(receipt: Omit<DelegationReceipt, "finish
 
 export function findDelegationReceipt(id: string): DelegationReceipt | null {
   return receipts.find((receipt) => receipt.id === id) ?? null;
+}
+
+/** Receipts for one source thread that finalized at or after `sinceMs` and
+ * carry explicit artifacts. Used to aggregate every child reply into the
+ * parent turn's email, even when several delegations settle concurrently. */
+export function receiptsForSourceThread(sourceThreadId: string, sinceMs: number): DelegationReceipt[] {
+  return receipts.filter((receipt) =>
+    receipt.sourceThreadId === sourceThreadId && receipt.finishedAt >= sinceMs && Boolean(receipt.attachments?.length));
 }
 
 /** A still-queued task's routing info, or null once it dispatched/settled. */

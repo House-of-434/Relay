@@ -31,6 +31,8 @@ export interface MailReplyRow {
   to: string;
   subject: string;
   body: string;
+  /** Rendered HTML alternative, persisted with the row. */
+  html?: string;
   /** Deterministic RFC 5322 Message-ID, persisted before the first send. */
   messageId: string;
   attachments: MailReplyAttachmentRef[];
@@ -60,6 +62,7 @@ export interface MailReplySendInput {
   to: string;
   subject: string;
   body: string;
+  html?: string;
   gmailThreadId: string;
   sourceMessageId: string;
   messageId: string;
@@ -82,8 +85,21 @@ export interface CreateMailReplyInput {
   to: string;
   subject: string;
   body: string;
+  html?: string;
   messageId: string;
   attachments: MailReplyAttachmentRef[];
+}
+
+/** The MVP reply-eligibility rule. It deliberately keeps the 30-minute
+ * unattended window: a turn that finishes after it is not emailed. The
+ * send-authorization rule is separate and lives on the turn capability. */
+export function shouldMirrorRoutedTurn(input: {
+  mailRouted: boolean;
+  ok: boolean;
+  completedTurnId?: string;
+  unattended: boolean;
+}): boolean {
+  return input.mailRouted && input.ok && Boolean(input.completedTurnId) && input.unattended;
 }
 
 const KIND = "gmail.reply";
@@ -91,8 +107,6 @@ const MAX_ATTEMPTS = 5;
 /** Must exceed the BFF send timeout; a stale lease is reclaimed by the next
  * drain and reconciled before any resend. */
 const LEASE_MS = 2 * 60_000;
-/** Room for the attachment-dropped note within the BFF's 20k body cap. */
-const MAX_BODY_LENGTH = 18_000;
 const MAX_ATTACHMENT_BYTES = 20 * 1024 * 1024;
 const MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024;
 const BACKOFF_MS = [60_000, 5 * 60_000, 15 * 60_000, 60 * 60_000];
@@ -109,12 +123,6 @@ function errorStatus(error: unknown): number {
 
 function backoffFor(attempts: number): number {
   return BACKOFF_MS[Math.min(Math.max(attempts, 1) - 1, BACKOFF_MS.length - 1)]!;
-}
-
-function boundedBody(body: string): string {
-  if (body.length <= MAX_BODY_LENGTH) return body;
-  const marker = "\n\n[message truncated by Relay]";
-  return `${body.slice(0, MAX_BODY_LENGTH - marker.length)}${marker}`;
 }
 
 const BLOCKED_ATTACHMENT_EXTENSIONS: ReadonlySet<string> = new Set([
@@ -177,7 +185,6 @@ export function createMailReplyRow(input: CreateMailReplyInput): void {
   runCommand({ kind: KIND, key: input.turnId }, () => {
     const row: MailReplyRow = {
       ...input,
-      body: boundedBody(input.body),
       state: "pending",
       createdAt: Date.now(),
       attempts: 0,
@@ -356,6 +363,7 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
           to: claimed.to,
           subject: claimed.subject,
           body,
+          ...(claimed.html ? { html: claimed.html } : {}),
           gmailThreadId: claimed.gmailThreadId,
           sourceMessageId: claimed.sourceMessageId,
           messageId: claimed.messageId,

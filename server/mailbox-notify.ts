@@ -1,15 +1,14 @@
-// "Finished while you were away" notices for the shared mailbox. When a
-// routed turn settles with real work (not a NO_ACTION acknowledgement), the
-// teammate who sent the mail gets one short email from Relay's own account,
-// with a bounded excerpt; the full thread lives in Relay. Server-only: this
-// is never a model-callable tool, and it is addressed only to the verified
-// sender already recorded on the conversation.
+// Routed reply and question email delivery for the shared mailbox. Relayed
+// replies are rendered as email (HTML plus a plain-text alternative) and sent
+// from Relay's own account to the verified sender. Server-only: this is never
+// a model-callable tool.
 import { createHash } from "node:crypto";
 
-import { fromMarkdown } from "mdast-util-from-markdown";
-
+import { markdownToPlainText } from "./email-markdown.ts";
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { redactSecretsInText } from "./redact.ts";
+
+export { markdownToPlainText } from "./email-markdown.ts";
 
 /** Durable receipt payload for record-then-send mailbox emails. A claim is
  * written before the Gmail send; on success it is overwritten with the sent
@@ -71,95 +70,6 @@ function sentIdsOf(response: unknown): MailSendIds {
   };
 }
 
-interface MdNode {
-  type: string;
-  value?: string;
-  url?: string;
-  alt?: string;
-  children?: MdNode[];
-}
-
-/** Render markdown to readable plain text for the notification email. Email
- * bodies are plain text, so emphasis markers and link syntax must not leak
- * through as literal `*`. Uses the mdast parser already in the tree — no new
- * dependency: emphasis is flattened, a link keeps its text and URL, lists keep
- * their bullets, code keeps its content, and raw HTML is dropped. */
-export function markdownToPlainText(markdown: string): string {
-  const tree = fromMarkdown(markdown) as unknown as MdNode;
-  const out: string[] = [];
-
-  const textOf = (node: MdNode): string => {
-    let value = "";
-    const collect = (current: MdNode): void => {
-      if (current.type === "text" && current.value) value += current.value;
-      for (const child of current.children ?? []) collect(child);
-    };
-    collect(node);
-    return value;
-  };
-
-  const walk = (node: MdNode, listDepth: number): void => {
-    switch (node.type) {
-      case "text":
-      case "inlineCode":
-      case "code":
-        out.push(node.value ?? "");
-        return;
-      case "break":
-        out.push("\n");
-        return;
-      case "emphasis":
-      case "strong":
-      case "delete":
-      case "linkReference":
-        for (const child of node.children ?? []) walk(child, listDepth);
-        return;
-      case "link": {
-        const label = textOf(node);
-        for (const child of node.children ?? []) walk(child, listDepth);
-        // Keep the target when it is not already the visible text.
-        if (node.url && node.url !== label.trim()) out.push(` (${node.url})`);
-        return;
-      }
-      case "image":
-        out.push(node.alt ? `[image: ${node.alt}]` : "[image]");
-        return;
-      case "listItem": {
-        // Gather the item's own text, then prefix it with one bullet so items
-        // stay on consecutive lines instead of gaining a blank line each.
-        const start = out.length;
-        for (const child of node.children ?? []) walk(child, listDepth + 1);
-        const body = out.splice(start).join("").trim();
-        out.push(`\n${"  ".repeat(listDepth)}- ${body}`);
-        return;
-      }
-      case "paragraph":
-      case "heading":
-        for (const child of node.children ?? []) walk(child, listDepth);
-        out.push("\n\n");
-        return;
-      case "list":
-      case "blockquote":
-        for (const child of node.children ?? []) walk(child, listDepth);
-        out.push("\n");
-        return;
-      case "thematicBreak":
-        out.push("---\n");
-        return;
-      case "html":
-        return; // no raw HTML in a plain-text email
-      default:
-        for (const child of node.children ?? []) walk(child, listDepth);
-    }
-  };
-
-  walk(tree, 0);
-  return out.join("")
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 /** A reply that asks for nothing (an invitation's NO_ACTION, possibly wrapped
  * in Markdown emphasis) must not trigger a completion email. */
 export function mailboxReplyNeedsNoEmail(reply: string | undefined): boolean {
@@ -204,34 +114,6 @@ export function mailboxReplySubject(subject: string | undefined): string {
   const trimmed = subject?.trim();
   if (!trimmed) return "Your Relay request";
   return /^re:/i.test(trimmed) ? trimmed.slice(0, 250) : `Re: ${trimmed}`.slice(0, 250);
-}
-
-/** A short acknowledgement that Relay has the mail and is on it, sent the
- * moment a message is routed — distinct from the completion email, which
- * carries the result. Kept separate so a long task still answers the sender
- * immediately instead of staying silent until it finishes. */
-export async function sendMailboxAcknowledgement(input: {
-  capability: string | undefined;
-  mirrorCapability: string | undefined;
-  actor: MailboxActor;
-  email: string;
-  /** The subject of the mail being acknowledged, if any. */
-  subject?: string;
-  gmailThreadId: string;
-  sourceMessageId: string;
-}): Promise<MailSendIds | null> {
-  if (!mailboxNotifyEnabled()) return null;
-  if (!process.env.RELAY_MAILBOX_ADDRESS?.trim() || !process.env.RELAY_MAILBOX_USER_ID?.trim()) return null;
-  return sendMailboxReply({
-    capability: input.capability,
-    mirrorCapability: input.mirrorCapability,
-    actor: input.actor,
-    to: input.email,
-    subject: mailboxReplySubject(input.subject),
-    body: "Relay received your email and is working on it. You will get a follow-up with the result.\n",
-    gmailThreadId: input.gmailThreadId,
-    sourceMessageId: input.sourceMessageId,
-  });
 }
 
 /** A question the turn needs answered, delivered to an email sender who
@@ -284,6 +166,8 @@ export async function sendMailboxReply(input: {
   to: string;
   subject: string;
   body: string;
+  /** Rendered HTML alternative for routed replies. Questions omit it. */
+  html?: string;
   gmailThreadId: string;
   sourceMessageId: string;
   /** Persisted deterministic RFC Message-ID for outbox reconciliation. */
@@ -296,6 +180,7 @@ export async function sendMailboxReply(input: {
     to: [input.to],
     subject: input.subject,
     body: input.body,
+    ...(input.html ? { html: input.html } : {}),
     gmailThreadId: input.gmailThreadId,
     sourceMessageId: input.sourceMessageId,
     ...(input.messageId ? { messageId: input.messageId } : {}),

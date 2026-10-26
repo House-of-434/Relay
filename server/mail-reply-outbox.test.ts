@@ -7,6 +7,7 @@ import { DATA_DIR } from "./config.ts";
 import {
   createMailReplyRow,
   drainRoutedReplies,
+  shouldMirrorRoutedTurn,
   type MailReplyRow,
 } from "./mail-reply-outbox.ts";
 import { closeMessageDb, mutateCommandReceipt } from "./message-db.ts";
@@ -43,6 +44,14 @@ function setRow(turnId: string, update: (current: MailReplyRow) => MailReplyRow)
 const sent = () => ({ sentId: "sent-1", gmailThreadId: "gmail-thread" });
 
 describe("routed reply outbox", () => {
+  it("mirrors only an eligible routed turn inside the unattended window", () => {
+    expect(shouldMirrorRoutedTurn({ mailRouted: true, ok: true, completedTurnId: "turn-1", unattended: true })).toBe(true);
+    expect(shouldMirrorRoutedTurn({ mailRouted: true, ok: true, completedTurnId: "turn-1", unattended: false })).toBe(false);
+    expect(shouldMirrorRoutedTurn({ mailRouted: true, ok: false, completedTurnId: "turn-1", unattended: true })).toBe(false);
+    expect(shouldMirrorRoutedTurn({ mailRouted: true, ok: true, completedTurnId: undefined, unattended: true })).toBe(false);
+    expect(shouldMirrorRoutedTurn({ mailRouted: false, ok: true, completedTurnId: "turn-1", unattended: true })).toBe(false);
+  });
+
   beforeEach(() => {
     closeMessageDb();
     rmSync(DATA_DIR, { recursive: true, force: true });
@@ -271,5 +280,64 @@ describe("routed reply outbox", () => {
     const dead = logs.find((event) => event.event === "mail-reply.dead");
     expect(dead?.turnId).toBe("turn-1");
     expect(dead?.attempts).toBe(5);
+  });
+
+  it("persists the HTML alternative across a retry", async () => {
+    create({ html: "<div><p>Here is the answer.</p></div>" });
+    const seen: Array<string | undefined> = [];
+    let now = NOW;
+    let attempt = 0;
+    const deps = {
+      send: async (input: { html?: string }) => {
+        seen.push(input.html);
+        attempt += 1;
+        if (attempt === 1) throw Object.assign(new Error("temporary"), { status: 503 });
+        return sent();
+      },
+      findSent: async () => false,
+      log: () => {},
+      now: () => now,
+    };
+    await drainRoutedReplies(deps);
+    expect(row().state).toBe("failed");
+    now += 61 * 60_000;
+    await drainRoutedReplies(deps);
+    expect(row().state).toBe("sent");
+    expect(seen).toEqual([
+      "<div><p>Here is the answer.</p></div>",
+      "<div><p>Here is the answer.</p></div>",
+    ]);
+  });
+
+  it("sends a long body without truncating it", async () => {
+    const body = "x".repeat(30_000);
+    create({ body });
+    let seen = "";
+    await drainRoutedReplies({
+      send: async (input) => { seen = input.body; return sent(); },
+      findSent: async () => false,
+      log: () => {},
+      now: () => NOW,
+    });
+    expect(row().state).toBe("sent");
+    expect(seen).toBe(body);
+    expect(seen).not.toContain("truncated by Relay");
+  });
+
+  it("dead-letters an oversized reply on a permanent 413", async () => {
+    create({ body: "x".repeat(300_000) });
+    const logs: Array<Record<string, unknown>> = [];
+    await drainRoutedReplies({
+      send: async () => {
+        throw Object.assign(new Error("reply body is 300000 bytes; the limit is 256000"), { status: 413 });
+      },
+      findSent: async () => false,
+      log: (event) => logs.push(event),
+      now: () => NOW,
+    });
+    expect(row().state).toBe("dead");
+    expect(row().attempts).toBe(1);
+    const dead = logs.find((event) => event.event === "mail-reply.dead");
+    expect(dead?.error).toContain("the limit is 256000");
   });
 });

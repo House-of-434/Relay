@@ -1326,6 +1326,7 @@ test("the trusted reply route threads from the source Message-ID and carries the
       to: ["friend@example.test"],
       subject: "Re: Launch",
       body: "Shipping Friday.",
+      html: "<div><p>Shipping <strong>Friday</strong>.</p></div>",
       gmailThreadId: "gmail-thread",
       sourceMessageId: "source-message",
       messageId: "<relay-turn@houseof434.com>",
@@ -1344,6 +1345,123 @@ test("the trusted reply route threads from the source Message-ID and carries the
   assert.match(raw, /^Message-ID: <relay-turn@houseof434\.com>\r$/m);
   assert.match(raw, /^In-Reply-To: <source@mail\.gmail\.com>\r$/m);
   assert.match(raw, /^References: <root@mail\.gmail\.com> <source@mail\.gmail\.com>\r$/m);
+  assert.match(raw, /Content-Type: multipart\/alternative; boundary="relay_alt_/);
+  assert.match(raw, /Content-Type: text\/plain; charset="UTF-8"/);
+  assert.match(raw, /Content-Type: text\/html; charset="UTF-8"/);
+  assert.ok(raw.includes("Shipping Friday."), "the plain-text alternative is present");
+  assert.ok(raw.includes("Shipping <strong>Friday</strong>."), "the HTML alternative is present");
+});
+
+test("a reply without HTML keeps the text-only shape for question email", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: USER_ID },
+  });
+  const response = await call(INTERNAL_GMAIL_REPLY, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID),
+      "x-relay-mail-mirror": `Bearer ${MIRROR_CAPABILITY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Re: Question",
+      body: "Which store?",
+      gmailThreadId: "gmail-thread",
+    }),
+  });
+  assert.equal(response.status, 200);
+  const raw = Buffer.from(calls.find((entry) => entry.operation === "messages.send")!.raw!, "base64url").toString("utf8");
+  assert.match(raw, /Content-Type: text\/plain; charset="UTF-8"/);
+  assert.doesNotMatch(raw, /multipart\/alternative/);
+});
+
+test("a reply with attachments nests the text and HTML alternatives before the files", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: USER_ID },
+  });
+  const response = await call(INTERNAL_GMAIL_REPLY, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID),
+      "x-relay-mail-mirror": `Bearer ${MIRROR_CAPABILITY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Re: Report",
+      body: "The full report is attached.",
+      html: "<div><p>The full report is attached.</p></div>",
+      gmailThreadId: "gmail-thread",
+      attachments: [{
+        filename: "report.md",
+        mimeType: "text/markdown",
+        data: Buffer.from("# Report\n").toString("base64"),
+      }],
+    }),
+  });
+  assert.equal(response.status, 200);
+  const raw = Buffer.from(calls.find((entry) => entry.operation === "messages.send")!.raw!, "base64url").toString("utf8");
+  assert.match(raw, /Content-Type: multipart\/mixed; boundary="relay_/);
+  assert.match(raw, /Content-Type: multipart\/alternative; boundary="relay_alt_/);
+  assert.match(raw, /Content-Type: text\/plain; charset="UTF-8"/);
+  assert.match(raw, /Content-Type: text\/html; charset="UTF-8"/);
+  assert.match(raw, /Content-Disposition: attachment; filename="report\.md"/);
+});
+
+test("an oversized reply body is a permanent 413 before Gmail", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: USER_ID },
+  });
+  const response = await call(INTERNAL_GMAIL_REPLY, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID),
+      "x-relay-mail-mirror": `Bearer ${MIRROR_CAPABILITY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Re: Report",
+      body: "x".repeat(300_000),
+      gmailThreadId: "gmail-thread",
+    }),
+  });
+  assert.equal(response.status, 413);
+  assert.match(await response.text(), /limit is 256000/);
+  assert.equal(calls.some((call) => call.operation === "messages.send"), false);
+});
+
+test("an oversized HTML alternative is a permanent 413 before Gmail", async () => {
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: SHARED_EMAIL }],
+    mailbox: { address: SHARED_EMAIL, userId: USER_ID },
+  });
+  const response = await call(INTERNAL_GMAIL_REPLY, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID),
+      "x-relay-mail-mirror": `Bearer ${MIRROR_CAPABILITY}`,
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({
+      to: ["friend@example.test"],
+      subject: "Re: Report",
+      body: "Short.",
+      html: `<div>${"x".repeat(1_000_001)}</div>`,
+      gmailThreadId: "gmail-thread",
+    }),
+  });
+  assert.equal(response.status, 413);
+  assert.match(await response.text(), /limit is 1000000/);
+  assert.equal(calls.some((call) => call.operation === "messages.send"), false);
 });
 
 test("the reply route refuses a caller without the harness mirror capability", async () => {

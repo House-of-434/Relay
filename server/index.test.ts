@@ -60,7 +60,7 @@ async function mintTestCapability(
   baseUrl: string,
   botId: string,
   threadId: string,
-  options: { kind?: "agents" | "connectors" | "computer"; skillAuthoring?: boolean } = {},
+  options: { kind?: "agents" | "connectors" | "computer" | "relay-tool"; skillAuthoring?: boolean; mailRouted?: boolean } = {},
 ): Promise<string> {
   const response = await fetch(`${baseUrl}/api/testing/internal-capability`, {
     method: "POST",
@@ -68,7 +68,13 @@ async function mintTestCapability(
       "content-type": "application/json",
       "x-relay-test-capability": TEST_CAPABILITY_KEY,
     },
-    body: JSON.stringify({ botId, threadId, kind: options.kind ?? "agents", skillAuthoring: options.skillAuthoring ?? false }),
+    body: JSON.stringify({
+      botId,
+      threadId,
+      kind: options.kind ?? "agents",
+      skillAuthoring: options.skillAuthoring ?? false,
+      ...(options.mailRouted !== undefined ? { mailRouted: options.mailRouted } : {}),
+    }),
   });
   expect(response.status).toBe(201);
   return ((await response.json()) as { token: string }).token;
@@ -1516,6 +1522,69 @@ describe("harness HTTP API", () => {
       await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${lead.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${other.id}`).catch(() => undefined);
+    }
+  });
+
+  it("keeps a routed turn's send prohibition after reply eligibility expires", async () => {
+    const bots = (await api("GET", "/api/bots?messages=0")).body.bots as Array<{
+      id: string; threadId: string; relayAgent?: string;
+    }>;
+    const mercury = bots.find((bot) => bot.relayAgent === "mercury");
+    expect(mercury).toBeDefined();
+    const mark = (routed: boolean, unattended: boolean) => fetch(`${BASE}/api/testing/mail-routed`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "x-relay-test-capability": TEST_CAPABILITY_KEY,
+      },
+      body: JSON.stringify({ botId: mercury!.id, threadId: mercury!.threadId, routed, unattended }),
+    });
+    expect((await mark(true, false)).status).toBe(200);
+    try {
+      // The thread is not marked unattended: this models a routed turn whose
+      // reply-eligibility window already expired. The explicit capability
+      // flag must still mint the marker.
+      const marked = await mintTestCapability(BASE, mercury!.id, mercury!.threadId, {
+        kind: "relay-tool",
+        mailRouted: true,
+      });
+      const signed = await fetch(`${BASE}/api/internal/sign-actor`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${marked}` },
+      });
+      expect(signed.status).toBe(200);
+      const assertion = JSON.parse((await signed.json() as { assertion: string }).assertion) as { mailRouted?: boolean };
+      expect(assertion.mailRouted).toBe(true);
+
+      // An explicit non-routed capability is authoritative even while the
+      // thread is still marked unattended: the fallback must not relax it.
+      expect((await mark(true, true)).status).toBe(200);
+      const open = await mintTestCapability(BASE, mercury!.id, mercury!.threadId, {
+        kind: "relay-tool",
+        mailRouted: false,
+      });
+      const opened = await fetch(`${BASE}/api/internal/sign-actor`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${open}` },
+      });
+      expect(opened.status).toBe(200);
+      const openAssertion = JSON.parse((await opened.json() as { assertion: string }).assertion) as { mailRouted?: boolean };
+      expect(openAssertion.mailRouted).toBeUndefined();
+
+      // A legacy capability without the field still uses the unattended
+      // fallback, so older callers keep the prohibition.
+      const legacy = await mintTestCapability(BASE, mercury!.id, mercury!.threadId, {
+        kind: "relay-tool",
+      });
+      const legacySigned = await fetch(`${BASE}/api/internal/sign-actor`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${legacy}` },
+      });
+      expect(legacySigned.status).toBe(200);
+      const legacyAssertion = JSON.parse((await legacySigned.json() as { assertion: string }).assertion) as { mailRouted?: boolean };
+      expect(legacyAssertion.mailRouted).toBe(true);
+    } finally {
+      await mark(false, false);
     }
   });
 
