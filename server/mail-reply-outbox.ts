@@ -349,7 +349,6 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
 
       const attachments: Array<{ filename: string; mimeType: string; data: string }> = [];
       const dropped: MailReplyAttachmentRef[] = [];
-      const unreadable: MailReplyAttachmentRef[] = [];
       let total = 0;
       for (const attachment of claimed.attachments) {
         if (isBlockedAttachment(attachment.filename, attachment.mimeType)) {
@@ -360,14 +359,15 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
           dropped.push(attachment);
           continue;
         }
-        let size: number;
+        let stat;
         try {
-          size = statSync(attachment.path).size;
+          stat = statSync(attachment.path);
         } catch {
           dropped.push(attachment);
           continue;
         }
-        if (size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
+        const size = stat.size;
+        if (!stat.isFile() || size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
           dropped.push(attachment);
           continue;
         }
@@ -378,12 +378,8 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
         let bytes: Buffer;
         try {
           bytes = readFileSync(attachment.path);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
-            dropped.push(attachment);
-            continue;
-          }
-          unreadable.push(attachment);
+        } catch {
+          dropped.push(attachment);
           continue;
         }
         if (bytes.length === 0 || bytes.length > MAX_MAIL_ATTACHMENT_BYTES) {
@@ -400,12 +396,6 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
           mimeType: attachment.mimeType,
           data: bytes.toString("base64"),
         });
-      }
-      if (unreadable.length) {
-        const error = "an attachment could not be read";
-        markFailed(claimed, error, false, now);
-        if (claimed.attempts >= MAX_ATTEMPTS) logDead(deps.log, claimed, error);
-        break;
       }
       const omittedNames = [...(claimed.omittedAttachments ?? []), ...dropped.map((attachment) => attachment.filename)];
       const droppedNames = omittedNames.join(", ").slice(0, 500);
@@ -450,6 +440,7 @@ export async function drainRoutedReplies(deps: DrainRoutedRepliesDeps): Promise<
             event: "mail-reply.attachments-dropped",
             turnId: claimed.turnId,
             paths: dropped.map((attachment) => attachment.path),
+            names: omittedNames,
           });
         }
         markSent(claimed, sent, now);

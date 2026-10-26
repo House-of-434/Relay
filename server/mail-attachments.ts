@@ -42,14 +42,15 @@ function settleCandidates(candidates: MailAttachmentRef[]): SettledMailAttachmen
       omitted.push(candidate.filename);
       continue;
     }
-    let size: number;
+    let stat;
     try {
-      size = statSync(candidate.path).size;
+      stat = statSync(candidate.path);
     } catch {
       omitted.push(candidate.filename);
       continue;
     }
-    if (size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
+    const size = stat.size;
+    if (!stat.isFile() || size === 0 || size > MAX_MAIL_ATTACHMENT_BYTES) {
       omitted.push(candidate.filename);
       continue;
     }
