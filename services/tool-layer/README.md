@@ -61,8 +61,9 @@ returned so the agent asks which person the user meant.
 Conversation history is readable by every agent and writable by none: a
 conversation belongs to the authenticated user, so `read` is scoped to the
 caller's own `user_id`. All `relay_read` and `relay_write` calls refuse to run
-without an authenticated actor; entity writes additionally stamp
-server-controlled provenance (`actor_user`, `actor_agent`).
+without an authenticated actor; entity writes to tables that carry provenance
+(`app.companies`, `app.people`) additionally stamp server-controlled
+provenance (`actor_user`, `actor_agent`). `app.events` carries none.
 
 The BFF verifies Supabase identity and issues a Relay session through the
 internal portal-session route. That session's UUID `userId` is the account
