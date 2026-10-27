@@ -186,16 +186,16 @@ test("notion sync: the first run inserts a deal, a rerun updates it by id", () =
   assert.equal(update.values.stage, "Seed");
 });
 
-test("event tracker fields insert without CRM-only requirements", () => {
+test("event tracker inserts need only the title and keep no CRM or provenance columns", () => {
   const prepared = prepareWrite(
     "app.events",
     "insert",
     {
       title: "AI Beyond the Screen",
-      occurred_at: "2026-07-13T00:00:00Z",
-      source_url: "https://luma.com/51tyh6y2",
+      event_date: "2026-07-13",
+      event_url: "https://luma.com/51tyh6y2",
       hosted: "hosted",
-      city: "New York",
+      city_state: "New York, NY",
       speakers: "Nikhil Tyagi — Technology leader",
       media_url: "https://drive.google.com/drive/folders/abc",
       cover_image_url: "https://example.com/poster.png",
@@ -203,41 +203,40 @@ test("event tracker fields insert without CRM-only requirements", () => {
     },
     undefined,
     { agent: "scout", userId: ACTOR_USER_ID },
+    "2026-09-29T12:00:00.000Z",
   );
-  assert.equal(prepared.values.hosted, "hosted");
-  assert.equal(prepared.values.city, "New York");
+  assert.equal(prepared.values.event_date, "2026-07-13");
+  assert.equal(prepared.values.city_state, "New York, NY");
   assert.equal(prepared.values.speakers, "Nikhil Tyagi — Technology leader");
-  assert.equal("attendee_ids" in prepared.values, false);
+  assert.equal("actor_user" in prepared.values, false);
+  assert.equal("classification" in prepared.values, false);
+  assert.equal("occurred_at" in prepared.values, false);
   assert.equal("type" in prepared.values, false);
 
-  // A supplied type still has to be one of the established event kinds.
-  assert.throws(() => prepareWrite(
-    "app.events", "insert",
-    {
-      type: "party",
-      title: "AI Beyond the Screen",
-      occurred_at: "2026-07-13T00:00:00Z",
-      source_url: "https://luma.com/51tyh6y2",
-    },
-    undefined,
+  // The sheet can have a title before it has a date or link.
+  const minimal = prepareWrite(
+    "app.events", "insert", { title: "Planned dinner" }, undefined,
     { agent: "scout", userId: ACTOR_USER_ID },
-  ), /outside its allowed set/);
+    "2026-09-29T12:00:00.000Z",
+  );
+  assert.deepEqual(minimal.values, {
+    title: "Planned dinner",
+    created_at: "2026-09-29T12:00:00.000Z",
+    updated_at: "2026-09-29T12:00:00.000Z",
+  });
 
-  // Provenance stays mandatory; optional tracker links must still be URLs.
+  // A removed CRM/provenance column is refused outright.
   assert.throws(() => prepareWrite(
     "app.events", "insert",
-    { title: "No source", occurred_at: "2026-07-13T00:00:00Z" },
+    { title: "AI Beyond the Screen", type: "party" },
     undefined,
     { agent: "scout", userId: ACTOR_USER_ID },
-  ), /source_url/);
+  ), /Unknown column/);
+
+  // Optional links must still be URLs when supplied.
   assert.throws(() => prepareWrite(
     "app.events", "insert",
-    {
-      title: "Bad media",
-      occurred_at: "2026-07-13T00:00:00Z",
-      source_url: "https://luma.com/51tyh6y2",
-      media_url: "not a url",
-    },
+    { title: "Bad media", media_url: "not a url" },
     undefined,
     { agent: "scout", userId: ACTOR_USER_ID },
   ), /media_url must be an http/);
@@ -299,11 +298,12 @@ test("filters allow only shaped columns and fixed operators", () => {
   assert.deepEqual(validateFilters("transcripts.meetings", { instance_id: "inst-1" }), [
     { column: "instance_id", operator: "eq", value: "inst-1" },
   ]);
-  // The event tracker filters by hosting type, city, and date.
-  assert.deepEqual(validateFilters("app.events", { city: "New York", hosted: "hosted", occurred_at_gte: "2026-01-01" }), [
-    { column: "city", operator: "eq", value: "New York" },
+  // The event tracker filters by date, host, city, and speaker.
+  assert.deepEqual(validateFilters("app.events", { city_state: "New York", hosted: "hosted", event_date_gte: "2026-01-01", speakers_like: "%Tyagi%" }), [
+    { column: "city_state", operator: "eq", value: "New York" },
     { column: "hosted", operator: "eq", value: "hosted" },
-    { column: "occurred_at", operator: "gte", value: "2026-01-01" },
+    { column: "event_date", operator: "gte", value: "2026-01-01" },
+    { column: "speakers", operator: "like", value: "%Tyagi%" },
   ]);
   // Applications are searched by reviewed columns only; free-text fields such
   // as story are not filterable.

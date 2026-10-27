@@ -41,9 +41,17 @@ subscribers, suppressed emails, and the email send log. Curator gets none of the
 public intake tables. They are read-only for every agent and returned newest
 first, so `limit: 1` is the most recent row.
 
-`app.events` also carries the website Event Content Tracker fields (`hosted`,
-`city`, `speakers`, `media_url`, `cover_image_url`, `notes`). A new event needs
-`title`, `occurred_at`, and `source_url`; `type` defaults to `gathering`.
+`app.events` is the House of 434 Event Content Tracker: `title`, `event_date`,
+`hosted`, `city_state`, `event_url`, `speakers`, `media_url`,
+`cover_image_url`, and `notes`. Only `title` is required; the sheet is the
+source of truth and may not have a date or link yet. Link fields are validated
+as http(s) URLs when supplied. The table carries no classification, research
+provenance, or per-user ownership columns, and every signed-in member can read
+every row.
+
+`relay_write` calls to entity tables also record `table_name`, `operation`, and
+the changed `row_id` in `logs.tool_calls`. The call arguments are still stored
+only as a hash; the log identifies the row, never the values.
 
 Every agent can call `find_teammate` to resolve a colleague's name or email to
 an invitation address. The service-role-only `app.search_members` function
@@ -53,8 +61,9 @@ returned so the agent asks which person the user meant.
 Conversation history is readable by every agent and writable by none: a
 conversation belongs to the authenticated user, so `read` is scoped to the
 caller's own `user_id`. All `relay_read` and `relay_write` calls refuse to run
-without an authenticated actor; entity writes additionally stamp
-server-controlled provenance (`actor_user`, `actor_agent`).
+without an authenticated actor; entity writes to tables that carry provenance
+(`app.companies`, `app.people`) additionally stamp server-controlled
+provenance (`actor_user`, `actor_agent`). `app.events` carries none.
 
 The BFF verifies Supabase identity and issues a Relay session through the
 internal portal-session route. That session's UUID `userId` is the account

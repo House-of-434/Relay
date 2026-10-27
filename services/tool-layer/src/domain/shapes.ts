@@ -73,31 +73,25 @@ export const SHAPES: Record<string, Shape> = {
       { f: "source_url", r: "url" },
     ],
   },
+  // The Event Content Tracker (migration 0013). Every signed-in member can read
+  // it, and only title is required: the sheet is the source of truth and may
+  // not have a date or link yet. The table carries no CRM graph, research
+  // provenance, classification, or per-user ownership. hosted stays plain text:
+  // the tracker's options evolve, so no app-side enum rejects a valid value.
   "app.events": {
     writable: [
-      "type", "title", "summary", "occurred_at", "company_id", "tags", "attendee_ids",
-      "investor_names", "round", "amount", "source", "source_url", "observed_at",
-      "confidence", "external_source", "external_source_id",
-      // Event Content Tracker fields (migration 0011). hosted stays plain text:
-      // the tracker's options evolve, so no app-side enum rejects a valid value.
-      "hosted", "city", "speakers", "media_url", "cover_image_url", "notes",
+      "title", "event_date", "hosted", "city_state", "event_url", "speakers",
+      "media_url", "cover_image_url", "notes",
     ],
-    serverSet: [
-      "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
-      "owner_user_id", "scope",
-    ],
+    serverSet: ["created_at", "updated_at"],
     filterable: [
-      "title", "type", "company_id", "tags", "occurred_at", "hosted", "city",
-      "actor_user", "owner_user_id", "scope",
+      "title", "event_date", "hosted", "city_state", "event_url", "speakers",
     ],
-    valueEnums: { type: ["meeting", "gathering", "fundraising", "talk", "demo_day"] },
     require: [
       { f: "title", r: "nonempty" },
-      { f: "occurred_at", r: "nonempty" },
-      { f: "source_url", r: "url" },
     ],
     validate: [
-      { f: "attendee_ids", r: "uuid[]" },
+      { f: "event_url", r: "url" },
       { f: "media_url", r: "url" },
       { f: "cover_image_url", r: "url" },
     ],
