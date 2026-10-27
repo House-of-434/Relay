@@ -122,7 +122,7 @@ export function createAgentMcpServer(
     "relay_write",
     {
       description: writeScope.length > 0
-        ? `Insert or update one row in a table explicitly permitted for this Relay agent: ${writeScope}. An app.events row needs title, occurred_at, and source_url; type defaults to gathering. For website event content, also pass hosted, city, speakers, media_url, cover_image_url, and notes as needed. Column shapes are enforced; updates must target one row.`
+        ? `Insert or update one row in a table explicitly permitted for this Relay agent: ${writeScope}. An app.events row needs only title. For the Event Content Tracker, pass event_date (YYYY-MM-DD), hosted, city_state, event_url, speakers, media_url, cover_image_url, and notes as the sheet provides them. Column shapes are enforced; updates must target one row.`
         : "Insert or update one row in a table explicitly permitted for this Relay agent. This agent has no writable tables. Column shapes are enforced; updates must target one row.",
       inputSchema: WRITE_INPUT,
       annotations: { readOnlyHint: false, destructiveHint: false },

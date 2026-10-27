@@ -10,8 +10,9 @@ const stores = source("../../../supabase/migrations/0002_stores.sql");
 const ownership = source("../../../supabase/migrations/0004_workspace_ownership.sql");
 const transcripts = source("../../../supabase/migrations/0006_transcripts.sql");
 const serviceActors = source("../../../supabase/migrations/0007_service_actors.sql");
-const eventTracker = source("../../../supabase/migrations/0011_event_content_tracker.sql");
 const memberDirectory = source("../../../supabase/migrations/0012_member_directory.sql");
+const eventContent = source("../../../supabase/migrations/0013_events_content_tracker.sql");
+const toolCallDetail = source("../../../supabase/migrations/0014_tool_call_write_detail.sql");
 const migrations = `${init}\n${stores}\n${ownership}\n${transcripts}\n${serviceActors}`;
 
 // This asserts that the migration files encode the frozen Relay v0.1 data
@@ -134,16 +135,48 @@ const returnsColumns = (sql: string): Array<{ name: string; type: string }> => {
   });
 };
 
-test("the event content tracker adds its fields without changing the event model", () => {
-  const columns = addedColumnTypes(eventTracker);
-  assert.deepEqual(
-    [...columns.keys()].sort(),
-    ["city", "cover_image_url", "hosted", "media_url", "notes", "speakers"],
+test("app.events is the Event Content Tracker, not the CRM graph", () => {
+  const columns = addedColumnTypes(eventContent);
+  assert.deepEqual([...columns.keys()].sort(), ["city_state", "event_date", "event_url"]);
+  assert.equal(columns.get("event_date"), "date");
+  assert.equal(columns.get("city_state"), "text");
+  assert.equal(columns.get("event_url"), "text");
+
+  const normalized = oneLine(eventContent);
+  for (const dropped of [
+    "type", "summary", "occurred_at", "company_id", "tags", "attendee_ids",
+    "investor_names", "round", "amount", "classification", "source",
+    "source_url", "observed_at", "captured_at", "confidence", "actor_user",
+    "actor_agent", "external_source", "external_source_id", "owner_user_id",
+    "scope", "city",
+  ]) {
+    assert.match(normalized, new RegExp(`drop column if exists ${dropped}\\b`), dropped);
+  }
+  assert.match(normalized, /drop policy if exists "read internal events" on app\.events/);
+  assert.match(
+    normalized,
+    /create policy "members read events" on app\.events for select to authenticated using \(true\)/,
   );
-  for (const column of columns.values()) assert.equal(column, "text");
-  const normalized = oneLine(eventTracker);
-  assert.match(normalized, /alter table app\.events alter column type set default 'gathering'/i);
-  assert.match(normalized, /notify pgrst, 'reload schema'/i);
+  assert.match(normalized, /create index if not exists events_event_date_idx on app\.events \(event_date desc\)/);
+  assert.match(normalized, /create index if not exists events_event_url_idx on app\.events \(event_url\)/);
+  assert.match(normalized, /notify pgrst, 'reload schema'/);
+  // The tracker has no event kind, so the old gathering default must not remain.
+  assert.doesNotMatch(normalized, /set default 'gathering'/);
+});
+
+test("tool calls record the entity row a write changed", () => {
+  const columns = addedColumnTypes(toolCallDetail);
+  assert.deepEqual([...columns.keys()].sort(), ["operation", "row_id", "table_name"]);
+  assert.equal(columns.get("table_name"), "text");
+  assert.equal(columns.get("operation"), "text");
+  assert.equal(columns.get("row_id"), "uuid");
+
+  const normalized = oneLine(toolCallDetail);
+  assert.match(normalized, /check \(operation is null or operation in \('insert', 'update'\)\)/);
+  assert.match(
+    normalized,
+    /create index if not exists tool_calls_row_lookup on logs\.tool_calls \(table_name, row_id, created_at desc\)/,
+  );
 });
 
 test("the member directory is service-role-only and skips inactive accounts", () => {

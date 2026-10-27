@@ -9,11 +9,17 @@ export interface ToolCallOutcome {
   argsHash: string;
   ms: number;
   error: string | null;
+  /** relay_write detail: which entity row the call targeted or changed. Values
+   * are never logged, only the table, operation, and row identity. */
+  tableName?: string | null;
+  operation?: "insert" | "update" | null;
+  rowId?: string | null;
 }
 
 export type ToolCallLogger = (outcome: ToolCallOutcome) => void | Promise<void>;
 
 const MAX_ERROR_LENGTH = 1000;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function hashToolArgs(args: unknown): string {
   let text: string;
@@ -32,7 +38,7 @@ export function databaseToolCallLogger(
   agent: Agent,
   userId: string | null,
 ): ToolCallLogger {
-  return ({ tool, argsHash, ms, error }) =>
+  return ({ tool, argsHash, ms, error, tableName, operation, rowId }) =>
     database.logToolCall({
       userId,
       agent,
@@ -40,7 +46,52 @@ export function databaseToolCallLogger(
       argsHash,
       ms,
       error: error === null ? null : error.slice(0, MAX_ERROR_LENGTH),
+      tableName: tableName ?? null,
+      operation: operation ?? null,
+      rowId: rowId ?? null,
     });
+}
+
+interface WriteDetail {
+  tableName?: string | null;
+  operation?: "insert" | "update" | null;
+  rowId?: string | null;
+}
+
+function rowIdFromResult(result: unknown): string | null {
+  if (!result || typeof result !== "object") return null;
+  const content = (result as { content?: unknown }).content;
+  if (!Array.isArray(content)) return null;
+  const first = content[0];
+  if (!first || typeof first !== "object") return null;
+  const text = (first as { text?: unknown }).text;
+  if (typeof text !== "string") return null;
+  try {
+    const value: unknown = JSON.parse(text);
+    if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+    const id = (value as { id?: unknown }).id;
+    return typeof id === "string" && UUID.test(id) ? id : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The row-level audit detail for a relay_write call. The write handler returns
+ * the saved row, so an insert's id comes from the result; an update's id is the
+ * where clause it targeted. Failed or non-write calls carry no row id. */
+function writeDetail(tool: string, args: unknown, result: unknown): WriteDetail {
+  if (tool !== "relay_write" || !args || typeof args !== "object" || Array.isArray(args)) return {};
+  const input = args as { table?: unknown; operation?: unknown; where?: unknown };
+  const tableName = typeof input.table === "string" ? input.table : null;
+  const operation = input.operation === "insert" || input.operation === "update" ? input.operation : null;
+  let rowId: string | null = null;
+  if (operation === "update" && input.where && typeof input.where === "object" && !Array.isArray(input.where)) {
+    const id = (input.where as { id?: unknown }).id;
+    if (typeof id === "string" && UUID.test(id)) rowId = id;
+  } else if (operation === "insert") {
+    rowId = rowIdFromResult(result);
+  }
+  return { tableName, operation, rowId };
 }
 
 /** A tool handler catches its own failures and returns `{ isError: true, … }`,
@@ -81,10 +132,22 @@ export function instrumentToolCalls(server: object, log: ToolCallLogger): void {
       const started = Date.now();
       try {
         const result = await handler(...args);
-        await record(log, { tool: name, argsHash: hashToolArgs(args[0]), ms: Date.now() - started, error: refusalText(result) });
+        await record(log, {
+          tool: name,
+          argsHash: hashToolArgs(args[0]),
+          ms: Date.now() - started,
+          error: refusalText(result),
+          ...writeDetail(name, args[0], result),
+        });
         return result;
       } catch (error) {
-        await record(log, { tool: name, argsHash: hashToolArgs(args[0]), ms: Date.now() - started, error: error instanceof Error ? error.message : "request refused" });
+        await record(log, {
+          tool: name,
+          argsHash: hashToolArgs(args[0]),
+          ms: Date.now() - started,
+          error: error instanceof Error ? error.message : "request refused",
+          ...writeDetail(name, args[0], null),
+        });
         throw error;
       }
     })) as typeof registrar.registerTool;

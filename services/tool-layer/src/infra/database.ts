@@ -20,7 +20,6 @@ const ENTITY_TABLES: Record<string, string> = {
 const INTERNAL_ONLY_TABLES = new Set([
   "app.companies",
   "app.people",
-  "app.events",
 ]);
 
 function entityTypeForTable(table: string): string | undefined {
@@ -492,6 +491,9 @@ export class RelayDatabase {
     argsHash: string;
     ms: number;
     error: string | null;
+    tableName?: string | null;
+    operation?: "insert" | "update" | null;
+    rowId?: string | null;
   }): Promise<void> {
     const { error } = await this.client("relay").schema("logs").from("tool_calls").insert({
       user_id: input.userId,
@@ -500,6 +502,9 @@ export class RelayDatabase {
       args_hash: input.argsHash,
       ms: input.ms,
       error: input.error,
+      table_name: input.tableName ?? null,
+      operation: input.operation ?? null,
+      row_id: input.rowId ?? null,
     });
     supabaseError(error);
   }
