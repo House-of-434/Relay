@@ -2,16 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { authorize, authorizeDirectory } from "./domain/permissions.js";
-import { prepareWrite, validateFilters } from "./domain/shapes.js";
+import { getShape, prepareWrite, validateFilters } from "./domain/shapes.js";
 
 const UUID = "2c90d6a2-5ade-4e7a-bb55-205a8b9e3918";
 const ACTOR_USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 
 test("table access is bound to the agent and project", () => {
   assert.equal(authorize("scout", "read", "app.companies"), "relay");
-  assert.equal(authorize("mercury", "read", "public.suppressed_emails"), "newsletter");
-  assert.equal(authorize("scout", "read", "public.applications"), "newsletter");
-  assert.equal(authorize("mercury", "read", "public.applications"), "newsletter");
+  assert.equal(authorize("mercury", "read", "public.suppressed_emails"), "relay");
+  assert.equal(authorize("scout", "read", "public.applications"), "relay");
+  assert.equal(authorize("mercury", "read", "public.applications"), "relay");
+  assert.equal(authorize("scout", "read", "public.host_applications"), "relay");
+  assert.equal(authorize("scout", "read", "public.partner_inquiries"), "relay");
+  assert.equal(authorize("scout", "read", "public.invitation_requests"), "relay");
   assert.throws(() => authorize("curator", "read", "public.applications"), /denied/);
   assert.throws(() => authorize("scout", "write", "public.applications"), /denied/);
   assert.throws(() => authorize("mercury", "write", "public.applications"), /denied/);
@@ -21,6 +24,20 @@ test("table access is bound to the agent and project", () => {
   assert.throws(() => authorize("curator", "write", "app.companies"), /denied/);
   assert.throws(() => authorize("curator", "write", "transcripts.email_threads"), /denied/);
   assert.throws(() => authorize("mercury", "write", "public.invitation_requests"), /denied/);
+});
+
+test("public intake tables read newest first", () => {
+  for (const table of [
+    "public.applications",
+    "public.invitation_requests",
+    "public.host_applications",
+    "public.partner_inquiries",
+    "public.newsletter_subscribers",
+    "public.suppressed_emails",
+    "public.email_send_log",
+  ]) {
+    assert.deepEqual(getShape(table).order, { column: "created_at", ascending: false }, table);
+  }
 });
 
 test("every agent may search the teammate directory", () => {
@@ -299,6 +316,15 @@ test("filters allow only shaped columns and fixed operators", () => {
     ],
   );
   assert.throws(() => validateFilters("public.applications", { story: "anything" }), /not filterable/);
+  assert.deepEqual(validateFilters("public.host_applications", { city: "San Francisco" }), [
+    { column: "city", operator: "eq", value: "San Francisco" },
+  ]);
+  assert.deepEqual(validateFilters("public.partner_inquiries", { company: "Acme" }), [
+    { column: "company", operator: "eq", value: "Acme" },
+  ]);
+  assert.deepEqual(validateFilters("public.newsletter_subscribers", { email: "a@example.com" }), [
+    { column: "email", operator: "eq", value: "a@example.com" },
+  ]);
+  assert.throws(() => validateFilters("public.newsletter_subscribers", { token: "x" }), /not filterable/);
   assert.throws(() => validateFilters("app.companies", { actor_user: "analyst@houseof434.com" }), /UUID/);
-  assert.throws(() => validateFilters("public.newsletter_subscribers", { email: "a@example.com" }), /No column shape/);
 });

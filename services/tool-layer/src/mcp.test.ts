@@ -57,7 +57,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
       arguments: { table: "public.applications", filters: { role: "founder" }, limit: 3 },
     });
     assert.equal(applications.isError, undefined);
-    assert.equal(calls.at(-1)?.args[0], "newsletter");
+    assert.equal(calls.at(-1)?.args[0], "relay");
 
     failRead = true;
     const readFailure = await client.callTool({ name: "relay_read", arguments: { table: "app.companies" } });
@@ -84,7 +84,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
       await mercuryClient.connect(mercuryTransport);
       const safetyRead = await mercuryClient.callTool({
         name: "relay_read",
-        arguments: { table: "public.suppressed_emails", filters: { email: "recipient@example.com" } },
+        arguments: { table: "public.email_unsubscribe_tokens", filters: { email: "recipient@example.com" } },
       });
       assert.equal(safetyRead.isError, true);
       assert.equal(calls.filter((call) => call.method === "read").length, 3);

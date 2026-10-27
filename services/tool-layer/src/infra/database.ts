@@ -2,7 +2,7 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
 import { verifyActorAssertion, type RelayActorContext } from "./actor-assertion.js";
 import type { Project } from "../domain/permissions.js";
-import type { Filter } from "../domain/shapes.js";
+import { getShape, type Filter } from "../domain/shapes.js";
 
 type Client = SupabaseClient<any>;
 type Env = Record<string, string | undefined>;
@@ -159,20 +159,6 @@ export class RelayDatabase {
     );
     const relayKey = required(env, "RELAY_DB_SERVICE_ROLE_KEY");
     this.clients.set("relay", makeClient(relayUrl, relayKey));
-
-    const newsletterKeys = ["NEWSLETTER_READONLY_URL", "NEWSLETTER_READONLY_KEY", "NEWSLETTER_READONLY_PROJECT_REF"];
-    const newsletterConfigured = newsletterKeys.filter((key) => Boolean(env[key]?.trim()));
-    if (newsletterConfigured.length !== 0 && newsletterConfigured.length !== newsletterKeys.length) {
-      throw new Error("NEWSLETTER_READONLY_URL, NEWSLETTER_READONLY_KEY, and NEWSLETTER_READONLY_PROJECT_REF must be configured together");
-    }
-    if (newsletterConfigured.length === newsletterKeys.length) {
-      const newsletterUrl = assertProjectUrl(
-        required(env, "NEWSLETTER_READONLY_URL"),
-        required(env, "NEWSLETTER_READONLY_PROJECT_REF"),
-        env,
-      );
-      this.clients.set("newsletter", makeClient(newsletterUrl, required(env, "NEWSLETTER_READONLY_KEY")));
-    }
   }
 
   async verifyRelayProject(): Promise<void> {
@@ -248,6 +234,8 @@ export class RelayDatabase {
     // ceiling explicitly in the Tool Layer.
     if (INTERNAL_ONLY_TABLES.has(table)) query = query.eq("classification", "internal");
     query = applyFilters(query, filters);
+    const order = getShape(table).order;
+    if (order) query = query.order(order.column, { ascending: order.ascending });
 
     const { data, error } = await query;
     supabaseError(error);
