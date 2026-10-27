@@ -25,6 +25,12 @@ services:
     env_file:
       - .env
       - .env.secrets
+      # Relay's GitHub workspace token is app-only: Scout-scoped repository
+      # operations must not be visible to tools, scribe, or other agents.
+      # Optional so environments without a token (CI smoke, fresh clones)
+      # still boot; relay-git operations fail closed without it.
+      - path: .env.workspace
+        required: false
       # The harness monitor holds the worker capability to arm captures; the app
       # must never hold the ingest capability (that is tools + scribe only).
       - .env.scribe

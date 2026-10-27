@@ -317,6 +317,8 @@ describe("routed mail message and prompt", () => {
     expect(prompt).toContain("delegate to Scout");
     expect(prompt).toContain("Follow the teammate's request");
     expect(prompt).toContain("Your response in this conversation is emailed to the sender; do not send mail yourself.");
+    expect(prompt).toContain("Website or code work goes to Scout via coordinate_bots");
+    expect(prompt).toContain("Scout cannot see this email");
     expect(prompt).not.toContain(body);
     expect(prompt).not.toContain("Pitch deck");
     expect(prompt).not.toContain(BOB.email);

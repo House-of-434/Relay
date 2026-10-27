@@ -12,6 +12,7 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "relay/history.conversations",
       "relay/transcripts.meetings",
       "newsletter/public.invitation_requests",
+      "newsletter/public.applications",
     ],
     write: [
       "relay/app.companies",
@@ -30,6 +31,7 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "newsletter/public.suppressed_emails",
       "newsletter/public.email_send_log",
       "newsletter/public.invitation_requests",
+      "newsletter/public.applications",
     ],
     write: [
       "relay/app.companies",
@@ -87,6 +89,23 @@ export function authorize(agent: Agent, operation: Operation, table: string): Pr
   }
 
   return matches[0]!;
+}
+
+/** Teammate directory: resolve a colleague's name to the email a calendar
+ * invitation needs. Every agent may search it; nothing outside the service
+ * role may list or edit the underlying auth table. */
+export type DirectoryCapability = "search";
+
+export const DIRECTORY_PERMISSIONS: Record<Agent, readonly DirectoryCapability[]> = {
+  scout: ["search"],
+  mercury: ["search"],
+  curator: ["search"],
+};
+
+export function authorizeDirectory(agent: Agent, capability: DirectoryCapability): void {
+  if (!DIRECTORY_PERMISSIONS[agent].includes(capability)) {
+    throw new Error(`directory ${capability} access denied for ${agent}`);
+  }
 }
 
 /** Gmail operations are granted per agent and per capability, never per request. */

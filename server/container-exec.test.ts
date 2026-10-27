@@ -4,6 +4,25 @@ import { clipExecOutput, containerExec, perBotLocalVmTarget } from "./container-
 
 const target = perBotLocalVmTarget("bot-under-test");
 
+function fakeSecretFiles() {
+  const written = new Map<string, string>();
+  const removed: string[] = [];
+  const contents: string[] = [];
+  return {
+    written,
+    removed,
+    contents,
+    writeSecretEnvFile: async (path: string, fileContents: string) => {
+      written.set(path, fileContents);
+      contents.push(fileContents);
+    },
+    removeSecretEnvFile: async (path: string) => {
+      removed.push(path);
+      written.delete(path);
+    },
+  };
+}
+
 function fakeExec(result: { stdout?: string; stderr?: string; code?: number } = {}) {
   const calls: Array<{ command: string; args: string[]; timeout: number }> = [];
   const exec = async (command: string, args: string[], options: { timeout: number }) => {
@@ -26,6 +45,63 @@ describe("containerExec", () => {
     ]);
     // The client waits a little longer than the in-container limit.
     expect(calls[0]!.timeout).toBe(50_000);
+  });
+
+  it("delivers secrets through a temporary env file rather than host process arguments", async () => {
+    const token = "workspace-token-for-tests";
+    const secrets = fakeSecretFiles();
+    const { calls, exec } = fakeExec({ stdout: `active account for ${token}\n`, stderr: `warning for ${token}\n` });
+    const result = await containerExec(target, "true", {
+      runtime: "docker",
+      exec,
+      secretEnv: { GH_TOKEN: token, GITHUB_TOKEN: token },
+      writeSecretEnvFile: secrets.writeSecretEnvFile,
+      removeSecretEnvFile: secrets.removeSecretEnvFile,
+    });
+
+    expect(calls).toHaveLength(1);
+    const args = calls[0]!.args;
+    const envFileIndex = args.indexOf("--env-file");
+    expect(envFileIndex).toBeGreaterThan(-1);
+    const envFile = args[envFileIndex + 1] as string;
+    expect(args.join("\n")).not.toContain(token);
+    expect(secrets.contents).toEqual([`GH_TOKEN=${token}\nGITHUB_TOKEN=${token}\n`]);
+    expect(secrets.removed).toEqual([envFile]);
+    expect(secrets.written.size).toBe(0);
+    expect(result.stdout).toBe("active account for [redacted-secret]\n");
+    expect(result.stderr).toBe("warning for [redacted-secret]\n");
+  });
+
+  it("keeps ordinary executions and thrown execution failures free of secrets", async () => {
+    const token = "workspace-token-for-tests";
+    const { calls, exec } = fakeExec({ stdout: "ordinary output\n" });
+    const ordinary = await containerExec(target, "echo hello", { runtime: "podman", exec });
+    expect(JSON.stringify(calls[0]!.args)).not.toContain(token);
+    expect(calls[0]!.args).not.toContain("--env-file");
+    expect(ordinary.stdout).toBe("ordinary output\n");
+
+    const failure = Object.assign(new Error(`client failed with ${token}`), {
+      status: 502,
+      stdout: `partial ${token}`,
+      stderr: "",
+    });
+    const failingExec = async () => {
+      throw failure;
+    };
+    try {
+      await containerExec(target, "true", {
+        runtime: "docker",
+        exec: failingExec,
+        secretEnv: { GH_TOKEN: token },
+        ...fakeSecretFiles(),
+      });
+      throw new Error("secret execution failure was not thrown");
+    } catch (error) {
+      expect(error).toBe(failure);
+      expect((error as Error).message).toBe("client failed with [redacted-secret]");
+      expect((error as { status?: unknown }).status).toBe(502);
+      expect((error as { stdout?: unknown }).stdout).toBe("partial [redacted-secret]");
+    }
   });
 
   it("returns a failing command's exit code and stderr instead of throwing", async () => {

@@ -7,6 +7,8 @@ import {
   BASE_IMAGE,
   BASE_IMAGE_DIGEST,
   BASE_IMAGE_LABEL,
+  BUN_LINUX_SHA256,
+  BUN_VERSION,
   CONTAINER,
   CUA_DRIVER_VERSION,
   CUA_EXECUTABLE,
@@ -656,6 +658,14 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain(`${IMAGE_LAYER_LABEL}="${IMAGE_LAYER_VERSION}"`);
     expect(dockerfile).toContain("did not become ready within 45 seconds");
     expect(dockerfile).not.toContain("while ! DISPLAY=:1 xset q");
+    expect(dockerfile).toContain("githubcli-archive-keyring.gpg");
+    expect(dockerfile).toContain("apt-get install -y --no-install-recommends gh");
+    expect(dockerfile).toContain("apt-get install -y --no-install-recommends ca-certificates curl git unzip");
+    expect(dockerfile).toContain("bun-linux-$bun_arch.zip");
+    expect(dockerfile).toContain(BUN_LINUX_SHA256.x86_64);
+    expect(dockerfile).toContain(BUN_LINUX_SHA256.aarch64);
+    expect(dockerfile).toContain(`test "$(bun --version)" = "${BUN_VERSION}"`);
+    expect(IMAGE_LAYER_VERSION).toBe("6");
   });
 
   it("installs checksum-pinned Japanese fonts and their license before the desktop starts", () => {
@@ -665,7 +675,7 @@ describe("Cua integration", () => {
     expect(dockerfile).toContain("6a73f9541c2de74158c0e7cf6b0a58ef774f5a780bf191f2d7ec9cc53efe2bf2");
     expect(dockerfile).toContain("/usr/local/share/licenses/noto-cjk/OFL.txt");
     expect(dockerfile).toContain("fc-cache -f");
-    expect(IMAGE_LAYER_VERSION).toBe("5");
+    expect(IMAGE_LAYER_VERSION).toBe("6");
   });
 
   it("rejects a zero-byte OpenSSL base image before the wheel download needs curl", () => {

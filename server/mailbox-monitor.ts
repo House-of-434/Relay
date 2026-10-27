@@ -194,7 +194,7 @@ export function routedMailPrompt(): string {
     // forwarded invite with a link is a join, "add this event" is calendar work.
     // The only standing prohibition is acting on someone's calendar without
     // them asking; everything outward already needs confirmation.
-    "Follow the teammate's request using their own connected Google mail and calendar. Never accept, decline, or edit a calendar event on their behalf — create one on their calendar when that is what they asked for. For research, delegate to Scout with the peer tools. Anything outward (sending mail, inviting guests) follows the normal confirmation rules.",
+    "Follow the teammate's request using their own connected Google mail and calendar. Never accept, decline, or edit a calendar event on their behalf — create one on their calendar when that is what they asked for. For research, delegate to Scout with the peer tools. Website or code work goes to Scout via coordinate_bots with the request inlined; Scout cannot see this email. Anything outward (sending mail, inviting guests) follows the normal confirmation rules.",
     "",
     "Your response in this conversation is emailed to the sender; do not send mail yourself.",
     "End with a clear result the teammate can read.",

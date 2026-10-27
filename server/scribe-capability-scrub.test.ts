@@ -14,6 +14,7 @@ import { holdHarnessCapabilities } from "./boot-capabilities.ts";
 const CAPABILITY_NAMES = [
   "RELAY_BFF_CAPABILITY",
   "RELAY_SCRIBE_WORKER_CAPABILITY",
+  "RELAY_GITHUB_WORKSPACE_TOKEN",
   // Must never reach the harness at all; scrubbed defensively if it somehow does.
   "RELAY_INGEST_CAPABILITY",
 ] as const;
@@ -55,11 +56,12 @@ describe("harness capability scrub", () => {
     const env: NodeJS.ProcessEnv = {
       RELAY_BFF_CAPABILITY: "bff-secret",
       RELAY_SCRIBE_WORKER_CAPABILITY: "worker-secret",
+      RELAY_GITHUB_WORKSPACE_TOKEN: "github-workspace-secret",
       RELAY_INGEST_CAPABILITY: "ingest-should-never-be-here",
       RELAY_MAILBOX_ADDRESS: "relay@example.com",
     };
     const held = holdHarnessCapabilities(env);
-    expect(held).toEqual({ bffCapability: "bff-secret", scribeWorkerCapability: "worker-secret" });
+    expect(held).toEqual({ bffCapability: "bff-secret", scribeWorkerCapability: "worker-secret", githubWorkspaceToken: "github-workspace-secret" });
     expectNoCapabilities(env);
     // Unrelated variables survive — the scrub is targeted, not a wipe.
     expect(env.RELAY_MAILBOX_ADDRESS).toBe("relay@example.com");
@@ -70,6 +72,7 @@ describe("harness capability scrub", () => {
       ...process.env,
       RELAY_BFF_CAPABILITY: "bff-secret",
       RELAY_SCRIBE_WORKER_CAPABILITY: "worker-secret",
+      RELAY_GITHUB_WORKSPACE_TOKEN: "github-workspace-secret",
       RELAY_INGEST_CAPABILITY: "ingest-should-never-be-here",
       RELAY_SCRIBE_SENTINEL: "keep-me",
     };
@@ -91,6 +94,7 @@ describe("harness capability scrub", () => {
     try {
       process.env.RELAY_BFF_CAPABILITY = "bff-secret";
       process.env.RELAY_SCRIBE_WORKER_CAPABILITY = "worker-secret";
+      process.env.RELAY_GITHUB_WORKSPACE_TOKEN = "github-workspace-secret";
       process.env.RELAY_INGEST_CAPABILITY = "ingest-should-never-be-here";
       process.env.RELAY_SCRIBE_SENTINEL = "keep-me";
       holdHarnessCapabilities(process.env);

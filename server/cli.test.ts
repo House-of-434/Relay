@@ -135,9 +135,9 @@ describe("relay command line", () => {
     const checkout = serverEntry(SERVER_DIR);
     expect(checkout.args[0]).toBe("--experimental-strip-types");
     expect(checkout.args[1]).toBe(join(SERVER_DIR, "index.ts"));
-    // skills/ is not tracked in the repo, so a checkout reports no skills
-    // dir (serverEntry returns null when the folder is absent).
-    expect(checkout.skillsDir).toBeNull();
+    // skills/ is tracked in the repo (bundled skills ship with a checkout),
+    // so a checkout reports the repo skills dir.
+    expect(checkout.skillsDir).toBe(join(SERVER_DIR, "..", "skills"));
   });
 
   it("serve: starts the server, prints the pairing link, and stops on SIGTERM", async () => {

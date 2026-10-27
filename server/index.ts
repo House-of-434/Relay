@@ -238,6 +238,7 @@ const heldCapabilities = holdHarnessCapabilities();
 const relayBffCapability = heldCapabilities.bffCapability;
 const scribeWorkerCapability = heldCapabilities.scribeWorkerCapability;
 const relayMailMirrorCapability = heldCapabilities.mailMirrorCapability;
+const githubWorkspaceToken = heldCapabilities.githubWorkspaceToken;
 const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "http://127.0.0.1:8791";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -488,6 +489,13 @@ import {
 import { mailboxBffCall, type MailboxActor } from "./mailbox-bff.ts";
 import { reserveRoutedThread, resolveMailOrigin } from "./routed-thread.ts";
 import { holdHarnessCapabilities } from "./boot-capabilities.ts";
+import {
+  authorizeRelayGitOperation,
+  buildRelayGitShell,
+  githubWorkspaceEnvironment,
+  parseRelayGitCommand,
+  redactRelayGitSecret,
+} from "./scout-git.ts";
 import { ScribeMonitor, createDegradedTracker, meetingCodeFor, scribeMonitorConfig } from "./scribe-monitor.ts";
 import { isPermanentNoticeError, joinRequestFromIntent, resolveNoticeSender } from "./scribe-intents.ts";
 import { createCalendarEventLister } from "./scribe-calendar.ts";
@@ -15564,7 +15572,31 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               botComputerControlSnapshot(internalSender.id).held) {
             return json(res, 409, { error: "The Local VM is no longer available to this turn." });
           }
-          const result = await containerExec(vm, typeof body.command === "string" ? body.command : "", {
+          const requestedCommand = typeof body.command === "string" ? body.command : "";
+          const relayGit = requestedCommand.trimStart().startsWith("relay-git") ? parseRelayGitCommand(requestedCommand) : null;
+          if (relayGit && !relayGit.ok) return json(res, relayGit.status, { error: relayGit.error });
+          if (relayGit && relayGit.ok) {
+            const authorized = authorizeRelayGitOperation({
+              senderRole: internalSender.relayAgent,
+              command: requestedCommand,
+              operation: relayGit.operation,
+              token: githubWorkspaceToken,
+            });
+            if (!authorized.ok) return json(res, authorized.status, { error: authorized.error });
+            const workspaceToken = githubWorkspaceToken as string;
+            const authorizedResult = await containerExec(vm, buildRelayGitShell(relayGit.operation), {
+              runtime,
+              timeoutSeconds: typeof body.timeout_seconds === "number" ? body.timeout_seconds : undefined,
+              secretEnv: githubWorkspaceEnvironment(workspaceToken),
+            });
+            localVmIdleFor(vm).touch();
+            return json(res, 200, {
+              ...authorizedResult,
+              stdout: redactRelayGitSecret(authorizedResult.stdout, workspaceToken),
+              stderr: redactRelayGitSecret(authorizedResult.stderr, workspaceToken),
+            });
+          }
+          const result = await containerExec(vm, requestedCommand, {
             runtime,
             timeoutSeconds: typeof body.timeout_seconds === "number" ? body.timeout_seconds : undefined,
           });

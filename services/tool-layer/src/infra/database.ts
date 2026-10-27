@@ -7,6 +7,11 @@ import type { Filter } from "../domain/shapes.js";
 type Client = SupabaseClient<any>;
 type Env = Record<string, string | undefined>;
 
+export interface TeammateMatch {
+  email: string;
+  display_name: string | null;
+}
+
 const ENTITY_TABLES: Record<string, string> = {
   companies: "companies",
   people: "people",
@@ -187,6 +192,31 @@ export class RelayDatabase {
     const { data, error } = await client.schema("app").rpc("member_by_email", { candidate });
     supabaseError(error);
     return typeof data === "string" && data.length > 0 ? data : null;
+  }
+
+  /** Resolve a teammate's name or email to calendar-invitable addresses.
+   * Confirmed, active accounts only; the SQL function is service-role-only and
+   * returns nothing but email and display name. Ambiguous names return every
+   * match so the agent can ask which person the user meant. */
+  async searchMembers(candidate: string, maxRows = 20): Promise<TeammateMatch[]> {
+    const client = this.client("relay");
+    const { data, error } = await client.schema("app").rpc("search_members", {
+      candidate,
+      max_rows: maxRows,
+    });
+    supabaseError(error);
+    if (!Array.isArray(data)) return [];
+    return data.flatMap((row: unknown): TeammateMatch[] => {
+      if (!row || typeof row !== "object" || Array.isArray(row)) return [];
+      const record = row as Record<string, unknown>;
+      if (typeof record.email !== "string" || record.email.length === 0) return [];
+      return [{
+        email: record.email,
+        display_name: typeof record.display_name === "string" && record.display_name.length > 0
+          ? record.display_name
+          : null,
+      }];
+    });
   }
 
   client(project: Project): Client {

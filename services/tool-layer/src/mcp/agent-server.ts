@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 
 import { RelayDatabase } from "../infra/database.js";
-import { authorize, authorizeCalendar, authorizeGmail, authorizeScribe, ARXIV_PERMISSIONS, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, FETCH_PERMISSIONS, GITHUB_PERMISSIONS, GMAIL_PERMISSIONS, NOTION_PERMISSIONS, SCRIBE_PERMISSIONS, SEC_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
+import { authorize, authorizeCalendar, authorizeDirectory, authorizeGmail, authorizeScribe, ARXIV_PERMISSIONS, BROWSER_PERMISSIONS, CALENDAR_PERMISSIONS, DIRECTORY_PERMISSIONS, FETCH_PERMISSIONS, GITHUB_PERMISSIONS, GMAIL_PERMISSIONS, NOTION_PERMISSIONS, PERMISSIONS, SCRIBE_PERMISSIONS, SEC_PERMISSIONS, SEARCH_PERMISSIONS, type Agent } from "../domain/permissions.js";
 import { RelayGmailClient } from "../infra/gmail.js";
 import { MAX_OUTBOUND_ATTACHMENTS, normalizeOutboundAttachmentRefs, resolveOutboundAttachments } from "../infra/mail-attachments.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
@@ -81,10 +81,22 @@ export function createAgentMcpServer(
   // search servers (registered below) are wrapped too.
   if (log) instrumentToolCalls(server, log);
 
+  const readScope = [
+    "app.companies, app.people, app.events (shared workspace knowledge)",
+    ...(PERMISSIONS[agent].read.includes("newsletter/public.applications")
+      ? ["public.applications (membership applications, read-only)"]
+      : []),
+    "history.conversations (your own conversations)",
+    "transcripts.meetings (captured meeting records)",
+  ].join(", ");
+  const writeScope = PERMISSIONS[agent].write
+    .map((entry) => entry.slice(entry.indexOf("/") + 1))
+    .join(", ");
+
   server.registerTool(
     "relay_read",
     {
-      description: "Read rows from a table explicitly permitted for this Relay agent: app.companies, app.people, app.events (shared workspace knowledge), history.conversations (your own conversations), transcripts.meetings (captured meeting records). Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.",
+      description: `Read rows from a table explicitly permitted for this Relay agent: ${readScope}. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.`,
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
@@ -106,7 +118,9 @@ export function createAgentMcpServer(
   server.registerTool(
     "relay_write",
     {
-      description: "Insert or update one row in a table explicitly permitted for this Relay agent. Column shapes are enforced; updates must target one row.",
+      description: writeScope.length > 0
+        ? `Insert or update one row in a table explicitly permitted for this Relay agent: ${writeScope}. An app.events row needs title, occurred_at, and source_url; type defaults to gathering. For website event content, also pass hosted, city, speakers, media_url, cover_image_url, and notes as needed. Column shapes are enforced; updates must target one row.`
+        : "Insert or update one row in a table explicitly permitted for this Relay agent. This agent has no writable tables. Column shapes are enforced; updates must target one row.",
       inputSchema: WRITE_INPUT,
       annotations: { readOnlyHint: false, destructiveHint: false },
     },
@@ -127,6 +141,31 @@ export function createAgentMcpServer(
       }
     },
   );
+
+  // Teammate lookup resolves a first name to the address a calendar invite
+  // needs. It returns only confirmed accounts' names and emails; ambiguity is
+  // surfaced as multiple matches so the agent asks instead of guessing.
+  if (userId && DIRECTORY_PERMISSIONS[agent].length > 0) {
+    server.registerTool(
+      "find_teammate",
+      {
+        description: "Find a Relay teammate by name or email and return their name and email. Use this before emailing or inviting a teammate named only by first name. One match means use that address; several matches mean ask the person which one; no match means ask for their email. Never invent or guess an address.",
+        inputSchema: {
+          query: z.string().trim().min(2).max(320),
+        },
+        annotations: { readOnlyHint: true },
+      },
+      async ({ query }) => {
+        try {
+          authorizeDirectory(agent, "search");
+          const members = await database.searchMembers(query.trim(), 20);
+          return { content: [{ type: "text", text: JSON.stringify({ members }) }] };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    );
+  }
 
   // Visibility matches authorization: an agent with no Gmail or calendar
   // capability must not even see those tools offered.

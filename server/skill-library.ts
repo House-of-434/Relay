@@ -58,7 +58,10 @@ function loadSkillDirectory(directory: string): BundledSkill | null {
   const skillPath = join(directory, "SKILL.md");
   if (!existsSync(manifestPath) || !existsSync(skillPath)) return null;
   const manifest = parseSkillManifest(JSON.parse(readFileSync(manifestPath, "utf8")), directory);
-  const instructions = readFileSync(skillPath, "utf8").trim();
+  // Checked-in skills reach Windows as CRLF; every consumer (system-prompt
+  // assembly, frontmatter checks) expects LF, so normalize once at the load
+  // boundary shared by bundled and user skills.
+  const instructions = readFileSync(skillPath, "utf8").replace(/\r\n/g, "\n").trim();
   if (!instructions.startsWith("---")) throw new Error(`${skillPath} has no skill frontmatter`);
   return { manifest, instructions, directory };
 }

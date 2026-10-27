@@ -37,7 +37,17 @@ the service-role key stays only here. See `../../.env.secrets.example`.
 Each Supabase URL is checked against its configured project ref. Startup fails
 if the Relay database cannot access `app.companies`. Newsletter tables remain
 unavailable until their per-table column shapes are configured; access fails
-closed rather than guessing columns.
+closed rather than guessing columns. Scout and Mercury may read
+`public.applications`; Curator may not.
+
+`app.events` also carries the website Event Content Tracker fields (`hosted`,
+`city`, `speakers`, `media_url`, `cover_image_url`, `notes`). A new event needs
+`title`, `occurred_at`, and `source_url`; `type` defaults to `gathering`.
+
+Every agent can call `find_teammate` to resolve a colleague's name or email to
+an invitation address. The service-role-only `app.search_members` function
+returns confirmed, active accounts' name and email only; multiple matches are
+returned so the agent asks which person the user meant.
 
 Conversation history is readable by every agent and writable by none: a
 conversation belongs to the authenticated user, so `read` is scoped to the

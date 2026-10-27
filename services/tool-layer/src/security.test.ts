@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { authorize } from "./domain/permissions.js";
+import { authorize, authorizeDirectory } from "./domain/permissions.js";
 import { prepareWrite, validateFilters } from "./domain/shapes.js";
 
 const UUID = "2c90d6a2-5ade-4e7a-bb55-205a8b9e3918";
@@ -10,12 +10,23 @@ const ACTOR_USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 test("table access is bound to the agent and project", () => {
   assert.equal(authorize("scout", "read", "app.companies"), "relay");
   assert.equal(authorize("mercury", "read", "public.suppressed_emails"), "newsletter");
+  assert.equal(authorize("scout", "read", "public.applications"), "newsletter");
+  assert.equal(authorize("mercury", "read", "public.applications"), "newsletter");
+  assert.throws(() => authorize("curator", "read", "public.applications"), /denied/);
+  assert.throws(() => authorize("scout", "write", "public.applications"), /denied/);
+  assert.throws(() => authorize("mercury", "write", "public.applications"), /denied/);
   assert.throws(() => authorize("scout", "read", "transcripts.email_threads"), /denied/);
   assert.throws(() => authorize("scout", "write", "history.generated_docs"), /denied/);
   assert.throws(() => authorize("mercury", "read", "logs.turns"), /denied/);
   assert.throws(() => authorize("curator", "write", "app.companies"), /denied/);
   assert.throws(() => authorize("curator", "write", "transcripts.email_threads"), /denied/);
   assert.throws(() => authorize("mercury", "write", "public.invitation_requests"), /denied/);
+});
+
+test("every agent may search the teammate directory", () => {
+  for (const agent of ["scout", "mercury", "curator"] as const) {
+    assert.doesNotThrow(() => authorizeDirectory(agent, "search"));
+  }
 });
 
 test("conversation history is readable by every agent and writable by none", () => {
@@ -158,6 +169,63 @@ test("notion sync: the first run inserts a deal, a rerun updates it by id", () =
   assert.equal(update.values.stage, "Seed");
 });
 
+test("event tracker fields insert without CRM-only requirements", () => {
+  const prepared = prepareWrite(
+    "app.events",
+    "insert",
+    {
+      title: "AI Beyond the Screen",
+      occurred_at: "2026-07-13T00:00:00Z",
+      source_url: "https://luma.com/51tyh6y2",
+      hosted: "hosted",
+      city: "New York",
+      speakers: "Nikhil Tyagi — Technology leader",
+      media_url: "https://drive.google.com/drive/folders/abc",
+      cover_image_url: "https://example.com/poster.png",
+      notes: "Recorded.",
+    },
+    undefined,
+    { agent: "scout", userId: ACTOR_USER_ID },
+  );
+  assert.equal(prepared.values.hosted, "hosted");
+  assert.equal(prepared.values.city, "New York");
+  assert.equal(prepared.values.speakers, "Nikhil Tyagi — Technology leader");
+  assert.equal("attendee_ids" in prepared.values, false);
+  assert.equal("type" in prepared.values, false);
+
+  // A supplied type still has to be one of the established event kinds.
+  assert.throws(() => prepareWrite(
+    "app.events", "insert",
+    {
+      type: "party",
+      title: "AI Beyond the Screen",
+      occurred_at: "2026-07-13T00:00:00Z",
+      source_url: "https://luma.com/51tyh6y2",
+    },
+    undefined,
+    { agent: "scout", userId: ACTOR_USER_ID },
+  ), /outside its allowed set/);
+
+  // Provenance stays mandatory; optional tracker links must still be URLs.
+  assert.throws(() => prepareWrite(
+    "app.events", "insert",
+    { title: "No source", occurred_at: "2026-07-13T00:00:00Z" },
+    undefined,
+    { agent: "scout", userId: ACTOR_USER_ID },
+  ), /source_url/);
+  assert.throws(() => prepareWrite(
+    "app.events", "insert",
+    {
+      title: "Bad media",
+      occurred_at: "2026-07-13T00:00:00Z",
+      source_url: "https://luma.com/51tyh6y2",
+      media_url: "not a url",
+    },
+    undefined,
+    { agent: "scout", userId: ACTOR_USER_ID },
+  ), /media_url must be an http/);
+});
+
 test("conversation ownership columns are not writable by a model", () => {
   // Conversations expose no writable columns, so any agent-supplied column is
   // refused before a row could be created.
@@ -213,6 +281,24 @@ test("filters allow only shaped columns and fixed operators", () => {
   ]);
   assert.deepEqual(validateFilters("transcripts.meetings", { instance_id: "inst-1" }), [
     { column: "instance_id", operator: "eq", value: "inst-1" },
-  ]);  assert.throws(() => validateFilters("app.companies", { actor_user: "analyst@houseof434.com" }), /UUID/);
+  ]);
+  // The event tracker filters by hosting type, city, and date.
+  assert.deepEqual(validateFilters("app.events", { city: "New York", hosted: "hosted", occurred_at_gte: "2026-01-01" }), [
+    { column: "city", operator: "eq", value: "New York" },
+    { column: "hosted", operator: "eq", value: "hosted" },
+    { column: "occurred_at", operator: "gte", value: "2026-01-01" },
+  ]);
+  // Applications are searched by reviewed columns only; free-text fields such
+  // as story are not filterable.
+  assert.deepEqual(
+    validateFilters("public.applications", { role: "founder", location: "San Francisco", created_at_gte: "2026-01-01" }),
+    [
+      { column: "role", operator: "eq", value: "founder" },
+      { column: "location", operator: "eq", value: "San Francisco" },
+      { column: "created_at", operator: "gte", value: "2026-01-01" },
+    ],
+  );
+  assert.throws(() => validateFilters("public.applications", { story: "anything" }), /not filterable/);
+  assert.throws(() => validateFilters("app.companies", { actor_user: "analyst@houseof434.com" }), /UUID/);
   assert.throws(() => validateFilters("public.newsletter_subscribers", { email: "a@example.com" }), /No column shape/);
 });
