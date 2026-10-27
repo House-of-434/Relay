@@ -1,7 +1,7 @@
 export const AGENTS = ["scout", "mercury", "curator"] as const;
 export type Agent = (typeof AGENTS)[number];
 export type Operation = "read" | "write";
-export type Project = "relay" | "newsletter";
+export type Project = "relay";
 
 export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = {
   scout: {
@@ -11,8 +11,10 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "relay/app.events",
       "relay/history.conversations",
       "relay/transcripts.meetings",
-      "newsletter/public.invitation_requests",
-      "newsletter/public.applications",
+      "relay/public.applications",
+      "relay/public.invitation_requests",
+      "relay/public.host_applications",
+      "relay/public.partner_inquiries",
     ],
     write: [
       "relay/app.companies",
@@ -27,11 +29,13 @@ export const PERMISSIONS: Record<Agent, Record<Operation, readonly string[]>> = 
       "relay/app.events",
       "relay/history.conversations",
       "relay/transcripts.meetings",
-      "newsletter/public.newsletter_subscribers",
-      "newsletter/public.suppressed_emails",
-      "newsletter/public.email_send_log",
-      "newsletter/public.invitation_requests",
-      "newsletter/public.applications",
+      "relay/public.applications",
+      "relay/public.invitation_requests",
+      "relay/public.host_applications",
+      "relay/public.partner_inquiries",
+      "relay/public.newsletter_subscribers",
+      "relay/public.suppressed_emails",
+      "relay/public.email_send_log",
     ],
     write: [
       "relay/app.companies",
@@ -57,7 +61,7 @@ export const DENY_ALL = [
   "auth.*",
   "storage.*",
   "vault.*",
-  "newsletter/public.*[write]",
+  "public.*[write]",
 ] as const;
 
 function explicitlyDenied(table: string, operation: Operation): boolean {

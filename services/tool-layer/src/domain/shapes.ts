@@ -16,6 +16,9 @@ export type Shape = {
   validate?: readonly Requirement[];
   valueEnums?: Readonly<Record<string, readonly string[]>>;
   updateKey?: string;
+  /** Default read order. Applied by relay_read before the limit, so
+   * `limit: 1` returns the newest/oldest row without a separate sort tool. */
+  order?: { column: string; ascending: boolean };
 };
 
 export const SHAPES: Record<string, Shape> = {
@@ -135,18 +138,77 @@ export const SHAPES: Record<string, Shape> = {
     },
     require: [],
   },
-  // Membership applications live in the separate newsletter/site project. The
-  // connector is read-only, so no write path is configured; the shape exists
-  // only to expose a reviewed, filterable column set to Scout and Mercury.
+  // Membership applications live in Relay's public schema. They are read-only
+  // for agents; the site form writes them, and the newest application is the
+  // person who most recently joined the pipeline.
   "public.applications": {
     writable: [],
     serverSet: [
       "id", "name", "email", "linkedin", "location", "role", "entity", "website",
       "story", "looking_for", "brings", "learn", "referrer", "role_details",
-      "attribution", "created_at",
+      "attribution", "whatsapp_number", "whatsapp_opt_in", "created_at",
     ],
-    filterable: ["name", "email", "role", "entity", "location", "referrer", "created_at"],
+    filterable: [
+      "name", "email", "role", "entity", "location", "referrer",
+      "whatsapp_opt_in", "created_at",
+    ],
     require: [],
+    order: { column: "created_at", ascending: false },
+  },
+  // The other public intake forms share the same read-only, newest-first
+  // contract. They are written by the public site, never by an agent.
+  "public.invitation_requests": {
+    writable: [],
+    serverSet: [
+      "id", "name", "email", "linkedin", "location", "building", "interest", "created_at",
+    ],
+    filterable: ["name", "email", "location", "interest", "created_at"],
+    require: [],
+    order: { column: "created_at", ascending: false },
+  },
+  "public.host_applications": {
+    writable: [],
+    serverSet: [
+      "id", "name", "email", "linkedin", "city", "background", "communities",
+      "events_hosted", "event_idea", "created_at",
+    ],
+    filterable: ["name", "email", "city", "created_at"],
+    require: [],
+    order: { column: "created_at", ascending: false },
+  },
+  "public.partner_inquiries": {
+    writable: [],
+    serverSet: [
+      "id", "company", "contact_name", "email", "city", "partnership_type",
+      "budget", "notes", "created_at",
+    ],
+    filterable: ["company", "contact_name", "email", "city", "partnership_type", "created_at"],
+    require: [],
+    order: { column: "created_at", ascending: false },
+  },
+  "public.newsletter_subscribers": {
+    writable: [],
+    serverSet: ["id", "name", "email", "created_at"],
+    filterable: ["name", "email", "created_at"],
+    require: [],
+    order: { column: "created_at", ascending: false },
+  },
+  "public.suppressed_emails": {
+    writable: [],
+    serverSet: ["id", "email", "reason", "metadata", "created_at"],
+    filterable: ["email", "reason", "created_at"],
+    require: [],
+    order: { column: "created_at", ascending: false },
+  },
+  "public.email_send_log": {
+    writable: [],
+    serverSet: [
+      "id", "message_id", "template_name", "recipient_email", "status",
+      "error_message", "metadata", "created_at",
+    ],
+    filterable: ["message_id", "template_name", "recipient_email", "status", "created_at"],
+    require: [],
+    order: { column: "created_at", ascending: false },
   },
 };
 

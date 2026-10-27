@@ -27,18 +27,19 @@ the service-role key stays only here. See `../../.env.secrets.example`.
   secret verifies harness assertions; the capability authorises this service to
   ask the BFF to run an agent Gmail operation.
 - Optionally, `RELAY_BFF_INTERNAL_URL`, defaulting to `http://127.0.0.1:8798`.
-- Optionally, `NEWSLETTER_READONLY_URL`, `NEWSLETTER_READONLY_PROJECT_REF`, and
-  `NEWSLETTER_READONLY_KEY` for the separate read-only newsletter project.
 - `RELAY_TOOL_PORT` defaults to `8787`.
 - `RELAY_SEC_USER_AGENT` declares the SEC EDGAR fair-access identity (with
   contact information). SEC tools are unavailable until it is set.
 - Optionally, `RELAY_ARXIV_USER_AGENT`, defaulting to a descriptive Relay value.
 
 Each Supabase URL is checked against its configured project ref. Startup fails
-if the Relay database cannot access `app.companies`. Newsletter tables remain
+if the Relay database cannot access `app.companies`. Public intake tables remain
 unavailable until their per-table column shapes are configured; access fails
-closed rather than guessing columns. Scout and Mercury may read
-`public.applications`; Curator may not.
+closed rather than guessing columns. Scout may read applications, invitation
+requests, host applications, and partner inquiries. Mercury also gets newsletter
+subscribers, suppressed emails, and the email send log. Curator gets none of the
+public intake tables. They are read-only for every agent and returned newest
+first, so `limit: 1` is the most recent row.
 
 `app.events` also carries the website Event Content Tracker fields (`hosted`,
 `city`, `speakers`, `media_url`, `cover_image_url`, `notes`). A new event needs

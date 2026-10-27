@@ -81,10 +81,13 @@ export function createAgentMcpServer(
   // search servers (registered below) are wrapped too.
   if (log) instrumentToolCalls(server, log);
 
+  const publicReadTables = PERMISSIONS[agent].read
+    .filter((entry) => entry.startsWith("relay/public."))
+    .map((entry) => entry.slice("relay/".length));
   const readScope = [
     "app.companies, app.people, app.events (shared workspace knowledge)",
-    ...(PERMISSIONS[agent].read.includes("newsletter/public.applications")
-      ? ["public.applications (membership applications, read-only)"]
+    ...(publicReadTables.length > 0
+      ? [`${publicReadTables.join(", ")} (public intake forms, read-only, newest first)`]
       : []),
     "history.conversations (your own conversations)",
     "transcripts.meetings (captured meeting records)",
@@ -96,7 +99,7 @@ export function createAgentMcpServer(
   server.registerTool(
     "relay_read",
     {
-      description: `Read rows from a table explicitly permitted for this Relay agent: ${readScope}. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported. To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.`,
+      description: `Read rows from a table explicitly permitted for this Relay agent: ${readScope}. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported.${publicReadTables.length > 0 ? " Public intake tables are returned newest first; use limit 1 for the most recent row." : ""} To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.`,
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
