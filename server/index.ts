@@ -409,6 +409,9 @@ import {
   ROUTINE_PROMPT,
   ROUTINE_EXECUTION_PROMPT,
   WEBHOOK_PROMPT,
+  OPENUI_PROMPT,
+  UI_SELECTION_PROMPT,
+  RELAY_IDENTITY_PROMPT,
   resolveComputerPromptKind,
 } from "./system-prompt.ts";
 import { readCuaConnection, readCuaUnavailableReason, gatedLocalComputer } from "./local-computer.ts";
@@ -3395,6 +3398,9 @@ function previewSystemPrompt(bot: BotRecord) {
     { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
     { id: "routine", label: "Routines", text: agentsMounted ? ROUTINE_PROMPT : "" },
     { id: "profile", label: "Profile changes", text: agentsMounted ? PROFILE_PROMPT : "" },
+    { id: "openui", label: "Generative UI", text: agentsMounted ? OPENUI_PROMPT : "" },
+    { id: "relay-identity", label: "Relay identity", text: agentsMounted ? RELAY_IDENTITY_PROMPT : "" },
+    { id: "ui-selection", label: "UI selection", text: UI_SELECTION_PROMPT },
     { id: "section-context", label: "Section context", text: sectionContextSystemPrompt(bot.section) },
     { id: "memory", label: "Memory", text: memorySystemPrompt(bot.id, { managedWrites: agentsMounted, fileTools: Boolean(privateWorkspace) }) },
     { id: "skills", label: "Skills index", text: privateWorkspace ? skillsSystemPrompt(bot.id) : "" },
@@ -9467,6 +9473,9 @@ async function startTurn(
         { id: "skill-instructions", label: "Skill instructions", text: skillInstructions },
         { id: "playbooks", label: "Playbooks", text: packagePlaybooks },
         { id: "webhook", label: "Webhook provenance", text: opts?.automationSource === "webhook" ? WEBHOOK_PROMPT : "" },
+        { id: "openui", label: "Generative UI", text: integrations.agents ? OPENUI_PROMPT : "" },
+        { id: "relay-identity", label: "Relay identity", text: integrations.agents ? RELAY_IDENTITY_PROMPT : "" },
+        { id: "ui-selection", label: "UI selection", text: UI_SELECTION_PROMPT },
         { id: "mentions", label: "Mentions", text: boundedCoordination && tagged.length ? `The user named these existing teammates: ${tagged.map(b => `${peerName(b.name)} (${b.id})`).join(", ")}. Use coordinate_bots when their contribution is needed; do not substitute native helper agents for these bots.` : mentionPrompt(tagged) },
       ]);
       turnPromptBytes.set(threadId, { stable: Buffer.byteLength(prompt.stable), volatile: Buffer.byteLength(prompt.volatile) });
@@ -11824,6 +11833,9 @@ async function runGroupMemberTurn(
     integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual Relay teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an Relay teammate participated. Plain @mentions are only for conversational replies in this room.",
     integrations.agents && ROUTINE_PROMPT.trim(),
     integrations.agents && PROFILE_PROMPT.trim(),
+    integrations.agents && OPENUI_PROMPT.trim(),
+    integrations.agents && RELAY_IDENTITY_PROMPT.trim(),
+    UI_SELECTION_PROMPT.trim(),
     skillAuthoring && LEARN_PROMPT.trim(),
     orchestration?.systemInstructions,
   ]

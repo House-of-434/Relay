@@ -84,10 +84,29 @@ export function createAgentMcpServer(
   const publicReadTables = PERMISSIONS[agent].read
     .filter((entry) => entry.startsWith("relay/public."))
     .map((entry) => entry.slice("relay/".length));
+
+  const tableDescriptions: Record<string, string> = {
+    "app.companies": "House of 434's tracked companies (deals, portfolio, research targets)",
+    "app.people": "people associated with companies (founders, investors, partners)",
+    "app.events": "House of 434 Event Content Tracker (events hosted or co-hosted, with dates, cities, speakers)",
+    "public.applications": "join/apply form submissions from the House of 434 website",
+    "public.invitation_requests": "invitation and collaboration requests from the website",
+    "public.host_applications": "event hosting applications from the website",
+    "public.partner_inquiries": "partnership inquiries from the website",
+    "public.newsletter_subscribers": "newsletter signups",
+    "public.suppressed_emails": "suppressed email addresses",
+    "public.email_send_log": "email send history",
+  };
+
   const readScope = [
-    "app.companies, app.people, app.events (shared workspace knowledge)",
+    ...PERMISSIONS[agent].read
+      .filter((entry) => entry.startsWith("relay/app."))
+      .map((entry) => {
+        const table = entry.slice("relay/".length);
+        return `${table} (${tableDescriptions[table] || "shared workspace knowledge"})`;
+      }),
     ...(publicReadTables.length > 0
-      ? [`${publicReadTables.join(", ")} (public intake forms, read-only, newest first)`]
+      ? [`${publicReadTables.map((t) => `${t} (${tableDescriptions[t] || "public intake form"})`).join(", ")} (read-only, newest first)`]
       : []),
     "history.conversations (your own conversations)",
     "transcripts.meetings (captured meeting records)",
@@ -99,7 +118,7 @@ export function createAgentMcpServer(
   server.registerTool(
     "relay_read",
     {
-      description: `Read rows from a table explicitly permitted for this Relay agent: ${readScope}. Filters are parameterized; only shaped columns and eq, _gte, _lte, _in, and _like are supported.${publicReadTables.length > 0 ? " Public intake tables are returned newest first; use limit 1 for the most recent row." : ""} To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.`,
+      description: `Read rows from a table explicitly permitted for this Relay agent: ${readScope}. Filters use suffixes on column names: created_at_gte for >=, created_at_lte for <=, name_like for substring match. Example: {"created_at_gte": "2026-10-01", "created_at_lte": "2026-10-31"}. Do NOT use nested objects like {"created_at": {"gte": "..."}}. Limit: 1-100 rows (default 50). No aggregation (COUNT/GROUP BY) — count rows client-side from returned data. Date filters use ISO date strings (YYYY-MM-DD). Public intake tables are returned newest first; use limit 1 for the most recent row. To get notes for a meeting, use get_meeting_transcript rather than reading transcripts.meetings directly; a transcript is readable only when segment_count > 0. No matching row means no capture exists — say so and never invent transcript content.`,
       inputSchema: READ_INPUT,
       annotations: { readOnlyHint: true },
     },
