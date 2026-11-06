@@ -15,7 +15,7 @@ test("table access is bound to the agent and project", () => {
   assert.equal(authorize("scout", "read", "public.host_applications"), "relay");
   assert.equal(authorize("scout", "read", "public.partner_inquiries"), "relay");
   assert.equal(authorize("scout", "read", "public.invitation_requests"), "relay");
-  assert.throws(() => authorize("curator", "read", "public.applications"), /denied/);
+  assert.throws(() => authorize("curator", "read", "logs.turns"), /denied/);
   assert.throws(() => authorize("scout", "write", "public.applications"), /denied/);
   assert.throws(() => authorize("mercury", "write", "public.applications"), /denied/);
   assert.throws(() => authorize("scout", "read", "transcripts.email_threads"), /denied/);
