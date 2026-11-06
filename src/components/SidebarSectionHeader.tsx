@@ -64,12 +64,12 @@ export function SidebarSectionHeader({
                 ? t("sidebar.section.expand", { name })
                 : t("sidebar.section.collapse", { name })
           }
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-raised/50"
+          className="group flex min-w-0 flex-1 items-center gap-0.5 rounded-md px-1 py-0.5 text-left"
         >
           <span className="truncate text-[12px] font-semibold text-ink-secondary">
             {name}
           </span>
-          <Chevron size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+          <Chevron size={13} className="shrink-0 text-ink-secondary transition-colors group-hover:text-ink" aria-hidden="true" />
           {attention && attention.waiting > 0 && (
             <span
               aria-hidden="true"

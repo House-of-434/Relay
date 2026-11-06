@@ -15,9 +15,9 @@ describe("bot roles", () => {
   });
 
   it("turns a role into the profile patch a blank bot needs", () => {
-    const patch = roleProfilePatch(botRole("research")!);
-    expect(patch).toMatchObject({ name: "Scout", title: "Researcher" });
-    expect(patch.soul).toContain("brief");
+    const patch = roleProfilePatch(botRole("assistant")!);
+    expect(patch).toMatchObject({ name: "Assistant", title: "General assistant" });
+    expect(patch.soul).toContain("assistant");
     // Presets only set profile content, never routing, tool permissions,
     // connected accounts or schedules — including when browser is unavailable.
     for (const role of BOT_ROLES) {

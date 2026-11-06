@@ -13,7 +13,6 @@ import {
   Library,
   Loader2,
   MoreHorizontal,
-  PanelLeft,
   Pencil,
   Pin,
   PinOff,
@@ -34,7 +33,6 @@ import { cn } from "@/lib/cn";
 import { useHeldMenuMotion, useMenuMotion } from "./MenuMotion";
 import { lastNonReceipt } from "@/lib/receipts";
 import { t } from "@/lib/i18n";
-import { isRoutineProblemRun } from "@/lib/routines";
 import type { LocaleKey } from "@/locales";
 import { ConfirmDialog } from "./ConfirmDialog";
 import { WorkingDots } from "./WorkingIndicator";
@@ -76,7 +74,6 @@ import {
 } from "@/lib/sidebar-layout";
 import { sidebarSectionAttention } from "@/lib/sidebar-attention";
 import { botListItemPointerIntent } from "@/lib/sidebar-selection";
-import { SidebarMoreMenu } from "./SidebarMoreMenu";
 import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
 import { SidebarProfileMenu } from "./SidebarProfileMenu";
@@ -157,8 +154,8 @@ function StackedMauses({ members, density, iconSize }: { members: Bot[]; density
   const slotSize = iconOnly ? "size-12" : density === "compact" ? "size-7" : "size-8";
   // A sized rail shrinks the slot with the avatar so rows stay tight.
   const slotStyle = iconOnly && iconSize ? { width: iconSize + 8, height: iconSize + 8 } : undefined;
-  const singleSize = iconOnly ? (iconSize ?? 44) : density === "compact" ? 26 : 32;
-  const pairSize = iconOnly ? (iconSize ? Math.max(16, iconSize - 6) : 30) : 20;
+  const singleSize = iconOnly ? (iconSize ?? 44) : density === "compact" ? 21 : 26;
+  const pairSize = iconOnly ? (iconSize ? Math.max(16, iconSize - 6) : 30) : 16;
   if (members.length <= 1) {
     const b = members[0];
     return (
@@ -342,7 +339,7 @@ function RoomContextMenu({
             onClick={saveRename}
             aria-label={isBotChat ? t("sidebar.room.saveChatName") : t("sidebar.room.saveChannelName")}
             title={t("common.save")}
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:text-ink"
           >
             <Check size={15} />
           </button>
@@ -351,7 +348,7 @@ function RoomContextMenu({
             onClick={onClose}
             aria-label={isBotChat ? t("sidebar.room.cancelChatRename") : t("sidebar.room.cancelChannelRename")}
             title={t("common.cancel")}
-            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:bg-raised hover:text-ink"
+            className="flex size-8 shrink-0 items-center justify-center rounded-lg text-ink-secondary hover:text-ink"
           >
             <X size={15} />
           </button>
@@ -802,14 +799,12 @@ export function BotListItem({
   useEffect(() => {
     if (iconOnly) setRenaming(false);
   }, [iconOnly]);
-  const avatarSize = iconOnly ? (iconSize ?? 44) : density === "compact" ? 40 : 56;
+  const avatarSize = iconOnly ? (iconSize ?? 44) : density === "compact" ? 32 : 45;
   // the visible branch, so a version switch changes the row with the chat
   const visible = visibleMessages(bot);
-  const last = visible.at(-1);
   // the role from Bot Settings → Title. A badge or tooltip beside the name
   // (#866, #871) always traded the name's width against the title's; its own
   // line above the name lets both truncate independently instead.
-  const title = bot.title.trim();
   const rowClass = cn(
     "flex w-full items-center rounded-md text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/60",
     iconOnly
@@ -867,13 +862,6 @@ export function BotListItem({
           className={cn("absolute -right-0.5 -bottom-0.5 rounded-full border-2 border-panel bg-ink-secondary", iconOnly ? "size-3" : "size-2.5")} />}
       </span>
       <div className={cn("min-w-0 flex-1", iconOnly && "hidden")}>
-        {title && !renaming && !quiet && (
-          // Its own line above the name: a badge or tooltip beside the name
-          // (#866, #871) always traded the name's width against the title's —
-          // stacking the two removes the competition entirely, so both can
-          // truncate independently against the full row width.
-          <div className="truncate text-[11px] font-medium leading-4 text-ink-secondary">{title}</div>
-        )}
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 grow items-center gap-1.5 truncate text-[14px] font-semibold text-ink">
             {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
@@ -902,11 +890,6 @@ export function BotListItem({
               </Crown>
             )}
           </span>
-          {selected && last && !renaming && (
-            <span className="shrink-0 text-xs text-ink-secondary transition-opacity group-hover:opacity-0 group-focus-within:opacity-0 touch:opacity-0">
-              {formatTime(last.at)}
-            </span>
-          )}
           {quiet && !statusLine && unread && <span className="size-1.5 shrink-0 rounded-full bg-accent" aria-label={t("task.unreadMany")} />}
         </div>
         {bot.chiefOfStaff && !renaming && !quiet && (
@@ -994,7 +977,7 @@ export function BotListItem({
       )}
       {!renaming && !deleting && !iconOnly && <>
         <button type="button" aria-label={t("sidebar.bot.actions", { name: bot.name })} title={t("sidebar.bot.actions", { name: bot.name })} aria-haspopup="menu" onClick={(event) => { const rect = event.currentTarget.getBoundingClientRect(); onMenu({ botId: bot.id, x: rect.left, y: rect.bottom }); }}
-          className="pointer-events-none absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded text-ink-secondary opacity-0 hover:bg-raised hover:text-ink group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 max-md:pointer-events-auto max-md:opacity-70 touch:pointer-events-auto touch:opacity-70"><MoreHorizontal size={15} /></button>
+          className="pointer-events-none absolute right-1 top-1/2 flex size-7 -translate-y-1/2 items-center justify-center rounded text-ink-secondary opacity-0 hover:text-ink group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100 max-md:pointer-events-auto max-md:opacity-70 touch:pointer-events-auto touch:opacity-70"><MoreHorizontal size={15} /></button>
       </>}
       {deleting && iconOnly && (
         <span className="pointer-events-none absolute bottom-1 right-1 rounded-full bg-card p-1 text-ink-secondary">
@@ -1083,6 +1066,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
     text: string;
   } | null>(null);
   const [query, setQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   // Website sidebar is always comfortable: the drawer open/close button
   // handles collapsing, so there is no density picker (comfortable / compact
   // / avatars-only). Row components still accept a density prop for tests.
@@ -1302,14 +1286,14 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
           the full sidebar below still serves as the drawer. */}
       {!desktopOpen && (
         <div className="hidden min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-3 pt-1 md:flex">
-          <div className="flex justify-center pb-3 pt-2">
+          <div className="flex justify-center pb-3 pt-1">
             {onToggleDesktop && (
               <button
                 type="button"
                 onClick={onToggleDesktop}
                 aria-label={t("sidebar.toggle.open")}
                 title={t("sidebar.toggle.open")}
-                className="group flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+                className="group flex size-10 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
               >
                 <img
                   src="/app-mark.png"
@@ -1321,7 +1305,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                   {/* Group opacity, not the alpha ink token: PanelLeft's divider
                       stroke overlaps the rect border, and two semi-transparent
                       strokes composite brighter where they cross. */}
-                  <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" />
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" aria-hidden="true"><path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 3.5v17M3 12c0-4.243 0-6.364 1.318-7.682C5.636 3 7.758 3 12 3c4.243 0 6.364 0 7.682 1.318C21 5.636 21 7.758 21 12c0 4.243 0 6.364-1.318 7.682C18.364 21 16.242 21 12 21c-4.243 0-6.364 0-7.682-1.318C3 18.364 3 16.242 3 12Z"/></svg>
                 </span>
               </button>
             )}
@@ -1378,19 +1362,42 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
       {/* Brand row: app icon + name on the left; the new-item action is
           admin-only (see canManage) and right-aligned beside the desktop
           collapse toggle. The toggle lives here, not in the chat header. */}
-      <div className="flex items-center justify-between gap-2 px-3 pb-1 pt-3">
-        <div className="flex min-w-0 items-center gap-1.5">
+      <div className="relative flex items-center justify-between gap-2 pl-3 pr-1 pb-1 pt-1">
+        <div className="flex min-w-0 items-center gap-2">
           <img src="/app-mark.png" alt="" aria-hidden="true" className="size-8 shrink-0" />
           <span className="truncate text-[15px] font-semibold text-ink">Relay</span>
         </div>
-        <div className="flex shrink-0 items-center gap-1">
+        <div className="flex shrink-0 items-center gap-0.5">
+        {searchOpen && (
+          <div className="absolute left-3 right-10 top-1/2 z-20 flex -translate-y-1/2 items-center gap-2 rounded-full border border-hairline/40 bg-card px-3 py-0.5">
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => e.key === "Escape" && (setQuery(""), setSearchOpen(false))}
+              onBlur={() => { if (!query) setSearchOpen(false); }}
+              placeholder={t("sidebar.search")}
+              aria-label={t("sidebar.searchAria")}
+              className="w-40 bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
+            />
+          </div>
+        )}
+          <button
+            type="button"
+            onClick={() => setSearchOpen((o) => !o)}
+            aria-label={t("sidebar.searchAria")}
+            title={t("sidebar.search")}
+            className="flex size-8 items-center justify-center rounded-full text-ink-secondary hover:text-ink"
+          >
+            <Search size={16} />
+          </button>
         {canManage && (
         <div className="relative flex items-center gap-1">
           <button
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
             aria-label={remoteClient ? t("sidebar.new") : t("sidebar.newOrShare")}
-            className="flex size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink"
+            className="flex size-9 items-center justify-center rounded-full border border-hairline/40 bg-inset/40 text-ink-secondary hover:text-ink"
             title={remoteClient ? t("sidebar.new") : t("sidebar.newOrShare")}
           >
             <Plus size={20} strokeWidth={2} />
@@ -1453,9 +1460,9 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             onClick={onToggleDesktop}
             aria-label={t("sidebar.toggle.close")}
             title={t("sidebar.toggle.close")}
-            className="group hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:bg-raised hover:text-ink md:flex"
+            className="group hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:text-ink md:flex"
           >
-            <PanelLeft size={20} className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" />
+            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" aria-hidden="true"><path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 3.5v17M3 12c0-4.243 0-6.364 1.318-7.682C5.636 3 7.758 3 12 3c4.243 0 6.364 0 7.682 1.318C21 5.636 21 7.758 21 12c0 4.243 0 6.364-1.318 7.682C18.364 21 16.242 21 12 21c-4.243 0-6.364 0-7.682-1.318C3 18.364 3 16.242 3 12Z"/></svg>
           </button>
         )}
         </div>
@@ -1463,20 +1470,6 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
 
       <DesktopWorkspaceSwitcher compact={false} cloudHome={state.config?.cloudHome === true} owner={cloudOwner} />
       <OrganizationIdentity compact={false} />
-      {/* Search */}
-      <div className="px-3 pb-2 pt-1">
-        <div className="flex items-center gap-2 rounded-md border border-hairline/40 bg-inset/40 px-2.5 py-1.5 focus-within:border-focus">
-          <Search size={14} className="text-ink-secondary" />
-          <input
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => e.key === "Escape" && setQuery("")}
-            placeholder={t("sidebar.search")}
-            aria-label={t("sidebar.searchAria")}
-            className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
-          />
-        </div>
-      </div>
 
       {/* Bot list */}
       <div className="flex-1 overflow-y-auto px-2">
@@ -1568,7 +1561,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     ))}
                     {!remoteClient && sectionName && layoutInteractive && (
                       <button onClick={() => setMoveToTeam(sectionName)} aria-label={t(state.bots.some(bot => bot.section?.trim() === sectionName) ? "team.manageBotsIn" : "team.addBotsTo", { name: sectionName })}
-                        className="mx-3 my-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink">
+                        className="mx-3 my-1 flex items-center gap-1.5 rounded-md px-2 py-1.5 text-[12px] text-ink-secondary hover:text-ink">
                         <Plus size={13} /> {t(state.bots.some(bot => bot.section?.trim() === sectionName) ? "team.manageBots" : "team.addBots")}
                       </button>
                     )}
@@ -1588,38 +1581,31 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
       </p>
 
       {/* Footer */}
-      <div className="px-3 pb-2 pt-2">
-        <SidebarMoreMenu
-          items={[
-            {
-              key: "routines",
-              tourId: "nav-automations",
-              label: t("sidebar.nav.automations"),
-              icon: <CalendarDays size={18} />,
-              active: state.activeView === "routines",
-              // folded away, this dot would otherwise vanish with the row
-              attention: state.routineRuns.some(
-                (run) => isRoutineProblemRun(run) && !run.seenAt,
-              ),
-              onSelect: () => dispatch({ type: "showRoutines" }),
-            },
-            {
-              key: "plugins",
-              tourId: "nav-apps",
-              label: t("settings.section.connections"),
-              icon: <Puzzle size={18} />,
-              onSelect: () => dispatch({ type: "togglePlugins", open: true }),
-            },
-          ]}
-        />
-        {/* The Tools row and the profile row are two different kinds of
-            thing — places to go, versus who you are and what the app is —
-            so they get clear space between them. A hairline lived here
-            briefly and made it worse: full-bleed, it ran within a few pixels
-            of the profile row's rounded hover pill, and the two hover states
-            read as one crowded block rather than two rows. */}
-        <div className="mt-3">
-          <SidebarProfileMenu />
+      <div className="px-3 pb-2 pt-1">
+        <div className="flex items-center justify-between gap-2 pr-1">
+          <div className="min-w-0 w-fit shrink-0">
+            <SidebarProfileMenu />
+          </div>
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "showRoutines" })}
+              aria-label={t("sidebar.nav.automations")}
+              title={t("sidebar.nav.automations")}
+              className="flex size-9 items-center justify-center rounded-full border border-hairline/40 bg-inset/40 text-ink-secondary hover:text-ink"
+            >
+              <CalendarDays size={18} strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "togglePlugins", open: true })}
+              aria-label={t("settings.section.connections")}
+              title={t("settings.section.connections")}
+              className="flex size-9 items-center justify-center rounded-full border border-hairline/40 bg-inset/40 text-ink-secondary hover:text-ink"
+            >
+              <Puzzle size={18} strokeWidth={1.5} />
+            </button>
+          </div>
         </div>
       </div>
       </div>

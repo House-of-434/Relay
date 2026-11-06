@@ -297,7 +297,7 @@ export function SidebarProfileMenu() {
   const triggerRef = useRef<HTMLSpanElement>(null);
 
   const identity = useSidebarIdentity();
-  const name = identity.name;
+  const name = identity.name.split(/\s+/)[0] || identity.name;
 
   const items: SidebarMenuItem[] = [
     ...(phone.pairedCount
@@ -322,7 +322,7 @@ export function SidebarProfileMenu() {
     },
     {
       key: "shortcuts",
-      label: "Keyboard shortcuts",
+      label: "Shortcuts",
       icon: <Keyboard size={18} />,
       trailing: <ShortcutHint id="shortcuts-cheat-sheet" />,
       onSelect: () => {
@@ -333,17 +333,17 @@ export function SidebarProfileMenu() {
     },
     ...(update ? [update.item] : []),
     {
+      key: "about",
+      label: t("sidebar.menu.about"),
+      icon: <Info size={18} />,
+      onSelect: () => setAboutOpen(true),
+    },
+    {
       key: "signOut",
       label: t("sidebar.menu.signOut"),
       icon: <LogOut size={18} />,
       separatorBefore: true,
       onSelect: () => void signOut(),
-    },
-    {
-      key: "about",
-      label: t("sidebar.menu.about"),
-      icon: <Info size={18} />,
-      onSelect: () => setAboutOpen(true),
     },
   ];
 
@@ -356,12 +356,12 @@ export function SidebarProfileMenu() {
           <span
             ref={triggerRef}
             className={cn(
-              "flex min-h-10 w-full items-center gap-3 rounded-xl px-3 py-2 text-left transition-colors",
-              open ? "bg-raised" : "hover:bg-raised/50",
+              "flex min-h-0 w-full items-center justify-center gap-2 rounded-full border border-hairline/40 bg-inset/40 px-2 py-1 text-left transition-colors",
+              open ? "bg-raised" : "",
             )}
           >
-            <IdentityAvatar identity={identity} size={28} />
-            <span className="min-w-0 flex-1 truncate text-[14px] text-ink">{name}</span>
+            <IdentityAvatar identity={identity} size={24} />
+            <span className="truncate pr-2 text-[12px] leading-none text-ink">{name}</span>
             {/* an update is the one thing worth interrupting the name for, so
               * it sits on the row rather than waiting to be found in the menu */}
             {update && updateNoteworthy(update.phase, update.pending) && (
