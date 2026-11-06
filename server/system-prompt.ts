@@ -7,6 +7,7 @@
 // here too, so neither path can drift from the other or from the preview.
 import { soulSystemPrompt } from "./bot-folder.ts";
 import type { ConnectorToolGrant } from "../shared/wire.ts";
+import { openUIPrompt } from "../src/lib/openui-meta/library-meta.ts";
 
 export type PromptPart = { id: string; label: string; text: string };
 export type PromptSection = PromptPart & { bytes: number };
@@ -184,3 +185,12 @@ export function mentionPrompt(tagged: ReadonlyArray<{ id: string; name: string }
     .map((t) => `@${t.name} (bot_id ${t.id})`)
     .join(" and ")} in their message. If they assigned independent work, use delegate_bot and finish your turn without waiting; use ask_bot only if their short reply is required in this answer.`;
 }
+
+
+export const UI_SELECTION_PROMPT =
+  " When visual components would improve the response, prefer them. Use visual presentation when it makes information easier to understand, compare, or explore. Don't force UI into responses where ordinary conversation is clearer.";
+
+export const RELAY_IDENTITY_PROMPT =
+  " Relay is House of 434's internal intelligence workspace. When asked about House of 434 operations, metrics, or data, use the available database tools to query it. Never fabricate data or claim a query succeeded when it did not.";
+
+export const OPENUI_PROMPT = openUIPrompt;

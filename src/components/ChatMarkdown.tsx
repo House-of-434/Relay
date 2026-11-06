@@ -22,6 +22,7 @@ import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import { Check, Copy, Download, LoaderCircle, RotateCcw, WrapText } from "lucide-react";
 import { remarkMentions, type MentionPeer } from "@/lib/mentions";
+import { OpenUIBlock } from "./OpenUIRenderer";
 
 import {
   countLines,
@@ -796,6 +797,12 @@ function ChatMarkdownComponent({ text, streaming = false, message, mentionPeers 
             // diagram renderer instead of the highlighter
             if (lang.trim().toLowerCase() === "mermaid") {
               return <MermaidDiagram code={code} streaming={streaming} />;
+            }
+            if (lang.trim().toLowerCase() === "openui" || lang.trim().toLowerCase() === "openui-lang" || lang.trim().toLowerCase() === "dil") {
+              if (!code.trim()) {
+                return <CodeBlock code={code} lang={lang} streaming={streaming} />;
+              }
+              return <OpenUIBlock code={code} streaming={streaming} />;
             }
             return <CodeBlock code={code} lang={lang} streaming={streaming} />;
           },
