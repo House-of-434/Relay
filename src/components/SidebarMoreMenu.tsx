@@ -13,7 +13,7 @@
 // Hover alone would make the items unreachable by keyboard and fragile with a
 // trackpad, so: hovering opens it, a click pins it, Escape and an outside
 // click close it, and the trigger is an ordinary focusable button.
-import { ChevronUp, Wrench } from "lucide-react";
+import { ChevronUp, Settings as SettingsIcon } from "lucide-react";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
@@ -45,7 +45,7 @@ export function SidebarMoreMenu({
             open ? "bg-raised text-ink" : "bg-transparent text-ink hover:bg-raised/50",
           )}
         >
-          <Wrench size={18} className={open ? "text-accent" : "text-ink-secondary"} />
+          <SettingsIcon size={18} className={open ? "text-accent" : "text-ink-secondary"} />
           <span className="flex-1 truncate text-left">{label}</span>
           {attention && !open && <span className="size-2 shrink-0 rounded-full bg-danger" />}
           <ChevronUp

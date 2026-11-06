@@ -67,7 +67,7 @@ describe("ThreadSwitcher", () => {
       open: false,
       title: "Delete thread?",
       body: "This permanently deletes every transcript and session in this thread. This cannot be undone.",
-      confirmLabel: "Delete thread",
+      confirmLabel: "Delete",
       tone: "danger",
     });
   });

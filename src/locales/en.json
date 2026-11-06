@@ -1156,7 +1156,7 @@
   "thread.switcher.label": "Switch thread",
   "thread.switcher.empty": "No threads yet.",
   "thread.switcher.openedBy": "Opened by {name}",
-  "thread.delete": "Delete thread",
+  "thread.delete": "Delete",
   "thread.deleteBody": "This permanently deletes every transcript and session in this thread. This cannot be undone.",
   "thread.new": "New thread",
   "task.unread": "Unread",

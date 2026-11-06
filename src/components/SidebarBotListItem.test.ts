@@ -129,32 +129,9 @@ describe("BotListItem", () => {
   // for the title text alone can pass by accident when there's no title.
   const titleLine = /<div class="truncate text-\[11px\][^"]*">([^<]*)<\/div>/;
 
-  it("shows the bot's title on its own line above the name, not a badge beside it", () => {
-    // #866 / #871: a badge next to the name always had to fight the name for
-    // width — a long name crushed the badge, and a long title crushed a long
-    // name right back. Its own line above the name never competes with it.
+  it("does not render the bot title line", () => {
     const markup = renderRow(bot({ title: "Developer" }));
-
-    expect(titleLine.exec(markup)?.[1]).toBe("Developer");
-    expect(markup.indexOf(">Developer<")).toBeLessThan(markup.indexOf(">Atlas<"));
-    // the rename hint is unrelated to the bot's title
-    expect(markup).toContain('title="Double-click to rename"');
-
-    expect(titleLine.test(renderRow(bot()))).toBe(false);
-    expect(titleLine.test(renderRow(bot({ title: "  " })))).toBe(false);
-  });
-
-  it("keeps the title line's own truncate class instead of a shared-line width cap", () => {
-    // renderToStaticMarkup keeps the full text regardless of CSS, so this
-    // can't observe an actual ellipsis — it asserts the title line still
-    // carries `truncate` (so a too-long title clips on its own line) and,
-    // unlike the #871 badge, never a max-width cap shared with the name.
-    const longTitle = "Meta-Agent — opensource team maintainer";
-    const markup = renderRow(bot({ name: "Team Maintainer", title: longTitle }));
-
-    expect(titleLine.exec(markup)?.[1]).toBe(longTitle);
-    expect(markup).toContain(">Team Maintainer<");
-    expect(markup).not.toContain("max-w-[45%]");
+    expect(titleLine.test(markup)).toBe(false);
   });
 
   it("shows typing dots instead of preview text while the bot works", () => {

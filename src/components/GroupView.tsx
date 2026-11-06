@@ -30,7 +30,6 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { Composer } from "./Composer";
 import { ThreadSwitcher } from "./ThreadSwitcher";
 import { GroupUsageChip } from "./GroupUsageChip";
-import { ExportTranscriptMenu } from "./ExportTranscriptMenu";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
@@ -104,7 +103,7 @@ export function RoomToolChip({ message, roomId }: { message: Message; roomId?: s
             }
           }}
           title={t("room.openBot", { name: comm.withName })}
-          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:text-ink"
         >
           <BotAvatar bot={withBot ?? { name: comm.withName, color: comm.withColor }} state="happy" size={16} />
           <span className="max-w-[480px] truncate">{tool.name}</span>
@@ -161,7 +160,7 @@ function PinToggle({ group, message }: { group: Group; message: Message }) {
         })
       }
       aria-label={pinned ? t("chat.unpinMessage") : t("chat.pinMessage")}
-      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
+      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
       title={pinned ? t("chat.unpinHint") : t("room.pinHint")}
     >
       {pinned ? <PinOff size={14} /> : <Pin size={14} />}
@@ -297,7 +296,7 @@ export const Transcript = memo(function Transcript({
                       onClick={() => onReply(m)}
                       aria-label={t("chat.replyToMessage")}
                       title={t("chat.reply")}
-                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
+                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
                     >
                       <MessageSquareReply size={14} />
                     </button>
@@ -351,7 +350,7 @@ export const Transcript = memo(function Transcript({
                       onClick={() => onReply(m)}
                       aria-label={t("chat.replyToMessage")}
                       title={t("chat.reply")}
-                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
+                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
                     >
                       <MessageSquareReply size={14} />
                     </button>
@@ -544,7 +543,7 @@ function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onToggle: ()
     return (
       <button
         onClick={onToggle}
-        className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+        className="rounded-md p-1.5 text-ink-secondary hover:text-ink"
         title={t("room.folder.chipTitle")}
       >
         <Folder size={14} />
@@ -555,7 +554,7 @@ function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onToggle: ()
   return (
     <button
       onClick={onToggle}
-      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
       title={t("chat.workingFolder", { folder })}
     >
       <Folder size={12} />
@@ -934,7 +933,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
             type="button"
             onClick={() => void finish("skip")}
             disabled={saving}
-            className="rounded-xl px-3 py-2 text-left text-[13px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
+            className="rounded-xl px-3 py-2 text-left text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50"
           >
             {t("room.setup.skip")}
           </button>
@@ -1212,7 +1211,7 @@ export function GroupView({ group }: {
           // @container so the header can wrap in a narrow column. A container
           // query never matches the container itself, so the row that has to
           // wrap is the child below, not this element.
-          "@container/roomhead px-5 py-3",
+          "@container/roomhead px-5 py-2",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
         )}
@@ -1258,17 +1257,10 @@ export function GroupView({ group }: {
               onClick={() => dispatch({ type: "newGroupTask", groupId: group.id })}
               aria-label={t("thread.new")}
               title={t("thread.new")}
-              className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+              className="rounded-md p-1.5 text-ink-secondary hover:text-ink"
             >
               <Plus size={18} />
             </button>
-          )}
-          {!threadIsEmpty && (
-          <ExportTranscriptMenu
-            title={group.name}
-            messages={group.messages}
-            isGroup
-          />
           )}
           <GroupUsageChip usage={group.usage} />
           {!remoteClient && !setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
@@ -1383,7 +1375,7 @@ export function GroupView({ group }: {
                 onClick={() => dispatch({ type: "patchGroup", groupId: group.id, patch: { pinnedMessageId: "" } })}
                 aria-label={t("chat.unpinMessage")}
                 title={t("chat.unpin")}
-                className={cn("shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink", remoteClient && "hidden")}
+                className={cn("shrink-0 rounded p-0.5 text-ink-secondary hover:text-ink", remoteClient && "hidden")}
               >
                 <X size={13} />
               </button>
@@ -1464,7 +1456,7 @@ export function GroupView({ group }: {
             <div className="flex justify-center pt-2">
               <button
                 onClick={showEarlier}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
               >
                 {t("chat.showEarlier", { count: hiddenCount })}
               </button>
@@ -1474,7 +1466,7 @@ export function GroupView({ group }: {
               <button
                 onClick={loadOlder}
                 disabled={olderPending}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink disabled:opacity-60"
               >
                 {olderPending ? t("chat.loadingEarlier") : t("chat.loadEarlier")}
               </button>
@@ -1493,7 +1485,7 @@ export function GroupView({ group }: {
             <div className="flex justify-center">
               <button
                 onClick={showLater}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
               >
                 {t("chat.showLater", { count: laterCount })}
               </button>
