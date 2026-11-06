@@ -10193,7 +10193,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
               // teammate's sender stamp, so the wait can never move their mail
               // onto another person's running conversation.
               const queued = queueSteeredMessage(workBotId, delivery.threadId, delivery.text, {
-                prompt: delivery.prompt,
+                prompt: `${delivery.text}\n\n${delivery.prompt}`,
                 reason: activeGroupTurnForBot(workBotId) ? "group-turn" : "capacity",
                 sender: delivery.sender,
                 unattended: true,
@@ -10218,7 +10218,7 @@ if (RELAY_MAILBOX_ADDRESS && RELAY_MAILBOX_USER_ID && relayBffCapability) {
               // The mirror needs the inbound message's Gmail identity, not the
               // task's mutable latest pointer. One receipt per Relay user line.
               runCommand({ kind: "gmail.origin", key: userMessage.id }, () => mailOrigin);
-              await startTurn(workBotId, delivery.prompt, {
+              await startTurn(workBotId, `${delivery.text}\n\n${delivery.prompt}`, {
                 threadId: delivery.threadId,
                 userMessage,
                 sender: delivery.sender,
