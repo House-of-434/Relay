@@ -84,7 +84,7 @@ export function KeyboardShortcutsModal({ open, onClose }: KeyboardShortcutsModal
             </span>
             <div>
               <h2 id="shortcuts-dialog-title" className="text-[16px] font-semibold text-ink">
-                Keyboard Shortcuts
+                Shortcuts
               </h2>
               <p className="text-[12px] text-ink-secondary">
                 Quick commands and navigation

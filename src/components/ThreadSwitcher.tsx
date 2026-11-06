@@ -33,10 +33,6 @@ function entryTime(entry: ThreadSwitcherEntry): number {
   return entry.updatedAt ?? entry.createdAt;
 }
 
-function dayLine(at: number): string {
-  return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
 export function ThreadSwitcher({
   currentThreadId,
   currentTitle,
@@ -121,7 +117,7 @@ export function ThreadSwitcher({
               const current = entry.threadId === currentThreadId;
               const meta = entry.openedByName
                 ? t("thread.switcher.openedBy", { name: entry.openedByName })
-                : dayLine(entryTime(entry));
+                : null;
               return (
                 <div
                   key={entry.threadId}
@@ -140,7 +136,7 @@ export function ThreadSwitcher({
                     className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
                   >
                     <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{entry.title}</span>
-                    <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-ink-tertiary">{meta}</span>
+                    {meta && <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-ink-tertiary">{meta}</span>}
                     {entry.unread && !current && (
                       <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
                     )}

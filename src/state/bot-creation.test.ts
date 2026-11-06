@@ -25,7 +25,7 @@ function mount(request: typeof fetch) {
 afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
 
 describe("bot presets", () => {
-  const bot = { id: "created", name: "Scout", messages: [] };
+  const bot = { id: "created", name: "Assistant", messages: [] };
 
   it("creates a blank bot with just one request", async () => {
     const request = vi.fn().mockResolvedValue({ bot });
@@ -34,7 +34,7 @@ describe("bot presets", () => {
   });
 
   it("applies a preset only to the bot returned by creation", async () => {
-    const role = botRole("research")!;
+    const role = botRole("assistant")!;
     const request = vi.fn().mockResolvedValueOnce({ bot }).mockResolvedValueOnce({ bot: { ...roleProfilePatch(role) } });
     const created = await createBotWithRole(role, request);
     expect(JSON.parse(request.mock.calls[0]![1].body)).toEqual({ name: role.name, title: role.title, description: role.description });
@@ -51,7 +51,7 @@ describe("bot presets", () => {
 
   it("retains the already-created bot if its optional preset fails, without creating another", async () => {
     const request = vi.fn().mockResolvedValueOnce({ bot }).mockRejectedValueOnce(new Error("profile unavailable"));
-    expect(await createBotWithRole(botRole("research"), request)).toEqual({ bot, profileError: "profile unavailable" });
+    expect(await createBotWithRole(botRole("assistant"), request)).toEqual({ bot, profileError: "profile unavailable" });
     expect(request).toHaveBeenCalledTimes(2);
   });
 
@@ -59,7 +59,7 @@ describe("bot presets", () => {
     const request = vi.fn().mockResolvedValue({ bot });
     await createBotWithRole(undefined, request, "admins");
     expect(request).toHaveBeenCalledExactlyOnceWith("/api/bots", { method: "POST", body: JSON.stringify({ visibility: "admins" }) });
-    const role = botRole("research")!;
+    const role = botRole("assistant")!;
     const withRole = vi.fn().mockResolvedValueOnce({ bot }).mockResolvedValueOnce({ bot: { ...roleProfilePatch(role) } });
     await createBotWithRole(role, withRole, { people: ["ada@example.test"] });
     expect(JSON.parse(withRole.mock.calls[0]![1].body)).toEqual({ name: role.name, title: role.title, description: role.description, visibility: { people: ["ada@example.test"] } });
@@ -71,13 +71,13 @@ describe("bot presets", () => {
 
   it("does not apply a profile after failed creation", async () => {
     const request = vi.fn().mockRejectedValue(new Error("offline"));
-    await expect(createBotWithRole(botRole("research"), request)).rejects.toThrow("offline");
+    await expect(createBotWithRole(botRole("assistant"), request)).rejects.toThrow("offline");
     expect(request).toHaveBeenCalledTimes(1);
   });
 });
 
 describe("shared bot creation guard", () => {
-  const bot = { id: "created", name: "Scout", messages: [] };
+  const bot = { id: "created", name: "Assistant", messages: [] };
 
   it.each([false, true])("blocks duplicates across dismissal through preset completion (profile failure: %s)", async (profileFails) => {
     const post = deferred();
@@ -86,7 +86,7 @@ describe("shared bot creation guard", () => {
     const dispatch = mount(request);
     const onCreated = vi.fn();
     const onError = vi.fn();
-    dispatch({ type: "newBot", role: botRole("research"), onCreated, onError });
+    dispatch({ type: "newBot", role: botRole("assistant"), onCreated, onError });
     dispatch({ type: "toggleNewBot", open: false });
     dispatch({ type: "toggleNewBot", open: true });
     dispatch({ type: "newBot" });
@@ -125,7 +125,7 @@ describe("shared bot creation guard", () => {
 
 describe("setup navigation", () => {
   it.each([false, true])("preserves the current selection only for nested creation (%s)", preserveSelection => {
-    const bot = { id: "created", name: "Scout", messages: [] } as unknown as Bot;
+    const bot = { id: "created", name: "Assistant", messages: [] } as unknown as Bot;
     const state = { ...initialState, activeView: "routines" as const, selectedId: "existing" };
     const next = reducer(state, { type: "botAdded", bot, preserveSelection });
     expect(next.bots).toContain(bot);
