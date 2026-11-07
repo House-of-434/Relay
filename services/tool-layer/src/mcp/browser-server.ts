@@ -117,6 +117,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     },
     async ({ url, taskId }) => {
       try {
+        authorizeBrowser(agent, "request_human");
         if (!sessions || !tokens) return toolError(new Error("login browser is not configured"));
         const session = sessions.requestHuman(userId, taskId);
         await pool.headfulOpen(userId, url);
@@ -147,6 +148,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     },
     async ({ sessionId, generation }) => {
       try {
+        authorizeBrowser(agent, "release");
         if (!sessions || !tokens) return toolError(new Error("login browser is not configured"));
         tokens.revokeSession(sessionId);
         sessions.release(sessionId, generation);

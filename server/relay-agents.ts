@@ -30,6 +30,8 @@ export interface RelayAgentSeed {
 export const RELAY_AGENT_SEEDS: readonly RelayAgentSeed[] = [
   {
     role: "scout",
+    // Pre-login-browser soul: migrate verbatim carriers to the new text.
+    replacesSoulHashes: ["7e119890d9b1fcd7e70934864479498587bdeb3d3774cd624c4f14569d27f7d5"],
     profile: {
       name: "Scout",
       title: "Research",

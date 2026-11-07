@@ -168,10 +168,10 @@ export function authorizeCalendar(agent: Agent, capability: CalendarCapability):
 /** Research-browser operations are granted per agent, never per request.
  * Only Scout researches the open web; Mercury and Curator work from Relay
  * records, mail, and calendar. */
-export type BrowserCapability = "open" | "read" | "extract";
+export type BrowserCapability = "open" | "read" | "extract" | "request_human" | "release";
 
 export const BROWSER_PERMISSIONS: Record<Agent, readonly BrowserCapability[]> = {
-  scout: ["open", "read", "extract"],
+  scout: ["open", "read", "extract", "request_human", "release"],
   mercury: [],
   curator: [],
 };
