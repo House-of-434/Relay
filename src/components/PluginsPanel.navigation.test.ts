@@ -81,22 +81,23 @@ describe("Connections marketplace", () => {
     expect(html).toContain('data-tour="apps-close"');
   });
 
-  it("shows both views without a connected count", () => {
+  it("shows each supported app once, with Disconnect on the connected one", () => {
     const { html } = render({ accounts: [gmail] });
-    expect(html).toContain("Available");
-    expect(html).toContain("Connected");
-    expect(html).not.toContain("Connected 1");
+    expect(html).toContain("Gmail");
+    expect(html).toContain('aria-label="Disconnect Gmail from Relay"');
+    expect(html).toContain("Google Calendar");
+    expect(html).not.toContain("Available");
+    expect(html).not.toContain("Connected");
   });
 
-  it("returns from Google authorization directly to the Connected view", () => {
-    const { html } = render({ accounts: [gmail] }, "?connections=connected");
+  it("shows a connected Google service with a Disconnect in the combined list", () => {
+    const { html } = render({ accounts: [gmail] });
     expect(html).toContain("Disconnect");
     // One account per service: no second-account slot, and no token or
     // identity line — the row action disconnects the grant.
     expect(html).not.toContain("Add account");
     expect(html).not.toContain("ca_1");
     expect(html).toContain('aria-label="Disconnect Gmail from Relay"');
-    expect(html).toContain('aria-selected="true" class="rounded-lg px-4 py-2 text-[13.5px] transition-colors bg-card text-ink shadow-sm">Connected');
   });
 
   it("cannot connect while Google's authorization is unconfigured", () => {
@@ -109,14 +110,14 @@ describe("Connections marketplace", () => {
     // A leftover second account must not keep serving mail behind a
     // confirmation that says Relay loses access to it.
     const onDisconnect = vi.fn();
-    const panel = render({ accounts: [gmail, secondGmail, calendar], onDisconnect }, "?connections=connected");
+    const panel = render({ accounts: [gmail, secondGmail, calendar], onDisconnect });
     panel.click("Disconnect Gmail from Relay");
     expect(onDisconnect).toHaveBeenCalledExactlyOnceWith([gmail, secondGmail]);
   });
 
   it("leaves a confirmed disconnect untouched when the teammate cancels", () => {
     const onDisconnect = vi.fn();
-    const panel = render({ accounts: [gmail], onDisconnect }, "?connections=connected", false);
+    const panel = render({ accounts: [gmail], onDisconnect }, "", false);
     panel.click("Disconnect Gmail from Relay");
     expect(onDisconnect).not.toHaveBeenCalled();
   });
@@ -152,16 +153,15 @@ describe("github connection", () => {
     expect(onConnectGithub).toHaveBeenCalledOnce();
   });
 
-  it("shows the connected account and a Disconnect once GitHub is linked", () => {
-    const { html } = render({ github: connected }, "?connections=connected");
-    expect(html).toContain("Connected as pranam434");
+  it("shows a Disconnect once GitHub is linked", () => {
+    const { html } = render({ github: connected });
     expect(html).toContain('aria-label="Disconnect GitHub from Relay"');
     expect(html).not.toContain('aria-label="Connect GitHub"');
   });
 
   it("revokes GitHub from its Disconnect action", () => {
     const onDisconnectGithub = vi.fn();
-    const panel = render({ github: connected, onDisconnectGithub }, "?connections=connected");
+    const panel = render({ github: connected, onDisconnectGithub });
     panel.click("Disconnect GitHub from Relay");
     expect(onDisconnectGithub).toHaveBeenCalledOnce();
   });
@@ -194,29 +194,17 @@ describe("notion connection", () => {
     expect(onConnectNotion).toHaveBeenCalledOnce();
   });
 
-  it("names the connected workspace with a Disconnect once Notion is linked", () => {
-    const { html } = render({ notion: connected }, "?connections=connected");
-    expect(html).toContain("Connected to House of 434");
+  it("shows a Disconnect once Notion is linked", () => {
+    const { html } = render({ notion: connected });
     expect(html).toContain('aria-label="Disconnect Notion from Relay"');
     expect(html).not.toContain('aria-label="Connect Notion"');
   });
 
   it("revokes Notion from its Disconnect action", () => {
     const onDisconnectNotion = vi.fn();
-    const panel = render({ notion: connected, onDisconnectNotion }, "?connections=connected");
+    const panel = render({ notion: connected, onDisconnectNotion });
     panel.click("Disconnect Notion from Relay");
     expect(onDisconnectNotion).toHaveBeenCalledOnce();
-  });
-
-  it("does not borrow one provider's identity for the other's row", () => {
-    // GitHub reports an account, Notion a workspace: a mis-wired row would show
-    // the wrong label, so assert each note only on its own row.
-    const { html } = render({
-      github: { configured: true, connected: true, account: "pranam434", connections: [] },
-      notion: connected,
-    }, "?connections=connected");
-    expect(html).toContain("Connected as pranam434");
-    expect(html).toContain("Connected to House of 434");
   });
 });
 
@@ -259,5 +247,19 @@ describe("connectionViews", () => {
       .toEqual(["google-calendar"]);
     expect(connectionViews(CONNECTION_SERVICES, [gmail], "calendar").connected).toEqual([]);
     expect(connectionViews(CONNECTION_SERVICES, [], "zzz").available).toEqual([]);
+  });
+
+  it("groups the catalog by category, Coding before Productivity", () => {
+    const { html } = render({ github: { configured: true, connected: false, connections: [] } });
+    expect(html).toContain("Coding");
+    expect(html).toContain("Productivity");
+    expect(html.indexOf("Coding")).toBeLessThan(html.indexOf("GitHub"));
+    expect(html.indexOf("GitHub")).toBeLessThan(html.indexOf("Productivity"));
+  });
+
+  it("labels each row's open button with the service name and keywords", () => {
+    const { html } = render();
+    expect(html).toContain('aria-label="Gmail: Emails, summaries"');
+    expect(html).toContain('aria-label="Google Calendar: Events, schedules"');
   });
 });

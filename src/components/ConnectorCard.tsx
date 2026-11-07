@@ -1,9 +1,14 @@
+// A requested connection as one catalog row (Apps -> Available): the icon,
+// the name, what the bot will use the connection for, and a single Connect
+// button. The card is the whole surface — no status badges or footer prose.
+import type { ReactNode } from "react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, Loader2, PlugZap, RefreshCw, X } from "lucide-react";
+import { Check, Loader2, PlugZap, Plus, RefreshCw, X } from "lucide-react";
 
 import { api, type Message } from "@/state/store";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
+import { GithubMark, GmailMark, GoogleCalendarMark, NotionMark } from "./ProviderIcons";
 
 async function openConnectionPage(url: string) {
   if (window.ogb?.openExternal) {
@@ -15,6 +20,25 @@ async function openConnectionPage(url: string) {
   opened.opener = null;
   opened.location.replace(url);
   return true;
+}
+
+/** The four preconfigured services get their marks; any other Composio
+ * toolkit keeps the first-letter tile the card always had. */
+function connectorMark(slug: string, label: string): ReactNode {
+  switch (slug.trim().toLowerCase()) {
+    case "gmail":
+      return <GmailMark size={22} />;
+    case "googlecalendar":
+    case "google_calendar":
+    case "google-calendar":
+      return <GoogleCalendarMark size={22} />;
+    case "github":
+      return <GithubMark size={22} />;
+    case "notion":
+      return <NotionMark size={22} />;
+    default:
+      return label.slice(0, 1).toUpperCase() || <PlugZap size={19} />;
+  }
 }
 
 export function ConnectorCard({ botId, threadId, message }: { botId: string; threadId: string; message: Message }) {
@@ -96,75 +120,61 @@ export function ConnectorCard({ botId, threadId, message }: { botId: string; thr
 
   return (
     <div className="flex w-full justify-start">
-      <div data-tour="connector" className="w-full max-w-[520px] overflow-hidden rounded-2xl border border-hairline/50 bg-card shadow-sm">
-        <div className="flex items-start gap-3 p-4">
-          <div className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-control text-[16px] font-semibold text-ink">
-            {connector.label.slice(0, 1).toUpperCase() || <PlugZap size={19} />}
-          </div>
+      <section
+        data-tour="connector"
+        aria-label={connector.label}
+        className="w-full max-w-[520px] rounded-2xl border border-hairline/50 bg-card px-3.5 py-3 shadow-sm"
+      >
+        <div className="flex items-center gap-3">
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-raised text-ink-secondary">
+            {connectorMark(connector.slug, connector.label)}
+          </span>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <span className="truncate text-[14px] font-semibold text-ink">{connector.label}</span>
-              {connected && (
-                <span className="flex items-center gap-1 rounded-full bg-success/15 px-2 py-0.5 text-[11px] font-medium text-success">
-                  <Check size={11} /> {t("connectors.card.connected")}
-                </span>
-              )}
-            </div>
-            <p className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">
+            <div className="truncate text-[14px] font-medium text-ink">{connector.label}</div>
+            <div className="mt-0.5 truncate text-[12.5px] leading-relaxed text-ink-secondary">
               {connected
                 ? connector.resumed
                   ? t("connectors.card.resumed")
                   : t("connectors.card.paused")
-                : connector.description}
-            </p>
-            {!connected && (
-              <p className="mt-1 text-[11.5px] text-ink-tertiary">
-                {t("connectors.card.signInHint")}
-              </p>
-            )}
-            {error && <p className="mt-2 text-[12px] text-danger">{typeof error === "string" ? error : t(error.key)}</p>}
+                : authorizing
+                  ? t("connectors.card.waiting")
+                  : connector.description}
+            </div>
           </div>
           {!connected && (
-            <button onClick={dismiss} aria-label={t("connectors.card.notNow")} title={t("connectors.card.notNow")} className="rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink">
+            <button onClick={dismiss} aria-label={t("connectors.card.notNow")} title={t("connectors.card.notNow")} className="shrink-0 rounded-md p-1 text-ink-secondary hover:bg-control hover:text-ink">
               <X size={15} />
             </button>
           )}
-        </div>
-        <div className="flex items-center justify-between border-t border-hairline/40 bg-panel/40 px-4 py-2.5">
-          <div className="flex items-center gap-1.5 text-[11.5px] text-ink-secondary">
-            {authorizing ? <Loader2 size={12} className="animate-spin" /> : <PlugZap size={12} />}
-            {authorizing
-              ? t("connectors.card.waiting")
-              : connected
-                ? t("connectors.card.readyToUse")
-                : t("connectors.card.requested")}
-          </div>
           {!connected ? (
             <button
               onClick={() => void connect()}
               disabled={busy}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="flex min-w-[88px] shrink-0 items-center justify-center gap-1 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
             >
-              {busy || authorizing ? <Loader2 size={13} className="animate-spin" /> : <PlugZap size={13} />}
+              {busy || authorizing ? <Loader2 size={14} className="animate-spin" /> : <Plus size={14} />}
               {authorizing
                 ? t("connectors.card.openAgain")
                 : connector.status === "failed"
                   ? t("connectors.card.tryAgain")
-                  : t("connectors.card.connectSecurely")}
+                  : t("connectors.action.connect")}
             </button>
           ) : !connector.resumed ? (
             <button
               onClick={() => void resume()}
               disabled={busy}
-              className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-[12.5px] font-medium text-white hover:opacity-90 disabled:opacity-50"
+              className="flex min-w-[88px] shrink-0 items-center justify-center gap-1 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
             >
-              {busy ? <Loader2 size={13} className="animate-spin" /> : <RefreshCw size={13} />} {t("connectors.card.continueTask")}
+              {busy ? <Loader2 size={14} className="animate-spin" /> : <RefreshCw size={14} />} {t("connectors.card.continueTask")}
             </button>
           ) : (
-            <span className="flex items-center gap-1 text-[12px] font-medium text-success"><Check size={13} /> {t("connectors.card.continuing")}</span>
+            <span className="flex shrink-0 items-center gap-1 rounded-full px-2 py-1 text-[12px] font-medium text-success">
+              <Check size={13} /> {t("connectors.card.continuing")}
+            </span>
           )}
         </div>
-      </div>
+        {error && <p role="alert" className="mt-2 text-[12px] text-danger">{typeof error === "string" ? error : t(error.key)}</p>}
+      </section>
     </div>
   );
 }
