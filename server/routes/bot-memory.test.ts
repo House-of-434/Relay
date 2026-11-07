@@ -28,7 +28,7 @@ afterEach(async () => {
 /** The table the way index.ts runs it: hooks may be installed on the
  * response before dispatchRoutes, and anything the module passes on falls
  * to a stand-in for index.ts's inline routes. */
-async function serve(deps: Partial<BotMemoryRouteDeps> = {}, beforeDispatch?: (res: import("node:http").ServerResponse) => void): Promise<string> {
+async function serve(deps: Partial<BotMemoryRouteDeps> = {}, beforeDispatch?: (res: import("node:http").ServerResponse) => void, auth: import("../request-auth.ts").RequestAuth = { kind: "loopback", scopes: ["admin"] }): Promise<string> {
   const routes = [createBotMemoryRoutes({
     bot: (id) => BOTS[id], taskByThread: () => undefined,
     upkeep: { status: () => ({ modelSteps: false }), tidy: async () => { throw new Error("unexpected tidy"); } },
@@ -41,7 +41,7 @@ async function serve(deps: Partial<BotMemoryRouteDeps> = {}, beforeDispatch?: (r
     try {
       const handled = await dispatchRoutes(routes, {
         req, res, url, path: url.pathname, method: req.method ?? "GET",
-        auth: { kind: "loopback", scopes: ["admin"] }, json, readBody,
+        auth, json, readBody,
       });
       if (!handled) json(res, 404, { from: "inline routes" });
     } catch (error) {
@@ -201,7 +201,9 @@ describe("the bot-memory module through the route table", () => {
     expect(await response.json()).toMatchObject({ botId: "bot-123", narrowed: true });
   });
 
-  it("is admin-scoped by path in request-auth.ts, every arm of it", () => {
+  it("is client-scoped by path in request-auth.ts, owner-or-admin in the handler", () => {
+    // The gate lets a chat session through so the panel can load; the
+    // handler then requires bot ownership (bot.ownerUserId) or admin scope.
     for (const [method, path] of [
       ["GET", "/api/bots/b1/memory"],
       ["PUT", "/api/bots/b1/memory"],
@@ -212,13 +214,25 @@ describe("the bot-memory module through the route table", () => {
       ["POST", "/api/bots/b1/memory/journal/e1/revert"],
       ["GET", "/api/bots/b1/memory/upkeep"],
       ["POST", "/api/bots/b1/memory/tidy"],
-      ["GET", "/api/profile/learned"],
-      ["POST", "/api/profile/learned/e1/remove"],
       ["POST", "/api/bots/b1/memory/open"],
       ["GET", "/api/bots/b1/memory/topics/x.md"],
     ] as const) {
-      expect(requiredScope(method, path), `${method} ${path}`).toBe("admin");
+      expect(requiredScope(method, path), `${method} ${path}`).toBe("client");
     }
+    expect(requiredScope("GET", "/api/profile/learned")).toBe("admin");
+    expect(requiredScope("POST", "/api/profile/learned/e1/remove")).toBe("admin");
+  });
+
+  it("lets the bot's owner read memory but refuses another signed-in user", async () => {
+    const OWNER = "1bd4480e-8030-4acc-a35e-e859b7091fbf";
+    const OTHER = "2bd4480e-8030-4acc-a35e-e859b7091fbf";
+    const owned = { bot: (id: string) => (id === "bot-123" ? { id, ownerUserId: OWNER } : null) };
+    const ownerBase = await serve(owned, undefined, { kind: "session", session: { id: "s1", userId: OWNER, scopes: ["client"] } as never, via: "bearer", scopes: ["client"] });
+    expect((await fetch(`${ownerBase}/api/bots/bot-123/memory`)).status).toBe(200);
+    const otherBase = await serve(owned, undefined, { kind: "session", session: { id: "s2", userId: OTHER, scopes: ["client"] } as never, via: "bearer", scopes: ["client"] });
+    const denied = await fetch(`${otherBase}/api/bots/bot-123/memory`);
+    expect(denied.status).toBe(403);
+    await expect(denied.json()).resolves.toMatchObject({ error: "session lacks the admin scope" });
   });
 });
 

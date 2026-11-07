@@ -109,14 +109,20 @@ describe("scopes", () => {
       ["GET", "/api/config"], ["GET", "/api/webhooks"],
       ["GET", "/api/auth/session"], ["POST", "/api/auth/stream-ticket"], ["POST", "/api/auth/logout"],
       ["GET", "/api/bots/x/slack-management"], // a link to Admin, read-only
+      ["GET", "/api/users/me/skills"], ["POST", "/api/users/me/skills"], ["PUT", "/api/users/me/skills/x"],
+      ["PATCH", "/api/users/me/skills/x"], ["DELETE", "/api/users/me/skills/x"], // own folder only (handler binds /me)
+      ["GET", "/api/bots/x/memory"], ["PUT", "/api/bots/x/memory"], ["GET", "/api/bots/x/memory/file"],
+      ["DELETE", "/api/bots/x/memory/file"], ["POST", "/api/bots/x/memory/tidy"], // bot memory: handler requires bot owner or admin
+      ["GET", "/api/bots/x/skills"], ["POST", "/api/bots/x/skills"], ["PATCH", "/api/bots/x/skills/s"],
+      ["DELETE", "/api/bots/x/skills/s"], ["POST", "/api/bots/x/skill-template"], // per-bot skills: handler requires bot owner or admin
     ] as const) expect(requiredScope(method, path), `${method} ${path}`).toBe("client");
     for (const [method, path] of [
       ["POST", "/api/cli-test"], ["GET", "/api/cli-candidates"], ["GET", "/api/instances"], ["PATCH", "/api/instances/claude"],
       ["POST", "/api/bots/x/computer/exec"], ["POST", "/api/bots/x/computer/join"], ["POST", "/api/local-computer/run"],
       ["GET", "/api/computers/boxes"], ["POST", "/api/computers/boxes/bx_23456789/delete"],
-      ["POST", "/api/webhooks"], ["POST", "/api/webhooks/w/rotate"], ["POST", "/api/bots/x/skills"], ["PATCH", "/api/bots/x/skills/s"],
+      ["POST", "/api/webhooks"], ["POST", "/api/webhooks/w/rotate"],
       ["PATCH", "/api/bots/x/model"], ["PATCH", "/api/groups/g/setup"], ["POST", "/api/teams/import"], ["GET", "/api/teams/scout"],
-      ["GET", "/api/bots/x/memory"], ["PUT", "/api/bots/x/memory"], ["PUT", "/api/section-context"], ["GET", "/api/threads/t/events"],
+      ["PUT", "/api/section-context"], ["GET", "/api/threads/t/events"],
       ["POST", "/api/bots/x/checkpoints/restore"], ["GET", "/api/mcp/servers"], ["POST", "/api/mcp/servers"], ["POST", "/api/connectors/slack/authorize"],
       ["POST", "/api/bots/x/slack-management"], ["GET", "/api/bots/x/slack-management/extra"],
       ["PUT", "/api/config"], ["POST", "/api/auth/pairing"], ["GET", "/api/auth/sessions"], ["DELETE", "/api/auth/sessions/abc"],

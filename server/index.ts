@@ -451,7 +451,8 @@ import { assertModelVariantSupported, memberTurnSelection } from "./member-turn.
 import { WebhookManager } from "./webhooks.ts";
 import type { WebhookTrigger } from "../shared/webhooks.ts";
 import { SPAWNED_PROXIES } from "./proxy-paths.ts";
-import { loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills } from "./skill-library.ts";
+import { deleteUserSkill, loadBundledSkills, loadUserSkills, mergeSkills, renderSkillInstructions, selectBundledSkills, writeUserSkill } from "./skill-library.ts";
+import { isCanonicalUserId, userSkillsDir } from "./user-paths.ts";
 import { installedPlaybookInstructions } from "./installed-playbooks.ts";
 import { createBotPackageExport, createLibraryPackageExport, createTeamPackageExport, picture as sharedPicture, TeamExportError, type ExportablePackageSkill, type TeamExportSkip } from "./package-export.ts";
 import { importPackageDocument, importTeamManifest, PackageImportError, type PackageImportDeps, type PackageImportResult } from "./package-import.ts";
@@ -1720,7 +1721,21 @@ function queuedTurnTrigger(item: { trigger?: UsageTrigger; sender?: ResolvedSend
 const providerAuthSessions = new ProviderAuthSessions();
 await registry.load(providerConfigs(), decorateHostedProvider);
 const bundledSkills = loadBundledSkills();
-const availableSkills = () => mergeSkills(bundledSkills, loadUserSkills(join(DATA_DIR, "skills")));
+let legacySkillsWarned = false;
+/** Skills for a turn: bundled (global/system) merged with the owning user's
+ * skills from users/<userId>/skills — user-owned, reusable instructions
+ * shared by every bot of that user. Bot memory stays per-bot; skills are
+ * the only user-shared context. Ownerless/legacy bots fall back to the old
+ * machine-global dir (one release, warned once) until they get an owner. */
+const availableSkills = (botId?: string) => {
+  const owner = botId ? store.bot(botId)?.ownerUserId : undefined;
+  if (isCanonicalUserId(owner)) return mergeSkills(bundledSkills, loadUserSkills(userSkillsDir(owner)));
+  if (!legacySkillsWarned) {
+    legacySkillsWarned = true;
+    console.error("[skills] ownerless bot: falling back to legacy global skills dir; assign an owner to get per-user skills");
+  }
+  return mergeSkills(bundledSkills, loadUserSkills(join(DATA_DIR, "skills")));
+};
 
 // Electron's utility-process parent port is private to the desktop main
 // process. It lets a slow first-time managed Composio registration arrive
@@ -8895,7 +8910,7 @@ async function startTurn(
       ...(!RELAY_COMPUTER_DISABLED && instance.adapter.capabilities.phoneMcp === true ? ["phoneMcp"] : []),
           ...(skillAuthoring ? ["skillAuthoring"] : []),
         ],
-        availableSkills(),
+        availableSkills(bot.id),
       );
       if (selectedSkills.some((skill) => skill.manifest.requiredCapabilities.includes("phoneMcp"))) {
         integrations.phone = phoneIntegration(bot.id, threadId, dispatchClaimId);
@@ -11523,7 +11538,7 @@ async function runGroupMemberTurn(
     bot.id,
   );
   const turnImages = usesNativeImageInput ? [...burstImages, ...resolvedLatestImages.images] : [];
-  const skills = availableSkills();
+  const skills = availableSkills(bot.id);
   const selectedSkills = mergeSkills(
     selectBundledSkills(
       roomContext,
@@ -20208,9 +20223,18 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // ── bot skills: imported Agent Skills (SKILL.md) ────────────────────
     // Import lands DISABLED; the UI shows SKILL.md + scan warnings and a
     // person enables after reading. See server/skills.ts for the policy.
+    // Owner-or-admin, like bot memory: the gate lets a chat session through,
+    // the handler refuses anyone who does not own the bot.
+    const canManageBotSkills = (botId: string): boolean => {
+      if (auth.scopes.includes("admin")) return true;
+      if (auth.kind !== "session") return false;
+      const owner = store.bot(botId)?.ownerUserId;
+      return Boolean(owner) && owner === auth.session.userId;
+    };
     m = path.match(/^\/api\/bots\/([\w-]+)\/skill-template$/);
     if (m && method === "POST") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!canManageBotSkills(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
       const checked = botSkillTemplateSchema.safeParse(await readBody(req));
       if (!checked.success) return json(res, 400, { error: checked.error.message });
       const input = checked.data;
@@ -20227,6 +20251,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills$/);
     if (m && method === "GET") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!canManageBotSkills(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
       return json(res, 200, {
         skills: listSkills(m[1]),
         staged: listStagedSkillWrites(m[1]).map(stagedSkillListing),
@@ -20234,6 +20259,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     if (m && method === "POST") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
+      if (!canManageBotSkills(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
       const parsed = z.object({ source: z.string().min(1).max(2000) }).safeParse(await readBody(req));
       if (!parsed.success) return json(res, 400, { error: "source must be a GitHub or skills.sh URL, or owner/repo" });
       const fetched = await fetchSkillFromSource(parsed.data.source);
@@ -20246,11 +20272,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
     m = path.match(/^\/api\/bots\/([\w-]+)\/skills\/([a-z0-9-]+)$/);
     if (m && method === "GET") {
+      if (!canManageBotSkills(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
       const text = readSkillFile(m[1]!, m[2]!);
       if (text === null) return json(res, 404, { error: "no such skill" });
       return json(res, 200, { text });
     }
     if (m && method === "PATCH") {
+      if (!canManageBotSkills(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
       const parsed = z.object({ enabled: z.boolean() }).safeParse(await readBody(req));
       if (!parsed.success) return json(res, 400, { error: "enabled must be true or false" });
       const result = setSkillEnabled(m[1]!, m[2]!, parsed.data.enabled);
@@ -20258,9 +20286,84 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       return json(res, 200, { skill: result });
     }
     if (m && method === "DELETE") {
+      if (!canManageBotSkills(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
       const result = removeSkill(m[1]!, m[2]!);
       if ("error" in result) return json(res, 404, { error: result.error });
       return json(res, 200, { ok: true });
+    }
+
+    // ── user skills: reusable instructions shared by all of one user's bots
+    // Memory stays bot-owned; skills are the user's context, loaded per turn
+    // from users/<userId>/skills (server/user-paths.ts). /me means the
+    // caller's own folder only — no cross-user access by id.
+    if (path === "/api/users/me/skills" || path.startsWith("/api/users/me/skills/")) {
+      let callerUserId: string | undefined = auth.kind === "session" ? auth.session.userId : undefined;
+      if (auth.kind === "loopback" && !isCanonicalUserId(callerUserId)) {
+        // Local owner trust: a desktop/loopback caller has no session user
+        // id, but every bot already points at its owner. When all owned bots
+        // share one canonical owner, that owner is the caller.
+        const owners = new Set(store.bots.map((b) => b.ownerUserId).filter((id) => isCanonicalUserId(id)));
+        if (owners.size === 1) callerUserId = [...owners][0];
+      }
+      if (!isCanonicalUserId(callerUserId)) {
+        return json(res, 403, { error: "per-user skills need a signed-in user session" });
+      }
+      const root = userSkillsDir(callerUserId);
+      if (path === "/api/users/me/skills" && method === "GET") {
+        return json(res, 200, { skills: loadUserSkills(root).map((s) => ({ id: s.manifest.id, name: s.manifest.name, description: s.manifest.description, version: s.manifest.version, defaultEnabled: s.manifest.defaultEnabled })) });
+      }
+      if (path === "/api/users/me/skills" && method === "POST") {
+        const parsed = z.object({ source: z.string().min(1).max(2000) }).safeParse(await readBody(req));
+        if (!parsed.success) return json(res, 400, { error: "source must be a GitHub or skills.sh URL, or owner/repo" });
+        const fetched = await fetchSkillFromSource(parsed.data.source);
+        if ("error" in fetched) return json(res, 422, { error: fetched.error });
+        const installed: unknown[] = [];
+        const errors: string[] = [];
+        for (const skill of fetched.skills) {
+          try {
+            const md = skill.files.find((f) => f.path === "SKILL.md" || f.path.endsWith("/SKILL.md"));
+            if (!md) { errors.push("no SKILL.md found"); continue; }
+            const parsedMd = parseSkillMd(md.content);
+            if ("error" in parsedMd) { errors.push(parsedMd.error); continue; }
+            installed.push(writeUserSkill(root, {
+              id: parsedMd.name, name: parsedMd.name, version: "1.0.0",
+              description: parsedMd.description, defaultEnabled: false,
+              triggerTerms: [parsedMd.name], requiredCapabilities: [],
+            }, md.content));
+          } catch (e) { errors.push(e instanceof Error ? e.message : String(e)); }
+        }
+        if (!installed.length) return json(res, 422, { error: errors.join("; ") || "nothing importable found" });
+        return json(res, 201, { installed, errors });
+      }
+      const id = decodeURIComponent(path.slice("/api/users/me/skills/".length));
+      if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(id)) return json(res, 400, { error: "invalid skill id" });
+      const existing = loadUserSkills(root).find((s) => s.manifest.id === id);
+      if (method === "GET") {
+        if (!existing) return json(res, 404, { error: "no such skill" });
+        return json(res, 200, { skill: { ...existing.manifest, instructions: existing.instructions } });
+      }
+      if (method === "PUT") {
+        const parsed = z.object({ manifest: z.unknown(), instructions: z.string() }).safeParse(await readBody(req));
+        if (!parsed.success) return json(res, 400, { error: "manifest and instructions are required" });
+        try {
+          const skill = writeUserSkill(root, parsed.data.manifest, parsed.data.instructions);
+          return json(res, 200, { skill });
+        } catch (e) { return json(res, 400, { error: e instanceof Error ? e.message : String(e) }); }
+      }
+      if (method === "PATCH") {
+        const parsed = z.object({ enabled: z.boolean() }).safeParse(await readBody(req));
+        if (!parsed.success) return json(res, 400, { error: "enabled must be true or false" });
+        if (!existing) return json(res, 404, { error: "no such skill" });
+        try {
+          const skill = writeUserSkill(root, { ...existing.manifest, defaultEnabled: parsed.data.enabled }, existing.instructions);
+          return json(res, 200, { skill });
+        } catch (e) { return json(res, 400, { error: e instanceof Error ? e.message : String(e) }); }
+      }
+      if (method === "DELETE") {
+        if (!deleteUserSkill(root, id)) return json(res, 404, { error: "no such skill" });
+        return json(res, 200, { ok: true });
+      }
+      return json(res, 405, { error: "method not allowed" });
     }
 
     // ── section context: a user-owned team brief ────────────────────────

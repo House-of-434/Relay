@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, type BundledSkill } from "./skill-library.ts";
+import { deleteUserSkill, loadBundledSkills, loadUserSkills, mergeSkills, parseSkillManifest, selectBundledSkills, skillInstructionsFor, writeUserSkill, type BundledSkill } from "./skill-library.ts";
 
 const phone: BundledSkill = {
   directory: "/skills/phone-harness",
@@ -57,6 +57,30 @@ describe("bundled skill library", () => {
 
   it("does not let a user skill shadow a bundled skill id", () => {
     expect(mergeSkills([phone], [{ ...phone, instructions: "user replacement" }])).toEqual([phone]);
+  });
+
+  it("writes, reloads, and deletes a user-owned skill shared across bots", () => {
+    const root = mkdtempSync(join(tmpdir(), "relay-user-skills-"));
+    const written = writeUserSkill(root, {
+      id: "deep-research", name: "Deep research", version: "1.0.0",
+      description: "Cited research reports", defaultEnabled: true,
+      triggerTerms: ["deep research"], requiredCapabilities: [],
+    }, "---\nname: deep-research\ndescription: Cited research reports\n---\nCite every claim.");
+    expect(written.manifest.id).toBe("deep-research");
+    expect(loadUserSkills(root).map((s) => s.manifest.id)).toEqual(["deep-research"]);
+    expect(skillInstructionsFor("do deep research", [], loadUserSkills(root))).toContain("Cite every claim");
+    expect(deleteUserSkill(root, "deep-research")).toBe(true);
+    expect(loadUserSkills(root)).toEqual([]);
+    expect(deleteUserSkill(root, "deep-research")).toBe(false);
+  });
+
+  it("refuses a user skill whose manifest id does not match its folder", () => {
+    const root = mkdtempSync(join(tmpdir(), "relay-user-skills-"));
+    expect(() => writeUserSkill(root, {
+      id: "other", name: "x", version: "1.0.0", description: "x",
+      defaultEnabled: true, triggerTerms: ["x"], requiredCapabilities: [],
+    }, "---\nx\n---\nbody")).not.toThrow();
+    expect(deleteUserSkill(root, "../escape")).toBe(false);
   });
 
   it("treats a non-directory user skill root as empty", () => {

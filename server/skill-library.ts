@@ -2,8 +2,11 @@
 // disabling one does not require changing a provider driver. A future Skills
 // UI can use the same manifests; today enabled built-ins are selected by their
 // declared trigger terms and mounted capabilities.
-import { existsSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { basename, join } from "node:path";
+
+import { writeFileAtomic } from "./atomic.ts";
+import { redactSecretsInText } from "./redact.ts";
 
 export interface SkillManifest {
   id: string;
@@ -99,6 +102,36 @@ export function loadUserSkills(root: string): BundledSkill[] {
     }
   }
   return skills;
+}
+
+export const USER_SKILL_FILE_MAX_BYTES = 64 * 1024;
+
+/** Write (or rewrite) one user-owned skill folder under `root`. The manifest
+ * is validated by the same parser the loader uses, so an editor save can
+ * never leave a folder the next turn silently drops. */
+export function writeUserSkill(root: string, manifest: unknown, instructions: string): BundledSkill {
+  const id = (manifest as { id?: unknown } | null)?.id;
+  if (typeof id !== "string" || !SAFE_ID.test(id)) throw new Error("skill id must be lowercase letters, numbers and single hyphens");
+  if (Buffer.byteLength(instructions, "utf8") > USER_SKILL_FILE_MAX_BYTES) throw new Error(`SKILL.md is larger than ${USER_SKILL_FILE_MAX_BYTES / 1024}KB`);
+  const directory = join(root, id);
+  const parsed = parseSkillManifest(manifest, directory);
+  const text = redactSecretsInText(instructions).replace(/\r\n/g, "\n").trim();
+  if (!text.startsWith("---")) throw new Error("SKILL.md must start with --- frontmatter");
+  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  writeFileAtomic(join(directory, "manifest.json"), `${JSON.stringify(parsed, null, 2)}\n`, { mode: 0o600 });
+  writeFileAtomic(join(directory, "SKILL.md"), `${text}\n`, { mode: 0o600 });
+  return { manifest: parsed, instructions: text, directory };
+}
+
+/** Delete one user-owned skill folder. The on-disk id must match the
+ * requested id (it is the folder name), so a crafted id cannot reach
+ * anything outside the user skills root. */
+export function deleteUserSkill(root: string, id: string): boolean {
+  if (!SAFE_ID.test(id)) return false;
+  const directory = join(root, id);
+  if (!existsSync(directory)) return false;
+  rmSync(directory, { recursive: true, force: true });
+  return true;
 }
 
 export function mergeSkills(bundled: readonly BundledSkill[], user: readonly BundledSkill[]): BundledSkill[] {
