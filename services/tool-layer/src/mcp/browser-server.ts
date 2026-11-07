@@ -15,6 +15,7 @@ export interface BladeBrowserContext {
 
 function toolError(error: unknown) {
   const message = error instanceof Error ? error.message : "request refused";
+  console.error(`[relay-tools] browser tool failed: ${message}`);
   return { isError: true, content: [{ type: "text" as const, text: message }] };
 }
 
