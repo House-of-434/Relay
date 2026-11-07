@@ -90,10 +90,18 @@ export class GmailRequestError extends Error {
   }
 }
 
+import { randomUUID } from "node:crypto";
+
+import { MAIL_APPROVAL_TTL_SECONDS, signMailApprovalReceipt } from "./mail-approval.js";
+
 export interface RelayGmailClientOptions {
   bffInternalUrl: string;
   capability: string | undefined;
   fetcher?: typeof fetch;
+  /** Same RELAY_TOOL_ACTOR_SECRET the harness signs with. Used only to issue
+   * bound mail-approval receipts for mail-routed 'approve for me' sends.
+   * The BFF verifies both the actor assertion and the receipt. */
+  actorSecret?: string;
 }
 
 /**
@@ -105,11 +113,13 @@ export class RelayGmailClient {
   private readonly bffInternalUrl: string;
   private readonly capability: string | undefined;
   private readonly fetcher: typeof fetch;
+  private readonly actorSecret: string | undefined;
 
   constructor(options: RelayGmailClientOptions) {
     this.bffInternalUrl = options.bffInternalUrl.replace(/\/+$/, "");
     this.capability = options.capability;
     this.fetcher = options.fetcher ?? fetch;
+    this.actorSecret = options.actorSecret;
   }
 
   private async call<Result>(path: string, actorAssertion: string, payload: unknown): Promise<Result> {
@@ -163,12 +173,54 @@ export class RelayGmailClient {
 
   sendEmail(
     actorAssertion: string,
-    input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; attachments?: GmailSendAttachment[] },
+    input: {
+      to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; attachments?: GmailSendAttachment[];
+      approvalReceipt?: { botId: string; threadId: string; draftHash: string; nonce: string; expiry: number; signature: string };
+    },
   ) {
+    let payload: unknown = input;
+    let parsed: { botId?: unknown; threadId?: unknown; mailRouted?: unknown; emailAutoApprove?: unknown } | undefined;
+    try {
+      parsed = JSON.parse(actorAssertion);
+    } catch {
+      // Unparseable assertion: let the BFF reject it as invalid.
+      parsed = undefined;
+    }
+    if (parsed?.mailRouted === true) {
+      if (parsed.emailAutoApprove !== true) {
+        throw new GmailRequestError(403, "Mail-routed sends are disabled for this bot; turn on 'approve for me' (Auto or Full) to allow confirmed drafts.");
+      }
+      if (typeof parsed.botId !== "string" || typeof parsed.threadId !== "string") {
+        throw new GmailRequestError(401, "actor assertion is invalid");
+      }
+      let receipt;
+      try {
+        receipt = signMailApprovalReceipt(
+          {
+            botId: parsed.botId,
+            threadId: parsed.threadId,
+            draft: {
+              to: input.to,
+              cc: input.cc ?? [],
+              bcc: input.bcc ?? [],
+              subject: input.subject,
+              body: input.body,
+              attachments: input.attachments ?? [],
+            },
+            nonce: randomUUID(),
+            expiry: Math.floor(Date.now() / 1000) + MAIL_APPROVAL_TTL_SECONDS,
+          },
+          this.actorSecret,
+        );
+      } catch {
+        throw new GmailRequestError(503, "mail approval is not configured");
+      }
+      payload = { ...input, approvalReceipt: receipt };
+    }
     return this.call<{ account: { email: string }; sent: { id?: string | null; threadId?: string | null }; to: string[]; cc: string[]; bcc: string[] }>(
       GMAIL_INTERNAL_PATHS.send,
       actorAssertion,
-      input,
+      payload,
     );
   }
 }

@@ -366,7 +366,7 @@ export async function createRelayToolServer(
       // could safely derive.
       const { bffInternalUrl, capability } = bffConfig();
       const gmail = actor.actorAssertion
-        ? { client: new RelayGmailClient({ bffInternalUrl, capability }), actorAssertion: actor.actorAssertion }
+        ? { client: new RelayGmailClient({ bffInternalUrl, capability, actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET }), actorAssertion: actor.actorAssertion }
         : undefined;
       const calendar = actor.actorAssertion
         ? { client: new RelayCalendarClient({ bffInternalUrl, capability }), actorAssertion: actor.actorAssertion }

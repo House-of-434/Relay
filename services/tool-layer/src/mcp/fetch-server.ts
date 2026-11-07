@@ -23,7 +23,7 @@ export function registerFetchTools(server: McpServer, agent: Agent, context: Fet
     "web_fetch",
     {
       description:
-        "Fetch a URL and return readable content, in Markdown by default. Supports JavaScript-rendered pages. Use for ordinary page reads; switch to browser tools if content is missing, incomplete, requires interaction, or needs structured extraction.",
+        "Fetch a URL and return readable content, in Markdown by default. Supports JavaScript-rendered pages. Use for ordinary page reads; switch to browser tools if content is missing, incomplete, requires interaction, or needs structured extraction. If the result is truncated, do not refetch the same whole page — use browser_read in artifact mode with offset/limit to page through the full output, tracking ranges to avoid duplicates. Report incomplete retrieval explicitly.",
       inputSchema: {
         url: z.string().min(1).max(2048),
         format: z.enum(["markdown", "html"]).optional(),

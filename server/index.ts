@@ -15237,13 +15237,19 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         // overridden by a stale unattended mark. Absent is the legacy fallback.
         const mailRouted = Boolean(task?.mailRouted) &&
           (internalCapability.mailRouted ?? isUnattended(internalSender.id, internalCapability.threadId));
+        const threadBot = store.projectBotForTask(internalSender.id, internalCapability.threadId) ?? internalSender;
+        const threadApprovalMode = approvalModeFor(threadBot);
+        const emailAutoApprove = threadApprovalMode === "auto" || threadApprovalMode === "full" || threadApprovalMode === "custom";
         let assertion: string;
         try {
           assertion = signedActorContext(
             { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent },
             process.env.RELAY_TOOL_ACTOR_SECRET,
             undefined,
-            mailRouted ? { mailRouted: true } : undefined,
+            {
+              ...(mailRouted ? { mailRouted: true as const } : {}),
+              ...(emailAutoApprove ? { emailAutoApprove: true as const } : {}),
+            },
           );
         } catch {
           return json(res, 500, { error: "the Relay tool call could not be signed" });

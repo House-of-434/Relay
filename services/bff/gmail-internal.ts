@@ -7,6 +7,7 @@ import { requestHasCapability, verifyInternalRequest } from "./internal-request.
 import { extractDocumentText } from "./document-text.ts";
 import { GOOGLE_API_SCOPE_CATALOG, GoogleApiGateway, type GoogleApiClientFor } from "./google-api.ts";
 import type { GoogleConnectionMetadata } from "./google-connections.ts";
+import { verifyMailApprovalReceipt } from "./mail-approval.ts";
 
 export const INTERNAL_GMAIL_MESSAGES_LIST = "/api/internal/gmail/messages/list";
 export const INTERNAL_GMAIL_MESSAGES_GET = "/api/internal/gmail/messages/get";
@@ -104,6 +105,15 @@ const attachmentGetSchema = z.object({
   mailbox: MAILBOX_INPUT,
 }).strict();
 
+const approvalReceiptSchema = z.object({
+  botId: z.string().uuid(),
+  threadId: z.string().uuid(),
+  draftHash: z.string().regex(/^[0-9a-f]{64}$/i),
+  nonce: z.string().uuid(),
+  expiry: z.number().int().positive(),
+  signature: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+}).strict();
+
 const sendSchema = z.object({
   to: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).min(1).max(20),
   cc: z.array(z.string().email().max(MAX_ADDRESS_LENGTH)).max(20).optional(),
@@ -122,6 +132,9 @@ const sendSchema = z.object({
     }).strict(),
   ])).max(MAX_OUTBOUND_ATTACHMENTS).optional(),
   mailbox: MAILBOX_INPUT,
+  /** Bound single-use approval for mail-routed sends ('approve for me').
+   * Ignored on ordinary turns; required on mailRouted turns. */
+  approvalReceipt: approvalReceiptSchema.optional(),
 }).strict();
 
 const replyAttachmentSchema = z.object({
@@ -887,12 +900,6 @@ export async function handleInternalGmail(
   }
   const actor: RelayActor = verified.actor;
   const raw: unknown = verified.body;
-  if (pathname === INTERNAL_GMAIL_SEND && actor.mailRouted) {
-    json(res, 403, {
-      error: "Relay sends the reply for a routed email; agent-initiated mail is disabled on this turn.",
-    });
-    return;
-  }
 
   let resolved: ResolvedMailbox | undefined;
   try {
@@ -1186,6 +1193,45 @@ export async function handleInternalGmail(
         error: pathname === INTERNAL_GMAIL_SEND ? "invalid Gmail message" : "not found",
       });
       return;
+    }
+    // Mail-routed turns may send only with a cryptographically bound,
+    // single-use approval receipt for the exact draft, issued by trusted
+    // code when the bot's standing permission is 'approve for me'.
+    // Email content never counts as confirmation: the receipt binds
+    // botId/threadId, draft hash, nonce, and expiry, and any draft change
+    // invalidates it.
+    if (actor.mailRouted) {
+      if (!actor.emailAutoApprove) {
+        json(res, 403, {
+          error: "Mail-routed sends are disabled for this bot; turn on 'approve for me' (Auto or Full) to allow confirmed drafts.",
+        });
+        return;
+      }
+      const receipt = parsed.data.approvalReceipt;
+      if (!receipt) {
+        json(res, 403, {
+          error: "Mail-routed sends require an approval receipt for this exact draft.",
+        });
+        return;
+      }
+      const verdict = verifyMailApprovalReceipt(
+        receipt,
+        {
+          to: parsed.data.to,
+          cc: parsed.data.cc ?? [],
+          bcc: parsed.data.bcc ?? [],
+          subject: parsed.data.subject,
+          body: parsed.data.body,
+          attachments: parsed.data.attachments ?? [],
+        },
+        actor,
+        options.actorSecret,
+        options.now ? Math.floor(options.now() / 1000) : Math.floor(Date.now() / 1000),
+      );
+      if (!verdict.ok) {
+        json(res, 403, { error: verdict.error });
+        return;
+      }
     }
     // The agent shows the complete draft in chat and sends only after the user
     // says yes there; email keeps no server-side pending store, so the

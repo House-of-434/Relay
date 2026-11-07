@@ -52,7 +52,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_read",
     {
       description:
-        "Read the current browser page: content, headings, find text, or page through a large artifact. Use the narrowest mode that answers the question.",
+        "Read the current browser page: content, headings, find text, or page through a large artifact. Use the narrowest mode that answers the question. If a previous result was truncated (truncated:true or an artifact note), inspect the tool's actual pagination contract, then request the next non-overlapping range with offset/limit — never refetch the whole page. Track retrieved ranges to avoid duplicates. Continue until complete or a defined limit is reached, and report incomplete retrieval explicitly.",
       inputSchema: {
         mode: z.enum(READ_MODES),
         query: z.string().min(1).max(512).optional(),
@@ -77,7 +77,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_extract",
     {
       description:
-        "Extract structured page data such as repository rankings, comment threads, products, links, or forms. Use when relationships between fields matter and plain text is insufficient. Reports blocked pages rather than fabricating results.",
+        "Extract structured page data such as repository rankings, comment threads, products, links, or forms. Use when relationships between fields matter and plain text is insufficient. Reports blocked pages rather than fabricating results. On a blocked page (access denied, CAPTCHA, auth-required, network or extraction failure), do not retry with the same browser/session — each fallback must genuinely change the access mechanism: 1) Bladebro background browser, 2) TinyFish CLI, 3) VM interactive browser. Log which fallback was used and the failure class.",
       inputSchema: {
         url: z.string().min(1).max(2048).optional(),
         kind: z.enum(EXTRACT_KINDS).optional(),

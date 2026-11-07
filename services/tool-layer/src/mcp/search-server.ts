@@ -25,7 +25,7 @@ export function registerSearchTools(server: McpServer, agent: Agent, context: Se
     "web_search",
     {
       description:
-        "Discover candidate sources. Find relevant web pages for a query. Returns URLs, titles, and snippets to guide further research. Use when the target source is unknown; use web_fetch to read a known URL.",
+        "Discover candidate sources. Find relevant web pages for a query. Returns URLs, titles, and snippets to guide further research. Use when the target source is unknown; use web_fetch to read a known URL. Search is rate-limited (30 req/min on TinyFish) — batch queries, avoid parallel bursts, and spread retries with backoff. Do not refetch the same query when truncated; paginate results instead and track what you already saw.",
       inputSchema: {
         query: z.string().min(1).max(512),
         limit: z.number().int().min(1).max(20).optional(),
