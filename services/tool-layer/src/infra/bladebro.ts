@@ -372,6 +372,48 @@ export class BladeBrowserPool {
     return this.boundResult(userId, "extract", text);
   }
 
+  /** Latest page screenshot as PNG bytes (720p). Viewer polling only. */
+  async screenshotPng(userId: unknown): Promise<Buffer> {
+    const tracked = this.trackWorkspace(userId);
+    if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
+    await this.sweepIdle(tracked.id);
+    const result = await this.spawn(this.binary, ["vision", "--json"], {
+      env: this.buildEnv(tracked.root, false),
+      timeoutMs: BLADE_ACTION_TIMEOUT_MS,
+      maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
+    });
+    if (result.exitCode !== 0) throw new Error("screenshot failed");
+    let parsed: { image_path?: unknown } = {};
+    try {
+      parsed = JSON.parse(result.stdout) as { image_path?: unknown };
+    } catch {
+      throw new Error("screenshot unreadable");
+    }
+    if (typeof parsed.image_path !== "string") throw new Error("screenshot unreadable");
+    return readFile(parsed.image_path);
+  }
+
+  /** Viewer input -> browser: click/press/type through `act` (refs/labels go
+   * through the same path the agent uses; coordinates dispatch via eval). */
+  async input(userId: unknown, op: { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string }): Promise<void> {
+    if (op.type === "click") {
+      const x = Math.round(op.x);
+      const y = Math.round(op.y);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad coordinates");
+      const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) { el.scrollIntoView({block:"center"}); for (const t of ["pointerdown","mousedown","pointerup","mouseup","click"]) el.dispatchEvent(new MouseEvent(t, {bubbles:true, clientX:${x}, clientY:${y}})); } return !!el; })()`;
+      await this.run(userId, ["act", "eval", js], false);
+      return;
+    }
+    if (op.type === "key") {
+      if (typeof op.key !== "string" || op.key.length === 0 || op.key.length > 32) throw new Error("bad key");
+      await this.run(userId, ["act", "press", op.key], false);
+      return;
+    }
+    if (typeof op.text !== "string" || op.text.length === 0 || op.text.length > 512) throw new Error("bad text");
+    const js = `(() => { const el = document.activeElement?.isContentEditable ? document.activeElement : document.activeElement; if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) { if (el.isContentEditable) { document.execCommand("insertText", false, ${JSON.stringify(op.text)}); } else { const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set; if (setter) setter.call(el, (el.value ?? "") + ${JSON.stringify(op.text)}); else el.value = (el.value ?? "") + ${JSON.stringify(op.text)}; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); } } return true; })()`;
+    await this.run(userId, ["act", "eval", js], false);
+  }
+
   /** Page one of our own spilled artifacts. Paths are workspace-relative;
    * anything absolute, empty, or escaping the artifacts dir is refused. */
   async readArtifact(userId: unknown, artifact: string, offset?: number, limit?: number): Promise<string> {

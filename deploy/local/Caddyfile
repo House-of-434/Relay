@@ -13,6 +13,7 @@
 {$RELAY_SITE} {
 	reverse_proxy /auth/* 127.0.0.1:8798
 	reverse_proxy /api/* 127.0.0.1:8798
+	reverse_proxy /_viewer/* tools:8787
 	reverse_proxy /.well-known/relay/* 127.0.0.1:8798
 	reverse_proxy 127.0.0.1:8799
 }

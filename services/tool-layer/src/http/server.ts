@@ -318,6 +318,71 @@ export async function createRelayToolServer(
         return;
       }
 
+      const viewerMatch = /^\/_viewer\/([0-9a-f]{32})(?:\/(screenshot|input|release))?$/.exec(url.pathname);
+      if (viewerMatch) {
+        const tokenValue = viewerMatch[1]!;
+        const action = viewerMatch[2];
+        sharedViewerTokens ??= new ViewerTokens();
+        const token = sharedViewerTokens.find(tokenValue);
+        if (!token) {
+          sendJson(response, 404, { error: "viewer link expired or invalid" });
+          return;
+        }
+        if (request.method === "GET" && !action) {
+          response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+          response.end(`<!doctype html><title>Login browser</title><body style="font-family:sans-serif;margin:16px">
+<h3>Login browser — agent is paused</h3>
+<p>Click to focus, then type. When signed in, press Done.</p>
+<img id="screen" style="width:min(1100px,96vw);border:1px solid #ccc" alt="browser"/>
+<br><button id="done">Done — hand back to agent</button>
+<script>
+const token="${tokenValue}";
+async function poll(){ const r=await fetch("/_viewer/"+token+"/screenshot"); if(r.ok){ const b=await r.blob(); document.getElementById("screen").src=URL.createObjectURL(b); } }
+poll(); setInterval(poll,1500);
+document.getElementById("screen").addEventListener("click",async(e)=>{ const r=e.target.getBoundingClientRect(); const x=Math.round((e.clientX-r.left)*1280/r.width); const y=Math.round((e.clientY-r.top)*720/r.height); await fetch("/_viewer/"+token+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({type:"click",x,y})}); });
+document.addEventListener("keydown",async(e)=>{ if(e.target.tagName==="BUTTON")return; e.preventDefault(); await fetch("/_viewer/"+token+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(e.key.length===1?{type:"type",text:e.key}:{type:"key",key:e.key})}); });
+document.getElementById("done").onclick=async()=>{ await fetch("/_viewer/"+token+"/release",{method:"POST"}); document.body.innerHTML="<p>Released.</p>"; };
+</script></body>`);
+          return;
+        }
+        if (request.method === "GET" && action === "screenshot") {
+          if (!sharedBladePool) { sendJson(response, 503, { error: "browser unavailable" }); return; }
+          try {
+            const png = await sharedBladePool.screenshotPng(token.userId);
+            response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
+            response.end(png);
+          } catch (error) {
+            sendJson(response, 500, { error: error instanceof Error ? error.message : "screenshot failed" });
+          }
+          return;
+        }
+        if (request.method === "POST" && action === "input") {
+          let body: unknown;
+          try { body = await readIngestBody(request); } catch { sendJson(response, 400, { error: "invalid json" }); return; }
+          if (!sharedBladePool) { sendJson(response, 503, { error: "browser unavailable" }); return; }
+          try {
+            await sharedBladePool.input(token.userId, body as { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string });
+            sendJson(response, 200, { ok: true });
+          } catch (error) {
+            sendJson(response, 500, { error: error instanceof Error ? error.message : "input failed" });
+          }
+          return;
+        }
+        if (request.method === "POST" && action === "release") {
+          sharedLoginSessions ??= new LoginSessionManager();
+          try {
+            sharedLoginSessions.release(token.sessionId, token.generation);
+            sharedViewerTokens.revoke(tokenValue);
+            sendJson(response, 200, { ok: true });
+          } catch (error) {
+            sendJson(response, 500, { error: error instanceof Error ? error.message : "release failed" });
+          }
+          return;
+        }
+        sendJson(response, 404, { error: "not found" });
+        return;
+      }
+
       const match = /^\/mcp\/(scout|mercury|curator)$/.exec(url.pathname);
       if (url.pathname === "/internal/transcripts") {
         await handleIngest(request, response, database);

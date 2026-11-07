@@ -7,6 +7,7 @@ export interface ViewerToken {
   value: string;
   sessionId: string;
   userId: string;
+  generation: number;
   expiresAt: number;
 }
 
@@ -20,11 +21,12 @@ export class ViewerTokens {
     this.now = options.now ?? Date.now;
   }
 
-  mint(sessionId: string, userId: string): ViewerToken {
+  mint(sessionId: string, userId: string, generation = 1): ViewerToken {
     const token: ViewerToken = {
       value: randomBytes(16).toString("hex"),
       sessionId,
       userId,
+      generation,
       expiresAt: this.now() + this.ttlMs,
     };
     this.tokens.set(token.value, token);
@@ -32,13 +34,18 @@ export class ViewerTokens {
   }
 
   validate(value: string, sessionId: string, userId: string): boolean {
+    const token = this.find(value);
+    return token === undefined ? false : token.sessionId === sessionId && token.userId === userId;
+  }
+
+  find(value: string): ViewerToken | undefined {
     const token = this.tokens.get(value);
-    if (!token) return false;
+    if (!token) return undefined;
     if (this.now() > token.expiresAt) {
       this.tokens.delete(value);
-      return false;
+      return undefined;
     }
-    return token.sessionId === sessionId && token.userId === userId;
+    return token;
   }
 
   revoke(value: string): void {

@@ -122,7 +122,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
         if (!sessions || !tokens) return toolError(new Error("login browser is not configured"));
         const session = sessions.requestHuman(userId, taskId);
         await pool.headfulOpen(userId, url);
-        const token = tokens.mint(session.id, userId);
+        const token = tokens.mint(session.id, userId, session.generation);
         const base = viewerBase ?? "";
         const viewerUrl = base ? `${base}/_viewer/${token.value}?session=${session.id}` : `/_viewer/${token.value}`;
         return {
