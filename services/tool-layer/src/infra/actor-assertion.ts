@@ -10,6 +10,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const KEYS = "agent,botId,issuedAt,signature,threadId,userId";
 const KEYS_WITH_MAIL = "agent,botId,issuedAt,mailRouted,signature,threadId,userId";
+const KEYS_WITH_AUTO = "agent,botId,emailAutoApprove,issuedAt,signature,threadId,userId";
+const KEYS_WITH_MAIL_AUTO = "agent,botId,emailAutoApprove,issuedAt,mailRouted,signature,threadId,userId";
 
 export const RELAY_AGENT_ROLES = ["scout", "mercury", "curator"] as const;
 export type RelayAgentRole = (typeof RELAY_AGENT_ROLES)[number];
@@ -20,6 +22,7 @@ export type RelayActorAssertion = {
   threadId: string;
   agent: RelayAgentRole;
   mailRouted?: true;
+  emailAutoApprove?: true;
   issuedAt: number;
   signature: string;
 };
@@ -33,10 +36,12 @@ function signingBytes(
   threadId: string,
   agent: string,
   mailRouted?: true,
+  emailAutoApprove?: true,
 ): string {
   return JSON.stringify([
     ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent,
     ...(mailRouted ? [true] : []),
+    ...(emailAutoApprove ? [true] : []),
   ]);
 }
 
@@ -55,7 +60,7 @@ export function signActorAssertion(
   actor: { userId: string; botId: string; threadId: string; agent: string },
   secret: string | undefined,
   issuedAt = Math.floor(Date.now() / 1000),
-  options?: { mailRouted?: true },
+  options?: { mailRouted?: true; emailAutoApprove?: true },
 ): string {
   const userId = actor.userId.trim().toLowerCase();
   const botId = actor.botId.trim().toLowerCase();
@@ -67,12 +72,14 @@ export function signActorAssertion(
   if (!Number.isSafeInteger(issuedAt)) throw new Error("Relay actor assertion timestamp is invalid");
 
   const mailRouted = options?.mailRouted === true;
+  const emailAutoApprove = options?.emailAutoApprove === true;
   const signature = createHmac("sha256", secretKey(secret))
-    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent, mailRouted ? true : undefined))
+    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent, mailRouted ? true : undefined, emailAutoApprove ? true : undefined))
     .digest("base64url");
   return JSON.stringify({
     userId, issuedAt, botId, threadId, agent: actor.agent,
     ...(mailRouted ? { mailRouted: true } : {}),
+    ...(emailAutoApprove ? { emailAutoApprove: true } : {}),
     signature,
   });
 }
@@ -95,9 +102,11 @@ export function verifyActorAssertion(
 
   const assertion = parsed as Record<string, unknown>;
   const keys = Object.keys(assertion).sort().join(",");
-  const mailRouted = keys === KEYS_WITH_MAIL;
-  if ((keys !== KEYS && !mailRouted) ||
+  const mailRouted = keys === KEYS_WITH_MAIL || keys === KEYS_WITH_MAIL_AUTO;
+  const emailAutoApprove = keys === KEYS_WITH_AUTO || keys === KEYS_WITH_MAIL_AUTO;
+  if ((keys !== KEYS && keys !== KEYS_WITH_MAIL && keys !== KEYS_WITH_AUTO && keys !== KEYS_WITH_MAIL_AUTO) ||
       (mailRouted && assertion.mailRouted !== true) ||
+      (emailAutoApprove && assertion.emailAutoApprove !== true) ||
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
@@ -120,6 +129,7 @@ export function verifyActorAssertion(
       assertion.threadId,
       assertion.agent,
       mailRouted ? true : undefined,
+      emailAutoApprove ? true : undefined,
     ))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
@@ -133,6 +143,7 @@ export function verifyActorAssertion(
     threadId: assertion.threadId,
     agent: assertion.agent,
     ...(mailRouted ? { mailRouted: true as const } : {}),
+    ...(emailAutoApprove ? { emailAutoApprove: true as const } : {}),
     issuedAt: assertion.issuedAt,
   };
 }

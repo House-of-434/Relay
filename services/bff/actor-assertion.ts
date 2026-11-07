@@ -11,6 +11,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const KEYS = "agent,botId,issuedAt,signature,threadId,userId";
 const KEYS_WITH_MAIL = "agent,botId,issuedAt,mailRouted,signature,threadId,userId";
+const KEYS_WITH_AUTO = "agent,botId,emailAutoApprove,issuedAt,signature,threadId,userId";
+const KEYS_WITH_MAIL_AUTO = "agent,botId,emailAutoApprove,issuedAt,mailRouted,signature,threadId,userId";
 
 export const RELAY_AGENT_ROLES = ["scout", "mercury", "curator"] as const;
 export type RelayAgentRole = (typeof RELAY_AGENT_ROLES)[number];
@@ -20,9 +22,12 @@ export interface RelayActor {
   botId: string;
   threadId: string;
   agent: RelayAgentRole;
-  /** This turn is forbidden from the agent-facing send route. Never an
-   * authorization to send. */
+  /** This turn is forbidden from the agent-facing send route without a
+   * bound approval receipt. Never an authorization to send. */
   mailRouted?: true;
+  /** Standing 'approve for me' for mail sends (ApprovalMode auto/full).
+   * Only meaningful together with mailRouted; never a draft approval. */
+  emailAutoApprove?: true;
 }
 
 export class ActorAssertionError extends Error {
@@ -39,10 +44,12 @@ function signingBytes(
   threadId: string,
   agent: string,
   mailRouted?: true,
+  emailAutoApprove?: true,
 ): string {
   return JSON.stringify([
     ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent,
     ...(mailRouted ? [true] : []),
+    ...(emailAutoApprove ? [true] : []),
   ]);
 }
 
@@ -87,9 +94,11 @@ export function verifyActorAssertion(
 
   const assertion = parsed as Record<string, unknown>;
   const keys = Object.keys(assertion).sort().join(",");
-  const mailRouted = keys === KEYS_WITH_MAIL;
-  if ((keys !== KEYS && !mailRouted) ||
+  const mailRouted = keys === KEYS_WITH_MAIL || keys === KEYS_WITH_MAIL_AUTO;
+  const emailAutoApprove = keys === KEYS_WITH_AUTO || keys === KEYS_WITH_MAIL_AUTO;
+  if ((keys !== KEYS && keys !== KEYS_WITH_MAIL && keys !== KEYS_WITH_AUTO && keys !== KEYS_WITH_MAIL_AUTO) ||
       (mailRouted && assertion.mailRouted !== true) ||
+      (emailAutoApprove && assertion.emailAutoApprove !== true) ||
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
@@ -111,6 +120,7 @@ export function verifyActorAssertion(
       assertion.threadId,
       assertion.agent,
       mailRouted ? true : undefined,
+      emailAutoApprove ? true : undefined,
     ))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
@@ -124,5 +134,6 @@ export function verifyActorAssertion(
     threadId: assertion.threadId,
     agent: assertion.agent,
     ...(mailRouted ? { mailRouted: true as const } : {}),
+    ...(emailAutoApprove ? { emailAutoApprove: true as const } : {}),
   };
 }

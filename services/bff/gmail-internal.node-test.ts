@@ -1528,3 +1528,189 @@ test("a forged or false mail marker is rejected before the send route", async ()
     assert.equal(response.status, 401);
   }
 });
+
+// ── mail-routed 'approve for me' approval receipts ─────────────────────────
+import { createHash } from "node:crypto";
+import { __resetMailApprovalNoncesForTests } from "./mail-approval.ts";
+
+function mailRoutedAutoAssertion(issuedAt = Math.floor(Date.now() / 1000)): string {
+  const signature = createHmac("sha256", ACTOR_SECRET)
+    .update(JSON.stringify(["relay-actor", USER_ID, issuedAt, BOT_ID, THREAD_ID, "mercury", true, true]))
+    .digest("base64url");
+  return JSON.stringify({
+    userId: USER_ID,
+    issuedAt,
+    botId: BOT_ID,
+    threadId: THREAD_ID,
+    agent: "mercury",
+    mailRouted: true,
+    emailAutoApprove: true,
+    signature,
+  });
+}
+
+function draftHashOf(draft: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; attachments?: unknown }): string {
+  const canonical = JSON.stringify([
+    draft.to,
+    draft.cc ?? [],
+    draft.bcc ?? [],
+    draft.subject,
+    draft.body,
+    draft.attachments ?? [],
+  ]);
+  return createHash("sha256").update(canonical).digest("hex");
+}
+
+function signReceipt(over: Partial<{ botId: string; threadId: string; draftHash: string; nonce: string; expiry: number; secret: string }>, draft: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string; attachments?: unknown }): Record<string, unknown> {
+  const botId = over.botId ?? BOT_ID;
+  const threadId = over.threadId ?? THREAD_ID;
+  const draftHash = over.draftHash ?? draftHashOf(draft);
+  const nonce = over.nonce ?? "11111111-2222-4333-8444-555555555555";
+  const expiry = over.expiry ?? Math.floor(Date.now() / 1000) + 300;
+  const signature = createHmac("sha256", over.secret ?? ACTOR_SECRET)
+    .update(JSON.stringify(["relay-mail-approval", botId, threadId, draftHash, nonce, expiry]))
+    .digest("base64url");
+  return { botId, threadId, draftHash, nonce, expiry, signature };
+}
+
+test("a mail-routed send with a valid bound receipt is allowed", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({}, draft);
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAutoAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...draft, approvalReceipt }),
+  });
+  assert.equal(response.status, 200);
+  assert.equal(calls.some((c) => c.operation === "messages.send"), true);
+});
+
+test("a receipt nonce is single-use: replay is refused", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({}, draft);
+  const headers = {
+    authorization: `Bearer ${CAPABILITY}`,
+    "x-relay-actor-user": mailRoutedAutoAssertion(),
+    "content-type": "application/json",
+  };
+  const body = JSON.stringify({ ...draft, approvalReceipt });
+  assert.equal((await call(INTERNAL_GMAIL_SEND, { method: "POST", headers, body })).status, 200);
+  const second = await call(INTERNAL_GMAIL_SEND, { method: "POST", headers, body });
+  assert.equal(second.status, 403);
+  assert.match(await second.text(), /already used/);
+});
+
+test("a changed draft invalidates the approval receipt", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({}, draft);
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAutoAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...draft, body: "Changed after confirmation.", approvalReceipt }),
+  });
+  assert.equal(response.status, 403);
+  assert.match(await response.text(), /does not match this draft/);
+  assert.equal(calls.some((c) => c.operation === "messages.send"), false);
+});
+
+test("an expired receipt is refused", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({ expiry: Math.floor(Date.now() / 1000) - 10 }, draft);
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAutoAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...draft, approvalReceipt }),
+  });
+  assert.equal(response.status, 403);
+  assert.match(await response.text(), /expired/);
+  assert.equal(calls.some((c) => c.operation === "messages.send"), false);
+});
+
+test("a forged receipt signature is refused", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({ secret: WRONG_SECRET }, draft);
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAutoAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...draft, approvalReceipt }),
+  });
+  assert.equal(response.status, 403);
+  assert.match(await response.text(), /signature is invalid/);
+  assert.equal(calls.some((c) => c.operation === "messages.send"), false);
+});
+
+test("a receipt for another thread is refused", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({ threadId: "11111111-2222-4333-8444-555555555555" }, draft);
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAutoAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...draft, approvalReceipt }),
+  });
+  assert.equal(response.status, 403);
+  assert.match(await response.text(), /does not match this conversation/);
+});
+
+test("a mail-routed bot without 'approve for me' is refused even with a receipt", async () => {
+  __resetMailApprovalNoncesForTests();
+  const { call } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+  const draft = { to: ["friend@example.test"], subject: "Launch", body: "Shipping Friday." };
+  const approvalReceipt = signReceipt({}, draft);
+  const response = await call(INTERNAL_GMAIL_SEND, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": mailRoutedAssertion(),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ ...draft, approvalReceipt }),
+  });
+  assert.equal(response.status, 403);
+  assert.match(await response.text(), /approve for me/);
+});
