@@ -116,10 +116,7 @@ export function SoulField({
         value={draft}
         onChange={(e) => change(e.target.value)}
       />
-      <div className="mt-1.5 flex items-start justify-between gap-3 text-[11px] text-ink-secondary">
-        <span>
-          In this bot’s context on every turn.{info?.file ? <> Mirrored to <span className="break-all">{info.file}</span>.</> : null}
-        </span>
+      <div className="mt-1.5 flex items-start justify-end text-[11px] text-ink-secondary">
         <span className={cn("shrink-0 tabular-nums", over && "font-medium text-red-500")}>
           {bytes.toLocaleString()} / {limit.toLocaleString()} bytes{over ? " — not saved" : ""}
         </span>

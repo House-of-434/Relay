@@ -19624,6 +19624,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
       }
       const existingBot = store.bot(m[1]);
+      // Soul is user-owned personality: only the bot's owner (or admin scope)
+      // may change it through this profile patch, same rule as the soul file
+      // routes below. Display-only client edits keep working.
+      if (parsed.patch.soul !== undefined && existingBot) {
+        const owner = existingBot.ownerUserId;
+        const canManageSoul = auth.scopes.includes("admin") || (auth.kind === "session" && Boolean(owner) && owner === auth.session.userId);
+        if (!canManageSoul) return json(res, 403, { error: "session lacks the admin scope" });
+      }
       // On a Cloud home a bot's name, title, description and standing
       // instructions ride every one of the owner's turns (and a lent Mac):
       // only the owner's own devices change them. Anyone else keeps the
@@ -20237,6 +20245,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const owner = store.bot(botId)?.ownerUserId;
       return Boolean(owner) && owner === auth.session.userId;
     };
+    // Soul is user-owned personality, same owner-or-admin rule. The assembled
+    // system-prompt preview stays admin-only (it reveals Relay instructions).
+    const canManageSoul = (bot: { ownerUserId?: string }): boolean => {
+      if (auth.scopes.includes("admin")) return true;
+      if (auth.kind !== "session") return false;
+      return Boolean(bot.ownerUserId) && bot.ownerUserId === auth.session.userId;
+    };
     m = path.match(/^\/api\/bots\/([\w-]+)\/skill-template$/);
     if (m && method === "POST") {
       if (!store.bot(m[1])) return json(res, 404, { error: "no such bot" });
@@ -20420,6 +20435,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     if (m && method === "GET") {
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!canManageSoul(bot)) return json(res, 403, { error: "session lacks the admin scope" });
       const soul = bot.soul ?? "";
       const drift = readSoulDrift(bot.id, soul, bot.soulHash ?? "");
       return json(res, 200, {
@@ -20437,6 +20453,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const body = await readBody(req);
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!canManageSoul(bot)) return json(res, 403, { error: "session lacks the admin scope" });
       if (body?.expectedRevision !== profileRevision(bot)) {
         return json(res, 409, { error: "This bot's profile changed; reload and look again" });
       }
@@ -20464,6 +20481,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const body = await readBody(req);
       const bot = store.bot(m[1]);
       if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!canManageSoul(bot)) return json(res, 403, { error: "session lacks the admin scope" });
       if (body?.expectedRevision !== profileRevision(bot)) {
         return json(res, 409, { error: "This bot's profile changed; reload and look again" });
       }
