@@ -393,41 +393,41 @@ export class BladeBrowserPool {
     return readFile(parsed.image_path);
   }
 
-  /** Viewer input -> browser. Clicks go through Bladebro's native CDP click
-   * (trusted): eval only resolves the element at (x,y) to a CSS selector,
-   * then `act click --selector` performs the real click. Synthetic
-   * dispatchEvent clicks are untrusted and sites like Google ignore them. */
+  /** Viewer input -> the X display (like OpenMausBot's desktop viewer):
+   * trusted OS-level events via xdotool under Xvfb. In-page synthetic events
+   * (dispatchEvent, isTrusted=false) are ignored by sites like Google even
+   * when the click lands — so clicks and keys go to the window manager. */
   async input(userId: unknown, op: { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string }): Promise<void> {
+    const env = { ...this.buildEnv(this.workspaceFor(userId), false), DISPLAY: process.env.DISPLAY ?? ":99" };
     if (op.type === "click") {
       const x = Math.round(op.x);
       const y = Math.round(op.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad coordinates");
-      const resolveJs = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (!el) return ""; if (el.id) return "#" + CSS.escape(el.id); const parts = []; let n = el; while (n && n.nodeType === 1 && n !== document.body) { let s = n.nodeName.toLowerCase(); const sib = n.parentElement ? n.parentElement.children : []; if (sib.length > 1) { s += ":nth-of-type(" + ([...sib].filter((c) => c.nodeName === n.nodeName).indexOf(n) + 1) + ")"; } parts.unshift(s); if (n.id) break; n = n.parentElement; } return parts.join(" > "); })()`;
-      let selector = "";
-      try {
-        const raw = await this.run(userId, ["act", "eval", resolveJs], false);
-        selector = raw.replace(/^"|"$/g, "").trim().split("\n")[0] ?? "";
-        const unescaped = (() => { try { return JSON.parse(raw); } catch { return selector; } })();
-        selector = typeof unescaped === "string" ? unescaped : selector;
-      } catch {
-        selector = "";
-      }
-      if (selector) {
-        await this.run(userId, ["act", "click", "--selector", selector], false);
-        return;
-      }
-      const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) { el.scrollIntoView({block:"center"}); for (const t of ["pointerdown","mousedown","pointerup","mouseup","click"]) el.dispatchEvent(new MouseEvent(t, {bubbles:true, clientX:${x}, clientY:${y}})); } return !!el; })()`;
-      await this.run(userId, ["act", "eval", js], false);
+      const result = await this.spawn("xdotool", ["mousemove", String(x), String(y), "click", "1"], {
+        env,
+        timeoutMs: 10_000,
+        maxBufferBytes: 65536,
+      });
+      if (result.exitCode !== 0) throw new Error(`viewer click failed: ${(result.stderr || "no output").slice(0, 300)}`);
       return;
     }
     if (op.type === "key") {
       if (typeof op.key !== "string" || op.key.length === 0 || op.key.length > 32) throw new Error("bad key");
-      await this.run(userId, ["act", "press", op.key], false);
+      const result = await this.spawn("xdotool", ["key", "--", op.key], {
+        env,
+        timeoutMs: 10_000,
+        maxBufferBytes: 65536,
+      });
+      if (result.exitCode !== 0) throw new Error(`viewer key failed: ${(result.stderr || "no output").slice(0, 300)}`);
       return;
     }
     if (typeof op.text !== "string" || op.text.length === 0 || op.text.length > 512) throw new Error("bad text");
-    const js = `(() => { const el = document.activeElement?.isContentEditable ? document.activeElement : document.activeElement; if (el && (el.tagName === "INPUT" || el.tagName === "TEXTAREA" || el.isContentEditable)) { if (el.isContentEditable) { document.execCommand("insertText", false, ${JSON.stringify(op.text)}); } else { const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value")?.set || Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set; if (setter) setter.call(el, (el.value ?? "") + ${JSON.stringify(op.text)}); else el.value = (el.value ?? "") + ${JSON.stringify(op.text)}; el.dispatchEvent(new Event("input", { bubbles: true })); el.dispatchEvent(new Event("change", { bubbles: true })); } } return true; })()`;
-    await this.run(userId, ["act", "eval", js], false);
+    const result = await this.spawn("xdotool", ["type", "--delay", "12", "--", op.text], {
+      env,
+      timeoutMs: 15_000,
+      maxBufferBytes: 65536,
+    });
+    if (result.exitCode !== 0) throw new Error(`viewer type failed: ${(result.stderr || "no output").slice(0, 300)}`);
   }
 
   /** Page one of our own spilled artifacts. Paths are workspace-relative;
