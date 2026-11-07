@@ -113,6 +113,41 @@ export function MessageAttachmentGallery({ text, attachments = NO_GENERATED_ATTA
   return <AttachmentGallery images={attached.images} files={files} message={message} eager={eager} className={className} />;
 }
 
+/** A message's attachments as a standalone block under the message, never
+ * inside its bubble or the "Worked for" fold: the turn's narration
+ * attachments are hoisted onto the terminal answer (ChatView's transcript),
+ * and an attachments-only message is exactly this block with no bubble. */
+export function MessageAttachments(props: (
+  { images?: Array<string | TranscriptImageAttachment>; files?: GalleryFile[] }
+  | { text: string; attachments?: readonly MessageAttachmentEntry[] }
+) & {
+  message: MessageAttachmentContext;
+  eager?: boolean;
+  className?: string;
+}) {
+  const { message, eager, className } = props;
+  if ("text" in props) {
+    return (
+      <MessageAttachmentGallery
+        text={props.text}
+        attachments={props.attachments}
+        message={message}
+        eager={eager}
+        className={className}
+      />
+    );
+  }
+  return (
+    <AttachmentGallery
+      images={props.images}
+      files={props.files}
+      message={message}
+      eager={eager}
+      className={className}
+    />
+  );
+}
+
 /** A server-provided MIME is required as well as the filename hint. Old
  * servers can still download a video but never turn arbitrary bytes into UI. */
 export async function loadMessageVideo(
