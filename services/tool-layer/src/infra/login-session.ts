@@ -165,7 +165,7 @@ export class LoginSessionManager {
   }
 
   pruneIdle(): void {
-    for (const session of [...this.sessions.values()]) {
+    for (const session of this.sessions.values()) {
       if (session.state !== "closed" && this.now() - session.openedAt > this.idleReclaimMs) {
         this.sessions.delete(session.id);
         this.byUser.delete(session.userId);
