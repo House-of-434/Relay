@@ -118,6 +118,8 @@ test("authenticated scout sees browser tools; others do not", async () => {
     "browser_extract",
     "browser_open",
     "browser_read",
+    "browser_release",
+    "browser_request_human",
     "find_teammate",
     "get_meeting_transcript",
     "relay_read",

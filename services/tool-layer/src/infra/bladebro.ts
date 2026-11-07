@@ -310,6 +310,16 @@ export class BladeBrowserPool {
     return this.boundResult(userId, "open", text);
   }
 
+  /** Headful login mode: show the real window (needs Xvfb on VPS) and
+   * navigate. Used only inside an active human takeover; research paths
+   * stay headless. */
+  async headfulOpen(userId: unknown, url: string): Promise<BrowserText> {
+    const target = assertHttpUrl(url);
+    await this.run(userId, ["rb", "visible", "on"], false, true);
+    const text = await this.run(userId, ["nav", target], false);
+    return this.boundResult(userId, "open", text);
+  }
+
   async read(
     userId: unknown,
     mode: ReadMode,
@@ -401,8 +411,11 @@ export class BladeBrowserPool {
     }
   }
 
-  private async run(userId: unknown, args: string[], fresh: boolean): Promise<string> {
-    assertSafeArgs(args);
+  private async run(userId: unknown, args: string[], fresh: boolean, allowRb = false): Promise<string> {
+    assertSafeArgs(args, allowRb);
+    if (allowRb && args.includes("rb")) {
+      // Headful login mode only: window visible under Xvfb; research stays headless.
+    }
     if (!(await this.probe())) {
       throw new Error("research browser is unavailable on this host");
     }
@@ -448,8 +461,9 @@ function requireQuery(query: string | undefined): string {
   return query;
 }
 
-export function assertSafeArgs(args: string[]): void {
+export function assertSafeArgs(args: string[], allowRb = false): void {
   for (const arg of args) {
+    if (arg === "rb" && allowRb) continue;
     if (FORBIDDEN_ARGS.has(arg)) throw new Error(`forbidden bladebro argument: ${arg}`);
   }
 }

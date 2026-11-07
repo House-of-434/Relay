@@ -9,6 +9,8 @@ import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
+import { LoginSessionManager } from "../infra/login-session.js";
+import { ViewerTokens } from "../infra/login-viewer.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { TinyFishFetchProvider } from "../infra/fetch.js";
 import { ArxivProvider } from "../infra/arxiv.js";
@@ -237,6 +239,8 @@ async function handleMemberLookup(
 }
 
 let sharedBladePool: BladeBrowserPool | null = null;
+let sharedLoginSessions: LoginSessionManager | null = null;
+let sharedViewerTokens: ViewerTokens | null = null;
 let sharedArxiv: { userAgent: string; provider: ArxivProvider } | null = null;
 let sharedSec: { userAgent: string; provider: SecProvider } | null = null;
 
@@ -393,7 +397,17 @@ export async function createRelayToolServer(
         timezone: blade.timezone,
         locale: blade.locale,
       });
-      const browser = sharedBladePool ? { pool: sharedBladePool, userId } : undefined;
+      sharedLoginSessions ??= new LoginSessionManager({ maxConcurrent: blade.loginMaxConcurrent });
+      sharedViewerTokens ??= new ViewerTokens();
+      const browser = sharedBladePool
+        ? {
+            pool: sharedBladePool,
+            userId,
+            sessions: sharedLoginSessions,
+            tokens: sharedViewerTokens,
+            viewerBase: blade.viewerBase,
+          }
+        : undefined;
 
       const searchConfigValue = searchConfig();
       const search = {
