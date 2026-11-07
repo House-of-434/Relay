@@ -26,10 +26,8 @@ import { NoEngines } from "@/components/NoEngines";
 import { CloudEngineSignIn } from "@/components/CloudEngineSignIn";
 import { engineReady } from "@/components/EngineLibrary";
 import { CommandPalette } from "@/components/CommandPalette";
-import { KeyboardShortcutsModal } from "@/components/KeyboardShortcutsModal";
 import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { setLocale } from "@/lib/i18n";
-import { shouldOpenKeyboardShortcuts } from "@/lib/keyboard-shortcuts";
 import { effectiveLanguage, useLanguageChoice } from "@/lib/language-preference";
 import type { SessionState } from "@/lib/session";
 import { SessionIdentityProvider } from "@/components/SidebarProfileMenu";
@@ -315,42 +313,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   // its first run, and every bot until then, is the engine sign-in.
   const cloudSignIn = cloudSignInDue(viewer, state, engineReady);
 
-  // App-wide shortcuts: ⌘N new bot · ⌘1–9 jump to bot · ⌘⇧[ / ⌘⇧] prev/next · ⌘/ or ? shortcuts cheat sheet.
-  // Kept deliberately small; every panel already closes on Esc.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || e.isComposing || state.shortcutsOpen) return;
-      if (shouldOpenKeyboardShortcuts(e)) {
-        e.preventDefault();
-        dispatch({ type: "toggleShortcuts", open: true });
-        return;
-      }
-
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod) return;
-      const bots = state.bots.filter((b) => !b.hidden);
-      if (e.key === "n" && !e.shiftKey) {
-        e.preventDefault();
-        dispatch({ type: "toggleNewBot", open: true });
-      } else if (/^[1-9]$/.test(e.key)) {
-        const target = bots[Number(e.key) - 1];
-        if (target) {
-          e.preventDefault();
-          dispatch({ type: "select", id: target.id });
-        }
-      } else if (e.shiftKey && (e.key === "[" || e.key === "]")) {
-        const idx = bots.findIndex((b) => b.id === state.selectedId);
-        const next = bots[(idx + (e.key === "]" ? 1 : -1) + bots.length) % bots.length];
-        if (next) {
-          e.preventDefault();
-          dispatch({ type: "select", id: next.id });
-        }
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [state.bots, state.selectedId, state.shortcutsOpen, dispatch]);
-
   useEffect(() => {
     window.ogb?.setUnreadCount?.(unreadCount);
   }, [unreadCount]);
@@ -529,12 +491,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       {state.appSettingsOpen && <SettingsModal />}
       <GoogleConnectionsDialog />
       {state.newBotOpen && <NewBotDialog />}
-      {state.shortcutsOpen && (
-        <KeyboardShortcutsModal
-          open={state.shortcutsOpen}
-          onClose={() => dispatch({ type: "toggleShortcuts", open: false })}
-        />
-      )}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
       <CommandPalette onOpenChange={setPaletteOpen} />

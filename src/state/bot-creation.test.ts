@@ -143,9 +143,9 @@ describe("setup navigation", () => {
   });
 
   it("opens one modal with exclusive keyboard ownership", () => {
-    const start = { ...initialState, settingsOpen: true, appSettingsOpen: true, pluginsOpen: true, shortcutsOpen: true, computerOpen: true };
+    const start = { ...initialState, settingsOpen: true, appSettingsOpen: true, pluginsOpen: true, computerOpen: true };
     const next = reducer(start, { type: "toggleNewBot", open: true });
-    expect(next).toMatchObject({ newBotOpen: true, settingsOpen: false, appSettingsOpen: false, pluginsOpen: false, shortcutsOpen: false, computerOpen: true });
+    expect(next).toMatchObject({ newBotOpen: true, settingsOpen: false, appSettingsOpen: false, pluginsOpen: false, computerOpen: true });
     expect(reducer(next, { type: "toggleNewBot", open: false })).toMatchObject({ settingsOpen: false, pluginsOpen: false });
   });
 

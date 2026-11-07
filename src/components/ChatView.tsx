@@ -64,7 +64,7 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
-import { AttachmentGallery, collectMessageFiles, splitMessageAttachments } from "./AttachmentGallery";
+import { MessageAttachments, collectMessageFiles, splitMessageAttachments, type GalleryFile } from "./AttachmentGallery";
 import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { ModelPicker } from "./ModelPicker";
@@ -302,6 +302,8 @@ function Bubble({
   onRegenerate,
   replyTarget,
   onReply,
+  hideAttachments = false,
+  extraAttachments,
 }: {
   bot: Bot;
   message: Message;
@@ -315,6 +317,10 @@ function Bubble({
   onRegenerate?: () => void;
   replyTarget?: Message;
   onReply: () => void;
+  /** Attachments the transcript hoisted onto this (terminal) message. */
+  extraAttachments?: { images: string[]; files: GalleryFile[] };
+  /** Folded narration messages carry no attachments of their own. */
+  hideAttachments?: boolean;
 }) {
   const { state, dispatch } = useStore();
   const remoteClient = window.ogb?.remoteClient?.active === true;
@@ -338,8 +344,10 @@ function Bubble({
   const visibleText = webhookView?.task ?? attachments?.display ?? text;
   const hasAttachments = Boolean(attachments && (attachments.images.length || attachments.files.length));
   // A message that is only attachments is just the files: no bubble around them.
+  // Turn-hoisted attachments count for the terminal message beside them.
+  const hoisted = hideAttachments ? undefined : extraAttachments;
   const attachmentsOnly = !webhookView && !replyTarget && !visibleText.trim() &&
-    (user ? hasAttachments : generatedPaths.length + linkedFiles.length > 0);
+    (user ? hasAttachments : generatedPaths.length + linkedFiles.length + (hoisted?.images.length ?? 0) + (hoisted?.files.length ?? 0) > 0);
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -445,7 +453,6 @@ function Bubble({
             </div>
           ) : user ? (
             <>
-              {attachments && <AttachmentGallery images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} className={!visibleText ? "mb-0" : undefined} />}
               {visibleText && (
                 <div
                   className={cn("chat-text", collapsible && "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}
@@ -474,10 +481,28 @@ function Bubble({
               {text ? (
                 <ChatMarkdown text={text} mentionPeers={mentionPeers} message={{ threadId: bot.threadId, messageId: message.id }} />
               ) : null}
-              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : "mb-0"} eager={eagerAttachments} />
             </MessageBoundary>
           )}
         </div>
+        {!hideAttachments && (
+          <>
+            {user && !webhookView && attachments && hasAttachments && (
+              <div className="mt-1.5 flex w-full justify-end">
+                <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} />
+              </div>
+            )}
+            {!user && (
+              <div className="mt-1.5 flex w-full justify-start">
+                <MessageAttachments
+                  images={[...generatedPaths, ...(extraAttachments?.images ?? [])]}
+                  files={[...linkedFiles, ...(extraAttachments?.files ?? [])]}
+                  message={{ threadId: bot.threadId, messageId: message.id }}
+                  eager={eagerAttachments}
+                />
+              </div>
+            )}
+          </>
+        )}
         {!user && (
           <MessageActions side="bot">
             {text && <CopyButton text={text} />}
@@ -648,6 +673,23 @@ const MessagesList = memo(function MessagesList({
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
   const items = useMemo(() => groupTranscript(messages), [messages, locale]);
+  // A turn's attachments move out of the "Worked for" fold onto the
+  // terminal answer instead: the fold hides them behind the label.
+  const turnAttachments = useMemo(() => {
+    const map = new Map<string, { images: string[]; files: GalleryFile[] }>();
+    for (const item of items) {
+      if (item.kind !== "turn") continue;
+      const images: string[] = [];
+      const files: GalleryFile[] = [];
+      for (const message of item.messages) {
+        const attached = splitMessageAttachments(message.attachments);
+        images.push(...attached.images);
+        files.push(...attached.files);
+      }
+      if (images.length || files.length) map.set(item.turnId, { images, files });
+    }
+    return map;
+  }, [items]);
   // Where this conversation works, for the place icon on screen and page tools.
   const place = effectivePlace(bot, bot.tasks?.find((task) => task.threadId === bot.threadId));
   const newestMessageId = messages.at(-1)?.id;
@@ -703,6 +745,7 @@ const MessagesList = memo(function MessagesList({
                     <Bubble
                       bot={bot}
                       message={message}
+                      hideAttachments
                       editing={false}
                       isLastBotText={false}
                       onStartEdit={noop}
@@ -820,6 +863,7 @@ const MessagesList = memo(function MessagesList({
                   eagerAttachments={m.id === newestMessageId || m.id === newestUserMessageId}
                   editing={editingId === m.id}
                   isLastBotText={m.id === lastBotTextId}
+                  extraAttachments={m.turnTerminal && m.turnId ? turnAttachments.get(m.turnId) : undefined}
                   onStartEdit={() => onStartEdit(m.id)}
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}

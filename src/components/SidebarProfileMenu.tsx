@@ -8,12 +8,11 @@
 //
 // The update entry is the one item that reports progress in place, so it
 // keeps the menu open and re-labels itself as it works.
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import {
   ArrowDownToLine,
   Check,
   Info,
-  Keyboard,
   Loader2,
   LogOut,
   RefreshCw,
@@ -24,7 +23,6 @@ import {
 import { InitialsAvatar } from "./Avatar";
 import { AboutDialog } from "./AboutDialog";
 import { SidebarPopoverMenu, type SidebarMenuItem } from "./SidebarPopoverMenu";
-import { ShortcutHint } from "./ShortcutHint";
 import { phoneSettingsAction, useSidebarPhoneStatus } from "./SidebarPhoneButton";
 import { useStore } from "@/state/store";
 import { signOut, type SessionState } from "@/lib/session";
@@ -214,7 +212,7 @@ export function updateBusy(phase: UpdatePhase, pending = false): boolean {
   return pending || phase === "checking" || phase === "downloading" || phase === "preparing" || phase === "installing";
 }
 
-function UpdateIcon({ phase, pending, size = 18 }: { phase: UpdatePhase; pending: boolean; size?: number }) {
+function UpdateIcon({ phase, pending, size = 15 }: { phase: UpdatePhase; pending: boolean; size?: number }) {
   if (updateBusy(phase, pending)) return <Loader2 size={size} className="animate-spin" />;
   if (phase === "up-to-date") return <Check size={size} />;
   if (phase === "available" || phase === "downloaded") return <ArrowDownToLine size={size} />;
@@ -294,7 +292,6 @@ export function SidebarProfileMenu() {
   const phone = useSidebarPhoneStatus();
   const update = useUpdateItem();
   const [aboutOpen, setAboutOpen] = useState(false);
-  const triggerRef = useRef<HTMLSpanElement>(null);
 
   const identity = useSidebarIdentity();
   const name = identity.name.split(/\s+/)[0] || identity.name;
@@ -305,7 +302,7 @@ export function SidebarProfileMenu() {
           {
             key: "phone",
             label: t("sidebar.menu.yourPhone"),
-            icon: <Smartphone size={18} />,
+            icon: <Smartphone size={15} />,
             trailing:
               phone.kind === "connected" ? (
                 <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-success" />
@@ -317,31 +314,20 @@ export function SidebarProfileMenu() {
     {
       key: "settings",
       label: t("sidebar.menu.settings"),
-      icon: <SettingsIcon size={18} />,
+      icon: <SettingsIcon size={15} />,
       onSelect: () => dispatch({ type: "toggleAppSettings" }),
-    },
-    {
-      key: "shortcuts",
-      label: "Shortcuts",
-      icon: <Keyboard size={18} />,
-      trailing: <ShortcutHint id="shortcuts-cheat-sheet" />,
-      onSelect: () => {
-        // The menu item unmounts; let the dialog restore the profile button.
-        triggerRef.current?.closest("button")?.focus();
-        dispatch({ type: "toggleShortcuts", open: true });
-      },
     },
     ...(update ? [update.item] : []),
     {
       key: "about",
       label: t("sidebar.menu.about"),
-      icon: <Info size={18} />,
+      icon: <Info size={15} />,
       onSelect: () => setAboutOpen(true),
     },
     {
       key: "signOut",
       label: t("sidebar.menu.signOut"),
-      icon: <LogOut size={18} />,
+      icon: <LogOut size={15} />,
       separatorBefore: true,
       onSelect: () => void signOut(),
     },
@@ -354,7 +340,6 @@ export function SidebarProfileMenu() {
         ariaLabel={name}
         renderTrigger={({ open }) => (
           <span
-            ref={triggerRef}
             className={cn(
               "flex min-h-0 w-full items-center justify-center gap-2 rounded-full border border-hairline/40 bg-inset/40 px-2 py-1 text-left transition-colors",
               open ? "bg-raised" : "",

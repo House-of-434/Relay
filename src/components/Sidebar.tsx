@@ -78,7 +78,6 @@ import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
 import { SidebarProfileMenu } from "./SidebarProfileMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
-import { ShortcutHint } from "./ShortcutHint";
 
 const SECTION_LABEL_KEYS: Record<string, LocaleKey> = {
   [PINNED_SECTION_ID]: "sidebar.section.pinned",
@@ -359,9 +358,9 @@ function RoomContextMenu({
             setDraft(group.name);
             setRenaming(true);
           }}
-          className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
+          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
         >
-          <Pencil size={16} className="text-ink-secondary" />
+          <Pencil size={15} className="text-ink-secondary" />
           {isBotChat ? t("sidebar.room.renameChat") : t("sidebar.room.renameChannel")}
         </button>
       ))}
@@ -371,9 +370,9 @@ function RoomContextMenu({
             onClose();
             onMoveToSection(group.id);
           }}
-          className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
+          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
         >
-          <FolderPlus size={16} className="text-ink-secondary" />
+          <FolderPlus size={15} className="text-ink-secondary" />
           {t("sidebar.section.moveToContext")}
         </button>
       )}
@@ -382,9 +381,9 @@ function RoomContextMenu({
           dispatch({ type: "deleteGroup", groupId: group.id });
           onClose();
         }}
-        className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-danger hover:bg-raised/70"
+        className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-danger hover:bg-raised/70"
       >
-        <Trash2 size={16} />
+        <Trash2 size={15} />
         {isBotChat ? t("sidebar.room.deleteChat") : t("sidebar.room.deleteChannel")}
       </button>}
     </div>,
@@ -695,7 +694,7 @@ export function BotContextMenu({
       aria-label={t("sidebar.bot.actions", { name: bot.name })}
       onKeyDown={navigateSidebarMenu}
       style={{ top: shown.y, left: shown.x }}
-      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[184px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-2xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[156px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-2xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
     >
       {remoteClient ? [
         item(<FolderPlus size={15} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
@@ -1414,27 +1413,26 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     dispatch({ type: "toggleNewBot", open: true });
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
                 >
-                  <BotIcon size={16} className="text-ink-secondary" />
+                  <BotIcon size={15} className="text-ink-secondary" />
                   <span className="flex-1">{t("sidebar.newBot")}</span>
-                  <ShortcutHint id="new-bot" />
                 </button>
                 <button
                   onClick={() => {
                     setPlusOpen(false);
                     setNewRoom(true);
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
                 >
-                  <Users size={16} className="text-ink-secondary" />
+                  <Users size={15} className="text-ink-secondary" />
                   {t("sidebar.newChannel.title")}
                 </button>
                 {!remoteClient && <button
                   onClick={() => { setPlusOpen(false); setNewTeam(true); }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
                 >
-                  <FolderPlus size={16} className="text-ink-secondary" /> {t("team.create")}
+                  <FolderPlus size={15} className="text-ink-secondary" /> {t("team.create")}
                 </button>}
                 {/* Team library (templates) needs reworking — dev builds only. */}
                 {import.meta.env.DEV && !remoteClient && (
@@ -1443,9 +1441,9 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     setTeamLibraryOpen(true);
                   }}
-                  className="flex w-full items-center gap-3 px-3.5 py-2 rounded-lg text-left text-[14px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
                 >
-                  <Library size={16} className="text-ink-secondary" />
+                  <Library size={15} className="text-ink-secondary" />
                   {t("sidebar.teamLibrary")}
                 </button>
                 )}

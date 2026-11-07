@@ -35,7 +35,7 @@ import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { GoalRunCard } from "./GoalRunCard";
-import { AttachmentGallery, MessageAttachmentGallery } from "./AttachmentGallery";
+import { MessageAttachments } from "./AttachmentGallery";
 import { OptionCard } from "./OptionCard";
 
 import { ApprovalCard } from "./ApprovalCard";
@@ -327,7 +327,6 @@ export const Transcript = memo(function Transcript({
                   })()}
                   {user ? (
                     <>
-                      {attachments && <AttachmentGallery images={attachments.images} files={attachments.files} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} className={!attachments.display ? "mb-0" : undefined} />}
                       <ThreadRefText text={attachments?.display ?? m.text ?? ""} peers={members} everyone={!group.dm} />
                       {m.via === "api" && (
                         <div className="mt-1 text-[11px] text-ink-secondary">Sent through the API, not typed here</div>
@@ -336,7 +335,6 @@ export const Transcript = memo(function Transcript({
                   ) : (
                     <>
                       {m.text ? <ChatMarkdown text={m.text} mentionPeers={members} everyone={!group.dm} message={{ threadId: group.threadId, messageId: m.id }} /> : null}
-                      <MessageAttachmentGallery text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} className={m.text ? "mt-2" : undefined} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
                     </>
                   )}
                 </div>
@@ -355,6 +353,16 @@ export const Transcript = memo(function Transcript({
                   </>
                 )}
               </div>
+              {user && attachments && (
+                <div className="mt-1.5 flex w-full justify-end">
+                  <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
+                </div>
+              )}
+              {!user && (
+                <div className="mt-1.5 flex w-full justify-start">
+                  <MessageAttachments text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
+                </div>
+              )}
               {!user && m.routedBy && <RoutedByLine routedBy={m.routedBy} />}
             </div>
           ) : null;

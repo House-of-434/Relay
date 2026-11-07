@@ -331,20 +331,6 @@ describe("independent bot threads", () => {
   });
 });
 
-describe("keyboard shortcuts dialog state", () => {
-  it("opens and closes without replacing bot settings navigation", () => {
-    expect(initialState.shortcutsOpen).toBe(false);
-    expect(initialState.botSettingsSection).toBe("identity");
-    const state = { ...initialState, botSettingsSection: "soul" as const };
-    const opened = reducer(state, { type: "toggleShortcuts", open: true });
-    expect(opened.shortcutsOpen).toBe(true);
-    expect(opened.botSettingsSection).toBe("soul");
-    const closed = reducer(opened, { type: "toggleShortcuts" });
-    expect(closed.shortcutsOpen).toBe(false);
-    expect(closed.botSettingsSection).toBe("soul");
-  });
-});
-
 describe("Settings opened by the Cloud link", () => {
   it("marks only the link's own opening, counts each link, and clears on any other Settings navigation", () => {
     expect(initialState.appSettingsCloudLink).toBe(0);
