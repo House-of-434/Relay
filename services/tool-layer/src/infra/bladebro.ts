@@ -393,13 +393,29 @@ export class BladeBrowserPool {
     return readFile(parsed.image_path);
   }
 
-  /** Viewer input -> browser: click/press/type through `act` (refs/labels go
-   * through the same path the agent uses; coordinates dispatch via eval). */
+  /** Viewer input -> browser. Clicks go through Bladebro's native CDP click
+   * (trusted): eval only resolves the element at (x,y) to a CSS selector,
+   * then `act click --selector` performs the real click. Synthetic
+   * dispatchEvent clicks are untrusted and sites like Google ignore them. */
   async input(userId: unknown, op: { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string }): Promise<void> {
     if (op.type === "click") {
       const x = Math.round(op.x);
       const y = Math.round(op.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad coordinates");
+      const resolveJs = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (!el) return ""; if (el.id) return "#" + CSS.escape(el.id); const parts = []; let n = el; while (n && n.nodeType === 1 && n !== document.body) { let s = n.nodeName.toLowerCase(); const sib = n.parentElement ? n.parentElement.children : []; if (sib.length > 1) { s += ":nth-of-type(" + ([...sib].filter((c) => c.nodeName === n.nodeName).indexOf(n) + 1) + ")"; } parts.unshift(s); if (n.id) break; n = n.parentElement; } return parts.join(" > "); })()`;
+      let selector = "";
+      try {
+        const raw = await this.run(userId, ["act", "eval", resolveJs], false);
+        selector = raw.replace(/^"|"$/g, "").trim().split("\n")[0] ?? "";
+        const unescaped = (() => { try { return JSON.parse(raw); } catch { return selector; } })();
+        selector = typeof unescaped === "string" ? unescaped : selector;
+      } catch {
+        selector = "";
+      }
+      if (selector) {
+        await this.run(userId, ["act", "click", "--selector", selector], false);
+        return;
+      }
       const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) { el.scrollIntoView({block:"center"}); for (const t of ["pointerdown","mousedown","pointerup","mouseup","click"]) el.dispatchEvent(new MouseEvent(t, {bubbles:true, clientX:${x}, clientY:${y}})); } return !!el; })()`;
       await this.run(userId, ["act", "eval", js], false);
       return;
