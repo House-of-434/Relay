@@ -312,12 +312,33 @@ export class BladeBrowserPool {
 
   /** Headful login mode: show the real window (needs Xvfb on VPS) and
    * navigate. Used only inside an active human takeover; research paths
-   * stay headless. */
+   * stay headless. `rb visible on` returns `{ok, setting, value}` with no
+   * `text`, so it is parsed leniently via runSetting. */
   async headfulOpen(userId: unknown, url: string): Promise<BrowserText> {
     const target = assertHttpUrl(url);
-    await this.run(userId, ["rb", "visible", "on"], false, true);
+    await this.runSetting(userId, ["rb", "visible", "on"]);
     const text = await this.run(userId, ["nav", target], false);
     return this.boundResult(userId, "open", text);
+  }
+
+  /** Setting command (no page text): success means exit 0 + ok:true. */
+  private async runSetting(userId: unknown, args: string[]): Promise<void> {
+    assertSafeArgs(args, true);
+    if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
+    const tracked = this.trackWorkspace(userId);
+    await this.sweepIdle(tracked.id);
+    const result = await this.spawn(this.binary, [...args, "--json"], {
+      env: this.buildEnv(tracked.root, false),
+      timeoutMs: BLADE_ACTION_TIMEOUT_MS,
+      maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
+    });
+    if (result.exitCode === 0) {
+      try {
+        const json = JSON.parse(result.stdout) as { ok?: unknown };
+        if (json.ok === true) return;
+      } catch { /* fall through */ }
+    }
+    throw new Error(`headful setup failed: ${(result.stderr || result.stdout || "no readable output").slice(0, 400)}`);
   }
 
   async read(
