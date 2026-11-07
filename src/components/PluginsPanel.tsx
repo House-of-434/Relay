@@ -7,17 +7,15 @@
 // workspace, so reaching data beyond these services is a request to the team
 // who runs the workspace.
 //
-// Two views, the pair this panel has always had: what you can connect
-// (Available) and what you have connected (Connected). A connected service is
-// one row whose action disconnects it, never a list of accounts to choose
-// between. GitHub and Notion differ only in where their connection state comes
-// from: the BFF reports it (there can be several installations or workspaces),
-// so their rows are derived from that authoritative response rather than from
-// the Google account list.
-import { type ReactNode, useEffect, useState } from "react";
-import { Loader2, Search, X } from "lucide-react";
+// One list of the shipped services: each row's action is the state of that
+// service (a Connect for what is not connected yet, a Disconnect once it is),
+// never a list of accounts to choose between. GitHub and Notion differ only
+// in where their connection state comes from: the BFF reports it (there can
+// be several installations or workspaces), so their rows are derived from
+// that authoritative response rather than from the Google account list.
+import { type ReactNode, useState } from "react";
+import { ChevronLeft, Loader2, X } from "lucide-react";
 
-import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import { useStore } from "@/state/store";
 import { GithubMark, GmailMark, GoogleCalendarMark, NotionMark } from "./ProviderIcons";
@@ -28,6 +26,11 @@ export interface ConnectionService {
   label: string;
   detail: string;
   icon: ReactNode;
+  category: "Coding" | "Productivity";
+  /** What the service does for the bots, in plain language. */
+  about: string;
+  /** Concrete ways a teammate would use the connection. */
+  usage: readonly string[];
 }
 
 /** The shipped catalog. Adding a service later is a line here, not a new
@@ -38,13 +41,19 @@ export const CONNECTION_SERVICES: readonly ConnectionService[] = [
   {
     id: "gmail",
     label: "Gmail",
-    detail: "Relay can read and search your mail, and send email for you. Sending asks for confirmation first.",
+    detail: "Emails, summaries",
+    category: "Productivity",
+    about: "Your mailbox, usable by your bots. Search, read, and summarize mail, and send email on your behalf — sending always asks for your confirmation first.",
+    usage: ["Summarize unread mail before you start the day", "Find a receipt, attachment, or old thread by subject", "Draft and send updates in your voice"],
     icon: <GmailMark size={22} />,
   },
   {
     id: "google-calendar",
     label: "Google Calendar",
-    detail: "Relay can read your primary calendar and manage its events — creating, rescheduling, or cancelling when you ask.",
+    detail: "Events, schedules",
+    category: "Productivity",
+    about: "Your primary calendar, readable and manageable by your bots. See what is coming up, and create, reschedule, or cancel events when you ask.",
+    usage: ["Ask what your day looks like", "Book a follow-up or move a meeting", "Find a free slot across your week"],
     icon: <GoogleCalendarMark size={22} />,
   },
 ];
@@ -56,7 +65,10 @@ export const CONNECTION_SERVICES: readonly ConnectionService[] = [
 export const GITHUB_SERVICE: ConnectionService = {
   id: "github",
   label: "GitHub",
-  detail: "Relay can read the repositories, issues, and releases you grant. Connecting authorizes the installation on GitHub first.",
+  detail: "Repos, issues, releases",
+  category: "Coding",
+  about: "The repositories you grant access to, readable by your bots. They can explore code, open and track issues, and read releases — the install decides which repos are in scope.",
+  usage: ["Ask what changed in a repo this week", "Open an issue from a bug you describe", "Read release notes without opening GitHub"],
   icon: <GithubMark size={22} />,
 };
 
@@ -66,7 +78,10 @@ export const GITHUB_SERVICE: ConnectionService = {
 export const NOTION_SERVICE: ConnectionService = {
   id: "notion",
   label: "Notion",
-  detail: "Relay can search, read, and update pages in the workspaces you connect — including the Dealflow database. Connecting authorizes through Notion first.",
+  detail: "Pages, databases",
+  category: "Productivity",
+  about: "The Notion workspaces you connect, searchable and updatable by your bots. Pages and databases — including the Dealflow database — can be read, searched, and written back.",
+  usage: ["Ask what a page says without opening Notion", "Search across connected workspaces", "Add or update rows in a database"],
   icon: <NotionMark size={22} />,
 };
 
@@ -79,15 +94,11 @@ export interface ConnectionAccount {
   email: string;
 }
 
-export type ConnectionView = "available" | "connected";
-
-/** Which services land in which view. A service is Available until it is
- *  connected and Connected afterwards — one service, one row, whichever side of
- *  the pair it belongs on. Google services count as connected once the teammate
- *  has an authenticated account; GitHub's connection state is not an account
- *  list, so the BFF reports it and the caller passes those ids in
- *  `connectedExternally`. Pure so the split is testable without driving the tab
- *  state. */
+/** Splits the matching services into connected and not-yet-connected so the
+ *  panel can pick each row's action. Google services count as connected once
+ *  the teammate has an authenticated account; GitHub's connection state is
+ *  not an account list, so the BFF reports it and the caller passes those ids
+ *  in `connectedExternally`. Pure so the split is testable on its own. */
 export function connectionViews(
   services: readonly ConnectionService[],
   accounts: readonly ConnectionAccount[],
@@ -160,23 +171,12 @@ export function PluginsPanel({
   notion, onConnectNotion, onDisconnectNotion,
 }: PluginsPanelProps) {
   const { dispatch } = useStore();
-  const [view, setView] = useState<ConnectionView>(() => {
-    if (typeof window === "undefined") return "available";
-    return new URLSearchParams(window.location?.search ?? "").get("connections") === "connected"
-      ? "connected"
-      : "available";
-  });
-  const [query, setQuery] = useState("");
+  const [selectedId, setSelectedId] = useState<ConnectionService["id"] | null>(null);
   const [pending, setPending] = useState<string | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const close = () => dispatch({ type: "togglePlugins", open: false });
 
-  useEffect(() => {
-    const url = new URL(window.location.href);
-    if (!url.searchParams.has("connections")) return;
-    url.searchParams.delete("connections");
-    window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
-  }, []);
+
 
   // GitHub and Notion join the catalog only when the workspace is configured
   // for them; an unconfigured workspace shows no row at all rather than a
@@ -192,7 +192,10 @@ export function PluginsPanel({
     ...(github?.connected ? ["github" as const] : []),
     ...(notion?.connected ? ["notion" as const] : []),
   ]);
-  const { accountsByService, available, connected } = connectionViews(services, accounts, query, externallyConnected);
+  const { accountsByService, available, connected } = connectionViews(services, accounts, "", externallyConnected);
+  const connectedIds = new Set(connected.map((service) => service.id));
+  const visibleIds = new Set([...available, ...connected].map((service) => service.id));
+  const visibleServices = services.filter((service) => visibleIds.has(service.id));
 
   const isConfigured = (service: ConnectionService) =>
     service.id === "github" ? githubConfigured : service.id === "notion" ? notionConfigured : Boolean(configured[service.id]);
@@ -233,17 +236,10 @@ export function PluginsPanel({
     }
   };
 
-  // GitHub and Notion are the rows that name what is connected: their identity
-  // comes from the BFF report, not from the Google account list.
-  const rowNote = (service: ConnectionService) => {
-    if (service.id === "github" && github?.account) {
-      return t("connectors.github.connected", { account: github.account });
-    }
-    if (service.id === "notion" && notion?.workspace) {
-      return t("connectors.notion.connected", { name: notion.workspace });
-    }
-    return undefined;
-  };
+  const selected = selectedId ? services.find((service) => service.id === selectedId) : undefined;
+  const CATEGORY_ORDER = ["Coding", "Productivity"] as const;
+  const categories = [...new Set(visibleServices.map((service) => service.category))]
+    .sort((left, right) => CATEGORY_ORDER.indexOf(left) - CATEGORY_ORDER.indexOf(right));
 
   return (
     <div
@@ -273,111 +269,171 @@ export function PluginsPanel({
           </button>
         </header>
 
-        <div className="flex flex-col gap-3 border-b border-hairline/40 px-6 pb-4 pt-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <div className="flex w-fit rounded-xl bg-raised/70 p-1" role="tablist" aria-label={t("connectors.viewAria")}>
-            {(["available", "connected"] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                role="tab"
-                aria-selected={view === option}
-                onClick={() => setView(option)}
-                className={cn(
-                  "rounded-lg px-4 py-2 text-[13.5px] transition-colors",
-                  view === option ? "bg-card text-ink shadow-sm" : "text-ink-secondary hover:text-ink",
-                )}
-              >
-                {t(`connectors.view.${option}`)}
-              </button>
-            ))}
-          </div>
-          <label className="flex h-11 w-full items-center gap-2.5 rounded-xl bg-raised/70 px-3.5 sm:w-[260px]">
-            <Search size={17} className="shrink-0 text-ink-secondary" />
-            <input
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={t("connectors.searchPlaceholder")}
-              aria-label={t("connectors.searchPlaceholder")}
-              className="min-w-0 flex-1 bg-transparent text-[14px] text-ink placeholder:text-ink-secondary focus:outline-none"
-            />
-          </label>
-        </div>
-
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-2 sm:px-8">
           {(error || actionError) && <p role="alert" className="mb-2 rounded-lg bg-danger/10 px-3 py-2 text-[12px] text-danger">{error ?? actionError}</p>}
           {loading && <div role="status" className="py-8 text-center text-[13px] text-ink-secondary">{t("connectors.empty.loadingTitle")}</div>}
-          {!loading && view === "available"
-            ? available.length === 0
-              ? <EmptyState />
-              : available.map((service) => (
-                <ServiceRow key={service.id} service={service} note={rowNote(service)} action={
-                  <button
-                    type="button"
-                    disabled={!isConfigured(service) || pending !== null}
-                    title={isConfigured(service) ? undefined : t("connectors.notConfiguredYet")}
-                    aria-label={t("connectors.connectAria", { service: service.label })}
-                    onClick={() => void connect(service)}
-                    className="flex min-w-[88px] shrink-0 items-center justify-center rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
-                  >
-                    {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : isConfigured(service) ? t("connectors.action.connect") : t("connectors.comingSoon")}
-                  </button>
-                } />
-              ))
-            : null}
-          {!loading && view === "connected" && (connected.length === 0
-            ? <EmptyState connected />
-            : connected.map((service) => {
-                const accounts = accountsByService.get(service.id) ?? [];
-                return (
-                  <ServiceRow key={service.id} service={service} note={rowNote(service)} action={
-                    <button
-                      type="button"
-                      disabled={pending !== null}
-                      onClick={() => void disconnect(service, accounts)}
-                      aria-label={t("connectors.disconnectAria", { service: service.label })}
-                      className="flex min-w-[112px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
-                    >
-                      {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : t("connectors.disconnect")}
-                    </button>
-                  } />
-                );
-              }))}
+          {!loading && selected ? (
+            <ServiceDetail
+              service={selected}
+              connected={connectedIds.has(selected.id)}
+              configured={isConfigured(selected)}
+              pending={pending}
+              onBack={() => setSelectedId(null)}
+              onConnect={() => void connect(selected)}
+              onDisconnect={() => void disconnect(selected, accountsByService.get(selected.id) ?? [])}
+            />
+          ) : !loading && (visibleServices.length === 0
+            ? <EmptyState />
+            : categories.map((category) => (
+              <section key={category} aria-label={category}>
+                <h3 className="mt-4 flex items-baseline gap-2 text-[13px] font-semibold text-ink">
+                  {category}
+                  <span className="text-[12px] font-normal text-ink-secondary">
+                    {visibleServices.filter((service) => service.category === category).length}
+                  </span>
+                </h3>
+                <div>
+                  {visibleServices
+                    .filter((service) => service.category === category)
+                    .map((service) => (
+                      <ServiceRow
+                        key={service.id}
+                        service={service}
+                        onOpen={() => setSelectedId(service.id)}
+                        action={
+                          connectedIds.has(service.id)
+                            ? (
+                              <button
+                                type="button"
+                                disabled={pending !== null}
+                                onClick={() => void disconnect(service, accountsByService.get(service.id) ?? [])}
+                                aria-label={t("connectors.disconnectAria", { service: service.label })}
+                                className="flex min-w-[112px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
+                              >
+                                {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : t("connectors.disconnect")}
+                              </button>
+                            )
+                            : (
+                              <button
+                                type="button"
+                                disabled={!isConfigured(service) || pending !== null}
+                                title={isConfigured(service) ? undefined : t("connectors.notConfiguredYet")}
+                                aria-label={t("connectors.connectAria", { service: service.label })}
+                                onClick={() => void connect(service)}
+                                className="flex min-w-[88px] shrink-0 items-center justify-center gap-1.5 rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
+                              >
+                                {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : null}
+                                {isConfigured(service) ? t("connectors.action.connect") : t("connectors.comingSoon")}
+                              </button>
+                            )
+                        }
+                      />
+                    ))}
+                </div>
+              </section>
+            )))}
         </div>
       </div>
     </div>
   );
 }
 
-function ServiceRow({ service, action, note }: {
+function ServiceRow({ service, action, onOpen }: {
   service: ConnectionService;
   action: ReactNode;
-  note?: string;
+  onOpen: () => void;
 }) {
   return (
-    <section className="border-b border-hairline/35 py-4 last:border-b-0">
-      <div className="flex min-h-[56px] items-center gap-3 px-1">
-        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-raised text-ink-secondary">
-          {service.icon}
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-[14px] font-medium text-ink">{service.label}</div>
-          <div className="mt-0.5 text-[12.5px] leading-relaxed text-ink-secondary">{service.detail}</div>
-          {note && <div className="mt-0.5 text-[12px] text-ink-secondary">{note}</div>}
-        </div>
+    <section>
+      <div className="flex min-h-[56px] items-center gap-3 px-1 py-3">
+        <button
+          type="button"
+          onClick={onOpen}
+          aria-label={`${service.label}: ${service.detail}`}
+          className="flex min-w-0 flex-1 items-center gap-3 rounded-xl text-left outline-none focus-visible:ring-1 focus-visible:ring-accent/60"
+        >
+          <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-raised text-ink-secondary">
+            {service.icon}
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[14px] font-medium text-ink">{service.label}</span>
+            <span className="mt-0.5 block truncate text-[12.5px] leading-relaxed text-ink-secondary">{service.detail}</span>
+          </span>
+        </button>
         {action}
       </div>
     </section>
   );
 }
 
-function EmptyState({ connected = false }: { connected?: boolean }) {
+function ServiceDetail({ service, connected, configured, pending, onBack, onConnect, onDisconnect }: {
+  service: ConnectionService;
+  connected: boolean;
+  configured: boolean;
+  pending: string | null;
+  onBack: () => void;
+  onConnect: () => void;
+  onDisconnect: () => void;
+}) {
+  return (
+    <div className="py-2">
+      <button
+        type="button"
+        onClick={onBack}
+        className="mb-3 flex items-center gap-1 rounded-lg px-1.5 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+      >
+        <ChevronLeft size={15} /> Back
+      </button>
+      <div className="flex items-center gap-3">
+        <span className="flex size-11 shrink-0 items-center justify-center rounded-xl bg-raised text-ink-secondary">
+          {service.icon}
+        </span>
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[16px] font-semibold text-ink">{service.label}</div>
+          <div className="mt-0.5 truncate text-[12.5px] text-ink-secondary">{service.detail}</div>
+        </div>
+        {connected ? (
+          <button
+            type="button"
+            disabled={pending !== null}
+            onClick={onDisconnect}
+            aria-label={t("connectors.disconnectAria", { service: service.label })}
+            className="flex min-w-[112px] shrink-0 items-center justify-center rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
+          >
+            {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : t("connectors.disconnect")}
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled={!configured || pending !== null}
+            title={configured ? undefined : t("connectors.notConfiguredYet")}
+            aria-label={t("connectors.connectAria", { service: service.label })}
+            onClick={onConnect}
+            className="flex min-w-[88px] shrink-0 items-center justify-center rounded-full bg-raised px-3 py-2 text-[12.5px] text-ink transition-colors hover:bg-raised-hover disabled:opacity-40"
+          >
+            {pending === service.id ? <Loader2 size={14} className="animate-spin" /> : null}
+            {configured ? t("connectors.action.connect") : t("connectors.comingSoon")}
+          </button>
+        )}
+      </div>
+      <div className="mt-4">
+        <p className="text-[13px] leading-relaxed text-ink">{service.about}</p>
+        <ul className="mt-2 list-disc space-y-1 pl-5 text-[13px] leading-relaxed text-ink">
+          {service.usage.map((item) => <li key={item}>{item}</li>)}
+        </ul>
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
   return (
     <div className="flex min-h-48 flex-col items-center justify-center text-center">
       <div className="text-[14px] font-medium text-ink">
-        {connected ? t("connectors.empty.noneTitle") : t("connectors.noAppsFound")}
+        {t("connectors.empty.noneTitle")}
       </div>
       <div className="mt-1 text-[12.5px] text-ink-secondary">
-        {connected ? t("connectors.empty.noneBody") : t("connectors.tryDifferentSearch")}
+        {t("connectors.empty.noneBody")}
       </div>
     </div>
   );

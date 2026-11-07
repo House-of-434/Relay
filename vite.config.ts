@@ -59,13 +59,13 @@ export default defineConfig(({ mode }) => {
     // talks to the local BFF, which owns the harness session token
     proxy: {
       "/auth": {
-        target: `http://127.0.0.1:${bffPort}`,
+        target: `http://localhost:${bffPort}`,
       },
       "/api": {
-        target: `http://127.0.0.1:${bffPort}`,
+        target: `http://localhost:${bffPort}`,
       },
       "/.well-known/relay/environment": {
-        target: `http://127.0.0.1:${bffPort}`,
+        target: `http://localhost:${bffPort}`,
       },
       "/_viewer": {
         target: `http://127.0.0.1:${toolPort}`,
