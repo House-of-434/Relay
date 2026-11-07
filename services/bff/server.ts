@@ -1381,6 +1381,16 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 
     if (url.pathname === "/auth/login" && method === "GET") {
       res.setHeader("cache-control", "no-store");
+      // The PKCE state cookie is host-only and the provider always returns
+      // to the localhost callback, so a flow started via 127.0.0.1 loses its
+      // transaction. Normalize the browser to the localhost UI origin first.
+      const host = String(req.headers.host ?? "");
+      if (host === `127.0.0.1:${config.uiPort}` && publicUrl.hostname === "localhost") {
+        res.statusCode = 302;
+        res.setHeader("location", `http://localhost:${config.uiPort}/auth/login`);
+        res.end();
+        return;
+      }
       const { state, codeVerifier } = transactions.create();
       setOAuthStateCookie(res, state, oauthStateTtlMs, publicUrl);
       const challenge = createHash("sha256").update(codeVerifier).digest("base64url");

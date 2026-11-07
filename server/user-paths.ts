@@ -28,3 +28,10 @@ export function userWorkspacesDir(userId: unknown): string {
 export function userThreadsDir(userId: unknown): string {
   return join(userRoot(userId), "threads");
 }
+
+/** User-owned skills: reusable knowledge shared by every bot of this user.
+ * Memory stays bot-owned under userWorkspacesDir; skills are instructions
+ * the user wants in context whenever relevant, so they live one level up. */
+export function userSkillsDir(userId: unknown): string {
+  return join(userRoot(userId), "skills");
+}

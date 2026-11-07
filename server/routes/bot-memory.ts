@@ -37,7 +37,7 @@ import { PASS, type RouteHandler } from "./table.ts";
 
 export interface BotMemoryRouteDeps {
   /** The bot record for an id, or nothing when there is none. */
-  bot(id: string): { id: string; memoryUpkeep?: boolean } | null | undefined;
+  bot(id: string): { id: string; memoryUpkeep?: boolean; ownerUserId?: string } | null | undefined;
   /** The task a thread belongs to; its title names the chat in a journal row. */
   taskByThread(botId: string, threadId: string): { title?: string } | undefined;
   upkeep: Pick<MemoryUpkeep, "status" | "tidy">;
@@ -86,6 +86,17 @@ export function createBotMemoryRoutes(deps: BotMemoryRouteDeps): RouteHandler {
     /** scratch for route matches, shared by every `path.match` below */
     let m: RegExpMatchArray | null = null;
     const write = <T>(botId: string, change: () => T): T => deps.ownersWrite ? deps.ownersWrite(auth, botId, change) : change();
+    /** Owner-or-admin: loopback holds both scopes anyway; a signed-in person
+     * manages the memory of bots they own (bot.ownerUserId), an admin-scope
+     * session manages anyone's. Anyone else gets 403, not a filtered read. */
+    const canManage = (botId: string): boolean => {
+      if (auth.scopes.includes("admin")) return true;
+      if (auth.kind !== "session") return false;
+      const owner = deps.bot(botId)?.ownerUserId;
+      return Boolean(owner) && owner === auth.session.userId;
+    };
+    m = path.match(/^\/api\/bots\/([\w-]+)\/memory/);
+    if (m && !canManage(m[1]!)) return json(res, 403, { error: "session lacks the admin scope" });
     m = path.match(/^\/api\/bots\/([\w-]+)\/memory$/);
     if (m && method === "GET") {
       if (!deps.bot(m[1])) return json(res, 404, { error: "no such bot" });
