@@ -54,6 +54,7 @@ export const BLADE_ALLOWED_ENV = [
   "BLADE_PROXY",
   "PATH",
   "CHROME_PATH",
+  "DISPLAY",
 ] as const;
 
 /** Artifacts directory: nested under the user's workspace so page extracts

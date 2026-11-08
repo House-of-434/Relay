@@ -300,6 +300,11 @@ export class BladeBrowserPool {
     if (this.proxy) env.BLADE_PROXY = this.proxy;
     if (this.timezone) env.BLADE_TZ = this.timezone;
     if (this.locale) env.BLADE_LOCALE = this.locale;
+    // Headful mode needs the X display inside the daemon environment too
+    // (headless lanes simply ignore it). Without DISPLAY the daemon's
+    // headful Chrome has no window and viewer clicks hit an empty desktop.
+    const display = process.env.DISPLAY;
+    if (display) env.DISPLAY = display;
     assertNoForbiddenEnv(env);
     return env;
   }
