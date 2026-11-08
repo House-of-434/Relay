@@ -449,7 +449,10 @@ export class BladeBrowserPool {
 
   private async unwrapEval(userId: unknown, js: string): Promise<string> {
     const raw = await this.run(userId, ["act", "eval", js], false);
-    const trimmed = raw.trim();
+    let trimmed = raw.trim();
+    // Bladebro formats evals as 'result: <json>' lines.
+    const m = /result:\s*("([^"\\]|\\.)*"|\S+)/s.exec(trimmed);
+    if (m) trimmed = m[1]!;
     try {
       const parsed: unknown = JSON.parse(trimmed);
       if (typeof parsed === "string") return parsed;
