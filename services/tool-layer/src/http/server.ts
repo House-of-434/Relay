@@ -416,6 +416,7 @@ async function handleBrowserTakeover(
     }
     try {
       sessions.handBack(sessionId, generation);
+      console.log(`[login] handback session=${sessionId} bot=${actor.botId} thread=${actor.threadId}`);
     } catch (error) {
       sendJson(response, 409, { error: error instanceof Error ? error.message : "this sign-in is no longer active" });
       return;

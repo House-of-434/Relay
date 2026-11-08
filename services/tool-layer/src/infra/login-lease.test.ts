@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -49,6 +49,28 @@ test("a lease left by a dead process is reclaimed", () => {
     const path = interactiveLeasePath(root, USER);
     mkdirSync(join(root, USER), { recursive: true });
     writeFileSync(path, JSON.stringify({ token: "dead", startedAt: Date.now(), pid: 999_999 }), { mode: 0o600 });
+    const lease = acquireInteractiveLease({ dataRoot: root, userId: USER, maxLifetimeMs: MAX });
+    assert.ok(lease);
+    lease.release();
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("a lease whose PID was reused by a new process is reclaimed", () => {
+  if (!existsSync("/proc/self/stat")) return; // Linux-only signal
+  const root = mkdtempSync(join(tmpdir(), "relay-lease-"));
+  try {
+    const path = interactiveLeasePath(root, USER);
+    mkdirSync(join(root, USER), { recursive: true });
+    // Same PID as this process, but a different kernel start time: the
+    // container restarted and the PID was reused.
+    writeFileSync(path, JSON.stringify({
+      token: "reused",
+      startedAt: Date.now(),
+      pid: process.pid,
+      startTime: 1,
+    }), { mode: 0o600 });
     const lease = acquireInteractiveLease({ dataRoot: root, userId: USER, maxLifetimeMs: MAX });
     assert.ok(lease);
     lease.release();

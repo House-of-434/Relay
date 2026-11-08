@@ -125,6 +125,13 @@ export class LoginSessionManager {
     return this.byUser.get(canonicalUserId(userId));
   }
 
+  /** Any live interactive session for this user, regardless of thread. Used
+   * to keep unrelated tasks from reusing (and restarting) the live daemon. */
+  sessionForUser(userId: unknown): LoginSession | null {
+    const id = this.byUser.get(canonicalUserId(userId));
+    return id ? this.sessions.get(id) ?? null : null;
+  }
+
   /** The interactive session this exact actor may drive, if the agent holds
    * control. Binding is server-derived: a different bot or thread never
    * attaches to someone else's live page. */
@@ -145,7 +152,10 @@ export class LoginSessionManager {
     if (existingId) {
       const existing = this.sessions.get(existingId)!;
       if (existing.botId !== actor.botId || existing.threadId !== actor.threadId) {
-        throw new Error("interactive browser is busy on another task; wait for it to finish, then retry");
+        console.warn(
+          `[login] busy: owner=${existing.botId}/${existing.threadId} request=${actor.botId}/${actor.threadId}`,
+        );
+        throw new Error("interactive browser is busy on another task; wait for it to finish or dismiss it in that chat, then retry");
       }
       if (existing.state !== "user_takeover") {
         existing.state = "user_takeover";
@@ -160,7 +170,8 @@ export class LoginSessionManager {
     if (active >= this.maxConcurrent) throw new Error("login browser is at capacity; try again shortly");
     const lease = this.leaseFor?.(uid);
     if (this.leaseFor && !lease) {
-      throw new Error("interactive browser is busy on another task; wait for it to finish, then retry");
+      console.warn(`[login] lease refused userId=${uid}`);
+      throw new Error("interactive browser is busy on another task; wait for it to finish or dismiss it in that chat, then retry");
     }
     const now = this.now();
     const session: LoginSession = {

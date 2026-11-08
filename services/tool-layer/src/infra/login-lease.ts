@@ -6,7 +6,7 @@
  * still matches. A lease older than the hard cap is stale and reclaimed.
  */
 import { randomBytes } from "node:crypto";
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 export interface InteractiveLease {
@@ -17,6 +17,9 @@ interface LeaseRecord {
   token: string;
   startedAt: number;
   pid: number;
+  /** Kernel start time (clock ticks) to tell a live process from a reused
+   * PID after a container restart. Linux only; absent elsewhere. */
+  startTime?: number;
 }
 
 /** Live holder check. A lease left by a dead process is reclaimable
@@ -29,6 +32,23 @@ function pidAlive(pid: number): boolean {
     return (error as { code?: unknown }).code === "EPERM";
   }
 }
+
+/** Field 22 of /proc/<pid>/stat. Distinguishes a live process from a PID
+ * reused by a new container. Undefined off Linux. */
+function processStartTime(pid: number): number | undefined {
+  try {
+    const stat = readFileSync(`/proc/${pid}/stat`, "utf8");
+    const close = stat.lastIndexOf(")");
+    if (close < 0) return undefined;
+    const fields = stat.slice(close + 2).trim().split(/\s+/);
+    const start = Number(fields[19]);
+    return Number.isFinite(start) ? start : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+const HAS_PROC = existsSync("/proc/self/stat");
 
 export function interactiveLeasePath(dataRoot: string, userId: string): string {
   return join(dataRoot, userId, ".interactive-session.lock");
@@ -44,7 +64,13 @@ export function acquireInteractiveLease(options: {
   const path = interactiveLeasePath(options.dataRoot, options.userId);
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   const token = randomBytes(16).toString("hex");
-  const record: LeaseRecord = { token, startedAt: now(), pid: process.pid };
+  const startTime = processStartTime(process.pid);
+  const record: LeaseRecord = {
+    token,
+    startedAt: now(),
+    pid: process.pid,
+    ...(startTime !== undefined ? { startTime } : {}),
+  };
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
       writeFileSync(path, JSON.stringify(record), { flag: "wx", mode: 0o600 });
@@ -64,7 +90,15 @@ export function acquireInteractiveLease(options: {
       let stale = true;
       try {
         const current = JSON.parse(readFileSync(path, "utf8")) as Partial<LeaseRecord>;
-        const ownerAlive = typeof current.pid === "number" && pidAlive(current.pid);
+        const pid = typeof current.pid === "number" ? current.pid : undefined;
+        // On Linux, a missing start time cannot prove the recorded PID is the
+        // same process (containers reuse PID 1/7), so the lease is reclaimed.
+        const sameProcess = !HAS_PROC
+          ? true
+          : typeof current.startTime === "number"
+            && pid !== undefined
+            && processStartTime(pid) === current.startTime;
+        const ownerAlive = pid !== undefined && pidAlive(pid) && sameProcess;
         stale = !ownerAlive
           || typeof current.startedAt !== "number"
           || now() - current.startedAt >= options.maxLifetimeMs;

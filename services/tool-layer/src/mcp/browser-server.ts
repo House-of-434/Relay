@@ -45,7 +45,19 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
   const actor = { userId, botId, threadId };
 
   const guardTakeover = (): void => {
-    if (sessions?.isUserTakeover(userId)) throw new Error("browser is in human takeover; agent input is paused");
+    if (sessions?.isUserTakeover(userId)) throw new Error("the person has control of the interactive browser; wait for them to hand it back");
+  };
+  /** The live daemon is one per profile. An unrelated task must not reuse it:
+   * doing so would restart the daemon and lose the person's page. */
+  const guardForeignSession = (): void => {
+    if (!sessions) return;
+    if (sessions.agentSession(actor)) return;
+    const other = sessions.sessionForUser(userId);
+    if (!other) return;
+    console.warn(
+      `[login] foreign browser call: session=${other.botId}/${other.threadId} actor=${botId}/${threadId}`,
+    );
+    throw new Error("the interactive browser is in use by another task; wait for it to finish or dismiss it in that chat");
   };
   /** The live display when this exact bot/thread owns the handed-back
    * session. Unrelated tasks never attach to it. */
@@ -68,6 +80,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       try {
         authorizeBrowser(agent, "open");
         guardTakeover();
+        guardForeignSession();
         const result = await pool.open(userId, url, false, liveDisplay());
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
@@ -94,6 +107,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       try {
         authorizeBrowser(agent, "read");
         guardTakeover();
+        guardForeignSession();
         const result = await pool.read(userId, mode as ReadMode, query, artifact, offset, limit, liveDisplay());
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
@@ -117,6 +131,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       try {
         authorizeBrowser(agent, "extract");
         guardTakeover();
+        guardForeignSession();
         const result = await pool.extract(userId, url ?? null, (kind ?? "auto") as ExtractKind, liveDisplay());
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
@@ -145,6 +160,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       try {
         authorizeBrowser(agent, "act");
         guardTakeover();
+        guardForeignSession();
         const display = liveDisplay();
         if (!display) throw new Error("interactive browser is not active for this task; call browser_request_human first");
         const input: BrowserActInput = { action, target, text, option, key, dx, dy };
