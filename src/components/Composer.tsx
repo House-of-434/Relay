@@ -857,7 +857,7 @@ export function Composer({
           </div>
         )}
         {replyTo && (
-          <div className="mb-2 px-1">
+          <div className="mb-2">
             <ReplyQuote
               message={replyTo}
               fallbackName={bot?.name}

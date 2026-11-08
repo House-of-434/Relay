@@ -4,7 +4,7 @@ import { cn } from "@/lib/cn";
 /** Class shared by every control that lives inside the tray: the tray decides
  * when the row is visible, so the buttons themselves never fade. */
 export const messageActionClass =
-  "rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-ink-secondary";
+  "rounded-md p-1.5 text-ink-secondary hover:text-ink disabled:cursor-not-allowed disabled:hover:text-ink-secondary";
 
 /** The row of message controls beside a bubble. One quiet row that fades in
  * on bubble hover or keyboard focus and stays visible on touch, where there

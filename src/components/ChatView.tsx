@@ -1,13 +1,11 @@
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  AlertTriangle,
   ArrowDown,
   Check,
   ChevronLeft,
   ChevronRight,
   Copy,
   Crown,
-  MessageSquareReply,
   Pencil,
   Pin,
   PinOff,
@@ -19,14 +17,13 @@ import {
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
-import { useCaptionChrome, useDesktopCapabilities } from "@/components/DesktopCapabilities";
+import { useCaptionChrome } from "@/components/DesktopCapabilities";
 import { contextChip, contextDetail, contextShare, lastTurnDetail, usageDetail } from "@/lib/usage";
 import {
   api,
   currentTaskBot,
   useStore,
   useStreaming,
-  formatTime,
   messageVersions,
   openNotificationTarget,
   visibleMessages,
@@ -34,13 +31,6 @@ import {
   type InstanceInfo,
   type Message,
 } from "@/state/store";
-import { EngineSetup } from "./EngineSetup";
-import { CHATGPT_USAGE_URL } from "./ChatGptPlanStatus";
-import { openExternalLink } from "@/lib/app-links";
-import { ClaudeUpdatePrompt } from "./ClaudeUpdatePrompt";
-import { MacCuaRecoveryActions } from "./MacCuaRecoveryActions";
-import { macCuaPermissionMessage, missingMacCuaPermissions } from "@/lib/mac-cua-permissions";
-import { isProviderSafetyBlock, PROVIDER_SAFETY_GUIDANCE, PROVIDER_SAFETY_HELP_URL } from "../../shared/provider-safety";
 import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
@@ -61,6 +51,7 @@ import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
 import { Composer } from "./Composer";
 import { ReplyQuote } from "./ReplyQuote";
+import { ReplyIcon } from "./ReplyIcon";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
@@ -93,31 +84,17 @@ import { useCanWriteIn } from "@/lib/cloud-guest";
 import { latestReply, type TranscriptSnapshot } from "@/lib/transcript-announcer";
 import { pendingApprovals } from "./PendingApproval";
 import { TranscriptAnnouncer } from "./TranscriptAnnouncer";
+import { DaySeparator } from "./DaySeparator";
+import { ErrorRow, claudeUpdateTarget } from "./ErrorRow";
+import { StreamingBubble } from "./StreamingBubble";
+
+export { ErrorRow, claudeUpdateTarget } from "./ErrorRow";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
 const noop = () => {};
-
-/** "Today" / "Yesterday" / "Mon, Aug 11" — real dates, not a hardcoded label. */
-function dayLabel(at: number): string {
-  const d = new Date(at);
-  const now = new Date();
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
-  if (diffDays === 0) return t("chat.day.today");
-  if (diffDays === 1) return t("chat.day.yesterday");
-  return d.toLocaleDateString(activeLocale(), { weekday: "short", month: "short", day: "numeric" });
-}
-
-function DaySeparator({ at }: { at: number }) {
-  return (
-    <div className="py-3 text-center text-[13px] text-ink-secondary">
-      {dayLabel(at)} {formatTime(at)}
-    </div>
-  );
-}
 
 /** Hover/focus-revealed copy control shared by user + bot bubbles. */
 function CopyButton({ text, className }: { text: string; className?: string }) {
@@ -136,80 +113,6 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
       {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
     </button>
   );
-}
-
-/** A failed turn: a real error block with a retry, not a truncated pill.
- *
- * A `setup` error — CLI missing, or installed but not signed in — shows what
- * to do instead of a Retry, because retrying hits the same wall every time.
- * Once the engine reports itself fixed the card flips back to Retry, which
- * (with the on-focus re-probe) happens by itself when the user returns from
- * the terminal. */
-export function ErrorRow({
-  message,
-  onRetry,
-  setupInstance,
-  claudeUpdateInstance,
-}: {
-  message: string;
-  onRetry?: () => void;
-  setupInstance?: InstanceInfo;
-  /** The Claude engine to update when this turn failed because its Claude
-   * Code is too old for the model. */
-  claudeUpdateInstance?: InstanceInfo;
-}) {
-  const { capabilities, ready } = useDesktopCapabilities();
-  const failedPermissions = missingMacCuaPermissions(message);
-  const currentPermissions = missingMacCuaPermissions(capabilities.localComputer.message);
-  const macCuaReason = ready && capabilities.host.platform === "darwin" &&
-    capabilities.localComputer.available === false && capabilities.localComputer.reasonCode !== "remote-server" &&
-    message.startsWith("CUA Driver is not ready for this computer — ") &&
-    failedPermissions.length > 0 && failedPermissions.join(",") === currentPermissions.join(",")
-    ? macCuaPermissionMessage(currentPermissions)
-    : null;
-  return (
-    <div className="flex justify-start">
-      <div className="w-fit max-w-[min(42rem,78%)] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
-        <div className="flex items-start gap-2">
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{macCuaReason ?? message}</span>
-        </div>
-        {macCuaReason && <details className="mt-2 text-[12px] text-ink-secondary"><summary className="cursor-pointer">{t("computer.mac.permission.driverDetail")}</summary><p className="mt-1 break-words">{message}</p></details>}
-        {macCuaReason &&
-          <MacCuaRecoveryActions reason={message} />}
-        {message.includes("subscription_sharing_usage_limit_exceeded") ? (
-          <a href={CHATGPT_USAGE_URL} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex rounded-lg bg-ink px-3 py-1.5 text-[12.5px] font-medium text-app" onClick={(event) => {
-            if (window.ogb?.openExternal) { event.preventDefault(); void openExternalLink(CHATGPT_USAGE_URL); }
-          }}>{t("engineSetup.chatgpt.manageUsage")}</a>
-        ) : claudeUpdateInstance ? (
-          <ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} />
-        ) : isProviderSafetyBlock(message) ? (
-          <p className="mt-2 text-[12.5px] leading-relaxed text-ink-secondary">
-            {PROVIDER_SAFETY_GUIDANCE}{" "}
-            <a href={PROVIDER_SAFETY_HELP_URL} target="_blank" rel="noreferrer" className="underline">About provider safety checks</a>
-          </p>
-        ) : setupInstance &&
-        !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false) ? (
-          <EngineSetup instance={setupInstance} className="mt-2 text-ink-secondary" />
-        ) : (
-          onRetry && (
-            <button
-              onClick={onRetry}
-              className="mt-1.5 flex items-center gap-1.5 rounded-full border border-danger/30 px-2.5 py-1 text-[12.5px] hover:bg-danger/15"
-            >
-              <RefreshCw size={12} /> {t("chat.retry")}
-            </button>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Only a local, editable Claude Code engine can be updated from chat; a
- * company-managed one is the organisation's to update. */
-export function claudeUpdateTarget(engine: InstanceInfo | undefined): InstanceInfo | undefined {
-  return engine?.driverKind === "claudeAgent" && !engine.readOnly ? engine : undefined;
 }
 
 /** One bad markdown node must not white-screen the app — the transcript
@@ -295,11 +198,9 @@ function Bubble({
   emerging = false,
   eagerAttachments = false,
   editing,
-  isLastBotText,
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
-  onRegenerate,
   replyTarget,
   onReply,
   hideAttachments = false,
@@ -310,11 +211,9 @@ function Bubble({
   emerging?: boolean;
   eagerAttachments?: boolean;
   editing: boolean;
-  isLastBotText: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
-  onRegenerate?: () => void;
   replyTarget?: Message;
   onReply: () => void;
   /** Attachments the transcript hoisted onto this (terminal) message. */
@@ -346,7 +245,7 @@ function Bubble({
   // A message that is only attachments is just the files: no bubble around them.
   // Turn-hoisted attachments count for the terminal message beside them.
   const hoisted = hideAttachments ? undefined : extraAttachments;
-  const attachmentsOnly = !webhookView && !replyTarget && !visibleText.trim() &&
+  const attachmentsOnly = !webhookView && !visibleText.trim() &&
     (user ? hasAttachments : generatedPaths.length + linkedFiles.length + (hoisted?.images.length ?? 0) + (hoisted?.files.length ?? 0) > 0);
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
@@ -393,7 +292,7 @@ function Bubble({
               title={t("chat.reply")}
               className={messageActionClass}
             >
-              <MessageSquareReply size={14} />
+              <ReplyIcon size={14} />
             </button>
             <button
               onClick={() =>
@@ -412,9 +311,19 @@ function Bubble({
             </button>
           </MessageActions>
         )}
-        <div
-          className={cn(
-            "w-fit max-w-[min(42rem,78%)] rounded-2xl text-[15px] leading-relaxed",
+        <div className="flex w-fit max-w-[min(42rem,78%)] flex-col">
+          {replyTarget && (
+            <ReplyQuote
+              message={replyTarget}
+              fallbackName={bot.name}
+              onJump={() =>
+                dispatch({ type: "focusMessage", threadId: bot.threadId, messageId: replyTarget.id })
+              }
+            />
+          )}
+          <div
+            className={cn(
+              "w-full rounded-2xl text-[15px] leading-relaxed",
             emerging && "turn-answer",
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
@@ -425,18 +334,6 @@ function Bubble({
                   : "bg-card px-4 py-2.5 text-ink",
           )}
         >
-          {replyTarget && (
-            <div className="mb-2">
-              <ReplyQuote
-                message={replyTarget}
-                fallbackName={bot.name}
-                compact
-                onJump={() =>
-                  dispatch({ type: "focusMessage", threadId: bot.threadId, messageId: replyTarget.id })
-                }
-              />
-            </div>
-          )}
           {user && webhookView ? (
             <div className="min-w-[300px] max-w-[520px]">
               <div className="flex items-center gap-2 border-b border-accent/15 bg-accent/[0.055] px-4 py-2.5 text-[11.5px] font-medium text-accent">
@@ -483,39 +380,11 @@ function Bubble({
               ) : null}
             </MessageBoundary>
           )}
+          </div>
         </div>
-        {!hideAttachments && (
-          <>
-            {user && !webhookView && attachments && hasAttachments && (
-              <div className="mt-1.5 flex w-full justify-end">
-                <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} />
-              </div>
-            )}
-            {!user && (
-              <div className="mt-1.5 flex w-full justify-start">
-                <MessageAttachments
-                  images={[...generatedPaths, ...(extraAttachments?.images ?? [])]}
-                  files={[...linkedFiles, ...(extraAttachments?.files ?? [])]}
-                  message={{ threadId: bot.threadId, messageId: message.id }}
-                  eager={eagerAttachments}
-                />
-              </div>
-            )}
-          </>
-        )}
         {!user && (
           <MessageActions side="bot">
             {text && <CopyButton text={text} />}
-            {isLastBotText && !bot.busy && onRegenerate && (
-              <button
-                onClick={onRegenerate}
-                aria-label={t("chat.regenerate")}
-                title={t("chat.regenerate")}
-                className={messageActionClass}
-              >
-                <RefreshCw size={14} />
-              </button>
-            )}
             <button
               type="button"
               onClick={onReply}
@@ -523,7 +392,7 @@ function Bubble({
               title={t("chat.reply")}
               className={messageActionClass}
             >
-              <MessageSquareReply size={14} />
+              <ReplyIcon size={14} />
             </button>
             <button
               onClick={() =>
@@ -543,6 +412,25 @@ function Bubble({
           </MessageActions>
         )}
       </div>
+      {!hideAttachments && (
+        <>
+          {user && !webhookView && attachments && hasAttachments && (
+            <div className="mt-1.5 flex w-full justify-end">
+              <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} />
+            </div>
+          )}
+          {!user && (
+            <div className="mt-1.5 flex w-full justify-start">
+              <MessageAttachments
+                images={[...generatedPaths, ...(extraAttachments?.images ?? [])]}
+                files={[...linkedFiles, ...(extraAttachments?.files ?? [])]}
+                message={{ threadId: bot.threadId, messageId: message.id }}
+                eager={eagerAttachments}
+              />
+            </div>
+          )}
+        </>
+      )}
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
           <button
@@ -639,7 +527,6 @@ const MessagesList = memo(function MessagesList({
   locale,
   transcript,
   editingId,
-  lastBotTextId,
   emergingId,
   canRetryLast,
   engine,
@@ -657,7 +544,6 @@ const MessagesList = memo(function MessagesList({
   /** Active-branch messages, including ones outside the mounted window. */
   transcript: Message[];
   editingId: string | null;
-  lastBotTextId: string | undefined;
   emergingId?: string | null;
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
@@ -705,7 +591,14 @@ const MessagesList = memo(function MessagesList({
   const focusedId = focus && !focus.consumed && focus.threadId === bot.threadId ? focus.messageId : null;
   return (
     <>
-      {messages.length === 0 && !bot.busy && (
+      {messages.length === 0 && bot.awaitingThreadSnapshot && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24" aria-busy="true" data-testid="transcript-loading">
+          <div className="size-16 animate-pulse rounded-full bg-raised" />
+          <div className="h-3 w-32 animate-pulse rounded-full bg-raised" />
+          <div className="h-3 w-52 animate-pulse rounded-full bg-raised" />
+        </div>
+      )}
+      {messages.length === 0 && !bot.busy && !bot.awaitingThreadSnapshot && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
           <BotAvatar bot={bot} state="idle" size={64} motion="none" motionKey={0} />
           <RenameTitle
@@ -747,7 +640,6 @@ const MessagesList = memo(function MessagesList({
                       message={message}
                       hideAttachments
                       editing={false}
-                      isLastBotText={false}
                       onStartEdit={noop}
                       onCancelEdit={noop}
                       onSubmitEdit={noop}
@@ -862,12 +754,10 @@ const MessagesList = memo(function MessagesList({
                   emerging={m.id === emergingId}
                   eagerAttachments={m.id === newestMessageId || m.id === newestUserMessageId}
                   editing={editingId === m.id}
-                  isLastBotText={m.id === lastBotTextId}
                   extraAttachments={m.turnTerminal && m.turnId ? turnAttachments.get(m.turnId) : undefined}
                   onStartEdit={() => onStartEdit(m.id)}
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
-                  onRegenerate={onRegenerate}
                   replyTarget={m.replyToId ? bot.messages.find((candidate) => candidate.id === m.replyToId) : undefined}
                   onReply={() => onReply(m)}
                 />
@@ -1008,11 +898,6 @@ export function ChatView({ bot: profile }: {
     [messages, transcriptWindow.start, transcriptWindow.end],
   );
 
-  const lastBotTextId = useMemo(
-    () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
-    [messages],
-  );
-
   // one message at a time may be in edit mode
   const [editingId, setEditingId] = useState<string | null>(null);
   useEffect(() => setEditingId(null), [bot.id, bot.threadId]);
@@ -1047,8 +932,18 @@ export function ChatView({ bot: profile }: {
       showWorkingDots(bot.busy, lastMessage),
   );
   const wasWaiting = useRef(false);
+  // Did this turn show live tokens? If so the settled bubble is already on
+  // screen and must not replay the "grow up from the mascot" entrance.
+  const streamedRef = useRef(false);
+  const [streamedSettle, setStreamedSettle] = useState(false);
   const [popping, setPopping] = useState<string | null>(null);
   const poppingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useLayoutEffect(() => {
+    if (streaming?.trim() || reasoning?.trim()) streamedRef.current = true;
+  }, [streaming, reasoning]);
+  useEffect(() => {
+    if (!bot.busy) streamedRef.current = false;
+  }, [bot.busy]);
   useEffect(() => () => {
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
   }, []);
@@ -1056,8 +951,10 @@ export function ChatView({ bot: profile }: {
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
     poppingTimer.current = null;
     wasWaiting.current = false;
+    streamedRef.current = false;
+    setStreamedSettle(false);
     setPopping(null);
-  }, [bot.id]);
+  }, [bot.id, bot.threadId]);
   useEffect(() => {
     if (waiting) wasWaiting.current = true;
   }, [waiting]);
@@ -1065,6 +962,9 @@ export function ChatView({ bot: profile }: {
     if (lastMessage?.role !== "bot" || lastMessage.kind !== "text" || !wasWaiting.current) return;
     wasWaiting.current = false;
     const messageId = lastMessage.id;
+    const streamed = streamedRef.current;
+    streamedRef.current = false;
+    setStreamedSettle(streamed);
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
     setPopping(messageId);
     poppingTimer.current = setTimeout(() => {
@@ -1113,7 +1013,7 @@ export function ChatView({ bot: profile }: {
   }, []);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
 
-  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
   // bounded window around it first; useFocusMessage then scrolls and flashes
@@ -1141,7 +1041,7 @@ export function ChatView({ bot: profile }: {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
+  }, [bot.id, transcriptKey, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1405,7 +1305,7 @@ export function ChatView({ bot: profile }: {
       >
         <div
           ref={transcriptRef}
-          className="flex w-full flex-col gap-3"
+          className="flex min-h-full w-full flex-col gap-3"
           style={{ paddingBottom: composerDock.pad }}
           role="log"
           // off: a polite log re-reads every tick and chip while the bot
@@ -1439,8 +1339,7 @@ export function ChatView({ bot: profile }: {
             messages={windowedMessages}
             transcript={messages}
             editingId={editingId}
-            lastBotTextId={lastBotTextId}
-            emergingId={popping}
+            emergingId={streamedSettle ? null : popping}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
             engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
             onStartEdit={startEdit}
@@ -1467,6 +1366,7 @@ export function ChatView({ bot: profile }: {
               </div>
             </div>
           )}
+          <StreamingBubble threadId={bot.threadId} text={streaming} reasoning={reasoning} />
           <TurnPresence
             avatar={
               // BotAvatar, not a bare MausAvatar: an uploaded profile image
@@ -1482,7 +1382,7 @@ export function ChatView({ bot: profile }: {
             }
             visible={presenceVisible}
             label={activityLabel}
-            answering={popping !== null}
+            answering={Boolean(streaming?.trim()) || popping !== null}
             since={busySince}
           />
         </div>

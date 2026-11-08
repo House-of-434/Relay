@@ -341,7 +341,7 @@ export function SidebarProfileMenu() {
         renderTrigger={({ open }) => (
           <span
             className={cn(
-              "flex min-h-0 w-full items-center justify-center gap-2 rounded-full border border-hairline/40 bg-inset/40 px-2 py-1 text-left transition-colors",
+              "flex min-h-0 w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors hover:bg-raised/40",
               open ? "bg-raised" : "",
             )}
           >

@@ -1366,7 +1366,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
           <img src="/app-mark.png" alt="" aria-hidden="true" className="size-8 shrink-0" />
           <span className="truncate text-[15px] font-semibold text-ink">Relay</span>
         </div>
-        <div className="flex shrink-0 items-center gap-0.5">
+        <div className="flex shrink-0 items-center gap-0">
         {searchOpen && (
           <div className="absolute left-3 right-10 top-1/2 z-20 flex -translate-y-1/2 items-center gap-2 rounded-full border border-hairline/40 bg-card px-3 py-0.5">
             <input
@@ -1386,7 +1386,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             onClick={() => setSearchOpen((o) => !o)}
             aria-label={t("sidebar.searchAria")}
             title={t("sidebar.search")}
-            className="flex size-8 items-center justify-center rounded-full text-ink-secondary hover:text-ink"
+            className="flex size-8 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
           >
             <Search size={16} />
           </button>
@@ -1396,10 +1396,10 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             ref={importReturnRef}
             onClick={() => setPlusOpen((o) => !o)}
             aria-label={remoteClient ? t("sidebar.new") : t("sidebar.newOrShare")}
-            className="flex size-9 items-center justify-center rounded-full border border-hairline/40 bg-inset/40 text-ink-secondary hover:text-ink"
+            className="flex size-8 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
             title={remoteClient ? t("sidebar.new") : t("sidebar.newOrShare")}
           >
-            <Plus size={20} strokeWidth={2} />
+            <Plus size={16} strokeWidth={2} />
           </button>
           {plusMotion.shown && (
             <>
@@ -1584,24 +1584,24 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
           <div className="min-w-0 w-fit shrink-0">
             <SidebarProfileMenu />
           </div>
-          <div className="flex items-center gap-1">
+          <div className="flex items-center gap-0">
             <button
               type="button"
               onClick={() => dispatch({ type: "showRoutines" })}
               aria-label={t("sidebar.nav.automations")}
               title={t("sidebar.nav.automations")}
-              className="flex size-9 items-center justify-center rounded-full border border-hairline/40 bg-inset/40 text-ink-secondary hover:text-ink"
+              className="flex size-8 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
             >
-              <CalendarDays size={18} strokeWidth={1.5} />
+              <CalendarDays size={16} strokeWidth={2} />
             </button>
             <button
               type="button"
               onClick={() => dispatch({ type: "togglePlugins", open: true })}
               aria-label={t("settings.section.connections")}
               title={t("settings.section.connections")}
-              className="flex size-9 items-center justify-center rounded-full border border-hairline/40 bg-inset/40 text-ink-secondary hover:text-ink"
+              className="flex size-8 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
             >
-              <Puzzle size={18} strokeWidth={1.5} />
+              <Puzzle size={16} strokeWidth={2} />
             </button>
           </div>
         </div>
