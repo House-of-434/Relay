@@ -285,7 +285,7 @@ export class BladeBrowserPool {
   /** Curated daemon environment, built from scratch: only allowlisted keys,
    * never ambient env, never model input. HOME is contained to the
    * workspace so Chrome's disk writes cannot escape it either. */
-  buildEnv(workspaceRoot: string, fresh: boolean): Record<string, string> {
+  buildEnv(workspaceRoot: string, fresh: boolean, display?: string): Record<string, string> {
     const env: Record<string, string> = {
       PATH: this.path,
       HOME: workspaceRoot,
@@ -300,11 +300,11 @@ export class BladeBrowserPool {
     if (this.proxy) env.BLADE_PROXY = this.proxy;
     if (this.timezone) env.BLADE_TZ = this.timezone;
     if (this.locale) env.BLADE_LOCALE = this.locale;
-    // Headful mode needs the X display inside the daemon environment too
-    // (headless lanes simply ignore it). Without DISPLAY the daemon's
-    // headful Chrome has no window and viewer clicks hit an empty desktop.
-    const display = process.env.DISPLAY;
-    if (display) env.DISPLAY = display;
+    // Headful takeover Chrome renders on the session's own X display; the
+    // research lane ignores it. Never take DISPLAY from ambient env: that
+    // would let unrelated sessions share a screen.
+    const activeDisplay = display ?? process.env.DISPLAY;
+    if (activeDisplay) env.DISPLAY = activeDisplay;
     assertNoForbiddenEnv(env);
     return env;
   }
@@ -315,25 +315,25 @@ export class BladeBrowserPool {
     return this.boundResult(userId, "open", text);
   }
 
-  /** Headful login mode: show the real window (needs Xvfb on VPS) and
-   * navigate. Used only inside an active human takeover; research paths
-   * stay headless. `rb visible on` returns `{ok, setting, value}` with no
-   * `text`, so it is parsed leniently via runSetting. */
-  async headfulOpen(userId: unknown, url: string): Promise<BrowserText> {
+  /** Headful login mode: the browser renders on the session's own X display,
+   * which the viewer reaches over VNC. Used only inside an active human
+   * takeover; research paths stay headless. `rb visible on` returns
+   * `{ok, setting, value}` with no `text`, so it is parsed leniently. */
+  async headfulOpen(userId: unknown, url: string, display: string): Promise<BrowserText> {
     const target = assertHttpUrl(url);
-    await this.runSetting(userId, ["rb", "visible", "on"]);
-    const text = await this.run(userId, ["nav", target], false);
+    await this.runSetting(userId, ["rb", "visible", "on"], display);
+    const text = await this.run(userId, ["nav", target], false, false, display);
     return this.boundResult(userId, "open", text);
   }
 
   /** Setting command (no page text): success means exit 0 + ok:true. */
-  private async runSetting(userId: unknown, args: string[]): Promise<void> {
+  private async runSetting(userId: unknown, args: string[], display: string): Promise<void> {
     assertSafeArgs(args, true);
     if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
     const tracked = this.trackWorkspace(userId);
     await this.sweepIdle(tracked.id);
     const result = await this.spawn(this.binary, [...args, "--json"], {
-      env: this.buildEnv(tracked.root, false),
+      env: this.buildEnv(tracked.root, false, display),
       timeoutMs: BLADE_ACTION_TIMEOUT_MS,
       maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
     });
@@ -375,138 +375,6 @@ export class BladeBrowserPool {
       url === null ? ["see", "extract", kind] : ["see", "extract", kind, assertHttpUrl(url)];
     const text = await this.run(userId, args, false);
     return this.boundResult(userId, "extract", text);
-  }
-
-  /** Latest page screenshot as PNG bytes (720p). Viewer polling only. */
-  async screenshotPng(userId: unknown): Promise<Buffer> {
-    const tracked = this.trackWorkspace(userId);
-    if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
-    await this.sweepIdle(tracked.id);
-    const result = await this.spawn(this.binary, ["vision", "--json"], {
-      env: this.buildEnv(tracked.root, false),
-      timeoutMs: BLADE_ACTION_TIMEOUT_MS,
-      maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
-    });
-    if (result.exitCode !== 0) throw new Error("screenshot failed");
-    let parsed: { image_path?: unknown } = {};
-    try {
-      parsed = JSON.parse(result.stdout) as { image_path?: unknown };
-    } catch {
-      throw new Error("screenshot unreadable");
-    }
-    if (typeof parsed.image_path !== "string") throw new Error("screenshot unreadable");
-    return readFile(parsed.image_path);
-  }
-
-  /** Viewer input via Bladebro's native CDP input. Chrome here renders via
-   * CDP (no X window is mapped), so synthetic page events are
-   * isTrusted=false (Google ignores them) and xdotool clicks miss the
-   * (empty) X desktop — both proved dead on production. `act click
-   * --selector`, `act press`, and `act type` go through real CDP input. */
-  async input(userId: unknown, op: { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string }): Promise<void> {
-    if (op.type === "click") {
-      const x = Math.round(op.x);
-      const y = Math.round(op.y);
-      if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad coordinates");
-      const target = await this.resolveClickTarget(userId, x, y).catch(() => ({ kind: "none" as const }));
-      if (target.kind === "selector") {
-        await this.run(userId, ["act", "click", "--selector", target.selector], false);
-        return;
-      }
-      if (target.kind === "text") {
-        await this.run(userId, ["act", "click", `--text=${target.text}`], false).catch(() =>
-          this.run(userId, ["act", "click", target.text], false),
-        );
-        return;
-      }
-      // Last resort: coordinate click via trusted CDP inline (never synthetic eval alone).
-      const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) el.click(); return !!el; })()`;
-      await this.run(userId, ["act", "eval", js], false);
-      return;
-    }
-    if (op.type === "key") {
-      // Modifier-only keys (Meta, Control, Shift, Alt…) have no press meaning alone.
-      if (["Meta", "Control", "Shift", "Alt", "CapsLock"].includes(op.key)) return;
-      if (typeof op.key !== "string" || op.key.length === 0 || op.key.length > 32) throw new Error("bad key");
-      await this.run(userId, ["act", "press", op.key], false);
-      return;
-    }
-    if (typeof op.text !== "string" || op.text.length === 0 || op.text.length > 512) throw new Error("bad text");
-    const selector = await this.focusedSelector(userId).catch(() => "");
-    if (selector) {
-      await this.run(userId, ["act", "type", "--selector", selector, op.text], false);
-      return;
-    }
-    // No focused form control: trusted per-character keypresses.
-    for (const ch of op.text) await this.run(userId, ["act", "press", ch], false);
-  }
-
-  /** Resolve (x,y) to the nearest actionable element and return a click spec
-   * for `act click`: prefer explicit id / testid, then visible text label,
-   * then a scoped CSS path. Hidden container divs are not actionable, so
-   * walk up to button/a/[role=button]/input/interactive first. */
-  private async resolveClickTarget(userId: unknown, x: number, y: number): Promise<{ kind: "selector"; selector: string } | { kind: "text"; text: string } | { kind: "none" }> {
-    const js = `(() => {
-      const hit = document.elementFromPoint(${x}, ${y});
-      if (!hit) return { kind: "none" };
-      let el = hit;
-      const actionable = (n) => n && ((n.tagName === "BUTTON") || (n.tagName === "A" && n.href) || n.getAttribute?.("role") === "button" || n.tagName === "INPUT" || n.tagName === "SELECT" || n.tagName === "TEXTAREA" || n.onclick);
-      while (el && !actionable(el)) el = el.parentElement;
-      if (!el) {
-        const anchor = hit.closest('a, button, [role="button"], input, select, textarea, label');
-        if (anchor) el = anchor;
-      }
-      if (!el) return { kind: "none" };
-      const testid = el.getAttribute?.("data-testid");
-      if (testid) return { kind: "selector", selector: '[data-testid="' + testid.replace(/"/g, "") + '"]' };
-      if (el.id) return { kind: "selector", selector: "#" + CSS.escape(el.id) };
-      const name = (el.getAttribute?.("aria-label") || el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 80);
-      if (name && (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute?.("role") === "button" || el.tagName === "INPUT")) {
-        return { kind: "text", text: name };
-      }
-      // nth-of-type path from the actionable element up to body
-      const parts = [];
-      let n = el;
-      while (n && n.nodeType === 1 && n !== document.body) {
-        let s = n.nodeName.toLowerCase();
-        const sib = n.parentElement ? [...n.parentElement.children] : [];
-        if (sib.length > 1) {
-          s += ":nth-of-type(" + ([...sib].filter((c) => c.nodeName === n.nodeName).indexOf(n) + 1) + ")";
-        }
-        parts.unshift(s);
-        if (n.id) break;
-        n = n.parentElement;
-      }
-      return parts.length ? { kind: "selector", selector: parts.join(" > ") } : { kind: "none" };
-    })()`;
-    const raw = await this.run(userId, ["act", "eval", js], false);
-    let trimmed = raw.trim();
-    const m = /result:\s*([\s\S]+)/s.exec(trimmed);
-    if (m) trimmed = m[1]!.trim();
-    try {
-      const obj = JSON.parse(trimmed) as { kind?: string; selector?: string; text?: string };
-      if (obj.kind === "selector" && typeof obj.selector === "string" && obj.selector) return { kind: "selector", selector: obj.selector };
-      if (obj.kind === "text" && typeof obj.text === "string" && obj.text) return { kind: "text", text: obj.text };
-    } catch { /* fall through */ }
-    return { kind: "none" };
-  }
-
-  private async focusedSelector(userId: unknown): Promise<string> {
-    const js = `(() => { const el = document.activeElement?.tagName === "BODY" ? null : document.activeElement; if (!el) return ""; if (el.id) return "#" + CSS.escape(el.id); if (el.name) return "[name=\\"" + el.name + "\\"]"; if (el.placeholder) return "[placeholder=\\"" + el.placeholder + "\\"]"; return ""; })()`;
-    return this.unwrapEval(userId, js);
-  }
-
-  private async unwrapEval(userId: unknown, js: string): Promise<string> {
-    const raw = await this.run(userId, ["act", "eval", js], false);
-    let trimmed = raw.trim();
-    // Bladebro formats evals as 'result: <json>' lines.
-    const m = /result:\s*("([^"\\]|\\.)*"|\S+)/s.exec(trimmed);
-    if (m) trimmed = m[1]!;
-    try {
-      const parsed: unknown = JSON.parse(trimmed);
-      if (typeof parsed === "string") return parsed;
-    } catch { /* fall through */ }
-    return trimmed.replace(/^"|"$/g, "").split("\n")[0] ?? "";
   }
 
   /** Page one of our own spilled artifacts. Paths are workspace-relative;
@@ -569,18 +437,15 @@ export class BladeBrowserPool {
     }
   }
 
-  private async run(userId: unknown, args: string[], fresh: boolean, allowRb = false): Promise<string> {
+  private async run(userId: unknown, args: string[], fresh: boolean, allowRb = false, display?: string): Promise<string> {
     assertSafeArgs(args, allowRb);
-    if (allowRb && args.includes("rb")) {
-      // Headful login mode only: window visible under Xvfb; research stays headless.
-    }
     if (!(await this.probe())) {
       throw new Error("research browser is unavailable on this host");
     }
     const tracked = this.trackWorkspace(userId);
     await this.sweepIdle(tracked.id);
     const result = await this.spawn(this.binary, [...args, "--json"], {
-      env: this.buildEnv(tracked.root, fresh),
+      env: this.buildEnv(tracked.root, fresh, display),
       timeoutMs: BLADE_ACTION_TIMEOUT_MS,
       maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
     });

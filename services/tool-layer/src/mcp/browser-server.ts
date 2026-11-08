@@ -10,6 +10,7 @@ export interface BladeBrowserContext {
   userId: string;
   sessions?: import("../infra/login-session.js").LoginSessionManager;
   tokens?: import("../infra/login-viewer.js").ViewerTokens;
+  displays?: import("../infra/login-display.js").LoginDisplayPool;
   viewerBase?: string;
 }
 
@@ -31,7 +32,7 @@ const EXTRACT_KINDS = ["auto", "links", "forms"] as const;
  * site-aware structured extraction inside the calling user's own browser
  * workspace. */
 export function registerBrowserTools(server: McpServer, agent: Agent, context: BladeBrowserContext): void {
-  const { pool, userId, sessions, tokens, viewerBase } = context;
+  const { pool, userId, sessions, tokens, displays, viewerBase } = context;
   const guardTakeover = (): void => {
     if (sessions?.isUserTakeover(userId)) throw new Error("browser is in human takeover; agent input is paused");
   };
@@ -119,9 +120,10 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     async ({ url, taskId }) => {
       try {
         authorizeBrowser(agent, "request_human");
-        if (!sessions || !tokens) return toolError(new Error("login browser is not configured"));
+        if (!sessions || !tokens || !displays) return toolError(new Error("login browser is not configured"));
         const session = sessions.requestHuman(userId, taskId);
-        await pool.headfulOpen(userId, url);
+        const lease = await displays.acquire(userId);
+        await pool.headfulOpen(userId, url, lease.display);
         const token = tokens.mint(session.id, userId, session.generation);
         const base = viewerBase ?? "";
         const viewerUrl = base ? `${base}/_viewer/${token.value}?session=${session.id}` : `/_viewer/${token.value}`;
@@ -150,9 +152,11 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     async ({ sessionId, generation }) => {
       try {
         authorizeBrowser(agent, "release");
-        if (!sessions || !tokens) return toolError(new Error("login browser is not configured"));
+        if (!sessions || !tokens || !displays) return toolError(new Error("login browser is not configured"));
         tokens.revokeSession(sessionId);
         sessions.release(sessionId, generation);
+        displays.release(userId);
+        await pool.stopWorkspace(userId).catch(() => {});
         return { content: [{ type: "text", text: `released ${sessionId}` }] };
       } catch (error) {
         return toolError(error);

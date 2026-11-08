@@ -1,5 +1,6 @@
-import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { createServer, request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { connect as netConnect } from "node:net";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 
 import { IngestConflictError, RelayDatabase } from "../infra/database.js";
@@ -10,6 +11,7 @@ import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { LoginSessionManager } from "../infra/login-session.js";
+import { LoginDisplayPool } from "../infra/login-display.js";
 import { ViewerTokens } from "../infra/login-viewer.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { TinyFishFetchProvider } from "../infra/fetch.js";
@@ -238,8 +240,70 @@ async function handleMemberLookup(
   }
 }
 
+/** Serve noVNC's static files from the session's websockify, which also
+ * hosts the RFB bridge. Token already validated by the caller; `path` is a
+ * relative file under the noVNC web root. */
+async function proxyNovnc(
+  request: IncomingMessage,
+  response: ServerResponse,
+  userId: string,
+  path: string,
+): Promise<void> {
+  const port = sharedDisplays?.wsPortFor(userId);
+  if (!port) {
+    sendJson(response, 503, { error: "login display is not running" });
+    return;
+  }
+  if (path.includes("..") || path.startsWith("/")) {
+    sendJson(response, 404, { error: "not found" });
+    return;
+  }
+  const upstream = httpRequest(
+    { host: "127.0.0.1", port, method: "GET", path: `/${path}` },
+    (answer) => {
+      response.writeHead(answer.statusCode ?? 502, answer.headers);
+      answer.pipe(response);
+    },
+  );
+  upstream.on("error", () => {
+    if (!response.headersSent) sendJson(response, 502, { error: "viewer upstream failed" });
+    else response.end();
+  });
+  upstream.end();
+}
+
+/** WebSocket upgrade for the viewer: authenticate the token, then bridge raw
+ * bytes to websockify's /websockify endpoint. No CDP is exposed. */
+function proxyViewerUpgrade(
+  request: IncomingMessage,
+  socket: import("node:stream").Duplex,
+  head: Buffer,
+): void {
+  const url = new URL(request.url ?? "/", "http://127.0.0.1");
+  const match = /^\/_viewer\/([0-9a-f]{32})\/ws$/.exec(url.pathname);
+  const token = match && sharedViewerTokens?.find(match[1]!);
+  const port = token && sharedDisplays?.wsPortFor(token.userId);
+  if (!token || !port) {
+    socket.destroy();
+    return;
+  }
+  const upstream = netConnect(port, "127.0.0.1", () => {
+    const headerLines = Object.entries(request.headers)
+      .filter(([key]) => key !== "host")
+      .map(([key, value]) => `${key}: ${Array.isArray(value) ? value.join(", ") : value}`)
+      .join("\r\n");
+    upstream.write(`GET /websockify HTTP/1.1\r\nHost: 127.0.0.1:${port}\r\n${headerLines}\r\n\r\n`);
+    if (head.length > 0) upstream.write(head);
+    upstream.pipe(socket);
+    socket.pipe(upstream);
+  });
+  upstream.on("error", () => socket.destroy());
+  socket.on("error", () => upstream.destroy());
+}
+
 let sharedBladePool: BladeBrowserPool | null = null;
 let sharedLoginSessions: LoginSessionManager | null = null;
+let sharedDisplays: LoginDisplayPool | null = null;
 let sharedViewerTokens: ViewerTokens | null = null;
 let sharedArxiv: { userAgent: string; provider: ArxivProvider } | null = null;
 let sharedSec: { userAgent: string; provider: SecProvider } | null = null;
@@ -318,7 +382,7 @@ export async function createRelayToolServer(
         return;
       }
 
-      const viewerMatch = /^\/_viewer\/([0-9a-f]{32})(?:\/(screenshot|input|release))?$/.exec(url.pathname);
+      const viewerMatch = /^\/_viewer\/([0-9a-f]{32})(?:\/(novnc\/.*|release))?$/.exec(url.pathname);
       if (viewerMatch) {
         const tokenValue = viewerMatch[1]!;
         const action = viewerMatch[2];
@@ -330,46 +394,42 @@ export async function createRelayToolServer(
         }
         if (request.method === "GET" && !action) {
           response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-          response.end(`<!doctype html><title>Login browser</title><body style="font-family:sans-serif;margin:16px">
+          response.end(`<!doctype html><title>Login browser</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
+  #screen { width: min(1200px, 96vw); height: min(675px, 54vw); border: 1px solid #444; background: #000; }
+  #status { color: #9f9; } #status.err { color: #f99; }
+</style>
 <h3>Login browser — agent is paused</h3>
 <p id="status">Connecting…</p>
-<p>Click the screen, then type. When signed in, press Done.</p>
-<img id="screen" style="width:min(1100px,96vw);border:1px solid #ccc" alt="browser"/>
+<p>Click the screen, then sign in. Press Done when finished.</p>
+<div id="screen"></div>
 <br><button id="done">Done — hand back to agent</button>
-<script>
-const token="${tokenValue}";
-const statusEl=document.getElementById("status");
-async function poll(){ try{ const r=await fetch("/_viewer/"+token+"/screenshot?t="+Date.now(),{cache:"no-store"}); if(r.ok){ const b=await r.blob(); document.getElementById("screen").src=URL.createObjectURL(b); statusEl.textContent="Streaming ✔"; } else { const j=await r.json().catch(()=>({})); statusEl.textContent="Stream error: "+(j.error||r.status); } }catch(e){ statusEl.textContent="Stream error: "+e.message; } }
-poll(); setInterval(poll,1500);
-document.getElementById("screen").addEventListener("click",async(e)=>{ const r=e.target.getBoundingClientRect(); const x=Math.round((e.clientX-r.left)*1280/r.width); const y=Math.round((e.clientY-r.top)*720/r.height); await fetch("/_viewer/"+token+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({type:"click",x,y})}); });
-document.addEventListener("keydown",async(e)=>{ if(e.target.tagName==="BUTTON")return; e.preventDefault(); await fetch("/_viewer/"+token+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(e.key.length===1?{type:"type",text:e.key}:{type:"key",key:e.key})}); });
-document.getElementById("done").onclick=async()=>{ const r=await fetch("/_viewer/"+token+"/release",{method:"POST"}); if(r.ok){ document.body.innerHTML="<p>Released.</p>"; } else { const j=await r.json().catch(()=>({})); statusEl.textContent="Release failed: "+(j.error||r.status); } };
-</script></body>`);
+<script type="module">
+import RFB from "/_viewer/${tokenValue}/novnc/core/rfb.js";
+const statusEl = document.getElementById("status");
+const target = document.getElementById("screen");
+let rfb = null;
+try {
+  rfb = new RFB(target, (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/_viewer/${tokenValue}/ws");
+  rfb.scaleViewport = true;
+  rfb.resizeSession = false;
+  rfb.showDotCursor = true;
+  rfb.addEventListener("connect", () => { statusEl.textContent = "Connected"; statusEl.className = ""; rfb.focus(); });
+  rfb.addEventListener("disconnect", (e) => { statusEl.textContent = "Disconnected" + (e.detail && e.detail.clean ? "" : " (connection lost)"); statusEl.className = "err"; });
+  rfb.addEventListener("credentialsrequired", () => { statusEl.textContent = "Viewer refused"; statusEl.className = "err"; });
+} catch (e) {
+  statusEl.textContent = "Viewer error: " + e.message; statusEl.className = "err";
+}
+document.getElementById("done").onclick = async () => {
+  const r = await fetch("/_viewer/${tokenValue}/release", { method: "POST" });
+  if (r.ok) { document.body.innerHTML = "<p>Released.</p>"; } else { const j = await r.json().catch(() => ({})); statusEl.textContent = "Release failed: " + (j.error || r.status); statusEl.className = "err"; }
+};
+</script>`);
           return;
         }
-        if (request.method === "GET" && action === "screenshot") {
-          if (!sharedBladePool) { sendJson(response, 503, { error: "browser unavailable" }); return; }
-          try {
-            const png = await sharedBladePool.screenshotPng(token.userId);
-            response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
-            response.end(png);
-          } catch (error) {
-            console.error(`[relay-tools] viewer screenshot failed: ${error instanceof Error ? error.message : String(error)}`);
-            sendJson(response, 500, { error: error instanceof Error ? error.message : "screenshot failed" });
-          }
-          return;
-        }
-        if (request.method === "POST" && action === "input") {
-          let body: unknown;
-          try { body = await readIngestBody(request); } catch { sendJson(response, 400, { error: "invalid json" }); return; }
-          if (!sharedBladePool) { sendJson(response, 503, { error: "browser unavailable" }); return; }
-          try {
-            await sharedBladePool.input(token.userId, body as { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string });
-            sendJson(response, 200, { ok: true });
-          } catch (error) {
-            console.error(`[relay-tools] viewer input failed: ${error instanceof Error ? error.message : String(error)}`);
-            sendJson(response, 500, { error: error instanceof Error ? error.message : "input failed" });
-          }
+        if (request.method === "GET" && action && action.startsWith("novnc/")) {
+          await proxyNovnc(request, response, token.userId, action.slice("novnc/".length));
           return;
         }
         if (request.method === "POST" && action === "release") {
@@ -377,6 +437,8 @@ document.getElementById("done").onclick=async()=>{ const r=await fetch("/_viewer
           try {
             sharedLoginSessions.release(token.sessionId, token.generation);
             sharedViewerTokens.revoke(tokenValue);
+            sharedDisplays?.release(token.userId);
+            await sharedBladePool?.stopWorkspace(token.userId).catch(() => {});
             sendJson(response, 200, { ok: true });
           } catch (error) {
             sendJson(response, 500, { error: error instanceof Error ? error.message : "release failed" });
@@ -468,12 +530,14 @@ document.getElementById("done").onclick=async()=>{ const r=await fetch("/_viewer
       });
       sharedLoginSessions ??= new LoginSessionManager({ maxConcurrent: blade.loginMaxConcurrent });
       sharedViewerTokens ??= new ViewerTokens();
+      sharedDisplays ??= new LoginDisplayPool({ maxSlots: blade.loginMaxConcurrent });
       const browser = sharedBladePool
         ? {
             pool: sharedBladePool,
             userId,
             sessions: sharedLoginSessions,
             tokens: sharedViewerTokens,
+            displays: sharedDisplays,
             viewerBase: blade.viewerBase,
           }
         : undefined;
@@ -534,6 +598,9 @@ document.getElementById("done").onclick=async()=>{ const r=await fetch("/_viewer
       httpServer.off("error", reject);
       resolve();
     });
+  });
+  httpServer.on("upgrade", (request, socket, head) => {
+    proxyViewerUpgrade(request, socket, head);
   });
   return httpServer;
 }
