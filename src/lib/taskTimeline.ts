@@ -5,7 +5,7 @@ import { redactSecretsInText } from "../../shared/redact.js";
 export interface TimelineMessage {
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
+  kind: "text" | "options" | "activity" | "connector" | "secret" | "takeover" | "routine.run" | "goal.run" | "digest" | "compaction";
   text?: string;
   tool?: { name: string; summary?: string; ok?: boolean };
   at: number;

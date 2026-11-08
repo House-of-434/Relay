@@ -300,6 +300,87 @@ function proxyViewerUpgrade(
   socket.on("error", () => upstream.destroy());
 }
 
+/** Browser-takeover control plane for the harness: mint a viewer for a live
+ * takeover and release it when the card reaches a terminal state. Both routes
+ * are authenticated by the same signed actor assertion the MCP calls use;
+ * the session must belong to the asserted user. */
+async function handleBrowserTakeover(
+  request: IncomingMessage,
+  response: ServerResponse,
+  database: RelayDatabase,
+  pathname: string,
+): Promise<void> {
+  if (request.method !== "POST") {
+    response.setHeader("allow", "POST");
+    sendJson(response, 405, { error: "method not allowed" });
+    return;
+  }
+  const header = request.headers["x-relay-actor-user"];
+  if (typeof header !== "string") {
+    sendJson(response, 401, { error: "authenticated actor required" });
+    return;
+  }
+  let userId: string;
+  try {
+    userId = database.authenticateActorAssertion(header).userId;
+  } catch {
+    sendJson(response, 401, { error: "invalid actor context" });
+    return;
+  }
+  let body: unknown;
+  try {
+    body = await readIngestBody(request);
+  } catch {
+    sendJson(response, 400, { error: "invalid request body" });
+    return;
+  }
+  const sessionId = body && typeof body === "object" ? (body as { session_id?: unknown }).session_id : undefined;
+  if (typeof sessionId !== "string" || sessionId.length === 0 || sessionId.length > 128) {
+    sendJson(response, 400, { error: "invalid session id" });
+    return;
+  }
+  sharedLoginSessions ??= new LoginSessionManager();
+  sharedViewerTokens ??= new ViewerTokens();
+  sharedLoginSessions.sweepExpired();
+  const session = sharedLoginSessions.ownedSession(userId, sessionId);
+  if (pathname === "/internal/browser-takeover/viewer") {
+    const generation = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
+    if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
+      sendJson(response, 400, { error: "invalid generation" });
+      return;
+    }
+    if (!session || session.state !== "user_takeover" || session.generation !== generation) {
+      sendJson(response, 409, { error: "this sign-in is no longer active" });
+      return;
+    }
+    const token = sharedViewerTokens.mint(session.id, userId, session.generation);
+    sendJson(response, 200, {
+      path: `/_viewer/${token.value}`,
+      expires_at: new Date(token.expiresAt).toISOString(),
+    });
+    return;
+  }
+  const generation = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
+  if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
+    sendJson(response, 400, { error: "invalid generation" });
+    return;
+  }
+  if (!session) {
+    // The card's duplicate terminal request: already released.
+    sendJson(response, 200, { released: false });
+    return;
+  }
+  if (session.generation !== generation) {
+    sendJson(response, 409, { error: "this sign-in was superseded" });
+    return;
+  }
+  sharedViewerTokens.revokeSession(sessionId);
+  sharedLoginSessions.release(sessionId, generation);
+  sharedDisplays?.release(userId);
+  await sharedBladePool?.stopWorkspace(userId).catch(() => {});
+  sendJson(response, 200, { released: true });
+}
+
 let sharedBladePool: BladeBrowserPool | null = null;
 let sharedLoginSessions: LoginSessionManager | null = null;
 let sharedDisplays: LoginDisplayPool | null = null;
@@ -381,6 +462,11 @@ export async function createRelayToolServer(
         return;
       }
 
+      if (url.pathname === "/internal/browser-takeover/viewer" || url.pathname === "/internal/browser-takeover/release") {
+        await handleBrowserTakeover(request, response, database, url.pathname);
+        return;
+      }
+
       const viewerMatch = /^\/_viewer\/([0-9a-f]{32})(?:\/(novnc\/.*|release))?$/.exec(url.pathname);
       if (viewerMatch) {
         const tokenValue = viewerMatch[1]!;
@@ -398,14 +484,23 @@ export async function createRelayToolServer(
   body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
   #screen { width: min(1200px, 96vw); height: min(675px, 54vw); border: 1px solid #444; background: #000; }
   #status { color: #9f9; } #status.err { color: #f99; }
+  body.embed { margin: 0; overflow: hidden; }
+  body.embed #chrome { display: none; }
+  body.embed #screen { width: 100vw; height: 100vh; border: 0; }
 </style>
-<h3>Login browser — agent is paused</h3>
-<p id="status">Connecting…</p>
-<p>Click the screen, then sign in. Press Done when finished.</p>
+<div id="chrome">
+  <h3>Login browser — agent is paused</h3>
+  <p id="status">Connecting…</p>
+  <p>Click the screen, then sign in. Press Done when finished.</p>
+</div>
 <div id="screen"></div>
-<br><button id="done">Done — hand back to agent</button>
+<div id="chrome-footer"><br><button id="done">Done — hand back to agent</button></div>
 <script type="module">
 import RFB from "/_viewer/${tokenValue}/novnc/core/rfb.js";
+if (new URLSearchParams(location.search).has("embed")) {
+  document.body.classList.add("embed");
+  document.getElementById("chrome-footer")?.remove();
+}
 const statusEl = document.getElementById("status");
 const target = document.getElementById("screen");
 let rfb = null;
@@ -534,10 +629,13 @@ document.getElementById("done").onclick = async () => {
         ? {
             pool: sharedBladePool,
             userId,
+            botId: actor.actor.botId,
+            threadId: actor.actor.threadId,
+            actorAssertion: actor.actorAssertion ?? "",
+            bffInternalUrl,
+            bffCapability: capability,
             sessions: sharedLoginSessions,
-            tokens: sharedViewerTokens,
             displays: sharedDisplays,
-            viewerBase: blade.viewerBase,
           }
         : undefined;
 

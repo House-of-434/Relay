@@ -64,8 +64,6 @@ export interface BladeConfig {
   proxy: string | undefined;
   timezone: string | undefined;
   locale: string | undefined;
-  /** Public base for one-time login-viewer links (never model-visible). */
-  viewerBase: string | undefined;
   /** Headful login sessions allowed at once (default 2). */
   loginMaxConcurrent: number;
 }
@@ -122,7 +120,6 @@ export function bladeConfig(env: NodeJS.ProcessEnv = process.env): BladeConfig {
     proxy: env.BLADE_PROXY,
     timezone: env.BLADE_TZ,
     locale: env.BLADE_LOCALE,
-    viewerBase: env.RELAY_LOGIN_VIEWER_BASE?.trim() || undefined,
     loginMaxConcurrent: loginMaxConcurrent(env),
   };
 }

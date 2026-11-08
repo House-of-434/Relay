@@ -42,6 +42,7 @@ import {
   isCredentialTargetId,
   type CredentialTargetId,
 } from "../shared/credential-request.ts";
+import { takeoverPending } from "../shared/takeover-card.ts";
 
 import { approvalHeldNote, approvalHeldReason, approvalModeForOrigin, autoVerdict, deliverFullAccessApproval, delegationInheritsFullAccess } from "./auto-approve.ts";
 import { CommandAllowlistStore, commandAllowlistCandidate } from "./command-allowlist.ts";
@@ -201,6 +202,12 @@ import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, P
 import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
 import {
+  BROWSER_TAKEOVER_TTL_MS,
+  ToolLayerTakeoverClient,
+  ToolLayerTakeoverError,
+  type TakeoverActor,
+} from "./browser-takeover.ts";
+import {
   RELAY_COMPUTER_DISABLED,
   relayComputerConfigRefusal,
   relayComputerRouteDisabled,
@@ -229,6 +236,12 @@ const RELAY_PORTAL_SESSIONS = process.env.RELAY_PORTAL_SESSIONS === "1";
 const RELAY_TOOL_URL = process.env.RELAY_TOOL_URL?.trim() ||
   (RELAY_SHARED_WORKSPACE ? "http://127.0.0.1:8787" : undefined);
 if (RELAY_TOOL_URL) relayToolMcpServer("scout", RELAY_TOOL_URL);
+/** Browser-takeover control plane: the harness owns the card and the resume;
+ * the Tool Layer owns the browser session, display, and viewer tokens. */
+const takeoverControl = new ToolLayerTakeoverClient({
+  toolUrl: RELAY_TOOL_URL,
+  actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
+});
 // Capabilities the harness holds in memory only: read out of the environment
 // and deleted HERE, at module top, before any monitor or engine can spawn — so
 // a child that inherits the environment (or a driver that spreads
@@ -593,6 +606,7 @@ import { ROUTES, dispatchRoutes } from "./routes/table.ts";
 import { createHostedSlackRoutes } from "./routes/hosted-slack.ts";
 import { createPortalSessionRoutes } from "./routes/portal-session.ts";
 import { createScribeJoinRoutes } from "./routes/scribe-join.ts";
+import { createBrowserTakeoverRoutes } from "./routes/browser-takeover.ts";
 import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
@@ -5435,7 +5449,7 @@ const watchdog = new TurnWatchdog({
         // connector and credential continuations.
         drainQueuedSends();
         drainConnectorResumes();
-        drainSecretResumes();
+        drainCardResumes();
         drainTeamSetupResumes();
       }
     };
@@ -7277,7 +7291,7 @@ bus.subscribe((event: RuntimeEvent) => {
             retryDelegationsWaitingOn(bot.id);
             drainQueuedSends();
             drainConnectorResumes();
-            drainSecretResumes();
+            drainCardResumes();
             drainTeamSetupResumes();
             drainDelegationWakes();
           }
@@ -8742,7 +8756,7 @@ async function startTurn(
         retryDelegationsWaitingOn(bot.id);
         drainQueuedSends();
         drainConnectorResumes();
-        drainSecretResumes();
+        drainCardResumes();
         drainTeamSetupResumes();
         drainDelegationWakes();
         return;
@@ -9575,7 +9589,7 @@ async function startTurn(
         retryDelegationsWaitingOn(bot.id);
         drainQueuedSends();
         drainConnectorResumes();
-        drainSecretResumes();
+        drainCardResumes();
         drainTeamSetupResumes();
         drainDelegationWakes();
       }
@@ -9617,7 +9631,7 @@ async function startTurn(
         if (ownsLatestGeneration) {
           drainQueuedSends();
           drainConnectorResumes();
-          drainSecretResumes();
+          drainCardResumes();
           drainTeamSetupResumes();
           drainDelegationWakes();
         }
@@ -9700,7 +9714,7 @@ async function startTurn(
       // drain would strand anything queued behind this turn
       drainQueuedSends();
       drainConnectorResumes();
-      drainSecretResumes();
+      drainCardResumes();
       drainTeamSetupResumes();
       drainDelegationWakes();
     }
@@ -12124,7 +12138,7 @@ async function runGroupMemberTurn(
     watchdog.settle(threadId);
     drainQueuedSends();
     drainConnectorResumes();
-    drainSecretResumes();
+    drainCardResumes();
     drainTeamSetupResumes();
     return false;
   }
@@ -12153,7 +12167,7 @@ async function runGroupMemberTurn(
         retryDelegationsWaitingOn(bot.id);
         drainQueuedSends();
         drainConnectorResumes();
-        drainSecretResumes();
+        drainCardResumes();
         drainTeamSetupResumes();
       }
     };
@@ -12179,7 +12193,7 @@ async function runGroupMemberTurn(
     // queued while this bot briefly owned the room must be retried now.
     drainQueuedSends();
     drainConnectorResumes();
-    drainSecretResumes();
+    drainCardResumes();
     drainTeamSetupResumes();
   }
   if (outcome === "provider_failed") {
@@ -12290,7 +12304,7 @@ async function runGroupMemberTurn(
       }
       drainQueuedSends();
       drainConnectorResumes();
-      drainSecretResumes();
+      drainCardResumes();
       drainTeamSetupResumes();
     }
   }
@@ -13667,14 +13681,18 @@ function drainConnectorResumes() {
   }
 }
 
-type SecretResumeEntry = {
+/** One pending card continuation. Credential and browser-takeover cards share
+ * this lifecycle: persist the card, end the turn, resume the same task when
+ * the person acts. `card` only selects the resume prompt and the card field. */
+type CardResumeEntry = {
   botId: string;
   threadId: string;
   messageId: string;
+  card: "secret" | "takeover";
   label: string;
   outcome: "provided" | "dismissed";
 };
-const pendingSecretResumes = new Map<string, SecretResumeEntry>();
+const pendingCardResumes = new Map<string, CardResumeEntry>();
 const phoneSecretSubmissions = new PhoneSecretSubmissionRegistry();
 
 function claimPhoneSecretBotDeletion(botId: string): (() => void) | null {
@@ -13718,6 +13736,16 @@ function secretMessage(botId: string, threadId: string, messageId: string): Mess
   return message?.kind === "secret" && message.secret ? message : null;
 }
 
+/** A browser-takeover card on the active branch, owned by the requesting bot
+ * in a shared channel. Same visibility rule as credential cards. */
+function takeoverMessage(botId: string, threadId: string, messageId: string): Message | null {
+  const owner = connectorThread(botId, threadId);
+  if (!owner) return null;
+  const message = store.activePath(threadId).find((candidate) => candidate.id === messageId);
+  if (owner.group && message?.from?.botId !== botId) return null;
+  return message?.kind === "takeover" && message.takeover ? message : null;
+}
+
 function currentSecretState(botId: string, threadId: string, messageId: string) {
   const message = secretMessage(botId, threadId, messageId);
   if (!message?.secret) return null;
@@ -13727,23 +13755,41 @@ function currentSecretState(botId: string, threadId: string, messageId: string) 
   };
 }
 
-function markSecretResumeFailed(threadId: string, messageId: string, error: string) {
+function markCardResumeFailed(card: "secret" | "takeover", threadId: string, messageId: string, error: string) {
   const message = store.messagesFor(threadId).find((candidate) => candidate.id === messageId);
-  if (!message?.secret) return;
+  const next = error.slice(0, 180);
+  if (card === "secret") {
+    if (!message?.secret) return;
+    store.patchMessage(threadId, message.id, {
+      secret: { ...message.secret, resumed: false, error: next },
+    });
+    return;
+  }
+  if (!message?.takeover) return;
   store.patchMessage(threadId, message.id, {
-    secret: { ...message.secret, resumed: false, error: error.slice(0, 180) },
+    takeover: { ...message.takeover, resumed: false, error: next },
   });
 }
 
-function dispatchSecretResume(entry: SecretResumeEntry) {
+/** The resume prompt per card kind. A takeover never exposes page content or
+ * credentials; it only tells the agent the intervention ended. */
+function cardResumePrompt(entry: CardResumeEntry): string {
+  if (entry.card === "takeover") {
+    return entry.outcome === "provided"
+      ? "Relay browser update: the person finished signing in to the site in the login browser. Continue the task that paused for it. Do not ask them for credentials, cookies, or codes; the browser session is already available in the same workspace."
+      : "Relay browser update: the person did not complete the sign-in (dismissed, or the panel expired). Continue without it if possible, or report that the site is still blocked and why. Do not ask them to paste credentials into chat.";
+  }
+  return entry.outcome === "provided"
+    ? `Relay credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
+    : `Relay credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+}
+
+function dispatchCardResume(entry: CardResumeEntry) {
   const owner = connectorThread(entry.botId, entry.threadId);
   if (!owner) return;
-  const prompt =
-    entry.outcome === "provided"
-      ? `Relay credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
-      : `Relay credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+  const prompt = cardResumePrompt(entry);
   if (!canAdmitDirectTurn(entry.botId, entry.threadId)) {
-    pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
+    pendingCardResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     return;
   }
   if (owner.group) {
@@ -13755,7 +13801,7 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
       const current = connectorThread(entry.botId, entry.threadId);
       if (!current?.group) return;
       if (current.bot.busy) {
-        pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
+        pendingCardResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
         return;
       }
       await runGroupMemberTurn(
@@ -13765,7 +13811,7 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
         0,
         new Set(),
         prompt,
-        (message) => markSecretResumeFailed(entry.threadId, entry.messageId, message),
+        (message) => markCardResumeFailed(entry.card, entry.threadId, entry.messageId, message),
         () => operation.cancelled,
         () => groupProviderHandshakeStarted(operation),
         () => groupProviderHandshakeSettled(operation),
@@ -13775,7 +13821,8 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
     groupQueues.set(
       groupId,
       tracked.catch((error) => {
-        markSecretResumeFailed(
+        markCardResumeFailed(
+          entry.card,
           entry.threadId,
           entry.messageId,
           error instanceof Error ? error.message : String(error),
@@ -13787,33 +13834,161 @@ function dispatchSecretResume(entry: SecretResumeEntry) {
   void startTurn(entry.botId, prompt, {
     threadId: entry.threadId,
     cardContinuation: true,
-    onDispatchError: (message) => markSecretResumeFailed(entry.threadId, entry.messageId, message),
+    onDispatchError: (message) => markCardResumeFailed(entry.card, entry.threadId, entry.messageId, message),
   }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     if (isTurnAdmissionBlocked(error)) {
-      pendingSecretResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
+      pendingCardResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     } else {
-      markSecretResumeFailed(entry.threadId, entry.messageId, message);
+      markCardResumeFailed(entry.card, entry.threadId, entry.messageId, message);
     }
   });
 }
 
-function resumeSecretCard(botId: string, threadId: string, messageId: string, outcome: SecretResumeEntry["outcome"]) {
-  const message = secretMessage(botId, threadId, messageId);
-  if (!message?.secret) return false;
-  if (message.secret.resumed) return true;
+/** Patch one terminal card state and dispatch its continuation exactly once.
+ * Returns false when the card is no longer actionable (already resumed or not
+ * on the active branch). */
+function resumeCard(card: "secret" | "takeover", botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"]) {
+  if (card === "secret") {
+    const message = secretMessage(botId, threadId, messageId);
+    if (!message?.secret) return false;
+    if (message.secret.resumed) return true;
+    store.patchMessage(threadId, message.id, {
+      secret: {
+        ...message.secret,
+        provided: outcome === "provided" ? true : message.secret.provided,
+        dismissed: outcome === "dismissed" ? true : message.secret.dismissed,
+        resumed: true,
+        error: undefined,
+      },
+    });
+    dispatchCardResume({ card, botId, threadId, messageId, label: message.secret.label, outcome });
+    return true;
+  }
+  const message = takeoverMessage(botId, threadId, messageId);
+  if (!message?.takeover) return false;
+  if (message.takeover.resumed) return true;
   store.patchMessage(threadId, message.id, {
-    secret: {
-      ...message.secret,
-      provided: outcome === "provided" ? true : message.secret.provided,
-      dismissed: outcome === "dismissed" ? true : message.secret.dismissed,
+    takeover: {
+      ...message.takeover,
+      status: message.takeover.status === "pending" ? (outcome === "provided" ? "done" : "dismissed") : message.takeover.status,
       resumed: true,
       error: undefined,
     },
   });
-  dispatchSecretResume({ botId, threadId, messageId, label: message.secret.label, outcome });
+  dispatchCardResume({ card, botId, threadId, messageId, label: message.takeover.title, outcome });
   return true;
 }
+
+function resumeSecretCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"]) {
+  return resumeCard("secret", botId, threadId, messageId, outcome);
+}
+
+function resumeTakeoverCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"]) {
+  return resumeCard("takeover", botId, threadId, messageId, outcome);
+}
+
+const takeoverExpiryTimers = new Map<string, NodeJS.Timeout>();
+const takeoverTerminalizing = new Set<string>();
+
+function takeoverTimerKey(threadId: string, messageId: string): string {
+  return `${threadId}:${messageId}`;
+}
+
+function takeoverActor(botId: string, threadId: string): TakeoverActor {
+  const bot = store.bot(botId);
+  if (!bot?.ownerUserId) throw new ToolLayerTakeoverError(403, "this bot has no owner workspace");
+  return { userId: bot.ownerUserId, botId: bot.id, threadId, agent: bot.relayAgent ?? "scout" };
+}
+
+function clearTakeoverTimer(threadId: string, messageId: string): void {
+  const key = takeoverTimerKey(threadId, messageId);
+  const timer = takeoverExpiryTimers.get(key);
+  if (timer) clearTimeout(timer);
+  takeoverExpiryTimers.delete(key);
+}
+
+/** Schedule the card's TTL. The timer is in-process and unref'd; a restart
+ * re-arms every pending card from its stored `expiresAt`. */
+function scheduleTakeoverExpiry(botId: string, threadId: string, messageId: string): void {
+  clearTakeoverTimer(threadId, messageId);
+  const message = takeoverMessage(botId, threadId, messageId);
+  if (!message?.takeover || !takeoverPending(message.takeover)) return;
+  const due = Date.parse(message.takeover.expiresAt);
+  const delay = Number.isFinite(due) ? Math.max(0, due - Date.now()) : 0;
+  const timer = setTimeout(() => {
+    takeoverExpiryTimers.delete(takeoverTimerKey(threadId, messageId));
+    void terminalTakeover(botId, threadId, messageId, "expired").catch(() => {
+      // The release failed; keep the card pending and retry on the next sweep
+      // point rather than leaking the browser or resuming prematurely.
+      scheduleTakeoverExpiry(botId, threadId, messageId);
+    });
+  }, Math.min(delay, 2_147_483_647));
+  timer.unref?.();
+  takeoverExpiryTimers.set(takeoverTimerKey(threadId, messageId), timer);
+}
+
+/** One terminal transition per card. The first Done/Dismiss/Expiry releases
+ * the browser and dispatches the continuation; duplicates return the settled
+ * outcome, and a failed continuation can be retried without a second release. */
+async function terminalTakeover(
+  botId: string,
+  threadId: string,
+  messageId: string,
+  status: "done" | "dismissed" | "expired",
+): Promise<{ status: string; resumed: boolean }> {
+  const key = takeoverTimerKey(threadId, messageId);
+  const message = takeoverMessage(botId, threadId, messageId);
+  if (!message?.takeover) throw new ToolLayerTakeoverError(404, "no such sign-in request");
+  const card = message.takeover;
+  if (card.status !== "pending") {
+    if (!card.resumed) {
+      // Retry the continuation for a card whose first dispatch failed.
+      resumeTakeoverCard(botId, threadId, messageId, card.status === "done" ? "provided" : "dismissed");
+    }
+    const settled = takeoverMessage(botId, threadId, messageId);
+    return { status: settled?.takeover?.status ?? card.status, resumed: settled?.takeover?.resumed === true };
+  }
+  if (takeoverTerminalizing.has(key)) throw new ToolLayerTakeoverError(409, "this sign-in is already being completed");
+  takeoverTerminalizing.add(key);
+  try {
+    await takeoverControl.release(takeoverActor(botId, threadId), card.sessionId, card.generation);
+    clearTakeoverTimer(threadId, messageId);
+    store.patchMessage(threadId, messageId, { takeover: { ...card, status, error: undefined } });
+    resumeTakeoverCard(botId, threadId, messageId, status === "done" ? "provided" : "dismissed");
+    const settled = takeoverMessage(botId, threadId, messageId);
+    return { status, resumed: settled?.takeover?.resumed === true };
+  } catch (error) {
+    if (status === "expired") scheduleTakeoverExpiry(botId, threadId, messageId);
+    throw error;
+  } finally {
+    takeoverTerminalizing.delete(key);
+  }
+}
+
+/** Re-arm TTLs for cards that outlived this process. */
+function restoreTakeoverExpiry(): void {
+  const threadIds = new Set<string>();
+  for (const bot of store.bots) {
+    threadIds.add(bot.threadId);
+    for (const task of bot.tasks ?? []) threadIds.add(task.threadId);
+  }
+  for (const group of store.groups) {
+    threadIds.add(group.threadId);
+    for (const task of group.tasks ?? []) threadIds.add(task.threadId);
+  }
+  for (const threadId of threadIds) {
+    const botId = store.botByThread(threadId)?.id;
+    if (!botId) continue;
+    const visible = new Set(store.activePath(threadId).map((message) => message.id));
+    for (const message of store.messagesFor(threadId)) {
+      if (!visible.has(message.id) || !takeoverPending(message.takeover)) continue;
+      scheduleTakeoverExpiry(botId, threadId, message.id);
+    }
+  }
+}
+
+restoreTakeoverExpiry();
 
 async function provideSecretFromPhone(
   context: PhoneSecretContext,
@@ -13918,11 +14093,11 @@ async function provideSecretFromPhone(
   return settled;
 }
 
-function drainSecretResumes() {
-  for (const [key, entry] of pendingSecretResumes) {
+function drainCardResumes() {
+  for (const [key, entry] of pendingCardResumes) {
     if (!canAdmitDirectTurn(entry.botId, entry.threadId)) continue;
-    pendingSecretResumes.delete(key);
-    dispatchSecretResume(entry);
+    pendingCardResumes.delete(key);
+    dispatchCardResume(entry);
   }
 }
 
@@ -13930,7 +14105,7 @@ bus.subscribe((event: RuntimeEvent) => {
   if (shouldIgnoreProviderEvent(event)) return;
   if (event.type === "turn.completed") {
     drainConnectorResumes();
-    drainSecretResumes();
+    drainCardResumes();
     drainTeamSetupResumes();
   }
 });
@@ -14429,7 +14604,7 @@ async function reloadProviders() {
   // queued behind them drains now — onto the freshly loaded fleet
   drainQueuedSends();
   drainConnectorResumes();
-  drainSecretResumes();
+  drainCardResumes();
   drainTeamSetupResumes();
 }
 
@@ -14564,6 +14739,46 @@ ROUTES.push(createPortalSessionRoutes({
     capability: relayBffCapability,
     actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
     scribeReady: () => scribeMonitor !== null,
+  }));
+  ROUTES.push(createBrowserTakeoverRoutes({
+    store,
+    capability: relayBffCapability,
+    actorSecret: process.env.RELAY_TOOL_ACTOR_SECRET,
+    create: (actor, input) => {
+      const owner = connectorThread(actor.botId, actor.threadId);
+      if (!owner) return null;
+      const expiresAt = Date.parse(input.expiresAt);
+      const nowMs = Date.now();
+      if (!Number.isFinite(expiresAt) || expiresAt <= nowMs || expiresAt > nowMs + BROWSER_TAKEOVER_TTL_MS + 60_000) {
+        return null;
+      }
+      // One live card per browser session: a retried call reuses it.
+      const existing = store.activePath(actor.threadId).find((candidate) =>
+        candidate.kind === "takeover"
+        && candidate.takeover?.sessionId === input.sessionId
+        && candidate.takeover?.generation === input.generation
+        && takeoverPending(candidate.takeover)
+        && (!owner.group || candidate.from?.botId === actor.botId));
+      if (existing) return { messageId: existing.id };
+      const message = store.appendMessage(actor.threadId, {
+        role: "bot",
+        kind: "takeover",
+        text: input.description,
+        ...(owner.group ? { from: { botId: actor.botId, name: owner.bot.name, color: owner.bot.color } } : {}),
+        takeover: {
+          kind: "browser_takeover",
+          sessionId: input.sessionId,
+          generation: input.generation,
+          title: input.title,
+          description: input.description,
+          status: "pending",
+          expiresAt: new Date(expiresAt).toISOString(),
+          requestKey: input.requestKey,
+        },
+      });
+      scheduleTakeoverExpiry(actor.botId, actor.threadId, message.id);
+      return { messageId: message.id };
+    },
   }));
 // The BFF capability is captured at the top of this module and kept there
 // for the process lifetime: the shared-mailbox monitor and Scribe call the
@@ -22730,7 +22945,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         drainQueuedSends();
         drainDelegationWakes();
         drainConnectorResumes();
-        drainSecretResumes();
+        drainCardResumes();
         drainTeamSetupResumes();
       }
       if (mandatoryError) throw mandatoryError;
@@ -22836,6 +23051,50 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         target: parsed.data.target,
       }, authenticatedDeviceId);
       return json(res, 200, state);
+    }
+
+    // Browser sign-in cards: the person opens the live viewer or settles the
+    // card. Done and Dismiss own the browser release; Expiry does the same on
+    // a timer. Only the first terminal transition releases and resumes.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/takeover-cards\/([\w-]+)\/(viewer|done|dismiss)$/);
+    if (m && method === "POST") {
+      const body = await readBody(req);
+      const threadId = String(body.threadId ?? "");
+      const bot = store.bot(m[1]);
+      const message = takeoverMessage(m[1], threadId, m[2]);
+      if (!bot) return json(res, 404, { error: "no such bot" });
+      if (!message?.takeover) return json(res, 404, { error: "no such sign-in request" });
+      if (m[3] === "viewer") {
+        if (!takeoverPending(message.takeover)) {
+          return json(res, 409, { error: "this sign-in is no longer active" });
+        }
+        try {
+          const result = await takeoverControl.viewer(
+            takeoverActor(m[1], threadId),
+            message.takeover.sessionId,
+            message.takeover.generation,
+          );
+          return json(res, 200, { path: result.path });
+        } catch (error) {
+          if (error instanceof ToolLayerTakeoverError && error.status === 409) {
+            // The live session is gone. Settle the card and resume the task
+            // rather than leaving the person with a dead panel.
+            const settled = await terminalTakeover(m[1], threadId, message.id, "expired").catch(() => null);
+            return json(res, 409, { error: "this sign-in expired", ...(settled ? { status: settled.status } : {}) });
+          }
+          return json(res, error instanceof ToolLayerTakeoverError ? error.status : 502, {
+            error: error instanceof Error ? error.message : "the login browser is unavailable",
+          });
+        }
+      }
+      try {
+        const settled = await terminalTakeover(m[1], threadId, message.id, m[3] === "done" ? "done" : "dismissed");
+        return json(res, 200, settled);
+      } catch (error) {
+        return json(res, error instanceof ToolLayerTakeoverError ? error.status : 502, {
+          error: error instanceof Error ? error.message : "the sign-in could not be completed",
+        });
+      }
     }
 
     // Desktop credential cards never send the credential through this route.

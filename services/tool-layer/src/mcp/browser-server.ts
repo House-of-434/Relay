@@ -4,14 +4,21 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Agent } from "../domain/permissions.js";
 import { authorizeBrowser } from "../domain/permissions.js";
 import type { BladeBrowserPool, ExtractKind, ReadMode } from "../infra/bladebro.js";
+import type { LoginSessionManager } from "../infra/login-session.js";
+import type { LoginDisplayPool } from "../infra/login-display.js";
+import { LOGIN_TAKEOVER_TTL_MS } from "../infra/login-session.js";
+import { RelayBrowserTakeoverClient, takeoverRequestKey } from "../infra/browser-takeover.js";
 
 export interface BladeBrowserContext {
   pool: BladeBrowserPool;
   userId: string;
-  sessions?: import("../infra/login-session.js").LoginSessionManager;
-  tokens?: import("../infra/login-viewer.js").ViewerTokens;
-  displays?: import("../infra/login-display.js").LoginDisplayPool;
-  viewerBase?: string;
+  botId: string;
+  threadId: string;
+  actorAssertion: string;
+  bffInternalUrl: string;
+  bffCapability: string | undefined;
+  sessions?: LoginSessionManager;
+  displays?: LoginDisplayPool;
 }
 
 function toolError(error: unknown) {
@@ -31,7 +38,8 @@ const EXTRACT_KINDS = ["auto", "links", "forms"] as const;
  * site-aware structured extraction inside the calling user's own browser
  * workspace. */
 export function registerBrowserTools(server: McpServer, agent: Agent, context: BladeBrowserContext): void {
-  const { pool, userId, sessions, tokens, displays, viewerBase } = context;
+  const { pool, userId, threadId, actorAssertion, bffInternalUrl, bffCapability, sessions, displays } = context;
+  const takeover = new RelayBrowserTakeoverClient({ bffInternalUrl, capability: bffCapability });
   const guardTakeover = (): void => {
     if (sessions?.isUserTakeover(userId)) throw new Error("browser is in human takeover; agent input is paused");
   };
@@ -109,57 +117,57 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_request_human",
     {
       description:
-        "Ask the user to take over the login browser. Use on login/Cloudflare/auth walls. Creates one takeover per profile; other authorized tasks attach as waiters. Returns a one-time viewer link. Never include credentials in your response.",
+        "Ask the person to sign in to a site the research browser cannot pass (login, Cloudflare, auth wall). Opens one persistent browser session and a sign-in card in this chat; the person signs in there and your turn ends. Relay resumes this task automatically when they finish or dismiss it. Never ask for or accept credentials in chat.",
       inputSchema: {
         url: z.string().min(1).max(2048),
-        taskId: z.string().min(1).max(256),
+        reason: z.string().min(1).max(240).optional(),
       },
       annotations: { readOnlyHint: false },
     },
-    async ({ url, taskId }) => {
+    async ({ url, reason }) => {
+      if (!sessions || !displays) return toolError(new Error("login browser is not configured"));
+      let sessionId = "";
+      let generation = 0;
+      let displayStarted = false;
       try {
         authorizeBrowser(agent, "request_human");
-        if (!sessions || !tokens || !displays) return toolError(new Error("login browser is not configured"));
-        const session = sessions.requestHuman(userId, taskId);
+        const host = new URL(url).hostname.slice(0, 120);
+        // Display first: a capacity refusal must not release a session this
+        // call did not create.
         const lease = await displays.acquire(userId);
+        displayStarted = true;
+        const session = sessions.requestHuman(userId, threadId);
+        sessionId = session.id;
+        generation = session.generation;
         await pool.headfulOpen(userId, url, lease.display);
-        const token = tokens.mint(session.id, userId, session.generation);
-        const base = viewerBase ?? "";
-        const viewerUrl = base ? `${base}/_viewer/${token.value}?session=${session.id}` : `/_viewer/${token.value}`;
+        const expiresAt = new Date(Date.now() + LOGIN_TAKEOVER_TTL_MS).toISOString();
+        await takeover.requestCard(actorAssertion, {
+          requestKey: takeoverRequestKey(userId, session.id, session.generation),
+          sessionId: session.id,
+          generation: session.generation,
+          title: `Sign in to ${host}`,
+          description: `${reason ? `${reason} ` : ""}The research browser needs you to sign in to ${host}. Use the panel in this chat; your credentials never reach the assistant.`,
+          expiresAt,
+        });
         return {
           content: [
             {
               type: "text",
-              text: `Takeover ${session.id} created (generation ${session.generation}). Share ONE viewer link (never in transcripts): ${viewerUrl}. Agent input is paused until browser_release.`,
+              text: "A sign-in panel is ready in this chat. End this turn; Relay resumes the task automatically after the person signs in, dismisses it, or the panel expires.",
             },
           ],
         };
       } catch (error) {
+        // Failed card creation must not leave a browser, display, or takeover
+        // behind. Release is best-effort; the original error is what matters.
+        if (sessionId) {
+          try { sessions.release(sessionId, generation); } catch { /* already settled */ }
+        }
+        if (displayStarted) displays.release(userId);
+        await pool.stopWorkspace(userId).catch(() => {});
         return toolError(error);
       }
     },
   );
 
-  server.registerTool(
-    "browser_release",
-    {
-      description:
-        "Hand the login browser back to the agent after the user finishes. Publishes completion so authorized waiting tasks resume independently.",
-      inputSchema: { sessionId: z.string().min(1), generation: z.number().int().min(1) },
-      annotations: { readOnlyHint: false },
-    },
-    async ({ sessionId, generation }) => {
-      try {
-        authorizeBrowser(agent, "release");
-        if (!sessions || !tokens || !displays) return toolError(new Error("login browser is not configured"));
-        tokens.revokeSession(sessionId);
-        sessions.release(sessionId, generation);
-        displays.release(userId);
-        await pool.stopWorkspace(userId).catch(() => {});
-        return { content: [{ type: "text", text: `released ${sessionId}` }] };
-      } catch (error) {
-        return toolError(error);
-      }
-    },
-  );
 }

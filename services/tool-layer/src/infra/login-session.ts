@@ -4,6 +4,9 @@
  * `infra/bladebro.ts` (CLI), this manager owns only ownership + fencing. */
 import { canonicalUserId } from "./workspace-identity.js";
 
+/** Hard lifetime of one browser takeover (matches the viewer token TTL). */
+export const LOGIN_TAKEOVER_TTL_MS = 30 * 60_000;
+
 export type SessionState =
   | "starting"
   | "ready"
@@ -27,10 +30,14 @@ export interface LoginSession {
   state: SessionState;
   owner: string;
   waiters: string[];
+  openedAt: number;
 }
 
 export interface LoginSessionOptions {
   maxConcurrent?: number;
+  /** Hard lifetime of one takeover; its browser resources are reclaimed
+   * lazily on the next acquire or release. */
+  maxAgeMs?: number;
   now?: () => number;
   id?: () => string;
   onEvent?: (event: TakeoverEvent) => void;
@@ -58,6 +65,7 @@ export class LoginSessionManager {
   private readonly sessions = new Map<string, LoginSession>();
   private readonly byUser = new Map<string, string>();
   private readonly maxConcurrent: number;
+  private readonly maxAgeMs: number;
   private readonly now: () => number;
   private readonly nextId: () => string;
   private readonly onEvent: ((event: TakeoverEvent) => void) | undefined;
@@ -65,6 +73,7 @@ export class LoginSessionManager {
 
   constructor(options: LoginSessionOptions = {}) {
     this.maxConcurrent = options.maxConcurrent ?? 2;
+    this.maxAgeMs = options.maxAgeMs ?? LOGIN_TAKEOVER_TTL_MS;
     this.now = options.now ?? Date.now;
     this.nextId = options.id ?? (() => `login_${++this.counter}_${this.now().toString(36)}`);
     this.onEvent = options.onEvent;
@@ -83,6 +92,7 @@ export class LoginSessionManager {
   /** Acquire or join the single headful session for a profile. */
   acquire(userId: unknown, taskId: string): LoginSession {
     const uid = canonicalUserId(userId);
+    this.sweepExpired();
     const existingId = this.byUser.get(uid);
     if (existingId) {
       const existing = this.sessions.get(existingId)!;
@@ -98,6 +108,7 @@ export class LoginSessionManager {
       state: "agent_active",
       owner: taskId,
       waiters: [taskId],
+      openedAt: this.now(),
     };
     this.sessions.set(session.id, session);
     this.byUser.set(uid, session.id);
@@ -111,10 +122,12 @@ export class LoginSessionManager {
     return session;
   }
 
-  /** Returns control; publishes durable completion for orchestrator fan-out. */
-  release(sessionId: string, generation: number): void {
+  /** Returns control; publishes durable completion for orchestrator fan-out.
+   * Idempotent once the session is gone: duplicate terminal requests from the
+   * card return the same settled result instead of failing. */
+  release(sessionId: string, generation: number): boolean {
     const session = this.sessions.get(sessionId);
-    if (!session) throw new Error("login session not found");
+    if (!session) return false;
     if (session.generation !== generation) throw new Error("stale release fenced");
     if (session.state !== "user_takeover" && session.state !== "agent_active") {
       throw new Error(`cannot release from ${session.state}`);
@@ -129,6 +142,33 @@ export class LoginSessionManager {
       generation,
       taskIds: [...session.waiters],
     });
+    return true;
+  }
+
+  /** Reclaim takeovers that outlived their TTL. Lazy by design: it runs on the
+   * next acquire/release, so an idle server holds no timers. */
+  sweepExpired(): void {
+    for (const session of this.sessions.values()) {
+      if (this.now() - session.openedAt < this.maxAgeMs) continue;
+      session.state = "closed";
+      this.sessions.delete(session.id);
+      this.byUser.delete(session.userId);
+      this.onEvent?.({
+        kind: "takeover_expired",
+        userId: session.userId,
+        sessionId: session.id,
+        generation: session.generation,
+        taskIds: [...session.waiters],
+      });
+    }
+  }
+
+  /** Session metadata for an authorized release/mint route. Null when the
+   * session is gone or owned by a different user. */
+  ownedSession(userId: unknown, sessionId: string): LoginSession | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) return null;
+    return session.userId === canonicalUserId(userId) ? session : null;
   }
 
   expire(sessionId: string, generation: number): void {

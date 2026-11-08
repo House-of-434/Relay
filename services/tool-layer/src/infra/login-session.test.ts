@@ -91,3 +91,33 @@ test("simultaneous requests create exactly one session", () => {
   assert.equal(new Set(results.map((r) => r.id)).size, 1);
   assert.equal(results[0]!.waiters.length, 5);
 });
+
+test("release is idempotent once the session is gone", () => {
+  const m = new LoginSessionManager();
+  const s = m.acquire(USER_A, "task-1");
+  assert.equal(m.release(s.id, s.generation), true);
+  assert.equal(m.release(s.id, s.generation), false);
+});
+
+test("ownedSession rejects another user and unknown sessions", () => {
+  const m = new LoginSessionManager();
+  const s = m.acquire(USER_A, "task-1");
+  assert.equal(m.ownedSession(USER_A, s.id)?.id, s.id);
+  assert.equal(m.ownedSession(USER_B, s.id), null);
+  assert.equal(m.ownedSession(USER_A, "missing"), null);
+});
+
+test("an expired takeover is reclaimed on the next acquire", () => {
+  let now = 1_000;
+  const events: unknown[] = [];
+  const m = new LoginSessionManager({ maxAgeMs: 100, now: () => now, onEvent: (e) => events.push(e) });
+  const first = m.acquire(USER_A, "task-1");
+  now += 101;
+  // A different user's acquire triggers the sweep; the same user would join
+  // the stale session, so sweep before looking it up.
+  m.acquire(USER_B, "task-2");
+  assert.deepEqual(events, [
+    { kind: "takeover_expired", userId: USER_A, sessionId: first.id, generation: 1, taskIds: ["task-1"] },
+  ]);
+  assert.equal(m.ownedSession(USER_A, first.id), null);
+});

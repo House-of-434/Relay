@@ -1,0 +1,123 @@
+/** Browser-takeover card creation: tool layer -> BFF -> harness.
+ *
+ * POST /api/internal/browser-takeover — loopback-only. The tool layer never
+ * reaches the harness directly; the BFF terminates tool-facing auth and
+ * proxies over loopback. Dual auth mirrors the Scribe join route: the shared
+ * BFF capability plus the per-turn actor assertion, both re-checked here.
+ *
+ * The harness owns the card and the continuation; this route validates and
+ * hands the safe metadata to the store.
+ */
+import { z } from "zod";
+import type { IncomingMessage } from "node:http";
+
+import { isLoopbackHost, isProxied } from "../request-auth.ts";
+import { verifyActorAssertion } from "../relay-mcp.ts";
+import type { BotRecord } from "../store.ts";
+import { bearerCapabilityMatches, capabilityHash } from "./portal-session.ts";
+import { PASS, type RouteContext, type RouteHandler } from "./table.ts";
+
+export const BROWSER_TAKEOVER_PATH = "/api/internal/browser-takeover";
+const MAX_BODY_BYTES = 16 * 1024;
+
+const bodySchema = z.object({
+  request_key: z.string().uuid(),
+  session_id: z.string().min(1).max(128),
+  generation: z.number().int().min(1),
+  title: z.string().trim().min(1).max(200),
+  description: z.string().trim().min(1).max(600),
+  expires_at: z.string().datetime(),
+}).strict();
+
+export type BrowserTakeoverActor = {
+  userId: string;
+  botId: string;
+  threadId: string;
+  agent: "scout" | "mercury" | "curator";
+};
+
+export interface BrowserTakeoverCreateInput {
+  requestKey: string;
+  sessionId: string;
+  generation: number;
+  title: string;
+  description: string;
+  expiresAt: string;
+}
+
+function header(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" ? value : undefined;
+}
+
+function loopbackPeer(req: IncomingMessage): boolean {
+  const address = req.socket?.remoteAddress;
+  if (!address) return false;
+  const normalized = address.startsWith("::ffff:") ? address.slice("::ffff:".length) : address;
+  return isLoopbackHost(normalized);
+}
+
+function reject(ctx: RouteContext, status: number, body: unknown): void {
+  ctx.res.setHeader("connection", "close");
+  ctx.json(ctx.res, status, body);
+}
+
+export function createBrowserTakeoverRoutes(options: {
+  store: { bot(id: string): Pick<BotRecord, "relayAgent" | "ownerUserId"> | null };
+  capability: string | undefined;
+  actorSecret: string | undefined;
+  /** Persist the card. Returns null when the source conversation does not
+   * belong to the sender or the actor is not a research bot. */
+  create: (actor: BrowserTakeoverActor, input: BrowserTakeoverCreateInput) => { messageId: string } | null;
+}): RouteHandler {
+  const capabilityReady = typeof options.capability === "string" && Buffer.byteLength(options.capability) >= 32;
+  const expectedHash = capabilityHash(options.capability ?? "");
+
+  return async (ctx) => {
+    if (ctx.path !== BROWSER_TAKEOVER_PATH) return PASS;
+    ctx.res.setHeader("cache-control", "no-store");
+
+    if (isProxied(ctx.req) || !isLoopbackHost(header(ctx.req.headers.host)) || !loopbackPeer(ctx.req)) {
+      return reject(ctx, 403, { error: "forbidden" });
+    }
+    if (ctx.method !== "POST") {
+      ctx.res.setHeader("allow", "POST");
+      return reject(ctx, 405, { error: "method not allowed" });
+    }
+    if (!/^application\/json\b/i.test(String(ctx.req.headers["content-type"] ?? ""))) {
+      return reject(ctx, 415, { error: "send the request as JSON" });
+    }
+    if (!capabilityReady) return reject(ctx, 503, { error: "browser takeover is unavailable" });
+    if (!bearerCapabilityMatches(ctx.req, expectedHash)) return reject(ctx, 401, { error: "unauthorized" });
+
+    let actor: BrowserTakeoverActor;
+    try {
+      actor = verifyActorAssertion(header(ctx.req.headers["x-relay-actor-user"]), options.actorSecret);
+    } catch {
+      return reject(ctx, 401, { error: "unauthorized" });
+    }
+    const bot = options.store.bot(actor.botId);
+    if (!bot || bot.relayAgent !== "scout" || bot.ownerUserId !== actor.userId) {
+      return reject(ctx, 403, { error: "browser sign-in is a research-only action" });
+    }
+
+    let raw: unknown;
+    try {
+      raw = await ctx.readBody(ctx.req, MAX_BODY_BYTES);
+    } catch {
+      return reject(ctx, 400, { error: "invalid request body" });
+    }
+    const parsed = bodySchema.safeParse(raw);
+    if (!parsed.success) return reject(ctx, 400, { error: "invalid browser takeover request" });
+
+    const result = options.create(actor, {
+      requestKey: parsed.data.request_key,
+      sessionId: parsed.data.session_id,
+      generation: parsed.data.generation,
+      title: parsed.data.title,
+      description: parsed.data.description,
+      expiresAt: parsed.data.expires_at,
+    });
+    if (!result) return reject(ctx, 403, { error: "source conversation does not belong to sender" });
+    return ctx.json(ctx.res, 201, { message_id: result.messageId });
+  };
+}

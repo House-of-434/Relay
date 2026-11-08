@@ -312,6 +312,14 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       error: out.secret.error ? redactSecretsInText(out.secret.error) : undefined,
     };
   }
+  if (out.takeover) {
+    out.takeover = {
+      ...out.takeover,
+      title: redactSecretsInText(out.takeover.title),
+      description: redactSecretsInText(out.takeover.description),
+      error: out.takeover.error ? redactSecretsInText(out.takeover.error) : undefined,
+    };
+  }
   return out;
 }
 
