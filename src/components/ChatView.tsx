@@ -7,13 +7,10 @@ import {
   Copy,
   Crown,
   Pencil,
-  Pin,
-  PinOff,
   Plus,
   RefreshCw,
   Square,
   Webhook,
-  X,
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
@@ -222,7 +219,6 @@ function Bubble({
   hideAttachments?: boolean;
 }) {
   const { state, dispatch } = useStore();
-  const remoteClient = window.ogb?.remoteClient?.active === true;
   // A user-role line another bot delivered (ask_bot, delegate_bot,
   // start_thread) is that bot speaking, not the person: it takes the
   // bot side of the chat under the peer's name, with the model-facing
@@ -293,21 +289,6 @@ function Bubble({
               className={messageActionClass}
             >
               <ReplyIcon size={14} />
-            </button>
-            <button
-              onClick={() =>
-                dispatch({
-                  type: "updateTask",
-                  botId: bot.id,
-                  threadId: bot.threadId,
-                  patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
-                })
-              }
-              aria-label={bot.pinnedMessageId === message.id ? t("chat.unpinMessage") : t("chat.pinMessage")}
-              title={bot.pinnedMessageId === message.id ? t("chat.unpinHint") : t("chat.pinHint")}
-              className={cn(messageActionClass, remoteClient && "hidden")}
-            >
-              {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
             </button>
           </MessageActions>
         )}
@@ -393,21 +374,6 @@ function Bubble({
               className={messageActionClass}
             >
               <ReplyIcon size={14} />
-            </button>
-            <button
-              onClick={() =>
-                dispatch({
-                  type: "updateTask",
-                  botId: bot.id,
-                  threadId: bot.threadId,
-                  patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
-                })
-              }
-              aria-label={bot.pinnedMessageId === message.id ? t("chat.unpinMessage") : t("chat.pinMessage")}
-              title={bot.pinnedMessageId === message.id ? t("chat.unpinHint") : t("chat.pinHint")}
-              className={cn(messageActionClass, remoteClient && "hidden")}
-            >
-              {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
             </button>
           </MessageActions>
         )}
@@ -775,54 +741,6 @@ const MessagesList = memo(function MessagesList({
     </>
   );
 });
-
-/** The one pinned message, above the transcript: sender, one line, click to
- * jump, X to unpin. Resolves the pin id against the full message list; a
- * pin that no longer resolves renders nothing (edited away or deleted). */
-function PinnedBanner({
-  bot,
-  pinnedId,
-  messages,
-  onJump,
-  onUnpin,
-}: {
-  bot: Bot;
-  pinnedId?: string;
-  messages: Message[];
-  onJump: (messageId: string) => void;
-  onUnpin?: () => void;
-}) {
-  const pinned = messages.find((m) => m.id === pinnedId);
-  if (!pinned || pinned.kind !== "text") return null;
-  const pinnedPeer = peerLine(pinned);
-  const sender =
-    pinned.role === "user" ? (pinnedPeer?.name ?? t("chat.you")) : (pinned.from?.name ?? bot.name);
-  const text = (pinnedPeer?.body ?? pinned.text ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return null;
-  return (
-    <div className="w-full px-5">
-      <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
-        <Pin size={12} className="shrink-0 text-accent" />
-        <button
-          onClick={() => onJump(pinned.id)}
-          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-          title={t("chat.pinnedJump")}
-        >
-          <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
-          <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
-        </button>
-        {onUnpin && <button
-          onClick={onUnpin}
-          aria-label={t("chat.unpinMessage")}
-          title={t("chat.unpin")}
-          className="shrink-0 rounded p-0.5 text-ink-secondary hover:text-ink"
-        >
-          <X size={13} />
-        </button>}
-      </div>
-    </div>
-  );
-}
 
 export function ChatView({ bot: profile }: {
   bot: Bot;
@@ -1247,20 +1165,6 @@ export function ChatView({ bot: profile }: {
           </div>
         </div>
       )}
-
-      {/* Pinned message banner */}
-      <PinnedBanner
-        bot={bot}
-        pinnedId={bot.pinnedMessageId}
-        messages={messages}
-        onJump={(messageId) =>
-          dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })
-        }
-        onUnpin={remoteClient ? undefined : () =>
-          dispatch({ type: "updateTask", botId: bot.id, threadId: bot.threadId, patch: { pinnedMessageId: "" } })
-        }
-      />
-
 
       {/* Messages + composer share one pane so bubbles scroll into the pill
           instead of dying on a rectangular clip above a black dock. */}

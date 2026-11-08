@@ -4,7 +4,7 @@
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activeLocale, t } from "@/lib/i18n";
-import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Pin, PinOff, Plus, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Pin, Plus } from "lucide-react";
 import {
   api,
   useStore,
@@ -118,29 +118,6 @@ export function RoomToolChip({ message, roomId }: { message: Message; roomId?: s
         <span className={cn("max-w-[480px] truncate", !comm && "font-mono")}>{tool.name}</span>
       </div>
     </div>
-  );
-}
-
-/** Pin toggle for one room message — one pin per room, patchGroup path. */
-function PinToggle({ group, message }: { group: Group; message: Message }) {
-  const { dispatch } = useStore();
-  if (window.ogb?.remoteClient?.active) return null;
-  const pinned = group.pinnedMessageId === message.id;
-  return (
-    <button
-      onClick={() =>
-        dispatch({
-          type: "patchGroup",
-          groupId: group.id,
-          patch: { pinnedMessageId: pinned ? "" : message.id },
-        })
-      }
-      aria-label={pinned ? t("chat.unpinMessage") : t("chat.pinMessage")}
-      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
-      title={pinned ? t("chat.unpinHint") : t("room.pinHint")}
-    >
-      {pinned ? <PinOff size={14} /> : <Pin size={14} />}
-    </button>
   );
 }
 
@@ -281,7 +258,6 @@ export const Transcript = memo(function Transcript({
                     >
                       <ReplyIcon size={14} />
                     </button>
-                    <PinToggle group={group} message={m} />
                   </>
                 )}
                 <div className="flex w-fit max-w-[min(42rem,78%)] flex-col">
@@ -329,7 +305,6 @@ export const Transcript = memo(function Transcript({
                     >
                       <ReplyIcon size={14} />
                     </button>
-                    <PinToggle group={group} message={m} />
                   </>
                 )}
               </div>
@@ -1348,37 +1323,6 @@ export function GroupView({ group }: {
           </div>
         </div>
       )}
-
-      {/* Pinned message banner — resolves against the room's full transcript */}
-      {(() => {
-        const pinned = group.messages.find((m) => m.id === group.pinnedMessageId && m.kind === "text");
-        const text = pinned ? (pinned.text ?? "").replace(/\s+/g, " ").trim() : "";
-        if (!pinned || !text) return null;
-        const sender = pinned.role === "user" ? t("chat.you") : (pinned.from?.name ?? t("room.aBot"));
-        return (
-          <div className="w-full px-5">
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
-              <Pin size={12} className="shrink-0 text-accent" />
-              <button
-                onClick={() => dispatch({ type: "focusMessage", threadId: group.threadId, messageId: pinned.id })}
-                className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-                title={t("chat.pinnedJump")}
-              >
-                <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
-                <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
-              </button>
-              <button
-                onClick={() => dispatch({ type: "patchGroup", groupId: group.id, patch: { pinnedMessageId: "" } })}
-                aria-label={t("chat.unpinMessage")}
-                title={t("chat.unpin")}
-                className={cn("shrink-0 rounded p-0.5 text-ink-secondary hover:text-ink", remoteClient && "hidden")}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          </div>
-        );
-      })()}
 
       <div className="relative min-h-0 flex-1">
       <div
