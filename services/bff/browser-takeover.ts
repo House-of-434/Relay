@@ -14,7 +14,8 @@ import { verifyActorAssertion } from "./actor-assertion.ts";
 
 export const INTERNAL_BROWSER_TAKEOVER = "/api/internal/browser-takeover/request";
 
-const MAX_BODY_BYTES = 16 * 1024;
+// One screenshot data URL (~1.5 MB decoded) rides with the card metadata.
+const MAX_BODY_BYTES = 3 * 1024 * 1024;
 
 const requestSchema = z.object({
   request_key: z.string().uuid(),
@@ -23,6 +24,7 @@ const requestSchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().min(1).max(600),
   expires_at: z.string().datetime(),
+  screenshot: z.string().max(2_100_000).optional(),
 }).strict();
 
 export interface InternalBrowserTakeoverOptions {

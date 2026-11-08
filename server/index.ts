@@ -13897,7 +13897,43 @@ function resumeTakeoverCard(botId: string, threadId: string, messageId: string, 
 }
 
 const takeoverExpiryTimers = new Map<string, NodeJS.Timeout>();
-const takeoverTerminalizing = new Map<string, Promise<{ status: string; resumed: boolean }>>();
+const takeoverTerminalizing = new Map<string, Promise<{ status: string; resumed: boolean; changed: boolean }>>();
+/** One-shot preview images, held only while their card is pending. They are
+ * deliberately not stored on the message or broadcast to clients. */
+const takeoverScreenshots = new Map<string, { dataUrl: string; sessionId: string; generation: number; at: number }>();
+const TAKEOVER_SCREENSHOT_TTL_MS = BROWSER_TAKEOVER_TTL_MS + 60_000;
+
+function takeoverScreenshotKey(messageId: string): string {
+  return messageId;
+}
+
+function rememberTakeoverScreenshot(
+  messageId: string,
+  dataUrl: string,
+  sessionId: string,
+  generation: number,
+): void {
+  const cutoff = Date.now() - TAKEOVER_SCREENSHOT_TTL_MS;
+  for (const [key, value] of takeoverScreenshots) {
+    if (value.at < cutoff) takeoverScreenshots.delete(key);
+  }
+  takeoverScreenshots.set(takeoverScreenshotKey(messageId), { dataUrl, sessionId, generation, at: Date.now() });
+}
+
+function takeTakeoverScreenshot(messageId: string): string | null {
+  return takeoverScreenshots.get(takeoverScreenshotKey(messageId))?.dataUrl ?? null;
+}
+
+function clearTakeoverScreenshot(messageId: string): void {
+  takeoverScreenshots.delete(takeoverScreenshotKey(messageId));
+}
+
+/** Pending sign-in cards on the visible branch of a conversation. */
+function pendingTakeoverMessages(threadId: string): Message[] {
+  return store.activePath(threadId).filter((message) =>
+    message.kind === "takeover" && message.takeover && takeoverPending(message.takeover),
+  );
+}
 
 function takeoverTimerKey(threadId: string, messageId: string): string {
   return `${threadId}:${messageId}`;
@@ -13945,22 +13981,27 @@ async function terminalTakeover(
   messageId: string,
   status: "done" | "dismissed" | "expired",
   note?: string,
-): Promise<{ status: string; resumed: boolean }> {
+): Promise<{ status: string; resumed: boolean; changed: boolean }> {
   const key = takeoverTimerKey(threadId, messageId);
   const message = takeoverMessage(botId, threadId, messageId);
   if (!message?.takeover) throw new ToolLayerTakeoverError(404, "no such sign-in request");
   const card = message.takeover;
   if (card.status !== "pending") {
+    clearTakeoverScreenshot(messageId);
     if (!card.resumed) {
       // Retry the continuation for a card whose first dispatch failed.
       resumeTakeoverCard(botId, threadId, messageId, card.status === "done" ? "provided" : "dismissed");
     }
     const settled = takeoverMessage(botId, threadId, messageId);
-    return { status: settled?.takeover?.status ?? card.status, resumed: settled?.takeover?.resumed === true };
+    return {
+      status: settled?.takeover?.status ?? card.status,
+      resumed: settled?.takeover?.resumed === true,
+      changed: false,
+    };
   }
   const inFlight = takeoverTerminalizing.get(key);
-  if (inFlight) return inFlight;
-  const run = (async (): Promise<{ status: string; resumed: boolean }> => {
+  if (inFlight) return inFlight.then((settled) => ({ ...settled, changed: false }));
+  const run = (async (): Promise<{ status: string; resumed: boolean; changed: boolean }> => {
     const actor = takeoverActor(botId, threadId);
     let terminalStatus = status;
     let url = "";
@@ -13984,6 +14025,7 @@ async function terminalTakeover(
       await takeoverControl.release(actor, card.sessionId, card.generation);
     }
     clearTakeoverTimer(threadId, messageId);
+    clearTakeoverScreenshot(messageId);
     store.patchMessage(threadId, messageId, { takeover: { ...card, status: terminalStatus, error: undefined } });
     resumeTakeoverCard(
       botId,
@@ -13994,7 +14036,7 @@ async function terminalTakeover(
       note,
     );
     const settled = takeoverMessage(botId, threadId, messageId);
-    return { status: terminalStatus, resumed: settled?.takeover?.resumed === true };
+    return { status: terminalStatus, resumed: settled?.takeover?.resumed === true, changed: true };
   })().catch((error) => {
     if (status !== "done") scheduleTakeoverExpiry(botId, threadId, messageId);
     throw error;
@@ -14798,7 +14840,17 @@ ROUTES.push(createPortalSessionRoutes({
         && candidate.takeover?.generation === input.generation
         && takeoverPending(candidate.takeover)
         && (!owner.group || candidate.from?.botId === actor.botId));
-      if (existing) return { messageId: existing.id };
+      if (existing) {
+        // A retried call may be the first one to carry a preview. Keep the
+        // existing image if one is already attached.
+        if (input.screenshot && existing.takeover && !takeTakeoverScreenshot(existing.id)) {
+          rememberTakeoverScreenshot(existing.id, input.screenshot, input.sessionId, input.generation);
+          store.patchMessage(actor.threadId, existing.id, {
+            takeover: { ...existing.takeover, hasScreenshot: true },
+          });
+        }
+        return { messageId: existing.id };
+      }
       const message = store.appendMessage(actor.threadId, {
         role: "bot",
         kind: "takeover",
@@ -14813,8 +14865,12 @@ ROUTES.push(createPortalSessionRoutes({
           status: "pending",
           expiresAt: new Date(expiresAt).toISOString(),
           requestKey: input.requestKey,
+          hasScreenshot: Boolean(input.screenshot),
         },
       });
+      if (input.screenshot) {
+        rememberTakeoverScreenshot(message.id, input.screenshot, input.sessionId, input.generation);
+      }
       scheduleTakeoverExpiry(actor.botId, actor.threadId, message.id);
       return { messageId: message.id };
     },
@@ -19263,6 +19319,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               throw Object.assign(new Error("sendId already belongs to another message"), { status: 409 });
             }
             if (accepted.kind === "match") {
+              const pendingTakeovers = pendingTakeoverMessages(threadId).filter((card) => Boolean(card.from?.botId));
+              if (pendingTakeovers.length) {
+                const note = redactSecretsInText(accepted.message.text ?? text).slice(0, 500);
+                for (const card of pendingTakeovers) {
+                  await terminalTakeover(card.from!.botId, threadId, card.id, "done", note);
+                }
+              }
               return { ok: true as const, threadId, message: accepted.message };
             }
             const queued = queuedChannelMessage(group.id, threadId, sendId);
@@ -19283,6 +19346,28 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             throw Object.assign(new Error("the channel switched tasks before it could receive the message"), {
               status: 409,
             });
+          }
+          // A person typing in the room hands the open sign-in browser back;
+          // their words become the note on the continuation. If another
+          // action already settled the card, this is a normal follow-up turn.
+          const pendingTakeovers = pendingTakeoverMessages(threadId).filter((card) => Boolean(card.from?.botId));
+          if (pendingTakeovers.length > 0) {
+            const card = pendingTakeovers[0]!;
+            const note = redactSecretsInText(text).slice(0, 500);
+            const settled = await terminalTakeover(card.from!.botId, threadId, card.id, "done", note);
+            if (settled.changed) {
+              const message = store.appendMessage(threadId, {
+                role: "user",
+                kind: "text",
+                text,
+                replyToId: replyTo?.id,
+                sendId,
+                channelMode,
+                via,
+                sender: messageSender(auth),
+              });
+              return { ok: true as const, threadId, message };
+            }
           }
           const decision = admit("room", {}, { roomWorking: groupIsWorking(current) });
           if (decision.action === "queue") {
@@ -20861,6 +20946,15 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               throw Object.assign(new Error("sendId already belongs to another message"), { status: 409 });
             }
             if (accepted.kind === "match") {
+              // A retry of the message that handed the browser back may have
+              // lost its first handback; settle the still-pending card now.
+              const pendingTakeovers = pendingTakeoverMessages(threadId);
+              if (pendingTakeovers.length) {
+                const note = redactSecretsInText(accepted.message.text ?? text).slice(0, 500);
+                for (const card of pendingTakeovers) {
+                  await terminalTakeover(bot.id, threadId, card.id, "done", note);
+                }
+              }
               const canonical = {
                 ok: true as const,
                 threadId,
@@ -20876,6 +20970,29 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 throw Object.assign(new Error("sendId already belongs to another message"), { status: 409 });
               }
               return { ok: true as const, queued: true as const, queueId: queued.id, threadId, reason: queued.reason };
+            }
+          }
+
+          // A person typing while a sign-in card is open means "hand it back,
+          // and this is what to do next." The message becomes the note on the
+          // card continuation, so it is not started again as a second turn.
+          // If another action already settled the card, fall through and let
+          // this message start a normal follow-up turn.
+          const pendingTakeovers = pendingTakeoverMessages(threadId);
+          if (pendingTakeovers.length > 0) {
+            const card = pendingTakeovers[0]!;
+            const note = redactSecretsInText(text).slice(0, 500);
+            const settled = await terminalTakeover(bot.id, threadId, card.id, "done", note);
+            if (settled.changed) {
+              const message = store.appendMessage(threadId, {
+                role: "user",
+                kind: "text",
+                text,
+                replyToId: replyTo?.id,
+                sendId,
+                sender: messageSender(auth),
+              });
+              return { ok: true as const, threadId, message };
             }
           }
 
@@ -23090,6 +23207,26 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         target: parsed.data.target,
       }, authenticatedDeviceId);
       return json(res, 200, state);
+    }
+
+    // The pending card's one-shot preview. It is streamed from memory, never
+    // stored in the transcript, and served only while the card is visible.
+    m = path.match(/^\/api\/bots\/([\w-]+)\/takeover-cards\/([\w-]+)\/screenshot$/);
+    if (m && method === "GET") {
+      const threadId = url.searchParams.get("threadId") ?? "";
+      const bot = store.bot(m[1]);
+      const message = takeoverMessage(m[1], threadId, m[2]);
+      if (!bot || !message?.takeover) return json(res, 404, { error: "no such sign-in request" });
+      const stored = takeoverScreenshots.get(takeoverScreenshotKey(message.id));
+      if (!stored || stored.sessionId !== message.takeover.sessionId || stored.generation !== message.takeover.generation) {
+        return json(res, 404, { error: "no screenshot for this sign-in request" });
+      }
+      const parsed = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/.exec(stored.dataUrl);
+      if (!parsed) return json(res, 404, { error: "no screenshot for this sign-in request" });
+      res.setHeader("cache-control", "private, no-store");
+      res.setHeader("content-type", parsed[1]);
+      res.writeHead(200);
+      return res.end(Buffer.from(parsed[2], "base64"));
     }
 
     // Browser sign-in cards: the person opens the live viewer or settles the

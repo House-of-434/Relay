@@ -450,6 +450,44 @@ export class BladeBrowserPool {
     return this.boundResult(userId, "extract", text);
   }
 
+  /** One-shot viewport PNG for the takeover card. The daemon writes the image
+   * into this user's artifacts directory; the data URL is the only copy that
+   * leaves the tool layer. Returns null instead of failing the card. */
+  async vision(userId: unknown, display: string): Promise<{ dataUrl: string } | null> {
+    if (!(await this.probe())) return null;
+    const tracked = this.trackWorkspace(userId);
+    await this.sweepIdle(tracked.id);
+    assertSafeArgs(["vision"]);
+    let result: SpawnResult;
+    try {
+      result = await this.spawn(this.binary, ["vision", "--json"], {
+        env: this.buildEnv(tracked.root, false, display),
+        timeoutMs: BLADE_ACTION_TIMEOUT_MS,
+        maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
+      });
+    } catch {
+      return null;
+    }
+    if (result.exitCode !== 0) return null;
+    let parsed: { ok?: unknown; image_path?: unknown };
+    try {
+      parsed = JSON.parse(result.stdout) as { ok?: unknown; image_path?: unknown };
+    } catch {
+      return null;
+    }
+    if (parsed.ok !== true || typeof parsed.image_path !== "string") return null;
+    const artifacts = artifactsDirFor(tracked.root);
+    const resolved = resolve(parsed.image_path);
+    const rel = relative(artifacts, resolved);
+    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+    const bytes = await readFile(resolved).catch(() => null);
+    if (!bytes || bytes.length < 512 || bytes.length > 1_500_000) return null;
+    const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    if (!png && !jpeg) return null;
+    return { dataUrl: `data:image/${png ? "png" : "jpeg"};base64,${bytes.toString("base64")}` };
+  }
+
   /** Current page URL on the (possibly handed-back) session. Empty when the
    * browser cannot answer; the resume prompt then omits the URL. */
   async currentUrl(userId: unknown, display?: string): Promise<string> {

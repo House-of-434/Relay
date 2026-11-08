@@ -129,6 +129,27 @@ describe("browser takeover route", () => {
     expect(reply.status).toBe(403);
   });
 
+
+  it("passes a validated one-shot screenshot to the card", async () => {
+    const png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl5sAAAAASUVORK5CYII=";
+    const reply = await call({ capability: CAPABILITY, actor: assertion(), payload: body({ screenshot: png }) });
+    expect(reply.status).toBe(201);
+    expect(created[0]!.input).toMatchObject({ screenshot: png });
+  });
+
+  it("drops a screenshot whose bytes do not match its declared type", async () => {
+    const fakePng = "data:image/png;base64," + Buffer.from("not a png at all").toString("base64");
+    const reply = await call({ capability: CAPABILITY, actor: assertion(), payload: body({ screenshot: fakePng }) });
+    expect(reply.status).toBe(201);
+    expect(created[0]!.input).not.toHaveProperty("screenshot");
+  });
+
+  it("rejects a non-image or malformed screenshot without failing the card", async () => {
+    const reply = await call({ capability: CAPABILITY, actor: assertion(), payload: body({ screenshot: "javascript:alert(1)" }) });
+    expect(reply.status).toBe(201);
+    expect(created[0]!.input).not.toHaveProperty("screenshot");
+  });
+
   it("rejects a malformed body", async () => {
     const reply = await call({ capability: CAPABILITY, actor: assertion(), payload: { session_id: "x" } });
     expect(reply.status).toBe(400);

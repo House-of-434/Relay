@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -229,6 +229,38 @@ test("forbidden argv never reaches the binary", () => {
     assert.throws(() => assertSafeArgs(["see", banned]), /forbidden/);
   }
   assertSafeArgs(["nav", "https://example.com", "--json"]);
+});
+
+test("vision captures a workspace artifact as a one-shot data URL", async () => {
+  const artifacts = join(ROOT, "blade", ALICE, "artifacts");
+  mkdirSync(artifacts, { recursive: true });
+  const imagePath = join(artifacts, "blade-1-0001.png");
+  // >512 bytes with a real PNG signature: the method rejects tiny/truncated files.
+  writeFileSync(imagePath, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(600),
+  ]));
+  const spawn = makeSpawn((call) => call.args[0] === "vision"
+    ? { exitCode: 0, stdout: JSON.stringify({ ok: true, image_path: imagePath }), stderr: "" }
+    : okJson("x"));
+  const pool = poolWith(spawn);
+  const shot = await pool.vision(ALICE, ":99");
+  assert.ok(shot?.dataUrl.startsWith("data:image/png;base64,"));
+  const visionCall = bladeCalls(spawn).find((call) => call.args[0] === "vision");
+  assert.deepEqual(visionCall?.args, ["vision", "--json"]);
+  assert.equal(visionCall?.env.DISPLAY, ":99");
+});
+
+test("vision refuses a path outside the artifacts directory", async () => {
+  const outside = join(ROOT, "outside.png");
+  writeFileSync(outside, Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.alloc(600),
+  ]));
+  const spawn = makeSpawn((call) => call.args[0] === "vision"
+    ? { exitCode: 0, stdout: JSON.stringify({ ok: true, image_path: outside }), stderr: "" }
+    : okJson("x"));
+  assert.equal(await poolWith(spawn).vision(ALICE, ":99"), null);
 });
 
 test("browser act maps to Bladebro argv without eval", () => {

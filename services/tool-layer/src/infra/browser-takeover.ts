@@ -26,6 +26,8 @@ export interface BrowserTakeoverCardInput {
   title: string;
   description: string;
   expiresAt: string;
+  /** One-shot PNG/JPEG data URL of the page the person is taking over. */
+  screenshot?: string;
 }
 
 export interface BrowserTakeoverCardResult {
@@ -74,6 +76,7 @@ export class RelayBrowserTakeoverClient {
           title: input.title,
           description: input.description,
           expires_at: input.expiresAt,
+          ...(input.screenshot ? { screenshot: input.screenshot } : {}),
         }),
       });
     } catch {

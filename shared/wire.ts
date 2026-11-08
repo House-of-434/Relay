@@ -543,6 +543,8 @@ export interface TakeoverCardData {
   /** Idempotency key for the originating request, so a retried tool call
    * reuses one card instead of creating another intervention. */
   requestKey: string;
+  /** A one-shot preview image is available from the card's screenshot route. */
+  hasScreenshot?: boolean;
   resumed?: boolean;
   error?: string;
 }

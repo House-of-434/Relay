@@ -18,7 +18,8 @@ import { bearerCapabilityMatches, capabilityHash } from "./portal-session.ts";
 import { PASS, type RouteContext, type RouteHandler } from "./table.ts";
 
 export const BROWSER_TAKEOVER_PATH = "/api/internal/browser-takeover";
-const MAX_BODY_BYTES = 16 * 1024;
+const MAX_BODY_BYTES = 3 * 1024 * 1024;
+const MAX_SCREENSHOT_BYTES = 1_500_000;
 
 const bodySchema = z.object({
   request_key: z.string().uuid(),
@@ -27,7 +28,28 @@ const bodySchema = z.object({
   title: z.string().trim().min(1).max(200),
   description: z.string().trim().min(1).max(600),
   expires_at: z.string().datetime(),
+  screenshot: z.string().max(2_100_000).optional(),
 }).strict();
+
+/** Accept only a PNG/JPEG data URL, strictly base64, within the size cap,
+ * with bytes that match the declared image type. A bad preview is dropped;
+ * the card itself still goes through. */
+function parseTakeoverScreenshot(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const match = /^data:image\/(png|jpeg);base64,([A-Za-z0-9+/]+={0,2})$/.exec(raw);
+  if (!match) return null;
+  const [, kind, base64] = match;
+  if (base64.length % 4 !== 0) return null;
+  const bytes = Buffer.from(base64, "base64");
+  if (bytes.toString("base64") !== base64) return null;
+  if (bytes.length === 0 || bytes.length > MAX_SCREENSHOT_BYTES) return null;
+  const png = bytes.length >= 8 &&
+    bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47 &&
+    bytes[4] === 0x0d && bytes[5] === 0x0a && bytes[6] === 0x1a && bytes[7] === 0x0a;
+  const jpeg = bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+  if ((kind === "png" && !png) || (kind === "jpeg" && !jpeg)) return null;
+  return `data:image/${kind};base64,${base64}`;
+}
 
 export type BrowserTakeoverActor = {
   userId: string;
@@ -43,6 +65,8 @@ export interface BrowserTakeoverCreateInput {
   title: string;
   description: string;
   expiresAt: string;
+  /** Validated one-shot PNG/JPEG data URL, or absent when the capture failed. */
+  screenshot?: string;
 }
 
 function header(value: string | string[] | undefined): string | undefined {
@@ -109,6 +133,7 @@ export function createBrowserTakeoverRoutes(options: {
     const parsed = bodySchema.safeParse(raw);
     if (!parsed.success) return reject(ctx, 400, { error: "invalid browser takeover request" });
 
+    const screenshot = parseTakeoverScreenshot(parsed.data.screenshot);
     const result = options.create(actor, {
       requestKey: parsed.data.request_key,
       sessionId: parsed.data.session_id,
@@ -116,6 +141,7 @@ export function createBrowserTakeoverRoutes(options: {
       title: parsed.data.title,
       description: parsed.data.description,
       expiresAt: parsed.data.expires_at,
+      ...(screenshot ? { screenshot } : {}),
     });
     if (!result) return reject(ctx, 403, { error: "source conversation does not belong to sender" });
     return ctx.json(ctx.res, 201, { message_id: result.messageId });

@@ -200,6 +200,9 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
         displayStarted = true;
         sessions.attachDisplay(sessionId, lease.display);
         await pool.headfulOpen(userId, url, lease.display);
+        // One-shot preview for the card; a failed capture must not fail the
+        // request or leave the browser behind.
+        const screenshot = await pool.vision(userId, lease.display).catch(() => null);
         const expiresAt = new Date(Date.now() + LOGIN_TAKEOVER_TTL_MS).toISOString();
         await takeover.requestCard(actorAssertion, {
           requestKey: takeoverRequestKey(userId, sessionId, generation),
@@ -210,6 +213,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
           // reason travels with the card, once.
           description: reason?.trim().slice(0, 240) ?? "",
           expiresAt,
+          ...(screenshot ? { screenshot: screenshot.dataUrl } : {}),
         });
         return {
           content: [
