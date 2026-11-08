@@ -27,14 +27,10 @@ export interface LoginSession {
   state: SessionState;
   owner: string;
   waiters: string[];
-  openedAt: number;
 }
 
 export interface LoginSessionOptions {
   maxConcurrent?: number;
-  idleReclaimMs?: number;
-  reconnectMs?: number;
-  takeoverTtlMs?: number;
   now?: () => number;
   id?: () => string;
   onEvent?: (event: TakeoverEvent) => void;
@@ -62,8 +58,6 @@ export class LoginSessionManager {
   private readonly sessions = new Map<string, LoginSession>();
   private readonly byUser = new Map<string, string>();
   private readonly maxConcurrent: number;
-  private readonly idleReclaimMs: number;
-  private readonly takeoverTtlMs: number;
   private readonly now: () => number;
   private readonly nextId: () => string;
   private readonly onEvent: ((event: TakeoverEvent) => void) | undefined;
@@ -71,8 +65,6 @@ export class LoginSessionManager {
 
   constructor(options: LoginSessionOptions = {}) {
     this.maxConcurrent = options.maxConcurrent ?? 2;
-    this.idleReclaimMs = options.idleReclaimMs ?? 10 * 60_000;
-    this.takeoverTtlMs = options.takeoverTtlMs ?? 30 * 60_000;
     this.now = options.now ?? Date.now;
     this.nextId = options.id ?? (() => `login_${++this.counter}_${this.now().toString(36)}`);
     this.onEvent = options.onEvent;
@@ -82,15 +74,6 @@ export class LoginSessionManager {
   isUserTakeover(userId: unknown): boolean {
     const id = this.sessionIdFor(userId);
     return id ? this.sessions.get(id)?.state === "user_takeover" : false;
-  }
-
-  getStatus(sessionId: string): SessionState | undefined {
-    return this.sessions.get(sessionId)?.state;
-  }
-
-  /** Authorized waiting task ids for a live session (orchestrator polling). */
-  getWaiters(sessionId: string): string[] {
-    return [...(this.sessions.get(sessionId)?.waiters ?? [])];
   }
 
   sessionIdFor(userId: unknown): string | undefined {
@@ -115,7 +98,6 @@ export class LoginSessionManager {
       state: "agent_active",
       owner: taskId,
       waiters: [taskId],
-      openedAt: this.now(),
     };
     this.sessions.set(session.id, session);
     this.byUser.set(uid, session.id);
@@ -162,15 +144,6 @@ export class LoginSessionManager {
       generation,
       taskIds: [...session.waiters],
     });
-  }
-
-  pruneIdle(): void {
-    for (const session of this.sessions.values()) {
-      if (session.state !== "closed" && this.now() - session.openedAt > this.idleReclaimMs) {
-        this.sessions.delete(session.id);
-        this.byUser.delete(session.userId);
-      }
-    }
   }
 
   /** Test seam: deterministic generation bump (new browser process). */

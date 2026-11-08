@@ -244,7 +244,6 @@ async function handleMemberLookup(
  * hosts the RFB bridge. Token already validated by the caller; `path` is a
  * relative file under the noVNC web root. */
 async function proxyNovnc(
-  request: IncomingMessage,
   response: ServerResponse,
   userId: string,
   path: string,
@@ -429,7 +428,7 @@ document.getElementById("done").onclick = async () => {
           return;
         }
         if (request.method === "GET" && action && action.startsWith("novnc/")) {
-          await proxyNovnc(request, response, token.userId, action.slice("novnc/".length));
+          await proxyNovnc(response, token.userId, action.slice("novnc/".length));
           return;
         }
         if (request.method === "POST" && action === "release") {

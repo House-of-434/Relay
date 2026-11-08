@@ -33,11 +33,6 @@ export class ViewerTokens {
     return token;
   }
 
-  validate(value: string, sessionId: string, userId: string): boolean {
-    const token = this.find(value);
-    return token === undefined ? false : token.sessionId === sessionId && token.userId === userId;
-  }
-
   find(value: string): ViewerToken | undefined {
     const token = this.tokens.get(value);
     if (!token) return undefined;

@@ -301,10 +301,9 @@ export class BladeBrowserPool {
     if (this.timezone) env.BLADE_TZ = this.timezone;
     if (this.locale) env.BLADE_LOCALE = this.locale;
     // Headful takeover Chrome renders on the session's own X display; the
-    // research lane ignores it. Never take DISPLAY from ambient env: that
-    // would let unrelated sessions share a screen.
-    const activeDisplay = display ?? process.env.DISPLAY;
-    if (activeDisplay) env.DISPLAY = activeDisplay;
+    // research lane ignores it. Never read ambient DISPLAY: unrelated
+    // sessions must not share a screen.
+    if (display) env.DISPLAY = display;
     assertNoForbiddenEnv(env);
     return env;
   }

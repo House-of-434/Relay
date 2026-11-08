@@ -65,13 +65,14 @@ test("viewer tokens are scoped, short-lived, and revocable", () => {
   const v = new ViewerTokens({ ttlMs: 100, now: () => now });
   const t = v.mint("sess-1", USER_A);
   assert.match(t.value, /^[0-9a-f]{32}$/);
-  assert.equal(v.validate(t.value, "sess-1", USER_A), true);
-  assert.equal(v.validate(t.value, "sess-2", USER_A), false);
+  const found = v.find(t.value);
+  assert.equal(found?.sessionId, "sess-1");
+  assert.equal(found?.userId, USER_A);
   now += 101; // expired
-  assert.equal(v.validate(t.value, "sess-1", USER_A), false);
+  assert.equal(v.find(t.value), undefined);
   const t2 = v.mint("sess-1", USER_A);
   v.revoke(t2.value);
-  assert.equal(v.validate(t2.value, "sess-1", USER_A), false);
+  assert.equal(v.find(t2.value), undefined);
 });
 
 test("fan-out isolates failures: one blocked waiter does not stop others", async () => {

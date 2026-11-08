@@ -102,10 +102,6 @@ export class LoginDisplayPool {
     return this.byUser.get(userId)?.lease.wsPort;
   }
 
-  displayFor(userId: string): string | undefined {
-    return this.byUser.get(userId)?.lease.display;
-  }
-
   release(userId: string): void {
     const slot = this.byUser.get(userId);
     if (!slot) return;
@@ -113,10 +109,6 @@ export class LoginDisplayPool {
     for (const child of slot.children) {
       try { child.kill("SIGTERM"); } catch { /* already gone */ }
     }
-  }
-
-  releaseAll(): void {
-    for (const userId of this.byUser.keys()) this.release(userId);
   }
 
   private start(binary: string, args: string[]): ChildProcess {
