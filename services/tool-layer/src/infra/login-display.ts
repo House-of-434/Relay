@@ -85,7 +85,7 @@ export class LoginDisplayPool {
       // A window manager gives Chrome's native popups (selects, date pickers,
       // dialogs) real geometry on the virtual display. Best-effort: the
       // browser still works without it.
-      slot.children.push(this.startWithDisplay(this.wm, ["--display", lease.display], lease.display));
+      slot.children.push(this.startWithDisplay(this.wm, [], lease.display));
       await delay(300);
       slot.children.push(this.start(this.x11vnc, [
         "-display", lease.display,
