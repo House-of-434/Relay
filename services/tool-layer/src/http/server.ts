@@ -332,16 +332,18 @@ export async function createRelayToolServer(
           response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
           response.end(`<!doctype html><title>Login browser</title><body style="font-family:sans-serif;margin:16px">
 <h3>Login browser — agent is paused</h3>
-<p>Click to focus, then type. When signed in, press Done.</p>
+<p id="status">Connecting…</p>
+<p>Click the screen, then type. When signed in, press Done.</p>
 <img id="screen" style="width:min(1100px,96vw);border:1px solid #ccc" alt="browser"/>
 <br><button id="done">Done — hand back to agent</button>
 <script>
 const token="${tokenValue}";
-async function poll(){ const r=await fetch("/_viewer/"+token+"/screenshot"); if(r.ok){ const b=await r.blob(); document.getElementById("screen").src=URL.createObjectURL(b); } }
+const statusEl=document.getElementById("status");
+async function poll(){ try{ const r=await fetch("/_viewer/"+token+"/screenshot?t="+Date.now(),{cache:"no-store"}); if(r.ok){ const b=await r.blob(); document.getElementById("screen").src=URL.createObjectURL(b); statusEl.textContent="Streaming ✔"; } else { const j=await r.json().catch(()=>({})); statusEl.textContent="Stream error: "+(j.error||r.status); } }catch(e){ statusEl.textContent="Stream error: "+e.message; } }
 poll(); setInterval(poll,1500);
 document.getElementById("screen").addEventListener("click",async(e)=>{ const r=e.target.getBoundingClientRect(); const x=Math.round((e.clientX-r.left)*1280/r.width); const y=Math.round((e.clientY-r.top)*720/r.height); await fetch("/_viewer/"+token+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({type:"click",x,y})}); });
 document.addEventListener("keydown",async(e)=>{ if(e.target.tagName==="BUTTON")return; e.preventDefault(); await fetch("/_viewer/"+token+"/input",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(e.key.length===1?{type:"type",text:e.key}:{type:"key",key:e.key})}); });
-document.getElementById("done").onclick=async()=>{ await fetch("/_viewer/"+token+"/release",{method:"POST"}); document.body.innerHTML="<p>Released.</p>"; };
+document.getElementById("done").onclick=async()=>{ const r=await fetch("/_viewer/"+token+"/release",{method:"POST"}); if(r.ok){ document.body.innerHTML="<p>Released.</p>"; } else { const j=await r.json().catch(()=>({})); statusEl.textContent="Release failed: "+(j.error||r.status); } };
 </script></body>`);
           return;
         }
@@ -352,6 +354,7 @@ document.getElementById("done").onclick=async()=>{ await fetch("/_viewer/"+token
             response.writeHead(200, { "content-type": "image/png", "cache-control": "no-store" });
             response.end(png);
           } catch (error) {
+            console.error(`[relay-tools] viewer screenshot failed: ${error instanceof Error ? error.message : String(error)}`);
             sendJson(response, 500, { error: error instanceof Error ? error.message : "screenshot failed" });
           }
           return;
@@ -364,6 +367,7 @@ document.getElementById("done").onclick=async()=>{ await fetch("/_viewer/"+token
             await sharedBladePool.input(token.userId, body as { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string });
             sendJson(response, 200, { ok: true });
           } catch (error) {
+            console.error(`[relay-tools] viewer input failed: ${error instanceof Error ? error.message : String(error)}`);
             sendJson(response, 500, { error: error instanceof Error ? error.message : "input failed" });
           }
           return;
