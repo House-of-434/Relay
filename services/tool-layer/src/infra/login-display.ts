@@ -116,7 +116,7 @@ export class LoginDisplayPool {
   }
 
   releaseAll(): void {
-    for (const userId of [...this.byUser.keys()]) this.release(userId);
+    for (const userId of this.byUser.keys()) this.release(userId);
   }
 
   private start(binary: string, args: string[]): ChildProcess {
