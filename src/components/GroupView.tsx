@@ -204,7 +204,7 @@ export const Transcript = memo(function Transcript({
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "options" && m.card?.requestId && m.card.questionRequest ? (
             <div className="flex justify-start">
-              <QuestionCard threadId={group.threadId} bot={memberOf(m.from?.botId)} message={m} />
+              <QuestionCard threadId={group.threadId} message={m} />
             </div>
           ) : m.kind === "options" && m.card?.requestId && m.card.tool ? (
             <div className="flex justify-start">

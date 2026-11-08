@@ -104,31 +104,35 @@ export function SidebarSectionHeader({
           {attentionLabel && <span className="sr-only">{attentionLabel}</span>}
         </div>
       )}
-      {onDelete && (
-        <button
-          type="button"
-          onClick={onDelete}
-          aria-label={t("sidebar.section.deleteAria", { name })}
-          title={t("sidebar.section.deleteAria", { name })}
-          className="flex size-6 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-danger/10 hover:text-danger"
-        >
-          <Trash2 size={13} aria-hidden="true" />
-        </button>
-      )}
-      {reorderable && (
-        <span
-          aria-hidden="true"
-          draggable
-          title={t("sidebar.section.dragToReorder")}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          className={cn(
-            "flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink",
-            dragging && "opacity-40",
+      {(onDelete || reorderable) && (
+        <div className="ml-auto flex shrink-0 items-center gap-0.5" aria-hidden={reorderable && !onDelete ? true : undefined}>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={t("sidebar.section.deleteAria", { name })}
+              title={t("sidebar.section.deleteAria", { name })}
+              className="flex size-5 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-danger/10 hover:text-danger"
+            >
+              <Trash2 size={12} aria-hidden="true" />
+            </button>
           )}
-        >
-          <GripVertical size={13} />
-        </span>
+          {reorderable && (
+            <span
+              aria-hidden="true"
+              draggable
+              title={t("sidebar.section.dragToReorder")}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              className={cn(
+                "flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink",
+                dragging && "opacity-40",
+              )}
+            >
+              <GripVertical size={12} />
+            </span>
+          )}
+        </div>
       )}
     </div>
   );
