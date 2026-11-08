@@ -130,7 +130,9 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
 }
 
 /** Inline editor a user bubble turns into: Enter sends (forking the
- * conversation), Esc cancels. Shift+Enter for a newline, like everywhere. */
+ * conversation), Esc cancels. Shift+Enter for a newline, like everywhere.
+ * The bubble keeps its original fitted size and grows with the draft
+ * (`field-sizing: content`), rather than jumping to the full bubble width. */
 function BubbleEditor({
   initial,
   onCancel,
@@ -152,7 +154,7 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+    <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
       <textarea
         ref={ref}
         value={draft}
@@ -165,8 +167,8 @@ function BubbleEditor({
           }
           if (e.key === "Escape") onCancel();
         }}
-        rows={Math.min(10, Math.max(2, draft.split("\n").length))}
-        className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink focus:outline-none"
+        rows={2}
+        className="max-h-40 w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-relaxed text-ink [field-sizing:content] focus:outline-none"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
@@ -650,7 +652,7 @@ const MessagesList = memo(function MessagesList({
               // draw must fall back to its text on every open, not take the
               // whole page down every time this chat is selected.
               const card = m.card?.requestId && m.card.questionRequest ? (
-                <QuestionCard threadId={bot.threadId} bot={bot} message={m} />
+                <QuestionCard threadId={bot.threadId} message={m} />
               ) : m.card?.requestId && m.card.tool ? (
                 <ApprovalCard bot={bot} message={m} />
               ) : shouldHideOnboardingCard(m, transcript) ? null : (

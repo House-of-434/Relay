@@ -83,10 +83,12 @@ export function ThreadSwitcher({
   };
 
   return (
-    // Hug the content so a short name keeps the chevron right after it, and
-    // let a long name take the header's leftover width before it truncates.
-    // The trigger fills the container, so its hover matches the visible width.
-    <div className="relative -ml-2 w-fit min-w-0 max-w-full" ref={menuRef}>
+    // Fixed width, matching the dropdown below: the thread name occupies the
+    // same 238px in the header as the selector opens to, so switching threads
+    // never shifts the header layout, and long names truncate at that width.
+    // The trigger itself hugs the title plus the chevron, so the hover
+    // highlight covers only the visible name, not the whole 238px.
+    <div className="relative -ml-2 w-[238px] max-w-full shrink-0" ref={menuRef}>
       <button
         ref={triggerRef}
         type="button"
@@ -95,7 +97,7 @@ export function ThreadSwitcher({
         aria-expanded={open}
         aria-label={t("thread.switcher.label")}
         title={currentTitle}
-        className="flex w-full min-w-0 items-center gap-1 rounded-md py-0.5 pl-2 text-[15px] text-ink-secondary hover:bg-raised hover:text-ink"
+        className="flex w-fit max-w-full items-center gap-1 rounded-md py-0.5 pl-2 text-[15px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
         <span className="min-w-0 truncate font-medium">{currentTitle}</span>
         <ChevronDown size={15} className={cn("shrink-0 transition-transform", open && "rotate-180")} />
@@ -105,7 +107,7 @@ export function ThreadSwitcher({
         <div
           role="menu"
           aria-label={t("thread.switcher.label")}
-          className={cn("absolute left-0 top-full z-40 mt-1 max-h-[min(20rem,50vh)] w-full min-w-[13rem] max-w-[80vw] overflow-y-auto rounded-2xl border border-hairline/50 bg-card px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+          className={cn("absolute left-0 top-full z-40 mt-1 max-h-[min(20rem,50vh)] w-full overflow-y-auto rounded-2xl border border-hairline/50 bg-card px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
         >
           {visible.length === 0 ? (
             <div className="px-3 py-2 text-[12px] text-ink-secondary">

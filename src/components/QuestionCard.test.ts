@@ -2,7 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterAll, describe, expect, it, vi } from "vitest";
 
-import type { Bot, Message } from "@/state/store";
+import type { Message } from "@/state/store";
 import type { QuestionRequestCardData } from "../../shared/ask-question";
 
 // The card dispatches its answer through the store, and the store module
@@ -42,8 +42,6 @@ const questionRequest: QuestionRequestCardData = {
   ],
 };
 
-const bot = { id: "bot-1", name: "Hazelnut" } as Bot;
-
 function message(card: Partial<Message["card"]> = {}): Message {
   return {
     id: "m-1",
@@ -62,7 +60,7 @@ function message(card: Partial<Message["card"]> = {}): Message {
 }
 
 const render = (m: Message) =>
-  renderToStaticMarkup(createElement(QuestionCard, { threadId: "thread-1", bot, message: m }));
+  renderToStaticMarkup(createElement(QuestionCard, { threadId: "thread-1", message: m }));
 
 describe("QuestionCard", () => {
   it("offers the full question when the ask is long", () => {
@@ -80,7 +78,7 @@ describe("QuestionCard", () => {
 
   it("shows the model's own question and options instead of an approval", () => {
     const markup = render(message());
-    expect(markup).toContain("Hazelnut has a question");
+    expect(markup).not.toContain("Your bot has a question");
     expect(markup).toContain("Which model should Hazelnut run on by default?");
     expect(markup).toContain("Claude Opus 5");
     expect(markup).toContain("What the bot had before.");
@@ -99,8 +97,8 @@ describe("QuestionCard", () => {
     const markup = render(message());
     expect(markup).toContain("Model");
     expect(markup).toContain("Style");
-    expect(markup).toContain("0 of 2 answered");
-    expect(markup).toContain("Other");
+    expect(markup).not.toContain("0 of 2 answered");
+    expect(markup).toContain('placeholder="Other"');
   });
 
   it("cannot be submitted before every question is answered", () => {
@@ -124,6 +122,23 @@ describe("QuestionCard", () => {
     );
     expect(markup).toContain("A: Claude Opus 5");
     expect(markup).not.toContain('role="radiogroup"');
+  });
+
+  it("shows a selected count for multi-select and an icon submit", () => {
+    const multi = message({
+      questionRequest: {
+        version: 1,
+        questions: [{ question: "Which stores?", multiSelect: true, options: [{ label: "Instamart" }] }],
+      },
+    });
+    expect(render(multi)).toContain("0 selected");
+    expect(render(message())).toContain('aria-label="Submit answers"');
+    expect(render(message())).toContain("lucide-arrow-up");
+  });
+
+  it("does not say waiting and does not use the accent border", () => {
+    expect(render(message())).not.toContain("Waiting for your answer");
+    expect(render(message())).not.toContain("border-accent/40");
   });
 
   it("renders nothing for a card that carries no questions", () => {

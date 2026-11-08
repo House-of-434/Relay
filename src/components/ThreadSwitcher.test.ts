@@ -27,6 +27,19 @@ beforeEach(() => {
 });
 
 describe("ThreadSwitcher", () => {
+  it("has a fixed width shared by the thread name and the dropdown", () => {
+    const markup = renderToStaticMarkup(createElement(ThreadSwitcher, {
+      currentThreadId: "alpha",
+      currentTitle: "A very long thread title that must not resize the dropdown",
+      entries,
+      onSelect: vi.fn(),
+    }));
+
+    expect(markup).toContain("w-[238px]");
+    expect(markup).not.toContain("min-w-[13rem]");
+    expect(markup).not.toContain("w-fit min-w-0 max-w-full");
+  });
+
   it("offers deletion only for visible threads that can be removed", () => {
     const markup = renderToStaticMarkup(createElement(ThreadSwitcher, {
       currentThreadId: "alpha",

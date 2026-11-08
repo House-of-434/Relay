@@ -904,7 +904,7 @@ export function BotListItem({
               {t("sidebar.bot.deletingRow")}
             </span>
           ) : (
-            <span className="flex min-w-0 items-center gap-1.5 truncate text-[11px] text-ink-secondary">
+            <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-ink-secondary">
               {working ? (
                 // the same typing dots as the chat header; sized to the text's
                 // line box so the row does not jump when work starts or ends
@@ -913,7 +913,7 @@ export function BotListItem({
                   <span className="sr-only">{t("sidebar.preview.working")}</span>
                 </span>
               ) : (
-                <span className="truncate">{waiting ? t("sidebar.preview.waiting") : teammateWait ? t("sidebar.preview.waitingOnTeammate") : queued ? t("task.queued") : preview(bot)}</span>
+                <span className="min-w-0 flex-1 truncate">{waiting ? t("sidebar.preview.waiting") : teammateWait ? t("sidebar.preview.waitingOnTeammate") : queued ? t("task.queued") : preview(bot)}</span>
               )}
             </span>
           )}

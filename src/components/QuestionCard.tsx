@@ -9,9 +9,11 @@
 // with their descriptions, an "Other" row for a reply it did not think of,
 // and a single submit that sends every answer back at once — the shape a
 // person can read at a glance and answer without scrolling back up.
+//
+// The card lives in the transcript, in place, where it was asked.
 import { useMemo, useState } from "react";
-import { Check, MessageCircleQuestion } from "lucide-react";
-import { useStore, type Bot, type Message } from "@/state/store";
+import { ArrowUp, Check } from "lucide-react";
+import { useStore, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
 import {
@@ -46,14 +48,11 @@ function tabLabel(question: AskQuestion, index: number): string {
 
 export function QuestionCard({
   threadId,
-  bot,
   message,
 }: {
   /** answered by THREAD, so a question raised inside a room settles the
    * same way as one in a 1:1 chat */
   threadId: string;
-  /** who is asking, for the "Name has a question" line */
-  bot?: Bot;
   message: Message;
 }) {
   const { dispatch } = useStore();
@@ -72,6 +71,7 @@ export function QuestionCard({
 
   if (!card || !questions.length) return null;
   const settled = Boolean(card.answered) || sent !== null;
+  const interactive = !settled;
   const current = questions[Math.min(active, questions.length - 1)]!;
   const currentIndex = Math.min(active, questions.length - 1);
   const draft = drafts[currentIndex] ?? EMPTY;
@@ -94,8 +94,7 @@ export function QuestionCard({
     // option means the free-text answer was not the one they wanted.
     update(currentIndex, { picked: [label], other: false });
     // Move to the next question they still owe an answer to, the way the
-    // tabs would have been clicked anyway. The last one stays put so the
-    // submit button is under the cursor that just chose.
+    // tabs would have been clicked anyway.
     const next = questions.findIndex((_, index) => index !== currentIndex && !answered[index]);
     if (next >= 0) setActive(next);
   };
@@ -106,6 +105,13 @@ export function QuestionCard({
       update(currentIndex, { other: false });
       return;
     }
+    openOther();
+  };
+
+  // Focusing the "Other" text box opens it; on a single-select question that
+  // also clears the picked option, the way choosing one would.
+  const openOther = () => {
+    if (settled || draft.other) return;
     update(currentIndex, { other: true, ...(current.multiSelect ? {} : { picked: [] }) });
   };
 
@@ -131,27 +137,16 @@ export function QuestionCard({
       role="group"
       aria-label={t("question.aria.card")}
       className={cn(
-        "w-full max-w-[840px] rounded-2xl border bg-card p-4",
-        settled ? "border-hairline/30 opacity-70" : "border-accent/40",
+        "w-full max-w-[520px] rounded-2xl border border-hairline/50 bg-card p-3",
+        settled && "opacity-70",
       )}
     >
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="text-[15px] font-semibold text-ink">
-          {bot ? t("question.card.named", { name: bot.name }) : t("question.card.title")}
-        </div>
-        {questions.length > 1 && !settled && (
-          <span className="shrink-0 text-[11px] tabular-nums text-ink-secondary">
-            {t("question.progress", { answered: answeredCount, count: questions.length })}
-          </span>
-        )}
-      </div>
-
       {card.questionRequest?.origin === "output" && (
-        <div className="mt-1 text-[12px] text-ink-secondary">{t("question.origin.badge")}</div>
+        <div className="text-[12px] text-ink-secondary">{t("question.origin.badge")}</div>
       )}
 
-      {questions.length > 1 && (
-        <div role="tablist" aria-label={t("question.aria.tabs")} className="mt-3 flex flex-wrap gap-1">
+      {questions.length > 1 && interactive && (
+        <div role="tablist" aria-label={t("question.aria.tabs")} className="flex flex-wrap gap-1">
           {questions.map((question, index) => (
             <button
               key={`${index}-${question.question}`}
@@ -172,12 +167,12 @@ export function QuestionCard({
         </div>
       )}
 
-      <ExpandableText text={current.question} className="mt-3 text-[15px] leading-relaxed text-ink" />
-      {current.multiSelect && !settled && (
+      <ExpandableText text={current.question} className={cn("text-[14.5px] leading-relaxed text-ink", (questions.length > 1 || card.questionRequest?.origin === "output") && interactive && "mt-3")} />
+      {current.multiSelect && interactive && (
         <div className="mt-1 text-[12.5px] text-ink-secondary">{t("question.multiHint")}</div>
       )}
 
-      {!settled && (
+      {interactive && (
         <div
           role={current.multiSelect ? "group" : "radiogroup"}
           aria-label={current.question}
@@ -192,7 +187,7 @@ export function QuestionCard({
                 aria-checked={picked}
                 onClick={() => choose(option.label)}
                 className={cn(
-                  "flex w-full items-start gap-3 px-3 py-2.5 text-left",
+                  "flex w-full items-start gap-3 px-3 py-2 text-left",
                   index > 0 && "border-t border-hairline/40",
                   // `raised` is the same value as the card in the light
                   // skins; `raised-hover` is the one tone every skin
@@ -210,34 +205,36 @@ export function QuestionCard({
               </button>
             );
           })}
-          <button
-            role={current.multiSelect ? "checkbox" : "radio"}
-            aria-checked={draft.other}
-            onClick={toggleOther}
+          <div
             className={cn(
-              "flex w-full items-center gap-3 px-3 py-2.5 text-left",
+              "flex w-full items-center gap-3 px-3 py-2",
               current.options.length > 0 && "border-t border-hairline/40",
               draft.other ? "bg-raised-hover" : "hover:bg-raised-hover/60",
             )}
           >
-            <Marker checked={draft.other} multi={Boolean(current.multiSelect)} />
-            <span className="text-[14.5px] text-ink">{t("question.other")}</span>
-          </button>
-          {draft.other && (
-            <div className="border-t border-hairline/40 px-3 py-2.5">
-              <input
-                autoFocus
-                value={draft.custom}
-                maxLength={MAX_CUSTOM_ANSWER}
-                onChange={(event) => update(currentIndex, { custom: event.target.value })}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" && complete) submit();
-                }}
-                placeholder={t("question.otherPlaceholder")}
-                className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[14.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
-              />
-            </div>
-          )}
+            <button
+              type="button"
+              role={current.multiSelect ? "checkbox" : "radio"}
+              aria-checked={draft.other}
+              aria-label={t("question.other")}
+              onClick={toggleOther}
+              className="flex shrink-0 items-center"
+            >
+              <Marker checked={draft.other} multi={Boolean(current.multiSelect)} />
+            </button>
+            <input
+              value={draft.custom}
+              maxLength={MAX_CUSTOM_ANSWER}
+              onFocus={openOther}
+              onChange={(event) => update(currentIndex, { custom: event.target.value })}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && complete) submit();
+              }}
+              placeholder={t("question.other")}
+              aria-label={t("question.other")}
+              className="min-w-0 flex-1 bg-transparent py-0.5 text-[14.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
+            />
+          </div>
         </div>
       )}
 
@@ -251,21 +248,23 @@ export function QuestionCard({
             })()}
           </span>
         </div>
-      ) : (
-        <div className="mt-3 flex items-center justify-end gap-3">
-          <span className="flex items-center gap-1.5 text-[13px] text-ink-secondary">
-            <MessageCircleQuestion size={14} className="text-accent" />
-            {t("question.status.waiting")}
+      ) : interactive ? (
+        <div className="mt-2 flex items-center justify-between gap-3">
+          <span className="min-w-0 flex-1 truncate text-[12.5px] text-ink-secondary">
+            {current.multiSelect ? t("question.selectedCount", { count: answersOf(draft).length }) : ""}
           </span>
           <button
+            type="button"
             onClick={submit}
             disabled={!complete}
-            className="rounded-full bg-accent px-3.5 py-1.5 text-[13.5px] font-medium text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
+            aria-label={questions.length > 1 ? t("question.submitAll") : t("question.submit")}
+            title={questions.length > 1 ? t("question.submitAll") : t("question.submit")}
+            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-accent text-white transition-colors hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            {questions.length > 1 ? t("question.submitAll") : t("question.submit")}
+            <ArrowUp size={17} />
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }
