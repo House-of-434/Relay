@@ -936,6 +936,7 @@
   "chat.reply.image": "[image]",
   "chat.reply.file": "[file]",
   "chat.activity.thinking": "Thinking",
+  "chat.reasoning": "Reasoning",
   "chat.activity.working": "Working",
   "chat.activity.runCommand": "Running a command",
   "chat.activity.readFile": "Reading a file",
