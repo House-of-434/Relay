@@ -408,19 +408,25 @@ export class BladeBrowserPool {
       const x = Math.round(op.x);
       const y = Math.round(op.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad coordinates");
-      const selector = await this.resolveSelector(userId, x, y).catch(() => "");
-      if (selector) {
-        await this.run(userId, ["act", "click", "--selector", selector], false);
+      const target = await this.resolveClickTarget(userId, x, y).catch(() => ({ kind: "none" as const }));
+      if (target.kind === "selector") {
+        await this.run(userId, ["act", "click", "--selector", target.selector], false);
         return;
       }
-      // Fallback: click by coordinates only if selector resolution failed.
-      await this.run(userId, [`act click ${x} ${y}`], false).catch(async () => {
-        const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) el.click(); return !!el; })()`;
-        await this.run(userId, ["act", "eval", js], false);
-      });
+      if (target.kind === "text") {
+        await this.run(userId, ["act", "click", `--text=${target.text}`], false).catch(() =>
+          this.run(userId, ["act", "click", target.text], false),
+        );
+        return;
+      }
+      // Last resort: coordinate click via trusted CDP inline (never synthetic eval alone).
+      const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) el.click(); return !!el; })()`;
+      await this.run(userId, ["act", "eval", js], false);
       return;
     }
     if (op.type === "key") {
+      // Modifier-only keys (Meta, Control, Shift, Alt…) have no press meaning alone.
+      if (["Meta", "Control", "Shift", "Alt", "CapsLock"].includes(op.key)) return;
       if (typeof op.key !== "string" || op.key.length === 0 || op.key.length > 32) throw new Error("bad key");
       await this.run(userId, ["act", "press", op.key], false);
       return;
@@ -435,11 +441,54 @@ export class BladeBrowserPool {
     for (const ch of op.text) await this.run(userId, ["act", "press", ch], false);
   }
 
-  /** Resolve (x,y) to a CSS selector via eval (element identification only;
-   * the click itself goes through native CDP). */
-  private async resolveSelector(userId: unknown, x: number, y: number): Promise<string> {
-    const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (!el) return ""; if (el.id) return "#" + CSS.escape(el.id); const parts = []; let n = el; while (n && n.nodeType === 1 && n !== document.body) { let s = n.nodeName.toLowerCase(); const sib = n.parentElement ? [...n.parentElement.children] : []; if (sib.length > 1) { s += ":nth-of-type(" + ([...sib].filter((c) => c.nodeName === n.nodeName).indexOf(n) + 1) + ")"; } parts.unshift(s); if (n.id) break; n = n.parentElement; } return parts.join(" > "); })()`;
-    return this.unwrapEval(userId, js);
+  /** Resolve (x,y) to the nearest actionable element and return a click spec
+   * for `act click`: prefer explicit id / testid, then visible text label,
+   * then a scoped CSS path. Hidden container divs are not actionable, so
+   * walk up to button/a/[role=button]/input/interactive first. */
+  private async resolveClickTarget(userId: unknown, x: number, y: number): Promise<{ kind: "selector"; selector: string } | { kind: "text"; text: string } | { kind: "none" }> {
+    const js = `(() => {
+      const hit = document.elementFromPoint(${x}, ${y});
+      if (!hit) return { kind: "none" };
+      let el = hit;
+      const actionable = (n) => n && ((n.tagName === "BUTTON") || (n.tagName === "A" && n.href) || n.getAttribute?.("role") === "button" || n.tagName === "INPUT" || n.tagName === "SELECT" || n.tagName === "TEXTAREA" || n.onclick);
+      while (el && !actionable(el)) el = el.parentElement;
+      if (!el) {
+        const anchor = hit.closest('a, button, [role="button"], input, select, textarea, label');
+        if (anchor) el = anchor;
+      }
+      if (!el) return { kind: "none" };
+      const testid = el.getAttribute?.("data-testid");
+      if (testid) return { kind: "selector", selector: '[data-testid="' + testid.replace(/"/g, "") + '"]' };
+      if (el.id) return { kind: "selector", selector: "#" + CSS.escape(el.id) };
+      const name = (el.getAttribute?.("aria-label") || el.textContent || "").trim().replace(/\\s+/g, " ").slice(0, 80);
+      if (name && (el.tagName === "BUTTON" || el.tagName === "A" || el.getAttribute?.("role") === "button" || el.tagName === "INPUT")) {
+        return { kind: "text", text: name };
+      }
+      // nth-of-type path from the actionable element up to body
+      const parts = [];
+      let n = el;
+      while (n && n.nodeType === 1 && n !== document.body) {
+        let s = n.nodeName.toLowerCase();
+        const sib = n.parentElement ? [...n.parentElement.children] : [];
+        if (sib.length > 1) {
+          s += ":nth-of-type(" + ([...sib].filter((c) => c.nodeName === n.nodeName).indexOf(n) + 1) + ")";
+        }
+        parts.unshift(s);
+        if (n.id) break;
+        n = n.parentElement;
+      }
+      return parts.length ? { kind: "selector", selector: parts.join(" > ") } : { kind: "none" };
+    })()`;
+    const raw = await this.run(userId, ["act", "eval", js], false);
+    let trimmed = raw.trim();
+    const m = /result:\s*([\s\S]+)/s.exec(trimmed);
+    if (m) trimmed = m[1]!.trim();
+    try {
+      const obj = JSON.parse(trimmed) as { kind?: string; selector?: string; text?: string };
+      if (obj.kind === "selector" && typeof obj.selector === "string" && obj.selector) return { kind: "selector", selector: obj.selector };
+      if (obj.kind === "text" && typeof obj.text === "string" && obj.text) return { kind: "text", text: obj.text };
+    } catch { /* fall through */ }
+    return { kind: "none" };
   }
 
   private async focusedSelector(userId: unknown): Promise<string> {
