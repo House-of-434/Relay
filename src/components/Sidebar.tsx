@@ -863,7 +863,6 @@ export function BotListItem({
       <div className={cn("min-w-0 flex-1", iconOnly && "hidden")}>
         <div className="flex items-baseline justify-between gap-2">
           <span className="flex min-w-0 grow items-center gap-1.5 truncate text-[14px] font-semibold text-ink">
-            {bot.pinned && <Pin size={12} className="shrink-0 text-ink-secondary" />}
             <RenameTitle
               key={iconOnly ? "icons" : "bot-name"}
               value={bot.name}
@@ -1109,6 +1108,28 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
 
 
   const q = query.trim().toLowerCase();
+
+  // The new-thread action moved here from the chat/room header: it creates a
+  // fresh thread for whatever the person has selected — a bot (`newTask`) or
+  // a non-DM group (`newGroupTask`). The button always renders, but if the
+  // person is already on a blank/new thread there is nothing to start anew
+  // from, so clicking does nothing. An unloaded bot thread counts as
+  // non-empty — it must still allow creating while its snapshot loads.
+  const selectedBotForThread = state.bots.find((bot) => bot.id === state.selectedId);
+  const selectedGroupForThread = state.groups.find((group) => group.id === state.selectedId);
+  const selectedThreadName = selectedBotForThread?.name ?? selectedGroupForThread?.name ?? "";
+  const createNewThread = () => {
+    if (remoteClient || state.activeView !== "chat") return;
+    if (selectedBotForThread) {
+      const threadIsEmpty = !selectedBotForThread.awaitingThreadSnapshot && visibleMessages(selectedBotForThread).length === 0 && !selectedBotForThread.hasMore;
+      if (threadIsEmpty) return;
+      dispatch({ type: "newTask", botId: selectedBotForThread.id });
+    } else if (selectedGroupForThread && !selectedGroupForThread.dm) {
+      const threadIsEmpty = selectedGroupForThread.messages.length === 0 && !selectedGroupForThread.hasMore;
+      if (threadIsEmpty) return;
+      dispatch({ type: "newGroupTask", groupId: selectedGroupForThread.id });
+    }
+  };
 
   // Message search rides the same box as the name filter: names match
   // instantly from local state; transcript hits are the SearchResults
@@ -1358,13 +1379,12 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
           stay outside this wrapper — portals and fixed overlays must not be
           display:none'd with it. */}
       <div className={cn("flex min-h-0 flex-1 flex-col", !desktopOpen && "md:hidden")}>
-      {/* Brand row: app icon + name on the left; the new-item action is
+      {/* Brand row: the app mark on the left; the new-item action is
           admin-only (see canManage) and right-aligned beside the desktop
           collapse toggle. The toggle lives here, not in the chat header. */}
       <div className="relative flex items-center justify-between gap-2 pl-3 pr-1 pb-1 pt-1">
         <div className="flex min-w-0 items-center gap-2">
           <img src="/app-mark.png" alt="" aria-hidden="true" className="size-8 shrink-0" />
-          <span className="truncate text-[15px] font-semibold text-ink">Relay</span>
         </div>
         <div className="flex shrink-0 items-center gap-0">
         {searchOpen && (
@@ -1381,6 +1401,16 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             />
           </div>
         )}
+          <button
+            type="button"
+            data-sidebar-new-thread
+            onClick={createNewThread}
+            aria-label={selectedThreadName ? t("task.newIn", { name: selectedThreadName }) : t("thread.new")}
+            title={selectedThreadName ? t("task.newIn", { name: selectedThreadName }) : t("thread.new")}
+            className="flex size-8 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
+          >
+            <Plus size={20} strokeWidth={2} />
+          </button>
           <button
             type="button"
             onClick={() => setSearchOpen((o) => !o)}
@@ -1579,8 +1609,8 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
       </p>
 
       {/* Footer */}
-      <div className="px-3 pb-2 pt-1">
-        <div className="flex items-center justify-between gap-2 pr-1">
+      <div className="pl-3 pr-1 pb-2 pt-1">
+        <div className="flex items-center justify-between gap-2">
           <div className="min-w-0 w-fit shrink-0">
             <SidebarProfileMenu />
           </div>
