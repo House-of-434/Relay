@@ -398,41 +398,63 @@ export class BladeBrowserPool {
     return readFile(parsed.image_path);
   }
 
-  /** Viewer input -> the X display (like OpenMausBot's desktop viewer):
-   * trusted OS-level events via xdotool under Xvfb. In-page synthetic events
-   * (dispatchEvent, isTrusted=false) are ignored by sites like Google even
-   * when the click lands — so clicks and keys go to the window manager. */
+  /** Viewer input via Bladebro's native CDP input. Chrome here renders via
+   * CDP (no X window is mapped), so synthetic page events are
+   * isTrusted=false (Google ignores them) and xdotool clicks miss the
+   * (empty) X desktop — both proved dead on production. `act click
+   * --selector`, `act press`, and `act type` go through real CDP input. */
   async input(userId: unknown, op: { type: "click"; x: number; y: number } | { type: "key"; key: string } | { type: "type"; text: string }): Promise<void> {
-    const env = { ...this.buildEnv(this.workspaceFor(userId), false), DISPLAY: process.env.DISPLAY ?? ":99" };
     if (op.type === "click") {
       const x = Math.round(op.x);
       const y = Math.round(op.y);
       if (!Number.isFinite(x) || !Number.isFinite(y)) throw new Error("bad coordinates");
-      const result = await this.spawn("xdotool", ["mousemove", String(x), String(y), "click", "1"], {
-        env,
-        timeoutMs: 10_000,
-        maxBufferBytes: 65536,
+      const selector = await this.resolveSelector(userId, x, y).catch(() => "");
+      if (selector) {
+        await this.run(userId, ["act", "click", "--selector", selector], false);
+        return;
+      }
+      // Fallback: click by coordinates only if selector resolution failed.
+      await this.run(userId, [`act click ${x} ${y}`], false).catch(async () => {
+        const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (el) el.click(); return !!el; })()`;
+        await this.run(userId, ["act", "eval", js], false);
       });
-      if (result.exitCode !== 0) throw new Error(`viewer click failed: ${(result.stderr || "no output").slice(0, 300)}`);
       return;
     }
     if (op.type === "key") {
       if (typeof op.key !== "string" || op.key.length === 0 || op.key.length > 32) throw new Error("bad key");
-      const result = await this.spawn("xdotool", ["key", "--", op.key], {
-        env,
-        timeoutMs: 10_000,
-        maxBufferBytes: 65536,
-      });
-      if (result.exitCode !== 0) throw new Error(`viewer key failed: ${(result.stderr || "no output").slice(0, 300)}`);
+      await this.run(userId, ["act", "press", op.key], false);
       return;
     }
     if (typeof op.text !== "string" || op.text.length === 0 || op.text.length > 512) throw new Error("bad text");
-    const result = await this.spawn("xdotool", ["type", "--delay", "12", "--", op.text], {
-      env,
-      timeoutMs: 15_000,
-      maxBufferBytes: 65536,
-    });
-    if (result.exitCode !== 0) throw new Error(`viewer type failed: ${(result.stderr || "no output").slice(0, 300)}`);
+    const selector = await this.focusedSelector(userId).catch(() => "");
+    if (selector) {
+      await this.run(userId, ["act", "type", "--selector", selector, op.text], false);
+      return;
+    }
+    // No focused form control: trusted per-character keypresses.
+    for (const ch of op.text) await this.run(userId, ["act", "press", ch], false);
+  }
+
+  /** Resolve (x,y) to a CSS selector via eval (element identification only;
+   * the click itself goes through native CDP). */
+  private async resolveSelector(userId: unknown, x: number, y: number): Promise<string> {
+    const js = `(() => { const el = document.elementFromPoint(${x}, ${y}); if (!el) return ""; if (el.id) return "#" + CSS.escape(el.id); const parts = []; let n = el; while (n && n.nodeType === 1 && n !== document.body) { let s = n.nodeName.toLowerCase(); const sib = n.parentElement ? [...n.parentElement.children] : []; if (sib.length > 1) { s += ":nth-of-type(" + ([...sib].filter((c) => c.nodeName === n.nodeName).indexOf(n) + 1) + ")"; } parts.unshift(s); if (n.id) break; n = n.parentElement; } return parts.join(" > "); })()`;
+    return this.unwrapEval(userId, js);
+  }
+
+  private async focusedSelector(userId: unknown): Promise<string> {
+    const js = `(() => { const el = document.activeElement?.tagName === "BODY" ? null : document.activeElement; if (!el) return ""; if (el.id) return "#" + CSS.escape(el.id); if (el.name) return "[name=\\"" + el.name + "\\"]"; if (el.placeholder) return "[placeholder=\\"" + el.placeholder + "\\"]"; return ""; })()`;
+    return this.unwrapEval(userId, js);
+  }
+
+  private async unwrapEval(userId: unknown, js: string): Promise<string> {
+    const raw = await this.run(userId, ["act", "eval", js], false);
+    const trimmed = raw.trim();
+    try {
+      const parsed: unknown = JSON.parse(trimmed);
+      if (typeof parsed === "string") return parsed;
+    } catch { /* fall through */ }
+    return trimmed.replace(/^"|"$/g, "").split("\n")[0] ?? "";
   }
 
   /** Page one of our own spilled artifacts. Paths are workspace-relative;
