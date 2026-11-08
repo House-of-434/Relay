@@ -189,8 +189,10 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
           requestKey: takeoverRequestKey(userId, sessionId, generation),
           sessionId,
           generation,
-          title: `Live browser — ${host}`,
-          description: `${reason ? `${reason} ` : ""}The browser needs you on ${host}. Sign in, or hand it back so the bot can continue on this page. Your credentials never reach the assistant.`,
+          title: host,
+          // The UI owns the fixed instructional copy; only the agent's own
+          // reason travels with the card, once.
+          description: reason?.trim().slice(0, 240) ?? "",
           expiresAt,
         });
         return {
