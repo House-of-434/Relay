@@ -2876,12 +2876,12 @@
   "computer.badge.autoBoat": "cloud boat · Auto · read-only",
   "computer.addBoatKey": "Add a Boat API key to give this bot a cloud computer — it spins up right here.",
   "takeover.title": "Sign-in needed",
-  "takeover.pending": "The bot is paused until you finish signing in.",
+  "takeover.pending": "The bot is paused. Sign in or make your changes, then hand the browser back.",
   "takeover.open": "Open sign-in",
-  "takeover.done": "Done",
+  "takeover.done": "Hand back — bot continues here",
   "takeover.dismiss": "Dismiss",
   "takeover.working": "Opening the live browser…",
-  "takeover.doneNote": "Signed in. Your bot is continuing the task.",
+  "takeover.doneNote": "Handed back. Your bot is continuing on the page you left open.",
   "takeover.dismissedNote": "You dismissed this sign-in request. Your bot will continue without it.",
   "takeover.expiredNote": "This sign-in request expired. Your bot will continue without it.",
   "takeover.resumed": "Bot resumed after the sign-in",
@@ -2891,5 +2891,7 @@
   "takeover.iframeTitle": "Live sign-in browser",
   "takeover.failedResume": "The sign-in finished, but resuming the bot failed",
   "takeover.retry": "Retry",
-  "takeover.superseded": "This sign-in request was replaced by a newer one."
+  "takeover.superseded": "This sign-in request was replaced by a newer one.",
+  "takeover.note": "What should the bot do next? (optional)",
+  "takeover.notePlaceholder": "e.g. Fill the date of birth, don't submit"
 }

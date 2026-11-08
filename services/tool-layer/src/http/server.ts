@@ -12,6 +12,7 @@ import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
 import { LoginSessionManager } from "../infra/login-session.js";
 import { LoginDisplayPool } from "../infra/login-display.js";
+import { acquireInteractiveLease } from "../infra/login-lease.js";
 import { ViewerTokens } from "../infra/login-viewer.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { TinyFishFetchProvider } from "../infra/fetch.js";
@@ -300,10 +301,36 @@ function proxyViewerUpgrade(
   socket.on("error", () => upstream.destroy());
 }
 
+/** One interactive-session manager for the process, wired to the
+ * cross-process lease and the single close path that tears down runtime
+ * resources (never the persistent profile). */
+function ensureLoginSessions(): LoginSessionManager {
+  if (sharedLoginSessions) return sharedLoginSessions;
+  const blade = bladeConfig();
+  sharedLoginSessions = new LoginSessionManager({
+    maxConcurrent: blade.loginMaxConcurrent,
+    idleMs: blade.loginIdleMs,
+    maxLifetimeMs: blade.loginMaxLifetimeMs,
+    leaseFor: (userId) =>
+      acquireInteractiveLease({
+        dataRoot: blade.dataRoot,
+        userId,
+        maxLifetimeMs: blade.loginMaxLifetimeMs,
+      }),
+    onEvent: (event) => {
+      // One close path for release, dismiss, expiry, idle and the hard cap.
+      sharedViewerTokens?.revokeSession(event.sessionId);
+      sharedDisplays?.release(event.userId);
+      void sharedBladePool?.stopWorkspace(event.userId).catch(() => {});
+    },
+  });
+  return sharedLoginSessions;
+}
+
 /** Browser-takeover control plane for the harness: mint a viewer for a live
- * takeover and release it when the card reaches a terminal state. Both routes
- * are authenticated by the same signed actor assertion the MCP calls use;
- * the session must belong to the asserted user. */
+ * takeover, hand the page back to the agent, or release it. All routes are
+ * authenticated by the same signed actor assertion the MCP calls use, and the
+ * session must belong to the asserted user. */
 async function handleBrowserTakeover(
   request: IncomingMessage,
   response: ServerResponse,
@@ -320,13 +347,15 @@ async function handleBrowserTakeover(
     sendJson(response, 401, { error: "authenticated actor required" });
     return;
   }
-  let userId: string;
+  let actor: { userId: string; botId: string; threadId: string };
   try {
-    userId = database.authenticateActorAssertion(header).userId;
+    const verified = database.authenticateActorAssertion(header);
+    actor = { userId: verified.userId, botId: verified.botId, threadId: verified.threadId };
   } catch {
     sendJson(response, 401, { error: "invalid actor context" });
     return;
   }
+  const userId = actor.userId;
   let body: unknown;
   try {
     body = await readIngestBody(request);
@@ -339,20 +368,28 @@ async function handleBrowserTakeover(
     sendJson(response, 400, { error: "invalid session id" });
     return;
   }
-  sharedLoginSessions ??= new LoginSessionManager();
+  const generation = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
+  if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
+    sendJson(response, 400, { error: "invalid generation" });
+    return;
+  }
+  const sessions = ensureLoginSessions();
   sharedViewerTokens ??= new ViewerTokens();
-  sharedLoginSessions.sweepExpired();
-  const session = sharedLoginSessions.ownedSession(userId, sessionId);
+  sessions.sweepExpired();
+  const session = sessions.ownedSession(userId, sessionId);
+  // Control-plane calls are bound to the originating bot + thread, not just
+  // the person: no other task may drive or settle this page.
+  if (session && (session.botId !== actor.botId || session.threadId !== actor.threadId)) {
+    sendJson(response, 403, { error: "this sign-in belongs to another task" });
+    return;
+  }
+
   if (pathname === "/internal/browser-takeover/viewer") {
-    const generation = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
-    if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
-      sendJson(response, 400, { error: "invalid generation" });
-      return;
-    }
     if (!session || session.state !== "user_takeover" || session.generation !== generation) {
       sendJson(response, 409, { error: "this sign-in is no longer active" });
       return;
     }
+    sessions.touchSession(sessionId);
     const token = sharedViewerTokens.mint(session.id, userId, session.generation);
     sendJson(response, 200, {
       path: `/_viewer/${token.value}`,
@@ -360,11 +397,37 @@ async function handleBrowserTakeover(
     });
     return;
   }
-  const generation = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
-  if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
-    sendJson(response, 400, { error: "invalid generation" });
+
+  if (pathname === "/internal/browser-takeover/handback") {
+    if (!session) {
+      sendJson(response, 200, { handed_back: false, url: "" });
+      return;
+    }
+    if (session.generation !== generation) {
+      sendJson(response, 409, { error: "this sign-in was superseded" });
+      return;
+    }
+    if (session.state !== "user_takeover") {
+      // Already handed back: idempotent, and the URL is still available.
+      sharedViewerTokens.revokeSession(sessionId);
+      const url = (await sharedBladePool?.currentUrl(userId, session.display)) ?? "";
+      sendJson(response, 200, { handed_back: true, url });
+      return;
+    }
+    try {
+      sessions.handBack(sessionId, generation);
+    } catch (error) {
+      sendJson(response, 409, { error: error instanceof Error ? error.message : "this sign-in is no longer active" });
+      return;
+    }
+    // The person is done driving: revoke their token, keep the browser and
+    // page alive for the agent.
+    sharedViewerTokens.revokeSession(sessionId);
+    const url = (await sharedBladePool?.currentUrl(userId, session.display)) ?? "";
+    sendJson(response, 200, { handed_back: true, url });
     return;
   }
+
   if (!session) {
     // The card's duplicate terminal request: already released.
     sendJson(response, 200, { released: false });
@@ -374,10 +437,7 @@ async function handleBrowserTakeover(
     sendJson(response, 409, { error: "this sign-in was superseded" });
     return;
   }
-  sharedViewerTokens.revokeSession(sessionId);
-  sharedLoginSessions.release(sessionId, generation);
-  sharedDisplays?.release(userId);
-  await sharedBladePool?.stopWorkspace(userId).catch(() => {});
+  sessions.release(sessionId, generation, "released");
   sendJson(response, 200, { released: true });
 }
 
@@ -462,12 +522,12 @@ export async function createRelayToolServer(
         return;
       }
 
-      if (url.pathname === "/internal/browser-takeover/viewer" || url.pathname === "/internal/browser-takeover/release") {
+      if (url.pathname === "/internal/browser-takeover/viewer" || url.pathname === "/internal/browser-takeover/release" || url.pathname === "/internal/browser-takeover/handback") {
         await handleBrowserTakeover(request, response, database, url.pathname);
         return;
       }
 
-      const viewerMatch = /^\/_viewer\/([0-9a-f]{32})(?:\/(novnc\/.*|release))?$/.exec(url.pathname);
+      const viewerMatch = /^\/_viewer\/([0-9a-f]{32})(?:\/(novnc\/.*|heartbeat))?$/.exec(url.pathname);
       if (viewerMatch) {
         const tokenValue = viewerMatch[1]!;
         const action = viewerMatch[2];
@@ -491,10 +551,10 @@ export async function createRelayToolServer(
 <div id="chrome">
   <h3>Login browser — agent is paused</h3>
   <p id="status">Connecting…</p>
-  <p>Click the screen, then sign in. Press Done when finished.</p>
+  <p>Click the screen, then sign in or make your changes. Use the card's button when finished.</p>
 </div>
 <div id="screen"></div>
-<div id="chrome-footer"><br><button id="done">Done — hand back to agent</button></div>
+
 <script type="module">
 import RFB from "/_viewer/${tokenValue}/novnc/core/rfb.js";
 if (new URLSearchParams(location.search).has("embed")) {
@@ -515,10 +575,7 @@ try {
 } catch (e) {
   statusEl.textContent = "Viewer error: " + e.message; statusEl.className = "err";
 }
-document.getElementById("done").onclick = async () => {
-  const r = await fetch("/_viewer/${tokenValue}/release", { method: "POST" });
-  if (r.ok) { document.body.innerHTML = "<p>Released.</p>"; } else { const j = await r.json().catch(() => ({})); statusEl.textContent = "Release failed: " + (j.error || r.status); statusEl.className = "err"; }
-};
+setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }).catch(() => {}); }, 30_000);
 </script>`);
           return;
         }
@@ -526,17 +583,11 @@ document.getElementById("done").onclick = async () => {
           await proxyNovnc(response, token.userId, action.slice("novnc/".length));
           return;
         }
-        if (request.method === "POST" && action === "release") {
-          sharedLoginSessions ??= new LoginSessionManager();
-          try {
-            sharedLoginSessions.release(token.sessionId, token.generation);
-            sharedViewerTokens.revoke(tokenValue);
-            sharedDisplays?.release(token.userId);
-            await sharedBladePool?.stopWorkspace(token.userId).catch(() => {});
-            sendJson(response, 200, { ok: true });
-          } catch (error) {
-            sendJson(response, 500, { error: error instanceof Error ? error.message : "release failed" });
-          }
+        if (request.method === "POST" && action === "heartbeat") {
+          // Keep the idle clock alive while the person is using the viewer;
+          // the hard cap is never extended by activity.
+          ensureLoginSessions().touchSession(token.sessionId);
+          sendJson(response, 200, { ok: true });
           return;
         }
         sendJson(response, 404, { error: "not found" });
@@ -622,7 +673,7 @@ document.getElementById("done").onclick = async () => {
         timezone: blade.timezone,
         locale: blade.locale,
       });
-      sharedLoginSessions ??= new LoginSessionManager({ maxConcurrent: blade.loginMaxConcurrent });
+      ensureLoginSessions();
       sharedViewerTokens ??= new ViewerTokens();
       sharedDisplays ??= new LoginDisplayPool({ maxSlots: blade.loginMaxConcurrent });
       const browser = sharedBladePool
@@ -634,7 +685,7 @@ document.getElementById("done").onclick = async () => {
             actorAssertion: actor.actorAssertion ?? "",
             bffInternalUrl,
             bffCapability: capability,
-            sessions: sharedLoginSessions,
+            sessions: ensureLoginSessions(),
             displays: sharedDisplays,
           }
         : undefined;
@@ -699,5 +750,10 @@ document.getElementById("done").onclick = async () => {
   httpServer.on("upgrade", (request, socket, head) => {
     proxyViewerUpgrade(request, socket, head);
   });
+  // Idle/hard-cap reclaim for interactive sessions. The timer owns no state;
+  // closing the server clears it.
+  const sessionSweep = setInterval(() => ensureLoginSessions().sweepExpired(), 60_000);
+  sessionSweep.unref?.();
+  httpServer.on("close", () => clearInterval(sessionSweep));
   return httpServer;
 }

@@ -21,6 +21,7 @@ export function TakeoverCard({
   const [viewerPath, setViewerPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [nextStep, setNextStep] = useState("");
   const frameRef = useRef<HTMLDivElement | null>(null);
   const pending = takeover.status === "pending";
   const declined = takeover.status === "dismissed" || takeover.status === "expired";
@@ -51,7 +52,10 @@ export function TakeoverCard({
     setBusy(true);
     setError(null);
     try {
-      await api(`${endpoint}/${action}`, { method: "POST", body: JSON.stringify({ threadId }) });
+      await api(`${endpoint}/${action}`, {
+        method: "POST",
+        body: JSON.stringify({ threadId, ...(action === "done" && nextStep.trim() ? { note: nextStep.trim() } : {}) }),
+      });
       setViewerPath(null);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
@@ -84,6 +88,20 @@ export function TakeoverCard({
         <span className="font-medium">{takeover.title || t("takeover.title")}</span>
       </div>
       <p className="mt-1 max-w-[34rem]">{pending ? `${takeover.description} ${t("takeover.pending")}` : note}</p>
+
+      {pending ? (
+        <label className="mt-2 block text-[12px]">
+          <span className="text-ink-secondary">{t("takeover.note")}</span>
+          <input
+            type="text"
+            value={nextStep}
+            onChange={(event) => setNextStep(event.target.value)}
+            maxLength={500}
+            placeholder={t("takeover.notePlaceholder")}
+            className="mt-1 w-full rounded-lg border border-hairline/50 bg-inset px-2 py-1.5 text-[12px] text-ink"
+          />
+        </label>
+      ) : null}
 
       {pending ? (
         <div className="mt-2 flex flex-wrap items-center gap-2">

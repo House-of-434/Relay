@@ -8,6 +8,7 @@ import {
   BLADE_URL_MAX_LENGTH,
   BROWSER_RESULT_BUDGET,
   BladeBrowserPool,
+  actArgs,
   assertHttpUrl,
   assertSafeArgs,
   type SpawnFn,
@@ -228,4 +229,15 @@ test("forbidden argv never reaches the binary", () => {
     assert.throws(() => assertSafeArgs(["see", banned]), /forbidden/);
   }
   assertSafeArgs(["nav", "https://example.com", "--json"]);
+});
+
+test("browser act maps to Bladebro argv without eval", () => {
+  assert.deepEqual(actArgs({ action: "click", target: "e5" }), ["act", "click", "e5"]);
+  assert.deepEqual(actArgs({ action: "click", selector: "#buy" }), ["act", "click", "--selector", "#buy"]);
+  assert.deepEqual(actArgs({ action: "type", target: "e9", text: "hello" }), ["act", "type", "e9", "hello"]);
+  assert.deepEqual(actArgs({ action: "select", target: "e3", option: "1990" }), ["act", "select", "e3", "1990"]);
+  assert.deepEqual(actArgs({ action: "press", key: "Enter" }), ["act", "press", "Enter"]);
+  assert.deepEqual(actArgs({ action: "scroll", dy: 400 }), ["act", "scroll", "0", "400"]);
+  assert.throws(() => actArgs({ action: "click" }), /target/);
+  assert.throws(() => actArgs({ action: "scroll" }), /dx or dy/);
 });

@@ -40,7 +40,7 @@ FROM node:24-bookworm-slim AS runtime
 # deferred (plans/deferred.md) and apt takes the stable channel.
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git wget gnupg \
-     xvfb x11vnc novnc websockify \
+     xvfb openbox x11vnc novnc websockify \
      libxcb-shm0 libx11-xcb1 libx11-6 libxcb1 libxext6 libxrandr2 \
      libxcomposite1 libxcursor1 libxdamage1 libxfixes3 libxi6 libgtk-3-0 \
      libpangocairo-1.0-0 libpango-1.0-0 libatk1.0-0 libcairo-gobject2 \

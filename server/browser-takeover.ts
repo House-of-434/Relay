@@ -66,6 +66,14 @@ export class ToolLayerTakeoverClient {
     return { path: body.path };
   }
 
+  async handBack(actor: TakeoverActor, sessionId: string, generation: number): Promise<{ handedBack: boolean; url: string }> {
+    const body = await this.post(actor, "/internal/browser-takeover/handback", { session_id: sessionId, generation });
+    return {
+      handedBack: body.handed_back === true,
+      url: typeof body.url === "string" ? body.url.slice(0, 2048) : "",
+    };
+  }
+
   async release(actor: TakeoverActor, sessionId: string, generation: number): Promise<void> {
     await this.post(actor, "/internal/browser-takeover/release", { session_id: sessionId, generation });
   }

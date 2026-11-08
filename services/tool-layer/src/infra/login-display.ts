@@ -26,6 +26,7 @@ interface Slot {
 export interface DisplayPoolOptions {
   maxSlots?: number;
   xvfb?: string;
+  wm?: string;
   x11vnc?: string;
   websockify?: string;
   novncDir?: string;
@@ -38,6 +39,7 @@ const SCREEN = "1280x720x24";
 export class LoginDisplayPool {
   private readonly maxSlots: number;
   private readonly xvfb: string;
+  private readonly wm: string;
   private readonly x11vnc: string;
   private readonly websockify: string;
   private readonly novncDir: string;
@@ -47,6 +49,7 @@ export class LoginDisplayPool {
   constructor(options: DisplayPoolOptions = {}) {
     this.maxSlots = options.maxSlots ?? 2;
     this.xvfb = options.xvfb ?? "Xvfb";
+    this.wm = options.wm ?? "openbox";
     this.x11vnc = options.x11vnc ?? "x11vnc";
     this.websockify = options.websockify ?? "websockify";
     this.novncDir = options.novncDir ?? "/usr/share/novnc";
@@ -79,6 +82,11 @@ export class LoginDisplayPool {
     try {
       slot.children.push(this.start(this.xvfb, [lease.display, "-screen", "0", SCREEN, "-nolisten", "tcp"]));
       await this.waitFor(() => existsSync(`/tmp/.X11-unix/X${displayNum}`), "display");
+      // A window manager gives Chrome's native popups (selects, date pickers,
+      // dialogs) real geometry on the virtual display. Best-effort: the
+      // browser still works without it.
+      slot.children.push(this.startWithDisplay(this.wm, ["--display", lease.display], lease.display));
+      await delay(300);
       slot.children.push(this.start(this.x11vnc, [
         "-display", lease.display,
         "-rfbport", String(lease.rfbPort),
@@ -102,6 +110,10 @@ export class LoginDisplayPool {
     return this.byUser.get(userId)?.lease.wsPort;
   }
 
+  displayFor(userId: string): string | undefined {
+    return this.byUser.get(userId)?.lease.display;
+  }
+
   release(userId: string): void {
     const slot = this.byUser.get(userId);
     if (!slot) return;
@@ -114,6 +126,12 @@ export class LoginDisplayPool {
   private start(binary: string, args: string[]): ChildProcess {
     const child = spawn(binary, args, { stdio: "ignore" });
     child.on("error", () => { /* surfaced by the readiness timeout */ });
+    return child;
+  }
+
+  private startWithDisplay(binary: string, args: string[], display: string): ChildProcess {
+    const child = spawn(binary, args, { stdio: "ignore", env: { ...process.env, DISPLAY: display } });
+    child.on("error", () => { /* no WM is survivable; popups may misplace */ });
     return child;
   }
 

@@ -115,6 +115,7 @@ test("scout gets the full research loop; others get no search or browser", async
     assert.deepEqual(scout.tools, [
       "arxiv_get",
       "arxiv_search",
+      "browser_act",
       "browser_extract",
       "browser_open",
       "browser_read",

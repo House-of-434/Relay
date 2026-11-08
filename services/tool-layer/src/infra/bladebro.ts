@@ -106,6 +106,71 @@ export interface BrowserText {
 export type ReadMode = "content" | "outline" | "find" | "artifact";
 export type ExtractKind = "auto" | "links" | "forms";
 
+export interface BrowserActInput {
+  action: "click" | "type" | "fill" | "select" | "press" | "scroll" | "hover";
+  target?: string;
+  selector?: string;
+  text?: string;
+  option?: string;
+  fields?: Record<string, string>;
+  submit?: string;
+  key?: string;
+  dx?: number;
+  dy?: number;
+}
+
+const ACT_TEXT_MAX = 512;
+const ACT_FIELDS_MAX = 24;
+
+function actField(value: unknown, name: string): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > ACT_TEXT_MAX) {
+    throw new Error(`browser_act ${name} must be a short string`);
+  }
+  return value;
+}
+
+/** Map one validated interaction to Bladebro's `act` argv. */
+export function actArgs(input: BrowserActInput): string[] {
+  const target = (): string[] => input.selector
+    ? ["--selector", actField(input.selector, "selector")]
+    : [actField(input.target, "target")];
+  switch (input.action) {
+    case "click":
+    case "hover":
+      return ["act", input.action, ...target()];
+    case "type":
+      return ["act", "type", ...target(), actField(input.text, "text")];
+    case "select":
+      return ["act", "select", ...target(), actField(input.option, "option")];
+    case "press":
+      return ["act", "press", actField(input.key, "key")];
+    case "scroll": {
+      const dx = Number.isFinite(input.dx) ? Math.trunc(input.dx!) : 0;
+      const dy = Number.isFinite(input.dy) ? Math.trunc(input.dy!) : 0;
+      if (dx === 0 && dy === 0) throw new Error("browser_act scroll needs dx or dy");
+      return ["act", "scroll", String(dx), String(dy)];
+    }
+    case "fill": {
+      const fields = input.fields;
+      if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+        throw new Error("browser_act fill needs a fields object");
+      }
+      const entries = Object.entries(fields);
+      if (entries.length === 0 || entries.length > ACT_FIELDS_MAX) {
+        throw new Error(`browser_act fill needs 1-${ACT_FIELDS_MAX} fields`);
+      }
+      for (const [key, value] of entries) {
+        actField(key, "field name");
+        actField(value, "field value");
+      }
+      const args = ["act", "fill", JSON.stringify(fields)];
+      if (input.submit !== undefined) args.push("--submit", actField(input.submit, "submit"));
+      return args;
+    }
+  }
+}
+
+
 /** Argv elements the adapter will never pass: remote endpoints, the
  * real-browser lane, and surfaces we do not use (direct MCP mount,
  * manual daemon control). */
@@ -308,9 +373,9 @@ export class BladeBrowserPool {
     return env;
   }
 
-  async open(userId: unknown, url: string, fresh = false): Promise<BrowserText> {
+  async open(userId: unknown, url: string, fresh = false, display?: string): Promise<BrowserText> {
     const target = assertHttpUrl(url);
-    const text = await this.run(userId, ["nav", target], fresh);
+    const text = await this.run(userId, ["nav", target], fresh, false, display);
     return this.boundResult(userId, "open", text);
   }
 
@@ -352,6 +417,7 @@ export class BladeBrowserPool {
     artifact?: string,
     offset?: number,
     limit?: number,
+    display?: string,
   ): Promise<BrowserText> {
     if (mode === "artifact") {
       if (typeof artifact !== "string" || artifact.length === 0) {
@@ -365,15 +431,37 @@ export class BladeBrowserPool {
         : mode === "outline"
           ? ["see", "outline"]
           : ["see", "--find", requireQuery(query)];
-    const text = await this.run(userId, args, false);
+    const text = await this.run(userId, args, false, false, display);
     return this.boundResult(userId, "read", text);
   }
 
-  async extract(userId: unknown, url: string | null, kind: ExtractKind = "auto"): Promise<BrowserText> {
+  /** Native-CDP interaction for the interactive lane: clicks, typing,
+   * fills, native selects, keys, scroll and hover. No eval / arbitrary JS. */
+  async act(userId: unknown, input: BrowserActInput, display?: string): Promise<BrowserText> {
+    const args = actArgs(input);
+    const text = await this.run(userId, args, false, false, display);
+    return this.boundResult(userId, "act", text);
+  }
+
+  async extract(userId: unknown, url: string | null, kind: ExtractKind = "auto", display?: string): Promise<BrowserText> {
     const args =
       url === null ? ["see", "extract", kind] : ["see", "extract", kind, assertHttpUrl(url)];
-    const text = await this.run(userId, args, false);
+    const text = await this.run(userId, args, false, false, display);
     return this.boundResult(userId, "extract", text);
+  }
+
+  /** Current page URL on the (possibly handed-back) session. Empty when the
+   * browser cannot answer; the resume prompt then omits the URL. */
+  async currentUrl(userId: unknown, display?: string): Promise<string> {
+    try {
+      const text = await this.run(userId, ["act", "eval", "location.href"], false, false, display);
+      const match = /result:\s*("([^"\\]|\\.)*")/s.exec(text);
+      const raw = match ? match[1]! : text.trim().split("\n")[0] ?? "";
+      const parsed = JSON.parse(raw) as unknown;
+      return typeof parsed === "string" && parsed.length <= 2048 ? parsed : "";
+    } catch {
+      return "";
+    }
   }
 
   /** Page one of our own spilled artifacts. Paths are workspace-relative;

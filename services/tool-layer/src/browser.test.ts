@@ -115,6 +115,7 @@ test("authenticated scout sees browser tools; others do not", async () => {
   assert.deepEqual(await toolNames("scout", assertionFor(ALICE, "scout")), [
     "arxiv_get",
     "arxiv_search",
+    "browser_act",
     "browser_extract",
     "browser_open",
     "browser_read",

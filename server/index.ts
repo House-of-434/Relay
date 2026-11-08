@@ -13691,6 +13691,10 @@ type CardResumeEntry = {
   card: "secret" | "takeover";
   label: string;
   outcome: "provided" | "dismissed";
+  /** Takeover only: the page the person left open when handing back. */
+  url?: string;
+  /** Takeover only: optional task guidance the person typed on hand-back. */
+  note?: string;
 };
 const pendingCardResumes = new Map<string, CardResumeEntry>();
 const phoneSecretSubmissions = new PhoneSecretSubmissionRegistry();
@@ -13775,9 +13779,13 @@ function markCardResumeFailed(card: "secret" | "takeover", threadId: string, mes
  * credentials; it only tells the agent the intervention ended. */
 function cardResumePrompt(entry: CardResumeEntry): string {
   if (entry.card === "takeover") {
+    const page = entry.url ? ` The browser is still open at ${entry.url}.` : "";
+    const fromPage = entry.url
+      ? " Continue from that exact page: inspect it first with browser_read, and use browser_act to click, fill, select, or press. Do not restart the sign-in flow."
+      : "";
     return entry.outcome === "provided"
-      ? "Relay browser update: the person finished signing in to the site in the login browser. Continue the task that paused for it. Do not ask them for credentials, cookies, or codes; the browser session is already available in the same workspace."
-      : "Relay browser update: the person did not complete the sign-in (dismissed, or the panel expired). Continue without it if possible, or report that the site is still blocked and why. Do not ask them to paste credentials into chat.";
+      ? `Relay browser update: the person finished the step in the sign-in browser and handed it back.${page}${entry.note ? ` They added: ${entry.note}` : ""} Continue the task that paused for it.${fromPage} Do not ask them for credentials, cookies, or codes.`
+      : `Relay browser update: the person handed the browser back without finishing the step.${page} Continue from that page if you can, or report precisely what is blocked.${fromPage} Do not ask them to paste credentials into chat.`;
   }
   return entry.outcome === "provided"
     ? `Relay credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
@@ -13848,7 +13856,7 @@ function dispatchCardResume(entry: CardResumeEntry) {
 /** Patch one terminal card state and dispatch its continuation exactly once.
  * Returns false when the card is no longer actionable (already resumed or not
  * on the active branch). */
-function resumeCard(card: "secret" | "takeover", botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"]) {
+function resumeCard(card: "secret" | "takeover", botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"], url?: string, note?: string) {
   if (card === "secret") {
     const message = secretMessage(botId, threadId, messageId);
     if (!message?.secret) return false;
@@ -13876,7 +13884,7 @@ function resumeCard(card: "secret" | "takeover", botId: string, threadId: string
       error: undefined,
     },
   });
-  dispatchCardResume({ card, botId, threadId, messageId, label: message.takeover.title, outcome });
+  dispatchCardResume({ card, botId, threadId, messageId, label: message.takeover.title, outcome, ...(url ? { url } : {}), ...(note ? { note } : {}) });
   return true;
 }
 
@@ -13884,12 +13892,12 @@ function resumeSecretCard(botId: string, threadId: string, messageId: string, ou
   return resumeCard("secret", botId, threadId, messageId, outcome);
 }
 
-function resumeTakeoverCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"]) {
-  return resumeCard("takeover", botId, threadId, messageId, outcome);
+function resumeTakeoverCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"], url?: string, note?: string) {
+  return resumeCard("takeover", botId, threadId, messageId, outcome, url, note);
 }
 
 const takeoverExpiryTimers = new Map<string, NodeJS.Timeout>();
-const takeoverTerminalizing = new Set<string>();
+const takeoverTerminalizing = new Map<string, Promise<{ status: string; resumed: boolean }>>();
 
 function takeoverTimerKey(threadId: string, messageId: string): string {
   return `${threadId}:${messageId}`;
@@ -13936,6 +13944,7 @@ async function terminalTakeover(
   threadId: string,
   messageId: string,
   status: "done" | "dismissed" | "expired",
+  note?: string,
 ): Promise<{ status: string; resumed: boolean }> {
   const key = takeoverTimerKey(threadId, messageId);
   const message = takeoverMessage(botId, threadId, messageId);
@@ -13949,21 +13958,51 @@ async function terminalTakeover(
     const settled = takeoverMessage(botId, threadId, messageId);
     return { status: settled?.takeover?.status ?? card.status, resumed: settled?.takeover?.resumed === true };
   }
-  if (takeoverTerminalizing.has(key)) throw new ToolLayerTakeoverError(409, "this sign-in is already being completed");
-  takeoverTerminalizing.add(key);
-  try {
-    await takeoverControl.release(takeoverActor(botId, threadId), card.sessionId, card.generation);
+  const inFlight = takeoverTerminalizing.get(key);
+  if (inFlight) return inFlight;
+  const run = (async (): Promise<{ status: string; resumed: boolean }> => {
+    const actor = takeoverActor(botId, threadId);
+    let terminalStatus = status;
+    let url = "";
+    if (status === "done") {
+      try {
+        // Hand back the SAME page; no release, no restart.
+        const handedBack = await takeoverControl.handBack(actor, card.sessionId, card.generation);
+        if (handedBack.handedBack) url = handedBack.url;
+        else terminalStatus = "expired";
+      } catch (error) {
+        // The session expired before the click: settle as declined rather
+        // than claiming the bot resumed on a page that no longer exists.
+        if (error instanceof ToolLayerTakeoverError && error.status === 409) {
+          terminalStatus = "expired";
+          await takeoverControl.release(actor, card.sessionId, card.generation).catch(() => {});
+        } else {
+          throw error;
+        }
+      }
+    } else {
+      await takeoverControl.release(actor, card.sessionId, card.generation);
+    }
     clearTakeoverTimer(threadId, messageId);
-    store.patchMessage(threadId, messageId, { takeover: { ...card, status, error: undefined } });
-    resumeTakeoverCard(botId, threadId, messageId, status === "done" ? "provided" : "dismissed");
+    store.patchMessage(threadId, messageId, { takeover: { ...card, status: terminalStatus, error: undefined } });
+    resumeTakeoverCard(
+      botId,
+      threadId,
+      messageId,
+      terminalStatus === "done" ? "provided" : "dismissed",
+      url,
+      note,
+    );
     const settled = takeoverMessage(botId, threadId, messageId);
-    return { status, resumed: settled?.takeover?.resumed === true };
-  } catch (error) {
-    if (status === "expired") scheduleTakeoverExpiry(botId, threadId, messageId);
+    return { status: terminalStatus, resumed: settled?.takeover?.resumed === true };
+  })().catch((error) => {
+    if (status !== "done") scheduleTakeoverExpiry(botId, threadId, messageId);
     throw error;
-  } finally {
+  }).finally(() => {
     takeoverTerminalizing.delete(key);
-  }
+  });
+  takeoverTerminalizing.set(key, run);
+  return run;
 }
 
 /** Re-arm TTLs for cards that outlived this process. */
@@ -23054,8 +23093,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     }
 
     // Browser sign-in cards: the person opens the live viewer or settles the
-    // card. Done and Dismiss own the browser release; Expiry does the same on
-    // a timer. Only the first terminal transition releases and resumes.
+    // card. Done hands the SAME page back; Dismiss and Expiry release it.
+    // Only the first terminal transition acts and resumes.
     m = path.match(/^\/api\/bots\/([\w-]+)\/takeover-cards\/([\w-]+)\/(viewer|done|dismiss)$/);
     if (m && method === "POST") {
       const body = await readBody(req);
@@ -23087,8 +23126,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           });
         }
       }
+      const note = m[3] === "done" && typeof body.note === "string"
+        ? redactSecretsInText(body.note.trim()).slice(0, 500)
+        : undefined;
       try {
-        const settled = await terminalTakeover(m[1], threadId, message.id, m[3] === "done" ? "done" : "dismissed");
+        const settled = await terminalTakeover(m[1], threadId, message.id, m[3] === "done" ? "done" : "dismissed", note || undefined);
         return json(res, 200, settled);
       } catch (error) {
         return json(res, error instanceof ToolLayerTakeoverError ? error.status : 502, {

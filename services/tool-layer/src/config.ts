@@ -66,11 +66,20 @@ export interface BladeConfig {
   locale: string | undefined;
   /** Headful login sessions allowed at once (default 2). */
   loginMaxConcurrent: number;
+  /** Idle timeout for an interactive session (default 10 minutes). */
+  loginIdleMs: number;
+  /** Safety ceiling from session creation (default 12 hours). */
+  loginMaxLifetimeMs: number;
 }
 
 export function loginMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
   const n = Number(env.RELAY_LOGIN_MAX_CONCURRENT ?? "2");
   return Number.isInteger(n) && n > 0 ? n : 2;
+}
+
+function positiveMs(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 export interface SearchConfig {
@@ -121,5 +130,7 @@ export function bladeConfig(env: NodeJS.ProcessEnv = process.env): BladeConfig {
     timezone: env.BLADE_TZ,
     locale: env.BLADE_LOCALE,
     loginMaxConcurrent: loginMaxConcurrent(env),
+    loginIdleMs: positiveMs(env.RELAY_LOGIN_IDLE_MS, 10 * 60_000),
+    loginMaxLifetimeMs: positiveMs(env.RELAY_LOGIN_MAX_LIFETIME_MS, 12 * 60 * 60_000),
   };
 }
