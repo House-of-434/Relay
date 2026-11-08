@@ -83,11 +83,10 @@ export function ThreadSwitcher({
   };
 
   return (
-    // Hug the content up to the cap so a short name keeps the chevron
-    // right after it; longer names truncate at a width that never reflows
-    // the header. The trigger fills the container, so its hover always
-    // matches the visible width.
-    <div className="relative w-fit max-w-[min(11rem,30vw)] shrink-0" ref={menuRef}>
+    // Hug the content so a short name keeps the chevron right after it, and
+    // let a long name take the header's leftover width before it truncates.
+    // The trigger fills the container, so its hover matches the visible width.
+    <div className="relative -ml-2 w-fit min-w-0 max-w-full" ref={menuRef}>
       <button
         ref={triggerRef}
         type="button"
@@ -96,9 +95,9 @@ export function ThreadSwitcher({
         aria-expanded={open}
         aria-label={t("thread.switcher.label")}
         title={currentTitle}
-        className="flex w-full min-w-0 items-center gap-1 rounded-md px-1 py-0.5 text-[15px] text-ink-secondary hover:bg-raised hover:text-ink"
+        className="flex w-full min-w-0 items-center gap-1 rounded-md py-0.5 pl-2 text-[15px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
-        <span className="truncate font-medium">{currentTitle}</span>
+        <span className="min-w-0 truncate font-medium">{currentTitle}</span>
         <ChevronDown size={15} className={cn("shrink-0 transition-transform", open && "rotate-180")} />
       </button>
 
@@ -148,7 +147,7 @@ export function ThreadSwitcher({
                       aria-label={`${t("task.deleteAria")}: ${entry.title}`}
                       title={t("task.deleteTitle")}
                       onClick={() => requestDelete(entry.threadId)}
-                      className="pointer-events-none mr-1 flex size-7 shrink-0 items-center justify-center rounded text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 touch:pointer-events-auto touch:opacity-70"
+                      className="pointer-events-none mr-1 flex size-7 shrink-0 items-center justify-center rounded text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 touch:pointer-events-auto touch:opacity-70"
                     >
                       <Trash2 size={13} />
                     </button>

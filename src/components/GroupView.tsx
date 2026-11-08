@@ -1126,11 +1126,6 @@ export function GroupView({ group }: {
     dispatch({ type: "loadOlderMessages", threadId: group.threadId });
   };
   const oldestId = group.messages[0]?.id;
-  // The inverse of the new-thread guard below: a thread known to be blank
-  // has nothing to start anew from and nothing to export, so both header
-  // buttons hide. Group transcripts arrive atomically, so an empty list
-  // with no scrollback is a truly empty thread.
-  const threadIsEmpty = group.messages.length === 0 && !group.hasMore;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const captured = preExpandHeight.current;
@@ -1222,17 +1217,6 @@ export function GroupView({ group }: {
           // control row 16px (visual only) below the 26px overlay.
           style={controlsShiftStyle}
         >
-          {!remoteClient && !setupPending && !group.dm && !threadIsEmpty && (
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "newGroupTask", groupId: group.id })}
-              aria-label={t("thread.new")}
-              title={t("thread.new")}
-              className="rounded-md p-1.5 text-ink-secondary hover:text-ink"
-            >
-              <Plus size={18} />
-            </button>
-          )}
           <GroupUsageChip usage={group.usage} />
           {!remoteClient && !setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
           {!remoteClient && !setupPending && !group.dm && <DefaultResponderSelect group={group} members={members} />}

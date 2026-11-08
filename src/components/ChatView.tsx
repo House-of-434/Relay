@@ -7,9 +7,7 @@ import {
   Copy,
   Crown,
   Pencil,
-  Plus,
   RefreshCw,
-  Square,
   Webhook,
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
@@ -60,7 +58,6 @@ import { ModelPicker } from "./ModelPicker";
 import { effectivePlace, toolPlace, type EffectivePlace } from "@/lib/place";
 import { cn } from "@/lib/cn";
 import { activeLocale, t } from "@/lib/i18n";
-import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
 import { groupTranscript, isRecoveryActivity } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
@@ -1049,12 +1046,6 @@ export function ChatView({ bot: profile }: {
   const routineExecution = state.routineRuns.find((run) => run.target === "bot" && run.botId === bot.id && run.threadId === bot.threadId);
   const resultsThreadId = routineExecution?.resultsThreadId ?? routineExecution?.sourceThreadId;
   const canOpenResults = resultsThreadId && [...state.bots, ...state.groups].some((owner) => owner.threadId === resultsThreadId || owner.tasks?.some((task) => task.threadId === resultsThreadId));
-  // The inverse of the new-thread guard below: a thread known to be blank
-  // has nothing to start anew from and nothing to export, so both header
-  // buttons hide. An unloaded thread counts as non-empty — the buttons must
-  // still work while the snapshot is on its way.
-  const threadIsEmpty = !bot.awaitingThreadSnapshot && messages.length === 0 && !bot.hasMore;
-
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       {/* Header */}
@@ -1075,11 +1066,7 @@ export function ChatView({ bot: profile }: {
             rename pencil landed under the export button. Below 30rem the
             header wraps: name line on top, chips underneath on the right. */}
         <div data-chathead-row className="flex items-center justify-between @max-[30rem]/chathead:flex-wrap @max-[30rem]/chathead:gap-y-1">
-        <div data-chathead-identity className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
-          <span className="truncate text-[15px] font-semibold text-ink">
-            {bot.name}
-          </span>
-          <span aria-hidden="true" className="shrink-0 text-[15px] text-ink-tertiary">/</span>
+        <div data-chathead-identity className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
           <ThreadSwitcher
             currentThreadId={bot.threadId}
             currentTitle={bot.tasks?.find((task) => task.threadId === bot.threadId)?.title ?? bot.name}
@@ -1114,30 +1101,6 @@ export function ChatView({ bot: profile }: {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
-          {!remoteClient && !threadIsEmpty && (
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "newTask", botId: bot.id })}
-              aria-label={t("thread.new")}
-              title={t("thread.new")}
-              className="rounded-md p-1.5 text-ink-secondary hover:text-ink"
-            >
-              <Plus size={18} />
-            </button>
-          )}
-          {(bot.busy || bot.waitingForTeammates) && (
-            <button
-              onClick={() => dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId })}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:text-ink",
-                COMPACT_BUBBLE,
-              )}
-              title={t("chat.stopTurn")}
-            >
-              <Square size={12} className="fill-current" />
-              <span className="@max-4xl/chathead:hidden">{t("chat.stop")}</span>
-            </button>
-          )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
         </div>
@@ -1406,6 +1369,9 @@ function UsageChip({ bot }: { bot: Bot }) {
     // a bug (issue #527); past 80% of the window the fix is a new thread
     share?.tone === "danger" ? t("chat.usage.contextNudge") : null,
   ].filter(Boolean);
+  const percent = share?.percent;
+  const fill = percent === undefined ? 0 : Math.min(1, Math.max(0, percent / 100));
+  const ring = 2 * Math.PI * 9;
   return (
     <div className="relative" ref={menuRef}>
       <button
@@ -1413,11 +1379,33 @@ function UsageChip({ bot }: { bot: Bot }) {
         onClick={() => setOpen((prev) => !prev)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:text-ink @max-4xl/chathead:px-2"
+        aria-label={lines.join("\n")}
+        className={cn(
+          "text-ink-secondary hover:text-ink",
+          percent === undefined
+            ? "whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums @max-4xl/chathead:px-2"
+            : "flex size-8 items-center justify-center rounded-md",
+        )}
         title={lines.join("\n")}
         data-testid="usage-chip"
       >
-        <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
+        {percent === undefined ? (
+          <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
+        ) : (
+          <>
+            <span className={cn("flex", share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+              <circle
+                cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={ring} strokeDashoffset={ring * (1 - fill)} transform="rotate(-90 12 12)"
+                className="transition-[stroke-dashoffset] duration-300"
+              />
+            </svg>
+            </span>
+            <span className="sr-only" data-testid="usage-context">{ctx}</span>
+          </>
+        )}
       </button>
       {motion.shown && (
         <div
