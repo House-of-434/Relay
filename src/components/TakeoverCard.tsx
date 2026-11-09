@@ -243,15 +243,36 @@ export function TakeoverCard({
             data-takeover-viewer
             className="relative flex h-[94vh] w-[96vw] max-w-[1600px] flex-col overflow-hidden rounded-2xl bg-black shadow-2xl"
           >
-            <div className="flex items-center gap-2 border-b border-white/10 px-3 py-2 text-white">
-              <span className="h-2 w-2 rounded-full bg-success" aria-hidden="true" />
-              <span className="text-[12px] font-medium">{t("takeover.live")}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[12px] text-white/60">· {host}</span>
-              <button type="button" onClick={fullScreen} className="rounded p-1.5 hover:bg-white/10" aria-label={t("takeover.fullscreen")}>
-                <Maximize2 size={15} />
+            <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
+              <button
+                type="button"
+                onClick={fullScreen}
+                className="flex size-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80"
+                title={t("takeover.fullscreen")}
+                aria-label={t("takeover.fullscreen")}
+              >
+                <Maximize2 size={17} />
               </button>
-              <button ref={closeRef} type="button" onClick={() => setViewerPath(null)} className="rounded p-1.5 hover:bg-white/10" aria-label={t("takeover.close")}>
-                <X size={15} />
+              <button
+                type="button"
+                onClick={() => settle("done")}
+                disabled={acting}
+                className="flex size-10 items-center justify-center rounded-full bg-accent text-white shadow-lg transition hover:bg-accent/90 disabled:opacity-60"
+                title={t("takeover.handBack")}
+                aria-label={t("takeover.handBack")}
+              >
+                <Check size={18} />
+              </button>
+              <button
+                ref={closeRef}
+                type="button"
+                onClick={() => settle("dismiss")}
+                disabled={acting}
+                className="flex size-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80 disabled:opacity-60"
+                title={t("takeover.close")}
+                aria-label={t("takeover.close")}
+              >
+                <X size={18} />
               </button>
             </div>
             <iframe
@@ -261,30 +282,6 @@ export function TakeoverCard({
               className="min-h-0 flex-1 border-0 bg-black"
               allow="clipboard-read; clipboard-write"
             />
-            <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center">
-              <div className="pointer-events-auto flex items-center gap-2 rounded-full border border-white/15 bg-black/70 px-2 py-1.5 backdrop-blur">
-                <button
-                  type="button"
-                  onClick={() => settle("dismiss")}
-                  disabled={acting}
-                  className="flex size-10 items-center justify-center rounded-full border border-white/20 text-white transition hover:bg-white/10 disabled:opacity-60"
-                  title={t("takeover.dismiss")}
-                  aria-label={t("takeover.dismiss")}
-                >
-                  <X size={18} />
-                </button>
-                <button
-                  type="button"
-                  onClick={() => settle("done")}
-                  disabled={acting}
-                  className="flex size-10 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent/90 disabled:opacity-60"
-                  title={t("takeover.handBack")}
-                  aria-label={t("takeover.handBack")}
-                >
-                  <Check size={18} />
-                </button>
-              </div>
-            </div>
             {error ? <p className="border-t border-white/10 px-3 py-2 text-[11px] text-danger">{error}</p> : null}
           </div>
         </div>
