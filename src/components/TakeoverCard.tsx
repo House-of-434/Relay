@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { Check, Maximize2, Monitor, RotateCw, X } from "lucide-react";
+import { Check, Monitor, RotateCw, X } from "lucide-react";
 
 import { t } from "@/lib/i18n";
 import { api, type Message } from "@/state/store";
@@ -46,12 +46,12 @@ function TakeoverPreview({
       <img
         src={src}
         alt={host}
-        className="h-40 w-full object-cover object-top"
+        className="aspect-video w-full object-cover object-top"
       />
     );
   }
   return (
-    <div className="flex h-40 items-center justify-center bg-gradient-to-br from-raised via-panel to-inset">
+    <div className="flex aspect-video w-full items-center justify-center bg-gradient-to-br from-raised via-panel to-inset">
       <Monitor size={22} className="text-ink-secondary opacity-70" aria-hidden="true" />
     </div>
   );
@@ -76,21 +76,43 @@ export function TakeoverCard({
   const pending = takeover.status === "pending";
   const [viewerPath, setViewerPath] = useState<string | null>(null);
   const [localOpen, setLocalOpen] = useState(false);
+  const [viewerReady, setViewerReady] = useState(false);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
 
   useEffect(() => {
     if (!pending) {
       setViewerPath(null);
       setLocalOpen(false);
+      setViewerReady(false);
     }
   }, [pending]);
 
   useEffect(() => {
     if (viewerPath) closeRef.current?.focus();
   }, [viewerPath]);
+
+  useEffect(() => {
+    const onMessage = (event: MessageEvent) => {
+      if (event.origin !== window.location.origin) return;
+      if (event.source !== iframeRef.current?.contentWindow) return;
+      const type = (event.data as { type?: unknown } | null)?.type;
+      if (type === "relay-takeover-viewer-ready" || type === "relay-takeover-viewer-error") {
+        setViewerReady(true);
+      }
+    };
+    window.addEventListener("message", onMessage);
+    return () => window.removeEventListener("message", onMessage);
+  }, []);
+
+  useEffect(() => {
+    if (!viewerPath || viewerReady) return;
+    const timer = setTimeout(() => setViewerReady(true), 15_000);
+    return () => clearTimeout(timer);
+  }, [viewerPath, viewerReady]);
 
   /** Escape closes the viewer. It never settles the session. */
   const escape = (event: KeyboardEvent): void => {
@@ -110,6 +132,7 @@ export function TakeoverCard({
   const openViewer = async () => {
     if (loading || acting) return;
     setLoading(true);
+    setViewerReady(false);
     setError(null);
     try {
       const result = await api<{ path: string; local?: boolean }>(`${endpoint}/viewer`, {
@@ -140,18 +163,12 @@ export function TakeoverCard({
       });
       setViewerPath(null);
       setLocalOpen(false);
+      setViewerReady(false);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setActing(false);
     }
-  };
-
-  const fullScreen = () => {
-    const element = document.querySelector<HTMLElement>("[data-takeover-viewer]");
-    if (!element) return;
-    if (document.fullscreenElement) void document.exitFullscreen();
-    else void element.requestFullscreen?.();
   };
 
   /** Focus the iframe's window so Escape still reaches the parent first. */
@@ -239,20 +256,8 @@ export function TakeoverCard({
 
       {viewerPath ? (
         <div className="fixed inset-0 z-50 bg-black" role="dialog" aria-modal="true" aria-label={t("takeover.iframeTitle")}>
-          <div
-            data-takeover-viewer
-            className="relative flex h-full w-full flex-col overflow-hidden bg-black"
-          >
+          <div className="relative flex h-full w-full flex-col overflow-hidden bg-black">
             <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
-              <button
-                type="button"
-                onClick={fullScreen}
-                className="flex size-8 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80"
-                title={t("takeover.fullscreen")}
-                aria-label={t("takeover.fullscreen")}
-              >
-                <Maximize2 size={14} />
-              </button>
               <button
                 ref={closeRef}
                 type="button"
@@ -279,12 +284,19 @@ export function TakeoverCard({
               </button>
             </div>
             <iframe
+              ref={iframeRef}
               title={t("takeover.iframeTitle")}
               src={`${viewerPath}${viewerPath.includes("?") ? "&" : "?"}embed=1`}
               onLoad={bindFrame}
               className="min-h-0 flex-1 border-0 bg-black"
               allow="clipboard-read; clipboard-write"
             />
+            {!viewerReady ? (
+              <div className="absolute inset-0 z-[1] flex flex-col items-center justify-center gap-3 bg-black text-white">
+                <span className="size-7 animate-spin rounded-full border-2 border-white/25 border-t-white" aria-hidden="true" />
+                <span className="text-[12px] text-white/70">{t("takeover.working")}</span>
+              </div>
+            ) : null}
             {error ? <p className="border-t border-white/10 px-3 py-2 text-[11px] text-danger">{error}</p> : null}
           </div>
         </div>

@@ -547,7 +547,7 @@ export async function createRelayToolServer(
           response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
           response.end(`<!doctype html><title>Live browser</title>
 <style>
-  body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
+  body { font-family: system-ui, sans-serif; margin: 16px; background: #000; color: #eee; }
   #screen { width: min(1200px, 96vw); height: min(675px, 54vw); border: 1px solid #444; background: #000; }
   #status { color: #9f9; } #status.err { color: #f99; }
   #embed-status { display: none; }
@@ -561,6 +561,7 @@ export async function createRelayToolServer(
   body.embed #chrome { display: none; }
   body.embed #screen { width: 100vw; height: 100vh; border: 0; }
 </style>
+<script>if (new URLSearchParams(location.search).has("embed")) document.body.classList.add("embed");</script>
 <div id="chrome">
   <h3>Live browser — agent is paused</h3>
   <p id="status">Connecting…</p>
@@ -571,10 +572,6 @@ export async function createRelayToolServer(
 
 <script type="module">
 import RFB from "/_viewer/${tokenValue}/novnc/core/rfb.js";
-if (new URLSearchParams(location.search).has("embed")) {
-  document.body.classList.add("embed");
-  document.getElementById("chrome-footer")?.remove();
-}
 const statusEl = document.getElementById("status");
 const embedStatusEl = document.getElementById("embed-status");
 const setStatus = (text, error) => {
@@ -582,17 +579,20 @@ const setStatus = (text, error) => {
   if (embedStatusEl) { embedStatusEl.textContent = text; embedStatusEl.style.color = error ? "#f99" : "#ddd"; }
 };
 const target = document.getElementById("screen");
+const notify = (type) => {
+  try { window.parent.postMessage({ type }, window.location.origin); } catch { /* parent gone */ }
+};
 let rfb = null;
 try {
   rfb = new RFB(target, (location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/_viewer/${tokenValue}/ws");
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
   rfb.showDotCursor = true;
-  rfb.addEventListener("connect", () => { document.body.classList.add("connected"); setStatus("Connected", false); rfb.focus(); });
-  rfb.addEventListener("disconnect", (e) => { document.body.classList.remove("connected"); setStatus("Disconnected" + (e.detail && e.detail.clean ? "" : " (connection lost)"), true); });
-  rfb.addEventListener("credentialsrequired", () => { document.body.classList.remove("connected"); setStatus("Viewer refused", true); });
+  rfb.addEventListener("connect", () => { document.body.classList.add("connected"); setStatus("Connected", false); notify("relay-takeover-viewer-ready"); rfb.focus(); });
+  rfb.addEventListener("disconnect", (e) => { document.body.classList.remove("connected"); setStatus("Disconnected" + (e.detail && e.detail.clean ? "" : " (connection lost)"), true); notify("relay-takeover-viewer-error"); });
+  rfb.addEventListener("credentialsrequired", () => { document.body.classList.remove("connected"); setStatus("Viewer refused", true); notify("relay-takeover-viewer-error"); });
 } catch (e) {
-  document.body.classList.remove("connected"); setStatus("Viewer error: " + e.message, true);
+  document.body.classList.remove("connected"); setStatus("Viewer error: " + e.message, true); notify("relay-takeover-viewer-error");
 }
 setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }).catch(() => {}); }, 30_000);
 </script>`);

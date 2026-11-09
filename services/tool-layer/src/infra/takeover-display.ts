@@ -5,9 +5,12 @@
  * websockify (loopback WS + noVNC static files) to that display. Slots are
  * capped like the takeover pool and torn down on release.
  */
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFile as execFileCallback, spawn, type ChildProcess } from "node:child_process";
 import { connect } from "node:net";
 import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+
+const execFileAsync = promisify(execFileCallback);
 
 export interface DisplayLease {
   display: string;
@@ -25,6 +28,7 @@ interface Slot {
 export interface DisplayPoolOptions {
   maxSlots?: number;
   wm?: string;
+  xdotool?: string;
   x11vnc?: string;
   websockify?: string;
   novncDir?: string;
@@ -35,6 +39,7 @@ export interface DisplayPoolOptions {
 export class TakeoverDisplayPool {
   private readonly maxSlots: number;
   private readonly wm: string;
+  private readonly xdotool: string;
   private readonly x11vnc: string;
   private readonly websockify: string;
   private readonly novncDir: string;
@@ -44,6 +49,7 @@ export class TakeoverDisplayPool {
   constructor(options: DisplayPoolOptions = {}) {
     this.maxSlots = options.maxSlots ?? 2;
     this.wm = options.wm ?? "openbox";
+    this.xdotool = options.xdotool ?? "xdotool";
     this.x11vnc = options.x11vnc ?? "x11vnc";
     this.websockify = options.websockify ?? "websockify";
     this.novncDir = options.novncDir ?? "/usr/share/novnc";
@@ -104,6 +110,9 @@ export class TakeoverDisplayPool {
         `127.0.0.1:${slot.lease.rfbPort}`,
       ]));
       await this.waitForPort(slot.lease.wsPort, "websocket");
+      // Fullscreen the real Chrome window so the viewer shows only the page,
+      // not tabs or the address bar. Best-effort: the viewer still works.
+      await this.fullscreenChrome(display);
       return slot.lease;
     } catch (error) {
       this.release(userId);
@@ -138,6 +147,28 @@ export class TakeoverDisplayPool {
     const child = spawn(binary, args, { stdio: "ignore", env: { ...process.env, DISPLAY: display } });
     child.on("error", () => { /* no WM is survivable; popups may misplace */ });
     return child;
+  }
+
+  /** xdotool sends Chrome's F11 shortcut at the X level; CDP key events do
+   * not reach the browser UI. This preserves the page and form state. */
+  private async fullscreenChrome(display: string): Promise<void> {
+    const env = { ...process.env, DISPLAY: display };
+    try {
+      let windowId = "";
+      for (const args of [
+        ["search", "--sync", "--onlyvisible", "--name", " - Google Chrome"],
+        ["search", "--sync", "--onlyvisible", "--class", "google-chrome"],
+      ]) {
+        try {
+          const { stdout } = await execFileAsync(this.xdotool, args, { env, timeout: 5_000 });
+          windowId = stdout.trim().split(/\s+/)[0] ?? "";
+          if (windowId) break;
+        } catch { /* try the next selector */ }
+      }
+      if (!windowId) return;
+      await execFileAsync(this.xdotool, ["windowactivate", "--sync", windowId], { env, timeout: 5_000 });
+      await execFileAsync(this.xdotool, ["key", "--clearmodifiers", "F11"], { env, timeout: 5_000 });
+    } catch { /* best-effort; the viewer is still usable */ }
   }
 
   /** The viewer opens as soon as the card is clicked; do not hand it a port

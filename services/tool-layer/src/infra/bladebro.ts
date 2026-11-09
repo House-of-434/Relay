@@ -39,6 +39,9 @@ export const BLADE_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 export const BLADE_URL_MAX_LENGTH = 2048;
 const BLADE_PROBE_TIMEOUT_MS = 15_000;
 const BLADE_ARTIFACT_PAGE_LIMIT = 8_000;
+/** Suppress Chrome's unsupported-flag infobar. The takeover viewer enters
+ * fullscreen separately, so page/form state survives. */
+const CHROME_FLAGS = "--test-type";
 
 /** Bladebro starts its own Xvfb for headful Chrome, so the viewer must attach
  * to the display it actually chose, not the one we asked for. Match the
@@ -406,6 +409,7 @@ export class BladeBrowserPool {
     // research lane ignores it. Never read ambient DISPLAY: unrelated
     // sessions must not share a screen.
     if (display) env.DISPLAY = display;
+    env.BLADE_CHROME_FLAGS = CHROME_FLAGS;
     assertNoForbiddenEnv(env);
     return env;
   }
@@ -416,10 +420,11 @@ export class BladeBrowserPool {
     return this.boundResult(userId, "open", text);
   }
 
-  /** Headful login mode: the browser renders on the session's own X display,
-   * which the viewer reaches over VNC. Used only inside an active human
-   * takeover; research paths stay headless. `rb visible on` returns
-   * `{ok, setting, value}` with no `text`, so it is parsed leniently. */
+  /** Headful takeover mode: the browser renders on the session's own X display,
+   * which the viewer reaches over VNC, and kiosk hides Chrome's tab/address
+   * bars. Used only inside an active human takeover; research paths stay
+   * headless. `rb visible on` returns `{ok, setting, value}` with no `text`,
+   * so it is parsed leniently. */
   async headfulOpen(userId: unknown, url: string | undefined, display?: string): Promise<BrowserText> {
     await this.runSetting(userId, ["rb", "visible", "on"], display);
     if (!url) return { text: "" };

@@ -52,6 +52,7 @@ export const BLADE_ALLOWED_ENV = [
   "BLADE_TZ",
   "BLADE_LOCALE",
   "BLADE_PROXY",
+  "BLADE_CHROME_FLAGS",
   "PATH",
   "CHROME_PATH",
   "DISPLAY",
