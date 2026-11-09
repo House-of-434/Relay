@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { fanOutResume, LoginSessionManager } from "./login-session.js";
-import { ViewerTokens } from "./login-viewer.js";
+import { fanOutResume, TakeoverSessionManager } from "./takeover-session.js";
+import { ViewerTokens } from "./takeover-viewer.js";
 
 const USER_A = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const USER_B = "9c858901-8a57-4791-81fe-4c455b099bc9";
@@ -15,7 +15,7 @@ const THREAD_B = "44444444-4444-4444-8444-444444444444";
 const actor = (userId = USER_A, botId = BOT, threadId = THREAD) => ({ userId, botId, threadId });
 
 test("one session per user; a competing thread gets busy", () => {
-  const m = new LoginSessionManager();
+  const m = new TakeoverSessionManager();
   const first = m.requestHuman(actor(), "task-1");
   assert.equal(first.created, true);
   assert.equal(first.session.state, "user_takeover");
@@ -25,7 +25,7 @@ test("one session per user; a competing thread gets busy", () => {
 });
 
 test("the same thread joins the session instead of creating a second", () => {
-  const m = new LoginSessionManager();
+  const m = new TakeoverSessionManager();
   const first = m.requestHuman(actor(), "task-1");
   const second = m.requestHuman(actor(), "task-2");
   assert.equal(second.created, false);
@@ -34,7 +34,7 @@ test("the same thread joins the session instead of creating a second", () => {
 });
 
 test("hand back keeps the session and flips control to the agent", () => {
-  const m = new LoginSessionManager();
+  const m = new TakeoverSessionManager();
   const { session } = m.requestHuman(actor(), "task-1", ":99");
   assert.equal(m.isUserTakeover(USER_A), true);
   assert.equal(m.handBack(session.id, session.generation), true);
@@ -45,7 +45,7 @@ test("hand back keeps the session and flips control to the agent", () => {
 });
 
 test("agentSession is bound to the exact bot and thread", () => {
-  const m = new LoginSessionManager();
+  const m = new TakeoverSessionManager();
   const { session } = m.requestHuman(actor(), "task-1");
   m.handBack(session.id, session.generation);
   assert.equal(m.agentSession(actor())?.id, session.id);
@@ -55,14 +55,14 @@ test("agentSession is bound to the exact bot and thread", () => {
 });
 
 test("release is idempotent once the session is gone", () => {
-  const m = new LoginSessionManager();
+  const m = new TakeoverSessionManager();
   const { session } = m.requestHuman(actor(), "task-1");
   assert.equal(m.release(session.id, session.generation), true);
   assert.equal(m.release(session.id, session.generation), false);
 });
 
 test("stale generation is fenced", () => {
-  const m = new LoginSessionManager();
+  const m = new TakeoverSessionManager();
   const { session } = m.requestHuman(actor(), "task-1");
   m.bumpGeneration(session.id);
   assert.throws(() => m.release(session.id, 1), /stale/);
@@ -72,7 +72,7 @@ test("stale generation is fenced", () => {
 test("idle closes an agent-active session; touch extends it", () => {
   let now = 1_000;
   const events: unknown[] = [];
-  const m = new LoginSessionManager({ idleMs: 100, now: () => now, onEvent: (e) => events.push(e) });
+  const m = new TakeoverSessionManager({ idleMs: 100, now: () => now, onEvent: (e) => events.push(e) });
   const { session } = m.requestHuman(actor(), "task-1");
   m.handBack(session.id, session.generation);
   now += 90;
@@ -89,7 +89,7 @@ test("idle closes an agent-active session; touch extends it", () => {
 test("the hard cap closes even an actively used session", () => {
   let now = 1_000;
   const events: unknown[] = [];
-  const m = new LoginSessionManager({ idleMs: 100, maxLifetimeMs: 500, now: () => now, onEvent: (e) => events.push(e) });
+  const m = new TakeoverSessionManager({ idleMs: 100, maxLifetimeMs: 500, now: () => now, onEvent: (e) => events.push(e) });
   const { session } = m.requestHuman(actor(), "task-1");
   m.handBack(session.id, session.generation);
   for (let i = 0; i < 6; i++) {
@@ -104,7 +104,7 @@ test("the hard cap closes even an actively used session", () => {
 test("an unclaimed sign-in expires after the user-takeover window", () => {
   let now = 1_000;
   const events: unknown[] = [];
-  const m = new LoginSessionManager({ userTakeoverMs: 100, now: () => now, onEvent: (e) => events.push(e) });
+  const m = new TakeoverSessionManager({ userTakeoverMs: 100, now: () => now, onEvent: (e) => events.push(e) });
   const { session } = m.requestHuman(actor(), "task-1");
   now += 101;
   m.sweepExpired();
@@ -113,7 +113,7 @@ test("an unclaimed sign-in expires after the user-takeover window", () => {
 });
 
 test("capacity is two sessions across users", () => {
-  const m = new LoginSessionManager({ maxConcurrent: 2 });
+  const m = new TakeoverSessionManager({ maxConcurrent: 2 });
   m.requestHuman(actor(USER_A), "t1");
   m.requestHuman(actor(USER_B), "t2");
   assert.throws(() => m.requestHuman(actor(USER_C), "t3"), /capacity/);
@@ -122,7 +122,7 @@ test("capacity is two sessions across users", () => {
 test("a held cross-process lease refuses the session and is released on close", () => {
   let held = false;
   let released = false;
-  const m = new LoginSessionManager({
+  const m = new TakeoverSessionManager({
     leaseFor: () => {
       held = true;
       return { release: () => { released = true; held = false; } };
@@ -133,7 +133,7 @@ test("a held cross-process lease refuses the session and is released on close", 
   m.release(session.id, session.generation);
   assert.equal(released, true);
 
-  const blocked = new LoginSessionManager({ leaseFor: () => null });
+  const blocked = new TakeoverSessionManager({ leaseFor: () => null });
   assert.throws(() => blocked.requestHuman(actor(USER_B), "task-2"), /busy on another task/);
 });
 

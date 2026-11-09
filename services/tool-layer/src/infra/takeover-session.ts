@@ -12,13 +12,13 @@
 import { canonicalUserId } from "./workspace-identity.js";
 
 /** A sign-in card that never gets acted on expires after this long. */
-export const LOGIN_USER_TAKEOVER_MS = 30 * 60_000;
+export const TAKEOVER_WINDOW_MS = 30 * 60_000;
 /** Normal cleanup: no interactive use for this long. */
-export const LOGIN_IDLE_MS = 10 * 60_000;
+export const TAKEOVER_IDLE_MS = 10 * 60_000;
 /** Safety ceiling only; never extended by activity. */
-export const LOGIN_MAX_LIFETIME_MS = 12 * 60 * 60_000;
+export const TAKEOVER_MAX_LIFETIME_MS = 12 * 60 * 60_000;
 /** Viewer token TTL (matches the card's sign-in window). */
-export const LOGIN_TAKEOVER_TTL_MS = LOGIN_USER_TAKEOVER_MS;
+export const TAKEOVER_TTL_MS = TAKEOVER_WINDOW_MS;
 
 export type SessionState = "agent_active" | "user_takeover";
 export type CloseReason = "released" | "expired" | "idle" | "hard-cap";
@@ -34,7 +34,7 @@ export interface TakeoverEvent {
   taskIds: string[];
 }
 
-export interface LoginSession {
+export interface TakeoverSession {
   id: string;
   userId: string;
   botId: string;
@@ -58,7 +58,7 @@ export interface SessionActor {
   threadId: string;
 }
 
-export interface LoginSessionOptions {
+export interface TakeoverSessionOptions {
   maxConcurrent?: number;
   idleMs?: number;
   maxLifetimeMs?: number;
@@ -89,8 +89,8 @@ export async function fanOutResume(
   return outcomes;
 }
 
-export class LoginSessionManager {
-  private readonly sessions = new Map<string, LoginSession>();
+export class TakeoverSessionManager {
+  private readonly sessions = new Map<string, TakeoverSession>();
   private readonly byUser = new Map<string, string>();
   private readonly maxConcurrent: number;
   private readonly idleMs: number;
@@ -102,13 +102,13 @@ export class LoginSessionManager {
   private readonly leaseFor: ((userId: string) => { release(): void } | null) | undefined;
   private counter = 0;
 
-  constructor(options: LoginSessionOptions = {}) {
+  constructor(options: TakeoverSessionOptions = {}) {
     this.maxConcurrent = options.maxConcurrent ?? 2;
-    this.idleMs = options.idleMs ?? LOGIN_IDLE_MS;
-    this.maxLifetimeMs = options.maxLifetimeMs ?? LOGIN_MAX_LIFETIME_MS;
-    this.userTakeoverMs = options.userTakeoverMs ?? LOGIN_USER_TAKEOVER_MS;
+    this.idleMs = options.idleMs ?? TAKEOVER_IDLE_MS;
+    this.maxLifetimeMs = options.maxLifetimeMs ?? TAKEOVER_MAX_LIFETIME_MS;
+    this.userTakeoverMs = options.userTakeoverMs ?? TAKEOVER_WINDOW_MS;
     this.now = options.now ?? Date.now;
-    this.nextId = options.id ?? (() => `login_${++this.counter}_${this.now().toString(36)}`);
+    this.nextId = options.id ?? (() => `takeover_${++this.counter}_${this.now().toString(36)}`);
     this.onEvent = options.onEvent;
     this.leaseFor = options.leaseFor;
   }
@@ -127,7 +127,7 @@ export class LoginSessionManager {
 
   /** Any live interactive session for this user, regardless of thread. Used
    * to keep unrelated tasks from reusing (and restarting) the live daemon. */
-  sessionForUser(userId: unknown): LoginSession | null {
+  sessionForUser(userId: unknown): TakeoverSession | null {
     const id = this.byUser.get(canonicalUserId(userId));
     return id ? this.sessions.get(id) ?? null : null;
   }
@@ -135,7 +135,7 @@ export class LoginSessionManager {
   /** The interactive session this exact actor may drive, if the agent holds
    * control. Binding is server-derived: a different bot or thread never
    * attaches to someone else's live page. */
-  agentSession(actor: SessionActor): LoginSession | null {
+  agentSession(actor: SessionActor): TakeoverSession | null {
     const session = this.sessions.get(this.byUser.get(canonicalUserId(actor.userId)) ?? "");
     if (!session) return null;
     if (session.botId !== actor.botId || session.threadId !== actor.threadId) return null;
@@ -145,7 +145,7 @@ export class LoginSessionManager {
   /** User takes control: one session per user, bound to the originating
    * bot + thread. A competing thread gets a clear busy error; the owner is
    * never pre-empted. */
-  requestHuman(actor: SessionActor, taskId: string, display?: string): { session: LoginSession; created: boolean } {
+  requestHuman(actor: SessionActor, taskId: string, display?: string): { session: TakeoverSession; created: boolean } {
     this.sweepExpired();
     const uid = canonicalUserId(actor.userId);
     const existingId = this.byUser.get(uid);
@@ -153,7 +153,7 @@ export class LoginSessionManager {
       const existing = this.sessions.get(existingId)!;
       if (existing.botId !== actor.botId || existing.threadId !== actor.threadId) {
         console.warn(
-          `[login] busy: owner=${existing.botId}/${existing.threadId} request=${actor.botId}/${actor.threadId}`,
+          `[takeover] busy: owner=${existing.botId}/${existing.threadId} request=${actor.botId}/${actor.threadId}`,
         );
         throw new Error("interactive browser is busy on another task; wait for it to finish or dismiss it in that chat, then retry");
       }
@@ -167,14 +167,14 @@ export class LoginSessionManager {
       return { session: existing, created: false };
     }
     const active = this.sessions.size;
-    if (active >= this.maxConcurrent) throw new Error("login browser is at capacity; try again shortly");
+    if (active >= this.maxConcurrent) throw new Error("live browser is at capacity; try again shortly");
     const lease = this.leaseFor?.(uid);
     if (this.leaseFor && !lease) {
-      console.warn(`[login] lease refused userId=${uid}`);
+      console.warn(`[takeover] lease refused userId=${uid}`);
       throw new Error("interactive browser is busy on another task; wait for it to finish or dismiss it in that chat, then retry");
     }
     const now = this.now();
-    const session: LoginSession = {
+    const session: TakeoverSession = {
       id: this.nextId(),
       userId: uid,
       botId: actor.botId,
@@ -251,13 +251,13 @@ export class LoginSessionManager {
 
   /** Session metadata for an authorized release/mint route. Null when the
    * session is gone or owned by a different user. */
-  ownedSession(userId: unknown, sessionId: string): LoginSession | null {
+  ownedSession(userId: unknown, sessionId: string): TakeoverSession | null {
     const session = this.sessions.get(sessionId);
     if (!session) return null;
     return session.userId === canonicalUserId(userId) ? session : null;
   }
 
-  get(sessionId: string): LoginSession | undefined {
+  get(sessionId: string): TakeoverSession | undefined {
     return this.sessions.get(sessionId);
   }
 
@@ -273,7 +273,7 @@ export class LoginSessionManager {
     if (session) session.generation += 1;
   }
 
-  private close(session: LoginSession, reason: CloseReason): void {
+  private close(session: TakeoverSession, reason: CloseReason): void {
     if (!this.sessions.has(session.id)) return;
     this.sessions.delete(session.id);
     this.byUser.delete(session.userId);

@@ -57,7 +57,7 @@ export class RelayBrowserTakeoverClient {
 
   async requestCard(actorAssertion: string, input: BrowserTakeoverCardInput): Promise<BrowserTakeoverCardResult> {
     if (typeof this.capability !== "string" || Buffer.byteLength(this.capability) < 32) {
-      throw new BrowserTakeoverRequestError(503, "the login browser card service is not configured");
+      throw new BrowserTakeoverRequestError(503, "the browser takeover card service is not configured");
     }
     let response: Response;
     try {
@@ -80,14 +80,14 @@ export class RelayBrowserTakeoverClient {
         }),
       });
     } catch {
-      throw new BrowserTakeoverRequestError(502, "the login browser card service is unreachable");
+      throw new BrowserTakeoverRequestError(502, "the browser takeover card service is unreachable");
     }
     if (!response.ok) {
       throw new BrowserTakeoverRequestError(response.status, await safeErrorMessage(response));
     }
     const body = (await response.json().catch(() => null)) as { message_id?: unknown } | null;
     if (!body || typeof body.message_id !== "string") {
-      throw new BrowserTakeoverRequestError(502, "the login browser card service answered unexpectedly");
+      throw new BrowserTakeoverRequestError(502, "the browser takeover card service answered unexpectedly");
     }
     return { messageId: body.message_id };
   }
@@ -100,5 +100,5 @@ async function safeErrorMessage(response: Response): Promise<string> {
   } catch {
     /* fall through */
   }
-  return `the login browser card service returned ${response.status}`;
+  return `the browser takeover card service returned ${response.status}`;
 }

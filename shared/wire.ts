@@ -385,7 +385,7 @@ export interface WireMessage {
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;
-  /** A browser sign-in intervention. Safe metadata only: the viewer token,
+  /** A browser takeover intervention. Safe metadata only: the viewer token,
    * cookies, and profile paths are never persisted here. */
   takeover?: TakeoverCardData;
   /** One idempotently updated status card for a routine run. */
@@ -528,7 +528,7 @@ export interface ConnectorCardData {
   resumed?: boolean;
 }
 
-/** A sign-in intervention raised by the research browser. The card is a
+/** A human-intervention card raised by the research browser. The card is a
  * typed purpose on the credential-card lifecycle, not a credential: it
  * carries no secret and no viewer token. */
 export interface TakeoverCardData {

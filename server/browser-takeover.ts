@@ -58,12 +58,14 @@ export class ToolLayerTakeoverClient {
     return signedActorContext(actor, this.actorSecret);
   }
 
-  async viewer(actor: TakeoverActor, sessionId: string, generation: number): Promise<{ path: string }> {
+  async viewer(actor: TakeoverActor, sessionId: string, generation: number): Promise<{ path: string; local: boolean }> {
     const body = await this.post(actor, "/internal/browser-takeover/viewer", { session_id: sessionId, generation });
-    if (typeof body.path !== "string" || !body.path.startsWith("/_viewer/")) {
-      throw new ToolLayerTakeoverError(502, "the login browser answered unexpectedly");
+    const local = body.local === true;
+    const path = typeof body.path === "string" ? body.path : "";
+    if (local ? path !== "" : !path.startsWith("/_viewer/")) {
+      throw new ToolLayerTakeoverError(502, "the live browser answered unexpectedly");
     }
-    return { path: body.path };
+    return { path, local };
   }
 
   async handBack(actor: TakeoverActor, sessionId: string, generation: number): Promise<{ handedBack: boolean; url: string }> {
@@ -89,11 +91,11 @@ export class ToolLayerTakeoverClient {
         body: JSON.stringify(payload),
       });
     } catch {
-      throw new ToolLayerTakeoverError(502, "the login browser is unreachable");
+      throw new ToolLayerTakeoverError(502, "the live browser is unreachable");
     }
     const body = (await response.json().catch(() => null)) as Record<string, unknown> | null;
     if (!response.ok) {
-      const error = body && typeof body.error === "string" ? body.error : `the login browser returned ${response.status}`;
+      const error = body && typeof body.error === "string" ? body.error : `the live browser returned ${response.status}`;
       throw new ToolLayerTakeoverError(response.status, error.slice(0, 200));
     }
     return body ?? {};

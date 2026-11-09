@@ -13781,10 +13781,10 @@ function cardResumePrompt(entry: CardResumeEntry): string {
   if (entry.card === "takeover") {
     const page = entry.url ? ` The browser is still open at ${entry.url}.` : "";
     const fromPage = entry.url
-      ? " Continue from that exact page: inspect it first with browser_read, and use browser_act to click, fill, select, or press. Do not restart the sign-in flow."
+      ? " Continue from that exact page: inspect it first with browser_read, and use browser_act to click, fill, select, or press. Do not restart the flow from the beginning."
       : "";
     return entry.outcome === "provided"
-      ? `Relay browser update: the person finished the step in the sign-in browser and handed it back.${page}${entry.note ? ` They added: ${entry.note}` : ""} Continue the task that paused for it.${fromPage} Do not ask them for credentials, cookies, or codes.`
+      ? `Relay browser update: the person finished the step in the live browser and handed it back.${page}${entry.note ? ` They added: ${entry.note}` : ""} Continue the task that paused for it.${fromPage} Do not ask them for credentials, cookies, or codes.`
       : `Relay browser update: the person handed the browser back without finishing the step.${page} Continue from that page if you can, or report precisely what is blocked.${fromPage} Do not ask them to paste credentials into chat.`;
   }
   return entry.outcome === "provided"
@@ -13928,11 +13928,25 @@ function clearTakeoverScreenshot(messageId: string): void {
   takeoverScreenshots.delete(takeoverScreenshotKey(messageId));
 }
 
-/** Pending sign-in cards on the visible branch of a conversation. */
+/** Pending takeover cards on the visible branch of a conversation. */
 function pendingTakeoverMessages(threadId: string): Message[] {
   return store.activePath(threadId).filter((message) =>
     message.kind === "takeover" && message.takeover && takeoverPending(message.takeover),
   );
+}
+
+/** One live card per bot in a conversation. A newer request supersedes older
+ * sessions without resuming their agent turn; their viewer tokens, displays,
+ * and screenshots are released with the terminal transition. */
+function supersedeTakeovers(botId: string, threadId: string, keep: Message): void {
+  const current = keep.takeover;
+  if (!current) return;
+  for (const card of pendingTakeoverMessages(threadId)) {
+    if (card.id === keep.id) continue;
+    if (card.from?.botId && card.from.botId !== botId) continue;
+    if (card.takeover?.sessionId === current.sessionId && card.takeover.generation === current.generation) continue;
+    void terminalTakeover(botId, threadId, card.id, "expired", undefined, { resume: false }).catch(() => {});
+  }
 }
 
 function takeoverTimerKey(threadId: string, messageId: string): string {
@@ -13981,14 +13995,16 @@ async function terminalTakeover(
   messageId: string,
   status: "done" | "dismissed" | "expired",
   note?: string,
+  options: { resume?: boolean } = {},
 ): Promise<{ status: string; resumed: boolean; changed: boolean }> {
+  const resume = options.resume !== false && status !== "dismissed";
   const key = takeoverTimerKey(threadId, messageId);
   const message = takeoverMessage(botId, threadId, messageId);
-  if (!message?.takeover) throw new ToolLayerTakeoverError(404, "no such sign-in request");
+  if (!message?.takeover) throw new ToolLayerTakeoverError(404, "no such takeover request");
   const card = message.takeover;
   if (card.status !== "pending") {
     clearTakeoverScreenshot(messageId);
-    if (!card.resumed) {
+    if (resume && card.status !== "dismissed" && !card.resumed) {
       // Retry the continuation for a card whose first dispatch failed.
       resumeTakeoverCard(botId, threadId, messageId, card.status === "done" ? "provided" : "dismissed");
     }
@@ -14026,15 +14042,19 @@ async function terminalTakeover(
     }
     clearTakeoverTimer(threadId, messageId);
     clearTakeoverScreenshot(messageId);
-    store.patchMessage(threadId, messageId, { takeover: { ...card, status: terminalStatus, error: undefined } });
-    resumeTakeoverCard(
-      botId,
-      threadId,
-      messageId,
-      terminalStatus === "done" ? "provided" : "dismissed",
-      url,
-      note,
-    );
+    store.patchMessage(threadId, messageId, {
+      takeover: { ...card, status: terminalStatus, error: undefined, ...(resume ? {} : { resumed: false }) },
+    });
+    if (resume) {
+      resumeTakeoverCard(
+        botId,
+        threadId,
+        messageId,
+        terminalStatus === "done" ? "provided" : "dismissed",
+        url,
+        note,
+      );
+    }
     const settled = takeoverMessage(botId, threadId, messageId);
     return { status: terminalStatus, resumed: settled?.takeover?.resumed === true, changed: true };
   })().catch((error) => {
@@ -14849,6 +14869,7 @@ ROUTES.push(createPortalSessionRoutes({
             takeover: { ...existing.takeover, hasScreenshot: true },
           });
         }
+        supersedeTakeovers(actor.botId, actor.threadId, existing);
         return { messageId: existing.id };
       }
       const message = store.appendMessage(actor.threadId, {
@@ -14872,6 +14893,7 @@ ROUTES.push(createPortalSessionRoutes({
         rememberTakeoverScreenshot(message.id, input.screenshot, input.sessionId, input.generation);
       }
       scheduleTakeoverExpiry(actor.botId, actor.threadId, message.id);
+      supersedeTakeovers(actor.botId, actor.threadId, message);
       return { messageId: message.id };
     },
   }));
@@ -19347,7 +19369,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
               status: 409,
             });
           }
-          // A person typing in the room hands the open sign-in browser back;
+          // A person typing in the room hands the open live browser back;
           // their words become the note on the continuation. If another
           // action already settled the card, this is a normal follow-up turn.
           const pendingTakeovers = pendingTakeoverMessages(threadId).filter((card) => Boolean(card.from?.botId));
@@ -20973,7 +20995,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             }
           }
 
-          // A person typing while a sign-in card is open means "hand it back,
+          // A person typing while a takeover card is open means "hand it back,
           // and this is what to do next." The message becomes the note on the
           // card continuation, so it is not started again as a second turn.
           // If another action already settled the card, fall through and let
@@ -23216,20 +23238,20 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const threadId = url.searchParams.get("threadId") ?? "";
       const bot = store.bot(m[1]);
       const message = takeoverMessage(m[1], threadId, m[2]);
-      if (!bot || !message?.takeover) return json(res, 404, { error: "no such sign-in request" });
+      if (!bot || !message?.takeover) return json(res, 404, { error: "no such takeover request" });
       const stored = takeoverScreenshots.get(takeoverScreenshotKey(message.id));
       if (!stored || stored.sessionId !== message.takeover.sessionId || stored.generation !== message.takeover.generation) {
-        return json(res, 404, { error: "no screenshot for this sign-in request" });
+        return json(res, 404, { error: "no screenshot for this takeover request" });
       }
       const parsed = /^data:(image\/(?:png|jpeg));base64,([A-Za-z0-9+/]+={0,2})$/.exec(stored.dataUrl);
-      if (!parsed) return json(res, 404, { error: "no screenshot for this sign-in request" });
+      if (!parsed) return json(res, 404, { error: "no screenshot for this takeover request" });
       res.setHeader("cache-control", "private, no-store");
       res.setHeader("content-type", parsed[1]);
       res.writeHead(200);
       return res.end(Buffer.from(parsed[2], "base64"));
     }
 
-    // Browser sign-in cards: the person opens the live viewer or settles the
+    // Browser takeover cards: the person opens the live viewer or settles the
     // card. Done hands the SAME page back; Dismiss and Expiry release it.
     // Only the first terminal transition acts and resumes.
     m = path.match(/^\/api\/bots\/([\w-]+)\/takeover-cards\/([\w-]+)\/(viewer|done|dismiss)$/);
@@ -23239,10 +23261,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       const bot = store.bot(m[1]);
       const message = takeoverMessage(m[1], threadId, m[2]);
       if (!bot) return json(res, 404, { error: "no such bot" });
-      if (!message?.takeover) return json(res, 404, { error: "no such sign-in request" });
+      if (!message?.takeover) return json(res, 404, { error: "no such takeover request" });
       if (m[3] === "viewer") {
         if (!takeoverPending(message.takeover)) {
-          return json(res, 409, { error: "this sign-in is no longer active" });
+          return json(res, 409, { error: "this takeover is no longer active" });
         }
         try {
           const result = await takeoverControl.viewer(
@@ -23250,13 +23272,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             message.takeover.sessionId,
             message.takeover.generation,
           );
-          return json(res, 200, { path: result.path });
+          return json(res, 200, { path: result.path, local: result.local });
         } catch (error) {
           if (error instanceof ToolLayerTakeoverError && error.status === 409) {
             // The live session is gone. Settle the card and resume the task
             // rather than leaving the person with a dead panel.
             const settled = await terminalTakeover(m[1], threadId, message.id, "expired").catch(() => null);
-            return json(res, 409, { error: "this sign-in expired", ...(settled ? { status: settled.status } : {}) });
+            return json(res, 409, { error: "this takeover expired", ...(settled ? { status: settled.status } : {}) });
           }
           return json(res, error instanceof ToolLayerTakeoverError ? error.status : 502, {
             error: error instanceof Error ? error.message : "the login browser is unavailable",

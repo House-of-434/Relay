@@ -4,9 +4,9 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Agent } from "../domain/permissions.js";
 import { authorizeBrowser } from "../domain/permissions.js";
 import type { BladeBrowserPool, BrowserActInput, ExtractKind, ReadMode } from "../infra/bladebro.js";
-import type { LoginSessionManager } from "../infra/login-session.js";
-import type { LoginDisplayPool } from "../infra/login-display.js";
-import { LOGIN_TAKEOVER_TTL_MS } from "../infra/login-session.js";
+import type { TakeoverSessionManager } from "../infra/takeover-session.js";
+import type { TakeoverDisplayPool } from "../infra/takeover-display.js";
+import { TAKEOVER_TTL_MS } from "../infra/takeover-session.js";
 import { RelayBrowserTakeoverClient, takeoverRequestKey } from "../infra/browser-takeover.js";
 
 export interface BladeBrowserContext {
@@ -17,8 +17,8 @@ export interface BladeBrowserContext {
   actorAssertion: string;
   bffInternalUrl: string;
   bffCapability: string | undefined;
-  sessions?: LoginSessionManager;
-  displays?: LoginDisplayPool;
+  sessions?: TakeoverSessionManager;
+  displays?: TakeoverDisplayPool;
 }
 
 function toolError(error: unknown) {
@@ -55,7 +55,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     const other = sessions.sessionForUser(userId);
     if (!other) return;
     console.warn(
-      `[login] foreign browser call: session=${other.botId}/${other.threadId} actor=${botId}/${threadId}`,
+      `[takeover] foreign browser call: session=${other.botId}/${other.threadId} actor=${botId}/${threadId}`,
     );
     throw new Error("the interactive browser is in use by another task; wait for it to finish or dismiss it in that chat");
   };
@@ -176,39 +176,48 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     "browser_request_human",
     {
       description:
-        "Ask the person to take over the live browser — a login/Cloudflare/auth wall, or any step only they can complete. Opens one persistent browser session and a card in this chat; the person signs in (or just hands it back) and your turn ends. Relay resumes this task on the same page. Never ask for or accept credentials in chat.",
+        "Ask the person to take over the live browser for any step only they can complete — a sign-in, CAPTCHA/Cloudflare wall, verification code, required form field, payment confirmation, or similar. This is independent of the Works on computer setting; it works when Works on is Off. Navigate to the exact page first with browser_open/browser_act when needed. Pass `url` to put the person on that page, or omit it to hand over the current page. Opens one persistent browser session and a card in this chat; the person completes the step (or just hands it back) and your turn ends. Relay resumes this task on the same page. Never ask for or accept credentials in chat.",
       inputSchema: {
-        url: z.string().min(1).max(2048),
+        url: z.string().min(1).max(2048).optional(),
         reason: z.string().min(1).max(240).optional(),
       },
       annotations: { readOnlyHint: false },
     },
     async ({ url, reason }) => {
-      if (!sessions || !displays) return toolError(new Error("login browser is not configured"));
+      // Local development can drive a real Chrome window on the host instead
+      // of the container X/VNC stack. Never enabled in production.
+      const localBrowser = process.env.RELAY_TAKEOVER_LOCAL_BROWSER === "1" && process.env.NODE_ENV !== "production";
+      if (!sessions || (!localBrowser && !displays)) return toolError(new Error("live browser is not configured"));
       let sessionId = "";
       let generation = 0;
       let created = false;
       let displayStarted = false;
       try {
         authorizeBrowser(agent, "request_human");
-        const host = new URL(url).hostname.slice(0, 120);
+        let host = url ? new URL(url).hostname.slice(0, 120) : "";
         const owned = sessions.requestHuman(actor, threadId);
         sessionId = owned.session.id;
         generation = owned.session.generation;
         created = owned.created;
-        const lease = await displays.acquire(userId);
-        displayStarted = true;
-        sessions.attachDisplay(sessionId, lease.display);
-        await pool.headfulOpen(userId, url, lease.display);
+        let lease: { display: string } | null = null;
+        if (localBrowser) {
+          await pool.localHeadfulOpen(userId, url);
+        } else {
+          if (!displays) throw new Error("live browser is not configured");
+          lease = await displays.acquire(userId);
+          displayStarted = true;
+          sessions.attachDisplay(sessionId, lease.display);
+          await pool.headfulOpen(userId, url, lease.display);
+        }
         // One-shot preview for the card; a failed capture must not fail the
         // request or leave the browser behind.
-        const screenshot = await pool.vision(userId, lease.display).catch(() => null);
-        const expiresAt = new Date(Date.now() + LOGIN_TAKEOVER_TTL_MS).toISOString();
+        const screenshot = await pool.vision(userId, lease?.display).catch(() => null);
+        const expiresAt = new Date(Date.now() + TAKEOVER_TTL_MS).toISOString();
         await takeover.requestCard(actorAssertion, {
           requestKey: takeoverRequestKey(userId, sessionId, generation),
           sessionId,
           generation,
-          title: host,
+          title: host || "Live browser",
           // The UI owns the fixed instructional copy; only the agent's own
           // reason travels with the card, once.
           description: reason?.trim().slice(0, 240) ?? "",
@@ -231,7 +240,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
             else sessions.handBack(sessionId, generation);
           } catch { /* already settled */ }
         }
-        if (displayStarted && created) displays.release(userId);
+        if (displayStarted && created && displays) displays.release(userId);
         if (created) await pool.stopWorkspace(userId).catch(() => {});
         return toolError(error);
       }

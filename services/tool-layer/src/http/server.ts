@@ -10,10 +10,10 @@ import { RelayGmailClient } from "../infra/gmail.js";
 import { RelayCalendarClient } from "../infra/calendar.js";
 import { RelayScribeJoinClient } from "../infra/scribe.js";
 import { BladeBrowserPool } from "../infra/bladebro.js";
-import { LoginSessionManager } from "../infra/login-session.js";
-import { LoginDisplayPool } from "../infra/login-display.js";
-import { acquireInteractiveLease } from "../infra/login-lease.js";
-import { ViewerTokens } from "../infra/login-viewer.js";
+import { TakeoverSessionManager } from "../infra/takeover-session.js";
+import { TakeoverDisplayPool } from "../infra/takeover-display.js";
+import { acquireInteractiveLease } from "../infra/takeover-lease.js";
+import { ViewerTokens } from "../infra/takeover-viewer.js";
 import { TinyFishSearchProvider } from "../infra/search.js";
 import { TinyFishFetchProvider } from "../infra/fetch.js";
 import { ArxivProvider } from "../infra/arxiv.js";
@@ -251,7 +251,7 @@ async function proxyNovnc(
 ): Promise<void> {
   const port = sharedDisplays?.wsPortFor(userId);
   if (!port) {
-    sendJson(response, 503, { error: "login display is not running" });
+    sendJson(response, 503, { error: "live display is not running" });
     return;
   }
   if (path.includes("..") || path.startsWith("/")) {
@@ -304,18 +304,18 @@ function proxyViewerUpgrade(
 /** One interactive-session manager for the process, wired to the
  * cross-process lease and the single close path that tears down runtime
  * resources (never the persistent profile). */
-function ensureLoginSessions(): LoginSessionManager {
-  if (sharedLoginSessions) return sharedLoginSessions;
+function ensureTakeoverSessions(): TakeoverSessionManager {
+  if (sharedTakeoverSessions) return sharedTakeoverSessions;
   const blade = bladeConfig();
-  sharedLoginSessions = new LoginSessionManager({
-    maxConcurrent: blade.loginMaxConcurrent,
-    idleMs: blade.loginIdleMs,
-    maxLifetimeMs: blade.loginMaxLifetimeMs,
+  sharedTakeoverSessions = new TakeoverSessionManager({
+    maxConcurrent: blade.takeoverMaxConcurrent,
+    idleMs: blade.takeoverIdleMs,
+    maxLifetimeMs: blade.takeoverMaxLifetimeMs,
     leaseFor: (userId) =>
       acquireInteractiveLease({
         dataRoot: blade.dataRoot,
         userId,
-        maxLifetimeMs: blade.loginMaxLifetimeMs,
+        maxLifetimeMs: blade.takeoverMaxLifetimeMs,
       }),
     onEvent: (event) => {
       // One close path for release, dismiss, expiry, idle and the hard cap.
@@ -324,7 +324,7 @@ function ensureLoginSessions(): LoginSessionManager {
       void sharedBladePool?.stopWorkspace(event.userId).catch(() => {});
     },
   });
-  return sharedLoginSessions;
+  return sharedTakeoverSessions;
 }
 
 /** Browser-takeover control plane for the harness: mint a viewer for a live
@@ -373,7 +373,7 @@ async function handleBrowserTakeover(
     sendJson(response, 400, { error: "invalid generation" });
     return;
   }
-  const sessions = ensureLoginSessions();
+  const sessions = ensureTakeoverSessions();
   sharedViewerTokens ??= new ViewerTokens();
   sessions.sweepExpired();
   const session = sessions.ownedSession(userId, sessionId);
@@ -390,6 +390,11 @@ async function handleBrowserTakeover(
       return;
     }
     sessions.touchSession(sessionId);
+    if (!session.display) {
+      // Local development: the real Chrome window is already on the host.
+      sendJson(response, 200, { path: "", local: true });
+      return;
+    }
     const token = sharedViewerTokens.mint(session.id, userId, session.generation);
     sendJson(response, 200, {
       path: `/_viewer/${token.value}`,
@@ -416,7 +421,7 @@ async function handleBrowserTakeover(
     }
     try {
       sessions.handBack(sessionId, generation);
-      console.log(`[login] handback session=${sessionId} bot=${actor.botId} thread=${actor.threadId}`);
+      console.log(`[takeover] handback session=${sessionId} bot=${actor.botId} thread=${actor.threadId}`);
     } catch (error) {
       sendJson(response, 409, { error: error instanceof Error ? error.message : "this sign-in is no longer active" });
       return;
@@ -443,8 +448,8 @@ async function handleBrowserTakeover(
 }
 
 let sharedBladePool: BladeBrowserPool | null = null;
-let sharedLoginSessions: LoginSessionManager | null = null;
-let sharedDisplays: LoginDisplayPool | null = null;
+let sharedTakeoverSessions: TakeoverSessionManager | null = null;
+let sharedDisplays: TakeoverDisplayPool | null = null;
 let sharedViewerTokens: ViewerTokens | null = null;
 let sharedArxiv: { userAgent: string; provider: ArxivProvider } | null = null;
 let sharedSec: { userAgent: string; provider: SecProvider } | null = null;
@@ -540,21 +545,29 @@ export async function createRelayToolServer(
         }
         if (request.method === "GET" && !action) {
           response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-          response.end(`<!doctype html><title>Login browser</title>
+          response.end(`<!doctype html><title>Live browser</title>
 <style>
   body { font-family: system-ui, sans-serif; margin: 16px; background: #111; color: #eee; }
   #screen { width: min(1200px, 96vw); height: min(675px, 54vw); border: 1px solid #444; background: #000; }
   #status { color: #9f9; } #status.err { color: #f99; }
+  #embed-status { display: none; }
+  body.embed #embed-status {
+    display: block; position: fixed; top: 12px; left: 12px; z-index: 10;
+    padding: 6px 10px; border-radius: 8px; background: rgba(0,0,0,.72);
+    font-size: 12px; color: #ddd; pointer-events: none;
+  }
+  body.embed.connected #embed-status { display: none; }
   body.embed { margin: 0; overflow: hidden; }
   body.embed #chrome { display: none; }
   body.embed #screen { width: 100vw; height: 100vh; border: 0; }
 </style>
 <div id="chrome">
-  <h3>Login browser — agent is paused</h3>
+  <h3>Live browser — agent is paused</h3>
   <p id="status">Connecting…</p>
-  <p>Click the screen, then sign in or make your changes. Use the card's button when finished.</p>
+  <p>Click the screen, then complete the step or make your changes. Use the card's button when finished.</p>
 </div>
 <div id="screen"></div>
+<div id="embed-status">Connecting…</div>
 
 <script type="module">
 import RFB from "/_viewer/${tokenValue}/novnc/core/rfb.js";
@@ -563,6 +576,11 @@ if (new URLSearchParams(location.search).has("embed")) {
   document.getElementById("chrome-footer")?.remove();
 }
 const statusEl = document.getElementById("status");
+const embedStatusEl = document.getElementById("embed-status");
+const setStatus = (text, error) => {
+  statusEl.textContent = text; statusEl.className = error ? "err" : "";
+  if (embedStatusEl) { embedStatusEl.textContent = text; embedStatusEl.style.color = error ? "#f99" : "#ddd"; }
+};
 const target = document.getElementById("screen");
 let rfb = null;
 try {
@@ -570,11 +588,11 @@ try {
   rfb.scaleViewport = true;
   rfb.resizeSession = false;
   rfb.showDotCursor = true;
-  rfb.addEventListener("connect", () => { statusEl.textContent = "Connected"; statusEl.className = ""; rfb.focus(); });
-  rfb.addEventListener("disconnect", (e) => { statusEl.textContent = "Disconnected" + (e.detail && e.detail.clean ? "" : " (connection lost)"); statusEl.className = "err"; });
-  rfb.addEventListener("credentialsrequired", () => { statusEl.textContent = "Viewer refused"; statusEl.className = "err"; });
+  rfb.addEventListener("connect", () => { document.body.classList.add("connected"); setStatus("Connected", false); rfb.focus(); });
+  rfb.addEventListener("disconnect", (e) => { document.body.classList.remove("connected"); setStatus("Disconnected" + (e.detail && e.detail.clean ? "" : " (connection lost)"), true); });
+  rfb.addEventListener("credentialsrequired", () => { document.body.classList.remove("connected"); setStatus("Viewer refused", true); });
 } catch (e) {
-  statusEl.textContent = "Viewer error: " + e.message; statusEl.className = "err";
+  document.body.classList.remove("connected"); setStatus("Viewer error: " + e.message, true);
 }
 setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }).catch(() => {}); }, 30_000);
 </script>`);
@@ -587,7 +605,7 @@ setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }
         if (request.method === "POST" && action === "heartbeat") {
           // Keep the idle clock alive while the person is using the viewer;
           // the hard cap is never extended by activity.
-          ensureLoginSessions().touchSession(token.sessionId);
+          ensureTakeoverSessions().touchSession(token.sessionId);
           sendJson(response, 200, { ok: true });
           return;
         }
@@ -674,9 +692,9 @@ setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }
         timezone: blade.timezone,
         locale: blade.locale,
       });
-      ensureLoginSessions();
+      ensureTakeoverSessions();
       sharedViewerTokens ??= new ViewerTokens();
-      sharedDisplays ??= new LoginDisplayPool({ maxSlots: blade.loginMaxConcurrent });
+      sharedDisplays ??= new TakeoverDisplayPool({ maxSlots: blade.takeoverMaxConcurrent });
       const browser = sharedBladePool
         ? {
             pool: sharedBladePool,
@@ -686,7 +704,7 @@ setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }
             actorAssertion: actor.actorAssertion ?? "",
             bffInternalUrl,
             bffCapability: capability,
-            sessions: ensureLoginSessions(),
+            sessions: ensureTakeoverSessions(),
             displays: sharedDisplays,
           }
         : undefined;
@@ -753,7 +771,7 @@ setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }
   });
   // Idle/hard-cap reclaim for interactive sessions. The timer owns no state;
   // closing the server clears it.
-  const sessionSweep = setInterval(() => ensureLoginSessions().sweepExpired(), 60_000);
+  const sessionSweep = setInterval(() => ensureTakeoverSessions().sweepExpired(), 60_000);
   sessionSweep.unref?.();
   httpServer.on("close", () => clearInterval(sessionSweep));
   return httpServer;

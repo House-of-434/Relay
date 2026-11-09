@@ -383,15 +383,24 @@ export class BladeBrowserPool {
    * which the viewer reaches over VNC. Used only inside an active human
    * takeover; research paths stay headless. `rb visible on` returns
    * `{ok, setting, value}` with no `text`, so it is parsed leniently. */
-  async headfulOpen(userId: unknown, url: string, display: string): Promise<BrowserText> {
-    const target = assertHttpUrl(url);
+  async headfulOpen(userId: unknown, url: string | undefined, display: string): Promise<BrowserText> {
     await this.runSetting(userId, ["rb", "visible", "on"], display);
-    const text = await this.run(userId, ["nav", target], false, false, display);
+    if (!url) return { text: "" };
+    const text = await this.run(userId, ["nav", assertHttpUrl(url)], false, false, display);
+    return this.boundResult(userId, "open", text);
+  }
+
+  /** Local-development takeover: drive a real Chrome window on the host
+   * instead of a container X display. Opt-in only; never enabled in prod. */
+  async localHeadfulOpen(userId: unknown, url?: string): Promise<BrowserText> {
+    await this.runSetting(userId, ["rb", "visible", "on"]);
+    if (!url) return { text: "" };
+    const text = await this.run(userId, ["nav", assertHttpUrl(url)], false, false);
     return this.boundResult(userId, "open", text);
   }
 
   /** Setting command (no page text): success means exit 0 + ok:true. */
-  private async runSetting(userId: unknown, args: string[], display: string): Promise<void> {
+  private async runSetting(userId: unknown, args: string[], display?: string): Promise<void> {
     assertSafeArgs(args, true);
     if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
     const tracked = this.trackWorkspace(userId);
@@ -453,7 +462,7 @@ export class BladeBrowserPool {
   /** One-shot viewport PNG for the takeover card. The daemon writes the image
    * into this user's artifacts directory; the data URL is the only copy that
    * leaves the tool layer. Returns null instead of failing the card. */
-  async vision(userId: unknown, display: string): Promise<{ dataUrl: string } | null> {
+  async vision(userId: unknown, display?: string): Promise<{ dataUrl: string } | null> {
     if (!(await this.probe())) return null;
     const tracked = this.trackWorkspace(userId);
     await this.sweepIdle(tracked.id);

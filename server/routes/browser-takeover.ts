@@ -121,7 +121,7 @@ export function createBrowserTakeoverRoutes(options: {
     }
     const bot = options.store.bot(actor.botId);
     if (!bot || bot.relayAgent !== "scout" || bot.ownerUserId !== actor.userId) {
-      return reject(ctx, 403, { error: "browser sign-in is a research-only action" });
+      return reject(ctx, 403, { error: "browser takeover is a research-only action" });
     }
 
     let raw: unknown;

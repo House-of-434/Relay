@@ -64,16 +64,16 @@ export interface BladeConfig {
   proxy: string | undefined;
   timezone: string | undefined;
   locale: string | undefined;
-  /** Headful login sessions allowed at once (default 2). */
-  loginMaxConcurrent: number;
+  /** Headful human-takeover sessions allowed at once (default 2). */
+  takeoverMaxConcurrent: number;
   /** Idle timeout for an interactive session (default 10 minutes). */
-  loginIdleMs: number;
+  takeoverIdleMs: number;
   /** Safety ceiling from session creation (default 12 hours). */
-  loginMaxLifetimeMs: number;
+  takeoverMaxLifetimeMs: number;
 }
 
-export function loginMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
-  const n = Number(env.RELAY_LOGIN_MAX_CONCURRENT ?? "2");
+export function takeoverMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.RELAY_TAKEOVER_MAX_CONCURRENT ?? "2");
   return Number.isInteger(n) && n > 0 ? n : 2;
 }
 
@@ -129,8 +129,8 @@ export function bladeConfig(env: NodeJS.ProcessEnv = process.env): BladeConfig {
     proxy: env.BLADE_PROXY,
     timezone: env.BLADE_TZ,
     locale: env.BLADE_LOCALE,
-    loginMaxConcurrent: loginMaxConcurrent(env),
-    loginIdleMs: positiveMs(env.RELAY_LOGIN_IDLE_MS, 10 * 60_000),
-    loginMaxLifetimeMs: positiveMs(env.RELAY_LOGIN_MAX_LIFETIME_MS, 12 * 60 * 60_000),
+    takeoverMaxConcurrent: takeoverMaxConcurrent(env),
+    takeoverIdleMs: positiveMs(env.RELAY_TAKEOVER_IDLE_MS, 10 * 60_000),
+    takeoverMaxLifetimeMs: positiveMs(env.RELAY_TAKEOVER_MAX_LIFETIME_MS, 12 * 60 * 60_000),
   };
 }

@@ -1,4 +1,4 @@
-/** One X display + VNC stack per active login session.
+/** One X display + VNC stack per active human-takeover session.
  *
  * Each user's headful Chrome must render on its own display: a shared Xvfb
  * would let one user's viewer see another's browser. A slot owns Xvfb, x11vnc
@@ -7,6 +7,7 @@
  * and torn down on release.
  */
 import { spawn, type ChildProcess } from "node:child_process";
+import { connect } from "node:net";
 import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -36,7 +37,7 @@ export interface DisplayPoolOptions {
 
 const SCREEN = "1280x720x24";
 
-export class LoginDisplayPool {
+export class TakeoverDisplayPool {
   private readonly maxSlots: number;
   private readonly xvfb: string;
   private readonly wm: string;
@@ -68,7 +69,7 @@ export class LoginDisplayPool {
         break;
       }
     }
-    if (index < 0) throw new Error("login browser is busy; try again later");
+    if (index < 0) throw new Error("live browser is busy; try again later");
 
     const displayNum = 99 + index;
     const lease: DisplayLease = {
@@ -92,13 +93,13 @@ export class LoginDisplayPool {
         "-rfbport", String(lease.rfbPort),
         "-localhost", "-forever", "-shared", "-nopw", "-quiet", "-noxdamage",
       ]));
-      await delay(400);
+      await this.waitForPort(lease.rfbPort, "vnc");
       slot.children.push(this.start(this.websockify, [
         "--web", this.novncDir,
         `127.0.0.1:${lease.wsPort}`,
         `127.0.0.1:${lease.rfbPort}`,
       ]));
-      await delay(400);
+      await this.waitForPort(lease.wsPort, "websocket");
       return lease;
     } catch (error) {
       this.release(userId);
@@ -135,12 +136,29 @@ export class LoginDisplayPool {
     return child;
   }
 
+  /** The viewer opens as soon as the card is clicked; do not hand it a port
+   * that is still binding. */
+  private async waitForPort(port: number, what: string): Promise<void> {
+    const deadline = Date.now() + this.readyTimeoutMs;
+    while (Date.now() < deadline) {
+      const open = await new Promise<boolean>((resolve) => {
+        const socket = connect({ host: "127.0.0.1", port });
+        socket.once("connect", () => { socket.destroy(); resolve(true); });
+        socket.once("error", () => { socket.destroy(); resolve(false); });
+        socket.setTimeout(250, () => { socket.destroy(); resolve(false); });
+      });
+      if (open) return;
+      await delay(100);
+    }
+    throw new Error(`live display did not start (${what})`);
+  }
+
   private async waitFor(ready: () => boolean, what: string): Promise<void> {
     const deadline = Date.now() + this.readyTimeoutMs;
     while (Date.now() < deadline) {
       if (ready()) return;
       await delay(100);
     }
-    throw new Error(`login display did not start (${what})`);
+    throw new Error(`live display did not start (${what})`);
   }
 }

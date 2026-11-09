@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { acquireInteractiveLease, interactiveLeasePath } from "./login-lease.js";
+import { acquireInteractiveLease, interactiveLeasePath } from "./takeover-lease.js";
 
 const USER = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const MAX = 1_000;

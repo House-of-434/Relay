@@ -11,14 +11,12 @@ function TakeoverPreview({
   threadId,
   messageId,
   hasScreenshot,
-  loading,
   host,
 }: {
   botId: string;
   threadId: string;
   messageId: string;
   hasScreenshot: boolean;
-  loading: boolean;
   host: string;
 }) {
   const [src, setSrc] = useState<string | null>(null);
@@ -53,13 +51,8 @@ function TakeoverPreview({
     );
   }
   return (
-    <div className="relative flex h-32 items-center justify-center bg-gradient-to-br from-raised via-panel to-inset">
-      <span className="flex flex-col items-center gap-1.5 text-ink-secondary">
-        <Monitor size={22} className="opacity-70" aria-hidden="true" />
-        <span className="text-[12px] font-medium">
-          {loading ? t("takeover.working") : t("takeover.openHint")}
-        </span>
-      </span>
+    <div className="flex h-32 items-center justify-center bg-gradient-to-br from-raised via-panel to-inset">
+      <Monitor size={22} className="text-ink-secondary opacity-70" aria-hidden="true" />
     </div>
   );
 }
@@ -82,13 +75,17 @@ export function TakeoverCard({
   const host = takeover.title || t("takeover.title");
   const pending = takeover.status === "pending";
   const [viewerPath, setViewerPath] = useState<string | null>(null);
+  const [localOpen, setLocalOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [acting, setActing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const closeRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    if (!pending) setViewerPath(null);
+    if (!pending) {
+      setViewerPath(null);
+      setLocalOpen(false);
+    }
   }, [pending]);
 
   useEffect(() => {
@@ -115,11 +112,16 @@ export function TakeoverCard({
     setLoading(true);
     setError(null);
     try {
-      const result = await api<{ path: string }>(`${endpoint}/viewer`, {
+      const result = await api<{ path: string; local?: boolean }>(`${endpoint}/viewer`, {
         method: "POST",
         body: JSON.stringify({ threadId }),
       });
-      setViewerPath(result.path);
+      if (result.local) {
+        setLocalOpen(true);
+        setViewerPath(null);
+      } else {
+        setViewerPath(result.path);
+      }
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -137,6 +139,7 @@ export function TakeoverCard({
         body: JSON.stringify({ threadId }),
       });
       setViewerPath(null);
+      setLocalOpen(false);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
@@ -170,7 +173,6 @@ export function TakeoverCard({
           ? <Check size={13} className="shrink-0 text-success" aria-hidden="true" />
           : <X size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />}
         <span>{note}</span>
-        {takeover.resumed ? <span className="text-[11px] text-ink-secondary">{t("takeover.resumed")}</span> : null}
         {retryable ? (
           <button
             type="button"
@@ -198,27 +200,41 @@ export function TakeoverCard({
         aria-label={`${t("takeover.openHint")}: ${host}`}
         className="group block w-[min(26rem,100%)] overflow-hidden rounded-xl border border-hairline/50 bg-panel text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-70"
       >
-        <div className="flex items-center gap-1.5 border-b border-hairline/40 bg-inset px-3 py-1.5">
-          <span className="h-2 w-2 rounded-full bg-danger/70" aria-hidden="true" />
-          <span className="h-2 w-2 rounded-full bg-amber-400/80" aria-hidden="true" />
-          <span className="h-2 w-2 rounded-full bg-success/70" aria-hidden="true" />
-          <span className="ml-1 min-w-0 flex-1 truncate font-mono text-[11px] text-ink-secondary">{host}</span>
-          <span className="rounded-full bg-accent/15 px-2 py-0.5 text-[10px] font-medium text-accent">{t("takeover.pending")}</span>
-        </div>
         <TakeoverPreview
           botId={botId}
           threadId={threadId}
           messageId={message.id}
           hasScreenshot={takeover.hasScreenshot === true}
-          loading={loading}
           host={host}
         />
-        <div className="border-t border-hairline/40 px-3 py-2">
-          <p className="line-clamp-1 text-[12px] text-ink-secondary">
-            {takeover.description || t("takeover.hint")}
-          </p>
-        </div>
       </button>
+      {localOpen ? (
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-xl border border-hairline/40 bg-panel px-3 py-2">
+          <span className="min-w-0 flex-1 text-[11.5px] leading-4 text-ink-secondary">{t("takeover.hint")}</span>
+          <div className="flex shrink-0 items-center gap-1.5">
+            <button
+              type="button"
+              onClick={() => settle("dismiss")}
+              disabled={acting}
+              className="flex size-8 items-center justify-center rounded-full border border-hairline/50 text-ink-secondary transition hover:bg-raised-hover disabled:opacity-60"
+              title={t("takeover.dismiss")}
+              aria-label={t("takeover.dismiss")}
+            >
+              <X size={16} />
+            </button>
+            <button
+              type="button"
+              onClick={() => settle("done")}
+              disabled={acting}
+              className="flex size-8 items-center justify-center rounded-full bg-accent text-white transition hover:bg-accent/90 disabled:opacity-60"
+              title={t("takeover.handBack")}
+              aria-label={t("takeover.handBack")}
+            >
+              <Check size={16} />
+            </button>
+          </div>
+        </div>
+      ) : null}
       {error ? <p className="mt-1 text-[11px] text-danger">{error}</p> : null}
 
       {viewerPath ? (
