@@ -2892,6 +2892,7 @@
   "takeover.openHint": "Open live browser",
   "takeover.hint": "Complete the step or make your changes, then hand it back to let the bot continue.",
   "takeover.handBack": "Hand back to bot",
+  "takeover.handBackShort": "Hand back",
   "takeover.note": "Additional instructions (optional)",
   "takeover.noteHint": "Guidance for the bot, not permission.",
   "takeover.noteAdd": "Add instructions",

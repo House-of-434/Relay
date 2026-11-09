@@ -238,10 +238,10 @@ export function TakeoverCard({
       {error ? <p className="mt-1 text-[11px] text-danger">{error}</p> : null}
 
       {viewerPath ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-2 backdrop-blur-sm sm:p-4" role="dialog" aria-modal="true" aria-label={t("takeover.iframeTitle")}>
+        <div className="fixed inset-0 z-50 bg-black" role="dialog" aria-modal="true" aria-label={t("takeover.iframeTitle")}>
           <div
             data-takeover-viewer
-            className="relative flex h-[94vh] w-[96vw] max-w-[1600px] flex-col overflow-hidden rounded-2xl bg-black shadow-2xl"
+            className="relative flex h-full w-full flex-col overflow-hidden bg-black"
           >
             <div className="absolute right-3 top-3 z-10 flex items-center gap-2">
               <button
@@ -268,11 +268,14 @@ export function TakeoverCard({
                 type="button"
                 onClick={() => settle("done")}
                 disabled={acting}
-                className="flex size-8 items-center justify-center rounded-full bg-accent text-white shadow-lg transition hover:bg-accent/90 disabled:opacity-60"
+                className="group flex h-8 items-center justify-center rounded-full bg-accent px-2 text-white shadow-lg transition-all hover:gap-1.5 hover:bg-accent/90 focus-visible:gap-1.5 disabled:opacity-60"
                 title={t("takeover.handBack")}
                 aria-label={t("takeover.handBack")}
               >
-                <Check size={15} />
+                <span className="max-w-0 overflow-hidden whitespace-nowrap text-[11px] font-medium opacity-0 transition-all duration-200 group-hover:max-w-24 group-hover:opacity-100 group-focus-visible:max-w-24 group-focus-visible:opacity-100">
+                  {t("takeover.handBackShort")}
+                </span>
+                <Check size={15} className="shrink-0" />
               </button>
             </div>
             <iframe
