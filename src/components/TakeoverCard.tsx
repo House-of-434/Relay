@@ -247,32 +247,32 @@ export function TakeoverCard({
               <button
                 type="button"
                 onClick={fullScreen}
-                className="flex size-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80"
+                className="flex size-8 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80"
                 title={t("takeover.fullscreen")}
                 aria-label={t("takeover.fullscreen")}
               >
-                <Maximize2 size={17} />
-              </button>
-              <button
-                type="button"
-                onClick={() => settle("done")}
-                disabled={acting}
-                className="flex size-10 items-center justify-center rounded-full bg-accent text-white shadow-lg transition hover:bg-accent/90 disabled:opacity-60"
-                title={t("takeover.handBack")}
-                aria-label={t("takeover.handBack")}
-              >
-                <Check size={18} />
+                <Maximize2 size={14} />
               </button>
               <button
                 ref={closeRef}
                 type="button"
                 onClick={() => settle("dismiss")}
                 disabled={acting}
-                className="flex size-10 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80 disabled:opacity-60"
+                className="flex size-8 items-center justify-center rounded-full border border-white/20 bg-black/60 text-white shadow-lg backdrop-blur transition hover:bg-black/80 disabled:opacity-60"
                 title={t("takeover.close")}
                 aria-label={t("takeover.close")}
               >
-                <X size={18} />
+                <X size={15} />
+              </button>
+              <button
+                type="button"
+                onClick={() => settle("done")}
+                disabled={acting}
+                className="flex size-8 items-center justify-center rounded-full bg-accent text-white shadow-lg transition hover:bg-accent/90 disabled:opacity-60"
+                title={t("takeover.handBack")}
+                aria-label={t("takeover.handBack")}
+              >
+                <Check size={15} />
               </button>
             </div>
             <iframe
