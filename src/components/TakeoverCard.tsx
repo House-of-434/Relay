@@ -46,12 +46,12 @@ function TakeoverPreview({
       <img
         src={src}
         alt={host}
-        className="h-32 w-full object-cover object-top"
+        className="h-40 w-full object-cover object-top"
       />
     );
   }
   return (
-    <div className="flex h-32 items-center justify-center bg-gradient-to-br from-raised via-panel to-inset">
+    <div className="flex h-40 items-center justify-center bg-gradient-to-br from-raised via-panel to-inset">
       <Monitor size={22} className="text-ink-secondary opacity-70" aria-hidden="true" />
     </div>
   );
@@ -198,7 +198,7 @@ export function TakeoverCard({
         onClick={openViewer}
         disabled={loading || acting}
         aria-label={`${t("takeover.openHint")}: ${host}`}
-        className="group block w-[min(26rem,100%)] overflow-hidden rounded-xl border border-hairline/50 bg-panel text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-70"
+        className="group block w-[min(32rem,100%)] overflow-hidden rounded-xl border border-hairline/50 bg-panel text-left shadow-sm transition hover:-translate-y-0.5 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:opacity-70"
       >
         <TakeoverPreview
           botId={botId}
