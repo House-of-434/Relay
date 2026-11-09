@@ -191,7 +191,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       let sessionId = "";
       let generation = 0;
       let created = false;
-      let displayStarted = false;
+      let lease: { display: string } | null = null;
       try {
         authorizeBrowser(agent, "request_human");
         let host = url ? new URL(url).hostname.slice(0, 120) : "";
@@ -199,15 +199,16 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
         sessionId = owned.session.id;
         generation = owned.session.generation;
         created = owned.created;
-        let lease: { display: string } | null = null;
         if (localBrowser) {
           await pool.localHeadfulOpen(userId, url);
         } else {
           if (!displays) throw new Error("live browser is not configured");
           lease = await displays.acquire(userId);
-          displayStarted = true;
-          sessions.attachDisplay(sessionId, lease.display);
-          await pool.headfulOpen(userId, url, lease.display);
+          await pool.headfulOpen(userId, url);
+          const display = await pool.headfulDisplay(userId);
+          lease = await displays.attach(userId, display);
+          sessions.attachDisplay(sessionId, display);
+          console.log(`[takeover] viewer session=${sessionId} display=${display}`);
         }
         // One-shot preview for the card; a failed capture must not fail the
         // request or leave the browser behind.
@@ -240,7 +241,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
             else sessions.handBack(sessionId, generation);
           } catch { /* already settled */ }
         }
-        if (displayStarted && created && displays) displays.release(userId);
+        if (lease && created && displays) displays.release(userId);
         if (created) await pool.stopWorkspace(userId).catch(() => {});
         return toolError(error);
       }

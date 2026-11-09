@@ -15,8 +15,8 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -39,6 +39,43 @@ export const BLADE_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 export const BLADE_URL_MAX_LENGTH = 2048;
 const BLADE_PROBE_TIMEOUT_MS = 15_000;
 const BLADE_ARTIFACT_PAGE_LIMIT = 8_000;
+
+/** Bladebro starts its own Xvfb for headful Chrome, so the viewer must attach
+ * to the display it actually chose, not the one we asked for. Match the
+ * daemon's Chrome (by workspace user-data-dir) to the sibling Xvfb process. */
+export async function findHeadfulDisplay(workspaceRoot: string, procRoot = "/proc"): Promise<string | null> {
+  const pids = (await readdir(procRoot)).filter((name) => /^\d+$/.test(name));
+  const displays = new Map<number, string>();
+  for (const pid of pids) {
+    const args = await procCmdline(procRoot, pid);
+    if (!args || basename(args[0] ?? "") !== "Xvfb") continue;
+    const display = args.find((arg) => /^:\d+$/.test(arg));
+    if (!display) continue;
+    const ppid = await procPpid(procRoot, pid);
+    if (ppid !== null) displays.set(ppid, display);
+  }
+  if (displays.size === 0) return null;
+  const userDataDir = `--user-data-dir=${workspaceRoot}/`;
+  for (const pid of pids) {
+    const args = await procCmdline(procRoot, pid);
+    if (!args?.some((arg) => arg.startsWith(userDataDir) && arg.includes("/profil"))) continue;
+    const ppid = await procPpid(procRoot, pid);
+    const display = ppid === null ? undefined : displays.get(ppid);
+    if (display) return display;
+  }
+  return null;
+}
+
+async function procCmdline(procRoot: string, pid: string): Promise<string[] | null> {
+  const raw = await readFile(join(procRoot, pid, "cmdline"), "utf8").catch(() => null);
+  return raw === null ? null : raw.split("\0").filter(Boolean);
+}
+
+async function procPpid(procRoot: string, pid: string): Promise<number | null> {
+  const status = await readFile(join(procRoot, pid, "status"), "utf8").catch(() => "");
+  const match = /^PPid:\s+(\d+)$/m.exec(status);
+  return match ? Number(match[1]) : null;
+}
 
 export interface SpawnResult {
   exitCode: number | null;
@@ -383,11 +420,25 @@ export class BladeBrowserPool {
    * which the viewer reaches over VNC. Used only inside an active human
    * takeover; research paths stay headless. `rb visible on` returns
    * `{ok, setting, value}` with no `text`, so it is parsed leniently. */
-  async headfulOpen(userId: unknown, url: string | undefined, display: string): Promise<BrowserText> {
+  async headfulOpen(userId: unknown, url: string | undefined, display?: string): Promise<BrowserText> {
     await this.runSetting(userId, ["rb", "visible", "on"], display);
     if (!url) return { text: "" };
     const text = await this.run(userId, ["nav", assertHttpUrl(url)], false, false, display);
     return this.boundResult(userId, "open", text);
+  }
+
+  /** Display Bladebro chose for this workspace's headful Chrome. It starts
+   * its own Xvfb, so this can differ from any DISPLAY we passed. */
+  async headfulDisplay(userId: unknown, timeoutMs = 8_000): Promise<string> {
+    if (process.platform !== "linux") throw new Error("live display is not available on this platform");
+    const root = this.workspaceFor(userId);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const display = await findHeadfulDisplay(root).catch(() => null);
+      if (display) return display;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("live display did not start");
   }
 
   /** Local-development takeover: drive a real Chrome window on the host

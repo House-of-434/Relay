@@ -1,14 +1,12 @@
-/** One X display + VNC stack per active human-takeover session.
+/** One viewer stack per active human-takeover session.
  *
- * Each user's headful Chrome must render on its own display: a shared Xvfb
- * would let one user's viewer see another's browser. A slot owns Xvfb, x11vnc
- * (loopback RFB, no password — the viewer token is the auth), and websockify
- * (loopback WS + noVNC static files). Slots are capped like the takeover pool
- * and torn down on release.
+ * Bladebro starts its own Xvfb for headful Chrome. A slot attaches openbox,
+ * x11vnc (loopback RFB, no password — the viewer token is the auth), and
+ * websockify (loopback WS + noVNC static files) to that display. Slots are
+ * capped like the takeover pool and torn down on release.
  */
 import { spawn, type ChildProcess } from "node:child_process";
 import { connect } from "node:net";
-import { existsSync } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 
 export interface DisplayLease {
@@ -26,20 +24,16 @@ interface Slot {
 
 export interface DisplayPoolOptions {
   maxSlots?: number;
-  xvfb?: string;
   wm?: string;
   x11vnc?: string;
   websockify?: string;
   novncDir?: string;
-  /** Boot budget for one slot (Xvfb socket + VNC + WS). */
+  /** Boot budget for the viewer stack (VNC + WS). */
   readyTimeoutMs?: number;
 }
 
-const SCREEN = "1280x720x24";
-
 export class TakeoverDisplayPool {
   private readonly maxSlots: number;
-  private readonly xvfb: string;
   private readonly wm: string;
   private readonly x11vnc: string;
   private readonly websockify: string;
@@ -49,7 +43,6 @@ export class TakeoverDisplayPool {
 
   constructor(options: DisplayPoolOptions = {}) {
     this.maxSlots = options.maxSlots ?? 2;
-    this.xvfb = options.xvfb ?? "Xvfb";
     this.wm = options.wm ?? "openbox";
     this.x11vnc = options.x11vnc ?? "x11vnc";
     this.websockify = options.websockify ?? "websockify";
@@ -57,8 +50,9 @@ export class TakeoverDisplayPool {
     this.readyTimeoutMs = options.readyTimeoutMs ?? 8_000;
   }
 
-  /** Slot for a user, starting the stack on first use. Joining the same
-   * user's existing slot never allocates a second display. */
+  /** Reserve a slot for a user. The display is filled in by `attach` once
+   * Bladebro has started its headful Xvfb. Joining the same user's existing
+   * slot never allocates a second display. */
   async acquire(userId: string): Promise<DisplayLease> {
     const existing = this.byUser.get(userId);
     if (existing) return existing.lease;
@@ -71,36 +65,46 @@ export class TakeoverDisplayPool {
     }
     if (index < 0) throw new Error("live browser is busy; try again later");
 
-    const displayNum = 99 + index;
     const lease: DisplayLease = {
-      display: `:${displayNum}`,
+      display: "",
       rfbPort: 5900 + index,
       wsPort: 6080 + index,
     };
     const slot: Slot = { index, userId, lease, children: [] };
     // Reserve the slot before any await so concurrent acquires cannot race.
     this.byUser.set(userId, slot);
+    return lease;
+  }
+
+  /** Attach the viewer stack to the display Bladebro actually uses. */
+  async attach(userId: string, display: string): Promise<DisplayLease> {
+    const slot = this.byUser.get(userId);
+    if (!slot) throw new Error("no live display slot");
+    if (slot.lease.display === display && slot.children.length > 0) return slot.lease;
+    for (const child of slot.children) {
+      try { child.kill("SIGTERM"); } catch { /* already gone */ }
+    }
+    slot.children = [];
+    slot.lease.display = display;
     try {
-      slot.children.push(this.start(this.xvfb, [lease.display, "-screen", "0", SCREEN, "-nolisten", "tcp"]));
-      await this.waitFor(() => existsSync(`/tmp/.X11-unix/X${displayNum}`), "display");
       // A window manager gives Chrome's native popups (selects, date pickers,
       // dialogs) real geometry on the virtual display. Best-effort: the
       // browser still works without it.
-      slot.children.push(this.startWithDisplay(this.wm, [], lease.display));
+      slot.children.push(this.startWithDisplay(this.wm, [], display));
       await delay(300);
       slot.children.push(this.start(this.x11vnc, [
-        "-display", lease.display,
-        "-rfbport", String(lease.rfbPort),
+        "-display", display,
+        "-rfbport", String(slot.lease.rfbPort),
         "-localhost", "-forever", "-shared", "-nopw", "-quiet", "-noxdamage",
       ]));
-      await this.waitForPort(lease.rfbPort, "vnc");
+      await this.waitForPort(slot.lease.rfbPort, "vnc");
       slot.children.push(this.start(this.websockify, [
         "--web", this.novncDir,
-        `127.0.0.1:${lease.wsPort}`,
-        `127.0.0.1:${lease.rfbPort}`,
+        `127.0.0.1:${slot.lease.wsPort}`,
+        `127.0.0.1:${slot.lease.rfbPort}`,
       ]));
-      await this.waitForPort(lease.wsPort, "websocket");
-      return lease;
+      await this.waitForPort(slot.lease.wsPort, "websocket");
+      return slot.lease;
     } catch (error) {
       this.release(userId);
       throw error;
@@ -148,15 +152,6 @@ export class TakeoverDisplayPool {
         socket.setTimeout(250, () => { socket.destroy(); resolve(false); });
       });
       if (open) return;
-      await delay(100);
-    }
-    throw new Error(`live display did not start (${what})`);
-  }
-
-  private async waitFor(ready: () => boolean, what: string): Promise<void> {
-    const deadline = Date.now() + this.readyTimeoutMs;
-    while (Date.now() < deadline) {
-      if (ready()) return;
       await delay(100);
     }
     throw new Error(`live display did not start (${what})`);
