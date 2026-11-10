@@ -115,7 +115,9 @@ describe("scopes", () => {
       ["DELETE", "/api/bots/x/memory/file"], ["POST", "/api/bots/x/memory/tidy"], // bot memory: handler requires bot owner or admin
       ["GET", "/api/bots/x/skills"], ["POST", "/api/bots/x/skills"], ["PATCH", "/api/bots/x/skills/s"],
       ["DELETE", "/api/bots/x/skills/s"], ["POST", "/api/bots/x/skill-template"], // per-bot skills: handler requires bot owner or admin
+      ["GET", "/api/bots/x/soul"], ["POST", "/api/bots/x/soul/apply-file"], ["POST", "/api/bots/x/soul/discard-file"], // soul: handler requires bot owner or admin
     ] as const) expect(requiredScope(method, path), `${method} ${path}`).toBe("client");
+    expect(requiredScope("GET", "/api/bots/x/system-prompt")).toBe("admin"); // assembled prompt stays admin-only
     for (const [method, path] of [
       ["POST", "/api/cli-test"], ["GET", "/api/cli-candidates"], ["GET", "/api/instances"], ["PATCH", "/api/instances/claude"],
       ["POST", "/api/bots/x/computer/exec"], ["POST", "/api/bots/x/computer/join"], ["POST", "/api/local-computer/run"],

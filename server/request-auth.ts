@@ -361,6 +361,11 @@ export const CLIENT_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: Reg
   // so the handler likewise requires bot ownership or admin scope.
   { methods: ["GET", "POST", "PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills(\/[a-z0-9-]+)?$/ },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/skill-template$/ },
+  // bot soul (personality file): user-owned like memory/skills, so the
+  // handler requires bot ownership or admin scope. The assembled system
+  // prompt preview stays admin-only — it reveals Relay instructions.
+  { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/soul$/ },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/soul\/(apply-file|discard-file)$/ },
   // configured-or-not booleans; the handler strips the few identifying fields for clients
   { methods: ["GET"], path: /^\/api\/config$/ },
 ];
