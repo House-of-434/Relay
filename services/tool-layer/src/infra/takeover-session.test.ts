@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { fanOutResume, TakeoverSessionManager } from "./takeover-session.js";
+import { fanOutResume, TakeoverSessionManager, takeoverBusyMessage } from "./takeover-session.js";
 import { ViewerTokens } from "./takeover-viewer.js";
 
 const USER_A = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -19,9 +19,32 @@ test("one session per user; a competing thread gets busy", () => {
   const first = m.requestHuman(actor(), "task-1");
   assert.equal(first.created, true);
   assert.equal(first.session.state, "user_takeover");
-  assert.throws(() => m.requestHuman(actor(USER_A, BOT_B, THREAD_B), "task-2"), /busy on another task/);
+  assert.throws(() => m.requestHuman(actor(USER_A, BOT_B, THREAD_B), "task-2"), /person is using the interactive browser/);
   // The owner keeps control.
   assert.equal(m.ownedSession(USER_A, first.session.id)?.state, "user_takeover");
+});
+
+test("busy copy distinguishes the person from a finishing agent turn", () => {
+  assert.match(takeoverBusyMessage("user_takeover"), /person is using the interactive browser/);
+  assert.match(takeoverBusyMessage("agent_active"), /still in use by another task; it will be released when that task finishes/);
+  const m = new TakeoverSessionManager();
+  const { session } = m.requestHuman(actor(), "task-1");
+  m.handBack(session.id, session.generation);
+  assert.throws(
+    () => m.requestHuman(actor(USER_A, BOT_B, THREAD_B), "task-2"),
+    /still in use by another task/,
+  );
+});
+
+test("a second user is never blocked by another user's session", () => {
+  const m = new TakeoverSessionManager();
+  const a = m.requestHuman(actor(USER_A), "task-1");
+  const b = m.requestHuman(actor(USER_B), "task-2");
+  assert.equal(a.created, true);
+  assert.equal(b.created, true);
+  assert.notEqual(a.session.id, b.session.id);
+  assert.equal(m.sessionForUser(USER_A)?.id, a.session.id);
+  assert.equal(m.sessionForUser(USER_B)?.id, b.session.id);
 });
 
 test("the same thread joins the session instead of creating a second", () => {
@@ -134,7 +157,7 @@ test("a held cross-process lease refuses the session and is released on close", 
   assert.equal(released, true);
 
   const blocked = new TakeoverSessionManager({ leaseFor: () => null });
-  assert.throws(() => blocked.requestHuman(actor(USER_B), "task-2"), /busy on another task/);
+  assert.throws(() => blocked.requestHuman(actor(USER_B), "task-2"), /still in use by another task/);
 });
 
 test("viewer tokens are scoped, short-lived, and revocable", () => {

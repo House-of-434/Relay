@@ -415,6 +415,7 @@ async function handleBrowserTakeover(
     if (session.state !== "user_takeover") {
       // Already handed back: idempotent, and the URL is still available.
       sharedViewerTokens.revokeSession(sessionId);
+      sharedDisplays?.detach(userId);
       const url = (await sharedBladePool?.currentUrl(userId, session.display)) ?? "";
       sendJson(response, 200, { handed_back: true, url });
       return;
@@ -426,9 +427,13 @@ async function handleBrowserTakeover(
       sendJson(response, 409, { error: error instanceof Error ? error.message : "this sign-in is no longer active" });
       return;
     }
-    // The person is done driving: revoke their token, keep the browser and
-    // page alive for the agent.
+    // The person is done driving: revoke their token, stop the viewer, and
+    // keep the browser itself alive for the agent's resumed turn.
     sharedViewerTokens.revokeSession(sessionId);
+    sharedDisplays?.detach(userId);
+    if (session.display) {
+      console.log(`[takeover] detach viewer session=${sessionId} display=${session.display}`);
+    }
     const url = (await sharedBladePool?.currentUrl(userId, session.display)) ?? "";
     sendJson(response, 200, { handed_back: true, url });
     return;

@@ -11,7 +11,8 @@
  */
 import { canonicalUserId } from "./workspace-identity.js";
 
-/** A sign-in card that never gets acted on expires after this long. */
+/** A sign-in card that never gets acted on expires after this long. The
+ * harness card TTL is authoritative; this is the tool-layer fallback. */
 export const TAKEOVER_WINDOW_MS = 30 * 60_000;
 /** Normal cleanup: no interactive use for this long. */
 export const TAKEOVER_IDLE_MS = 10 * 60_000;
@@ -22,6 +23,14 @@ export const TAKEOVER_TTL_MS = TAKEOVER_WINDOW_MS;
 
 export type SessionState = "agent_active" | "user_takeover";
 export type CloseReason = "released" | "expired" | "idle" | "hard-cap";
+
+/** Why another task may not use the user's live browser right now. The
+ * holder's identity stays in the logs, never in the tool error. */
+export function takeoverBusyMessage(state: SessionState): string {
+  return state === "user_takeover"
+    ? "The person is using the interactive browser in another chat; wait for them to hand it back."
+    : "The interactive browser is still in use by another task; it will be released when that task finishes.";
+}
 
 export interface TakeoverEvent {
   kind: "session_closed";
@@ -155,7 +164,7 @@ export class TakeoverSessionManager {
         console.warn(
           `[takeover] busy: owner=${existing.botId}/${existing.threadId} request=${actor.botId}/${actor.threadId}`,
         );
-        throw new Error("interactive browser is busy on another task; wait for it to finish or dismiss it in that chat, then retry");
+        throw new Error(takeoverBusyMessage(existing.state));
       }
       if (existing.state !== "user_takeover") {
         existing.state = "user_takeover";
@@ -171,7 +180,7 @@ export class TakeoverSessionManager {
     const lease = this.leaseFor?.(uid);
     if (this.leaseFor && !lease) {
       console.warn(`[takeover] lease refused userId=${uid}`);
-      throw new Error("interactive browser is busy on another task; wait for it to finish or dismiss it in that chat, then retry");
+      throw new Error(takeoverBusyMessage("agent_active"));
     }
     const now = this.now();
     const session: TakeoverSession = {

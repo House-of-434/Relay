@@ -9,6 +9,7 @@ import { z } from "zod";
 
 import { signedActorContext } from "./relay-mcp.ts";
 import type { RelayAgentRole } from "../packages/relay-shared/relay-agent.ts";
+import type { TakeoverCardData, WireMessage } from "../shared/wire.ts";
 
 /** A takeover card older than this is terminal: release the browser, mark
  * the card expired, and resume the agent with the declined outcome. */
@@ -24,6 +25,19 @@ export const browserTakeoverStartSchema = z.object({
 }).strict();
 
 export type BrowserTakeoverStart = z.infer<typeof browserTakeoverStartSchema>;
+
+/** The latest browser-takeover card in a thread, when it is settled back to
+ * the agent (`done`) rather than waiting on the person. A newer pending card
+ * reuses the same tool-layer session, so an older done card must not release
+ * it. */
+export function latestSettledTakeover(
+  messages: ReadonlyArray<Pick<WireMessage, "id" | "kind" | "takeover">>,
+): { messageId: string; card: TakeoverCardData } | null {
+  const message = messages.findLast((candidate) => candidate.kind === "takeover" && candidate.takeover);
+  const card = message?.takeover;
+  if (!message || !card || card.status !== "done") return null;
+  return { messageId: message.id, card };
+}
 
 export interface TakeoverActor {
   userId: string;
@@ -76,8 +90,9 @@ export class ToolLayerTakeoverClient {
     };
   }
 
-  async release(actor: TakeoverActor, sessionId: string, generation: number): Promise<void> {
-    await this.post(actor, "/internal/browser-takeover/release", { session_id: sessionId, generation });
+  async release(actor: TakeoverActor, sessionId: string, generation: number): Promise<boolean> {
+    const body = await this.post(actor, "/internal/browser-takeover/release", { session_id: sessionId, generation });
+    return body.released === true;
   }
 
   private async post(actor: TakeoverActor, path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {

@@ -205,6 +205,7 @@ import {
   BROWSER_TAKEOVER_TTL_MS,
   ToolLayerTakeoverClient,
   ToolLayerTakeoverError,
+  latestSettledTakeover,
   type TakeoverActor,
 } from "./browser-takeover.ts";
 import {
@@ -14067,6 +14068,45 @@ async function terminalTakeover(
   return run;
 }
 
+/** Release the live browser once the agent's resumed turn ends. The card
+ * stays `done`; a newer pending card in the same thread reuses the session
+ * and must keep it alive. Release is idempotent, so a duplicate event is
+ * harmless, and the 10-minute idle sweep remains the fallback. */
+function releaseSettledTakeover(botId: string, threadId: string): void {
+  const settled = latestSettledTakeover(store.activePath(threadId));
+  if (!settled) return;
+  // A continuation waiting for a thread slot has not used the browser yet.
+  if (pendingCardResumes.has(`${threadId}:${settled.messageId}`)) return;
+  let actor: TakeoverActor;
+  try {
+    actor = takeoverActor(botId, threadId);
+  } catch (error) {
+    console.warn(
+      `[takeover] release after turn skipped session=${settled.card.sessionId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return;
+  }
+  void takeoverControl.release(actor, settled.card.sessionId, settled.card.generation).then(
+    (released) => {
+      if (released) {
+        console.log(`[takeover] release after turn session=${settled.card.sessionId} bot=${botId} thread=${threadId}`);
+      }
+    },
+    (error) => {
+      console.warn(
+        `[takeover] release after turn failed session=${settled.card.sessionId} bot=${botId} thread=${threadId}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    },
+  );
+}
+
+/** Only direct bot threads own a resumable turn; shared channels keep the
+ * 10-minute idle fallback. */
+function releaseSettledTakeoverForThread(threadId: string): void {
+  const bot = store.botByThread(threadId);
+  if (bot) releaseSettledTakeover(bot.id, threadId);
+}
+
 /** Re-arm TTLs for cards that outlived this process. */
 function restoreTakeoverExpiry(): void {
   const threadIds = new Set<string>();
@@ -14205,9 +14245,14 @@ function drainCardResumes() {
 bus.subscribe((event: RuntimeEvent) => {
   if (shouldIgnoreProviderEvent(event)) return;
   if (event.type === "turn.completed") {
+    // Before the drains: a card whose continuation is still waiting for a
+    // slot must not release the browser that continuation will use.
+    releaseSettledTakeoverForThread(event.threadId);
     drainConnectorResumes();
     drainCardResumes();
     drainTeamSetupResumes();
+  } else if (event.type === "session.exited") {
+    releaseSettledTakeoverForThread(event.threadId);
   }
 });
 

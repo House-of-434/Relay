@@ -6,7 +6,7 @@ import { authorizeBrowser } from "../domain/permissions.js";
 import type { BladeBrowserPool, BrowserActInput, ExtractKind, ReadMode } from "../infra/bladebro.js";
 import type { TakeoverSessionManager } from "../infra/takeover-session.js";
 import type { TakeoverDisplayPool } from "../infra/takeover-display.js";
-import { TAKEOVER_TTL_MS } from "../infra/takeover-session.js";
+import { TAKEOVER_TTL_MS, takeoverBusyMessage } from "../infra/takeover-session.js";
 import { RelayBrowserTakeoverClient, takeoverRequestKey } from "../infra/browser-takeover.js";
 
 export interface BladeBrowserContext {
@@ -57,7 +57,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     console.warn(
       `[takeover] foreign browser call: session=${other.botId}/${other.threadId} actor=${botId}/${threadId}`,
     );
-    throw new Error("the interactive browser is in use by another task; wait for it to finish or dismiss it in that chat");
+    throw new Error(takeoverBusyMessage(other.state));
   };
   /** The live display when this exact bot/thread owns the handed-back
    * session. Unrelated tasks never attach to it. */

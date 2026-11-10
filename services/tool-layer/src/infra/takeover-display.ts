@@ -128,13 +128,21 @@ export class TakeoverDisplayPool {
     return this.byUser.get(userId)?.lease.display;
   }
 
-  release(userId: string): void {
+  /** Drop only the viewer stack (WM, VNC, websocket) and free its slot and
+   * ports. The browser session stays alive for the agent's resumed turn. */
+  detach(userId: string): void {
     const slot = this.byUser.get(userId);
     if (!slot) return;
     this.byUser.delete(userId);
     for (const child of slot.children) {
       try { child.kill("SIGTERM"); } catch { /* already gone */ }
     }
+  }
+
+  /** Full teardown on the session-close path. The display pool owns only the
+   * viewer; the Bladebro workspace is stopped by the same close event. */
+  release(userId: string): void {
+    this.detach(userId);
   }
 
   private start(binary: string, args: string[]): ChildProcess {
