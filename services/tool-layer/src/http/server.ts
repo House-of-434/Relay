@@ -561,6 +561,7 @@ export async function createRelayToolServer(
   body.embed #chrome { display: none; }
   body.embed #screen { width: 100vw; height: 100vh; border: 0; }
 </style>
+<body>
 <script>if (new URLSearchParams(location.search).has("embed")) document.body.classList.add("embed");</script>
 <div id="chrome">
   <h3>Live browser — agent is paused</h3>
@@ -595,7 +596,8 @@ try {
   document.body.classList.remove("connected"); setStatus("Viewer error: " + e.message, true); notify("relay-takeover-viewer-error");
 }
 setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }).catch(() => {}); }, 30_000);
-</script>`);
+</script>
+</body>`);
           return;
         }
         if (request.method === "GET" && action && action.startsWith("novnc/")) {
