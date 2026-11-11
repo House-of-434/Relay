@@ -155,7 +155,7 @@ export function SidebarPopoverMenu({
           aria-label={ariaLabel}
           {...motion.exitProps}
           className={cn(
-            "absolute bottom-full left-0 right-0 z-40 mb-1 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/50",
+            "absolute bottom-full left-0 z-40 mb-1 w-[184px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/50",
             motion.className,
           )}
         >
@@ -172,14 +172,14 @@ export function SidebarPopoverMenu({
                   if (!item.keepOpen) close();
                 }}
                 className={cn(
-                  "flex w-full items-center gap-3 px-3.5 py-2 text-left text-[14px] disabled:opacity-60",
+                  "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px] disabled:opacity-60",
                   item.active ? "rounded-lg bg-raised text-ink" : "text-ink rounded-lg hover:bg-raised/70",
                 )}
               >
                 {item.icon && (
                   <span
                     className={cn(
-                      "flex size-5 shrink-0 items-center justify-center",
+                      "flex size-[18px] shrink-0 items-center justify-center",
                       item.active ? "text-accent" : "text-ink-secondary",
                     )}
                   >

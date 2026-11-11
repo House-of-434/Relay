@@ -28,6 +28,7 @@ export const BOT_PROFILE_PATCH_FIELDS = [
   "avatarFocusX",
   "avatarFocusY",
   "mascotBody",
+  "bodyTexture",
 ] as const;
 
 export const profilePatchSchema = z.object({
@@ -63,6 +64,7 @@ export const profilePatchSchema = z.object({
   avatarFocusX: z.number({ error: "avatarFocusX must be a number from 0 to 1" }).finite().min(0).max(1).optional(),
   avatarFocusY: z.number({ error: "avatarFocusY must be a number from 0 to 1" }).finite().min(0).max(1).optional(),
   mascotBody: mascotBodySchema.optional(),
+  bodyTexture: z.enum(["pixel", "none"]).optional(),
 });
 
 export type BotProfilePatchInput = z.input<typeof profilePatchSchema>;
@@ -81,6 +83,7 @@ export type BotProfilePatch = Partial<
     | "avatarFocusX"
     | "avatarFocusY"
     | "mascotBody"
+    | "bodyTexture"
   >
 >;
 

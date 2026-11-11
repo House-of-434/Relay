@@ -13,13 +13,14 @@ import {
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { MAUS_COLORS, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
+import { MAUS_COLORS, mascotBodyFor, type MausColor, type MausMotion, type MausState } from "@/lib/mascot";
 import { CursorAvatar, type CursorAvatarHandle } from "./CursorAvatar";
 import { botAvatarProfile, clampAvatarFocus, clampAvatarZoom, type BotAvatarCrop } from "../../shared/bot-avatar";
 import { MASCOT_BODIES, botMascotBody, type MascotBodyId } from "../../shared/mascot-bodies";
+import { DEFAULT_BORING_VARIANT, boringSeed, paletteFor, type BoringVariant } from "./boring-patterns";
 
 export const EYE_SCALE = 1.12;
-export const MOUTH_WEIGHT = 11;
+export const MOUTH_WEIGHT = 10;
 
 /**
  * How far the pointer may pull the eyes. Facing forward the full range is
@@ -110,6 +111,14 @@ export type MausAvatarProps = {
   animated?: boolean;
   /** Which body the bot wears. Unknown values fall back to the cursor. */
   bodyId?: MascotBodyId;
+  /**
+   * Body texture behind the face. Null/omitted draws none. Seeds are stable
+   * so the same bot looks identical in every surface it appears.
+   */
+  pattern?: { seed: string; colors: string[]; variant: BoringVariant } | null;
+  patternOpacity?: number;
+  /** Draw the eyes/mouth over the texture. Defaults to on. */
+  face?: boolean;
 };
 
 function MausAvatarComponent(
@@ -132,6 +141,9 @@ function MausAvatarComponent(
     trackPointer = true,
     animated = true,
     bodyId,
+    pattern = null,
+    patternOpacity,
+    face = true,
   }: MausAvatarProps,
   ref: React.Ref<MausAvatarHandle>,
 ) {
@@ -182,6 +194,9 @@ function MausAvatarComponent(
         expression={expression}
         size={size}
         silhouette={silhouette}
+        pattern={pattern}
+        patternOpacity={patternOpacity}
+        face={face}
         gradient={gradientFor(color)}
         title={label ?? null}
         lookAround={lookAround ?? (forward ? 0 : 1)}
@@ -199,8 +214,9 @@ function MausAvatarComponent(
 
 export const MausAvatar = memo(forwardRef(MausAvatarComponent));
 
-export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
+export type BotAvatarProps = Omit<MausAvatarProps, "color" | "pattern"> & {
   bot: {
+    id?: string;
     name?: string;
     color: MausColor;
     avatarUrl?: string | null;
@@ -209,6 +225,8 @@ export type BotAvatarProps = Omit<MausAvatarProps, "color"> & {
     avatarFocusX?: number;
     avatarFocusY?: number;
     mascotBody?: MascotBodyId | null;
+    /** Body texture behind the face. Absent/"pixel" draws the grid; "none" is flat. */
+    bodyTexture?: "pixel" | "none" | null;
   };
 };
 
@@ -256,10 +274,17 @@ export function BotAvatar({ bot, size = 44, label, ...mascotProps }: BotAvatarPr
   });
 
   if (outcome !== "flatImage") {
+    // Seed on id so a rename doesn't change the avatar; name is the fallback
+    // for synthetic profiles (e.g. a communication peer) that carry no id.
+    const seed = boringSeed(bot);
+    const pattern = bot.bodyTexture === "none"
+      ? null
+      : { seed, colors: paletteFor(MAUS_COLORS[bot.color] ?? MAUS_COLORS.green), variant: DEFAULT_BORING_VARIANT };
     return (
       <MausAvatar
-        bodyId={bot.mascotBody ?? undefined}
+        bodyId={mascotBodyFor(bot)}
         {...mascotProps}
+        pattern={pattern}
         color={bot.color}
         size={size}
         label={label ?? bot.name}

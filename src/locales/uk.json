@@ -42,8 +42,6 @@
   "approval.status.denied": "Відмовлено",
   "approval.status.waitingConfirmation": "Чекаємо на ваше підтвердження нижче",
   "approval.status.waitingAnswer": "Чекаємо на вашу відповідь нижче",
-  "question.card.named": "{name} ставить запитання",
-  "question.card.title": "Ваш бот ставить запитання",
   "question.tab.numbered": "Запитання {index}",
   "question.progress": "{answered} з {count} відповідено",
   "question.multiHint": "Оберіть усі варіанти, що підходять",

@@ -27,7 +27,6 @@ import { Card, SettingRow, Switch } from "./SettingsPrimitives";
 import { useSidebarIdentity } from "./SidebarProfileMenu";
 import { effortLabel } from "./ModelPicker";
 import { EFFORT_LEVELS, isEffortLevel } from "../../shared/wire";
-import { shortcutLabel } from "./ShortcutHint";
 import { UsageSection } from "./UsageSection";
 import { LicenseExpiryBanner } from "./LicenseExpiryBanner";
 import { WorkspacesSection, workspacesAvailable } from "./WorkspacesSection";
@@ -460,9 +459,9 @@ export function SettingsModal() {
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
-    const search = dialog?.querySelector<HTMLInputElement>("[data-settings-search]");
-    if (search?.checkVisibility()) search.focus();
-    else dialog?.focus();
+    // The search field stays unfocused on open: autofocusing it painted the
+    // focus border on every open, which read as a persistent highlight.
+    dialog?.focus();
 
     const onKey = (event: KeyboardEvent) => {
       // A child editor owns Escape and its focus trap, including while saving.
@@ -521,11 +520,8 @@ export function SettingsModal() {
         {/* section nav */}
         <span id="app-settings-title" className="sr-only">{t("settings.title")}</span>
         <nav className="hidden min-h-0 w-[190px] shrink-0 flex-col gap-1 overflow-y-auto border-r border-hairline/40 bg-app/30 p-3 sm:flex">
-          <div className="shrink-0 px-2 py-3 text-[15px] font-semibold text-ink">
-            {t("settings.title")}
-          </div>
-          <div className="mb-2 mt-1 flex min-h-8 shrink-0 items-center gap-2 rounded-lg border border-transparent bg-control/70 px-2.5 py-2 focus-within:border-focus">
-            <Search size={14} className="shrink-0 text-ink-secondary" />
+          <div className="mb-2 mt-1 flex min-h-8 shrink-0 items-center gap-2 rounded-full border border-hairline/40 bg-card px-3 py-0.5 focus-within:border-focus">
+            <Search size={16} className="shrink-0 text-ink-secondary" />
             <input
               data-settings-search
               value={query}
@@ -538,7 +534,7 @@ export function SettingsModal() {
               }}
               placeholder={t("settings.search")}
               aria-label={t("settings.searchAria")}
-              className="w-full bg-transparent text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
+              className="w-full bg-transparent text-[12.5px] text-ink placeholder:text-ink-secondary focus:outline-none"
             />
           </div>
           {visibleSections.length === 0 && (
@@ -583,7 +579,7 @@ export function SettingsModal() {
             <button
               onClick={() => dispatch({ type: "toggleAppSettings", open: false })}
               aria-label={t("settings.close")}
-              title={`${t("settings.close")} (${shortcutLabel("close-panel")})`}
+              title={t("settings.close")}
               className="ui-icon-button shrink-0"
             >
               <X size={18} />

@@ -72,15 +72,13 @@ describe("thread control placement", () => {
     expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "deleteTask", botId: "bot", threadId: "older" });
   });
 
-  it("offers trusted modes in the composer without requiring a Full bot default", () => {
+  it("keeps approval levels out of the composer: settings owns them", () => {
     const fullBot = { ...bot, busy: false, approvalMode: "full" as const };
-    expect(renderToStaticMarkup(createElement(ChatView, { bot: fullBot }))).not.toContain("Use bot’s Full access for this thread");
+    expect(renderToStaticMarkup(createElement(ChatView, { bot: fullBot }))).not.toContain("data-test-approval-control");
     window.ogb = { approvals: { setMode: vi.fn() } } as unknown as NonNullable<Window["ogb"]>;
-    expect(renderToStaticMarkup(createElement(ChatView, { bot: fullBot }))).not.toContain("Use bot’s Full access for this thread");
-    renderToStaticMarkup(createElement(ChatView, { bot }));
-    expect(fixture.approval?.trustedModesAvailable).toBe(true);
-    fixture.approval!.onSelect("custom");
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "updateTask", botId: "bot", threadId: "selected", patch: { approvalMode: "custom" } });
+    expect(renderToStaticMarkup(createElement(ChatView, { bot: fullBot }))).not.toContain("data-test-approval-control");
+    expect(renderToStaticMarkup(createElement(ChatView, { bot }))).not.toContain("data-test-approval-control");
+    expect(fixture.approval).toBeNull();
     delete window.ogb;
   });
 
@@ -217,18 +215,14 @@ describe("thread control placement", () => {
     expect(badge[2].split(" ")).toContain("@max-4xl/chathead:sr-only");
   });
 
-  it("keeps the selected thread's model in the header and permissions inside the composer pill", () => {
+  it("keeps the selected thread's model in the header and permissions out of the composer pill", () => {
     const markup = renderToStaticMarkup(createElement(ChatView, { bot }));
     expect(markup.match(/data-test-model-control/g)).toHaveLength(1);
     expect(markup.indexOf("data-test-model-control")).toBeLessThan(markup.indexOf('role="log"'));
     expect(markup.indexOf("rounded-3xl bg-composer")).toBeGreaterThan(-1);
-    expect(markup.indexOf("data-test-approval-control")).toBeGreaterThan(markup.indexOf("rounded-3xl bg-composer"));
-    expect(markup.indexOf("data-test-approval-control")).toBeLessThan(markup.indexOf("<textarea"));
+    expect(markup).not.toContain("data-test-approval-control");
     expect(markup).not.toContain('aria-label="Thread settings"');
     expect(fixture.model).toMatchObject({ threadId: "selected", bot: { busy: false, modelSelection: { model: "thread-model" } } });
-    expect(fixture.approval).toMatchObject({ approvalMode: "ask", disabled: false, trustedModesAvailable: false });
-    fixture.approval!.onSelect("auto");
-    expect(fixture.dispatch).toHaveBeenLastCalledWith({ type: "updateTask", botId: "bot", threadId: "selected", patch: { approvalMode: "auto" } });
   });
 
   it("keeps both controls hidden for remote clients", () => {

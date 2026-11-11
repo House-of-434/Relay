@@ -381,6 +381,8 @@ export interface Bot {
   mascotExpression?: string | null;
   /** Which body the bot wears. Unknown/absent values fall back to the cursor. */
   mascotBody?: MascotBodyId | null;
+  /** Body texture behind the face. Absent means "pixel"; "none" is flat. */
+  bodyTexture?: "pixel" | "none" | null;
   /** App-owned image attachment used for this bot's profile. */
   avatarUrl?: string | null;
   /** Mascot, or the crop applied to avatarUrl. */
@@ -861,7 +863,6 @@ export interface AppState {
    * relay://cloud link; each link counts up. Any other
    * toggleAppSettings (another section, the same one by hand, closing) sets 0. */
   appSettingsCloudLink: number;
-  shortcutsOpen: boolean;
   /** the first-run welcome tour, also replayable from Settings → General */
   welcomeOpen: boolean;
   /** the guided tour on the live interface that follows the welcome flow */
@@ -1131,7 +1132,6 @@ export type Action =
   | { type: "focusMessage"; threadId: string; messageId: string }
   | { type: "focusMessageConsumed"; nonce: number }
   | { type: "toggleAppSettings"; open?: boolean; section?: AppSettingsSection; cloudLink?: boolean }
-  | { type: "toggleShortcuts"; open?: boolean }
   | { type: "toggleWelcome"; open?: boolean }
   | { type: "toggleTour"; open?: boolean }
   | {
@@ -1875,7 +1875,7 @@ export function reducer(state: AppState, action: Action): AppState {
       return {
         ...state,
         pluginsOpen: open,
-        ...(open ? { settingsOpen: false, appSettingsOpen: false, newBotOpen: false, shortcutsOpen: false } : {}),
+        ...(open ? { settingsOpen: false, appSettingsOpen: false, newBotOpen: false } : {}),
       };
     }
     case "botCreationPending":
@@ -1884,7 +1884,7 @@ export function reducer(state: AppState, action: Action): AppState {
       const open = action.open ?? !state.newBotOpen;
       return {
         ...state, newBotOpen: open,
-        ...(open ? { settingsOpen: false, appSettingsOpen: false, pluginsOpen: false, shortcutsOpen: false } : {}),
+        ...(open ? { settingsOpen: false, appSettingsOpen: false, pluginsOpen: false } : {}),
       };
     }
     case "notice":
@@ -1953,13 +1953,6 @@ export function reducer(state: AppState, action: Action): AppState {
         pluginsOpen: open ? false : state.pluginsOpen,
       };
     }
-    case "toggleShortcuts": {
-      const open = action.open ?? !state.shortcutsOpen;
-      return {
-        ...state,
-        shortcutsOpen: open,
-      };
-    }
     case "toggleTour": {
       const open = action.open ?? !state.tourOpen;
       return { ...state, tourOpen: open, appSettingsOpen: open ? false : state.appSettingsOpen };
@@ -1972,7 +1965,6 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         welcomeOpen: open,
         appSettingsOpen: open ? false : state.appSettingsOpen,
-        shortcutsOpen: open ? false : state.shortcutsOpen,
       };
     }
     case "updateBot": {
@@ -2277,7 +2269,6 @@ export const initialState: AppState = {
   appSettingsOpen: false,
   appSettingsSection: "general",
   appSettingsCloudLink: 0,
-  shortcutsOpen: false,
   welcomeOpen: false,
   tourOpen: false,
   botSettingsSection: "identity",
@@ -2808,7 +2799,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
     const wrapped: React.Dispatch<Action> = (action) => {
       // Pin before any await or optimistic state change, including legacy
-      // callers such as keyboard shortcuts and voice controls.
+      // callers such as voice controls.
       action = pinBotThreadAction(action, stateRef.current.bots);
       if (action.type === "taskSwitched") action = { ...action, bot: withTaskWrites(action.bot) as Bot };
       if (action.type === "botPatched") action = { ...action, bot: withTaskWrites(action.bot) };

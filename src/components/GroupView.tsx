@@ -4,12 +4,11 @@
 // default responder; @mentions override that routing.
 import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { activeLocale, t } from "@/lib/i18n";
-import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, MessageSquareReply, Pin, PinOff, Plus, X } from "lucide-react";
+import { ArrowDown, Check, ChevronDown, ChevronRight, Folder, FolderOpen, Loader2, Pin, Plus } from "lucide-react";
 import {
   api,
   useStore,
   useStreaming,
-  formatTime,
   openNotificationTarget,
   type Bot,
   type Group,
@@ -30,14 +29,14 @@ import { ChatMarkdown } from "./ChatMarkdown";
 import { Composer } from "./Composer";
 import { ThreadSwitcher } from "./ThreadSwitcher";
 import { GroupUsageChip } from "./GroupUsageChip";
-import { ExportTranscriptMenu } from "./ExportTranscriptMenu";
 import { ReplyQuote } from "./ReplyQuote";
+import { ReplyIcon } from "./ReplyIcon";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { TakeoverCard } from "./TakeoverCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { GoalRunCard } from "./GoalRunCard";
-import { AttachmentGallery, MessageAttachmentGallery } from "./AttachmentGallery";
+import { MessageAttachments } from "./AttachmentGallery";
 import { OptionCard } from "./OptionCard";
 
 import { ApprovalCard } from "./ApprovalCard";
@@ -66,16 +65,10 @@ import { useReplyDraft } from "@/lib/drafts";
 import { latestReply, type TranscriptSnapshot } from "@/lib/transcript-announcer";
 import { pendingApprovals } from "./PendingApproval";
 import { TranscriptAnnouncer } from "./TranscriptAnnouncer";
-
-function dayLabel(at: number): string {
-  const d = new Date(at);
-  const now = new Date();
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
-  if (diffDays === 0) return t("chat.day.today");
-  if (diffDays === 1) return t("chat.day.yesterday");
-  return d.toLocaleDateString(activeLocale(), { weekday: "short", month: "short", day: "numeric" });
-}
+import { ClusterLabel } from "./ClusterLabel";
+import { DaySeparator } from "./DaySeparator";
+import { ErrorRow, claudeUpdateTarget } from "./ErrorRow";
+import { StreamingBubble } from "./StreamingBubble";
 
 /** One finished tool step in a room. Same pill the 1:1 chat uses, minus the
  * status glyph — a room reads as a conversation, not a build log. A chip
@@ -104,7 +97,7 @@ export function RoomToolChip({ message, roomId }: { message: Message; roomId?: s
             }
           }}
           title={t("room.openBot", { name: comm.withName })}
-          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:text-ink"
         >
           <BotAvatar bot={withBot ?? { name: comm.withName, color: comm.withColor }} state="happy" size={16} />
           <span className="max-w-[480px] truncate">{tool.name}</span>
@@ -126,46 +119,6 @@ export function RoomToolChip({ message, roomId }: { message: Message; roomId?: s
         <span className={cn("max-w-[480px] truncate", !comm && "font-mono")}>{tool.name}</span>
       </div>
     </div>
-  );
-}
-
-/** 16px profile avatar + name, shown once per sender cluster. */
-function ClusterLabel({ bot, name, color }: { bot?: Bot; name: string; color: string }) {
-  return (
-    <div className="mt-1 flex items-center gap-1.5 pl-0.5">
-      <BotAvatar
-        bot={bot ?? { name, color: color as Bot["color"] }}
-        state={normalizeState(bot?.mascotExpression) ?? "happy"}
-        size={16}
-        motion="none"
-        motionKey={0}
-        animated={false}
-      />
-      <span className="text-[11px] font-medium text-ink-secondary">{name}</span>
-    </div>
-  );
-}
-
-/** Pin toggle for one room message — one pin per room, patchGroup path. */
-function PinToggle({ group, message }: { group: Group; message: Message }) {
-  const { dispatch } = useStore();
-  if (window.ogb?.remoteClient?.active) return null;
-  const pinned = group.pinnedMessageId === message.id;
-  return (
-    <button
-      onClick={() =>
-        dispatch({
-          type: "patchGroup",
-          groupId: group.id,
-          patch: { pinnedMessageId: pinned ? "" : message.id },
-        })
-      }
-      aria-label={pinned ? t("chat.unpinMessage") : t("chat.pinMessage")}
-      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
-      title={pinned ? t("chat.unpinHint") : t("room.pinHint")}
-    >
-      {pinned ? <PinOff size={14} /> : <Pin size={14} />}
-    </button>
   );
 }
 
@@ -211,11 +164,7 @@ export const Transcript = memo(function Transcript({
           const cluster = !prev || prev.role !== first.role || prev.from?.botId !== first.from?.botId || newDay;
           return (
             <div key={item.id} className="contents">
-              {newDay && (
-                <div className="py-3 text-center text-[13px] text-ink-secondary">
-                  {dayLabel(first.at)} {formatTime(first.at)}
-                </div>
-              )}
+              {newDay && <DaySeparator at={first.at} />}
               {first.from && cluster && (
                 <ClusterLabel bot={memberOf(first.from.botId)} name={first.from.name} color={first.from.color} />
               )}
@@ -238,6 +187,11 @@ export const Transcript = memo(function Transcript({
         const routineTarget = routineOwner && hasRoutineExecutionTask(routineOwner.tasks, routineExecutionThreadId)
           ? { botId: routineOwner.id, threadId: routineExecutionThreadId }
           : undefined;
+        const activityBot = m.kind === "activity" ? memberOf(m.from?.botId) : undefined;
+        const activityEngine = activityBot
+          ? state.instances.find((instance) => instance.instanceId === activityBot.modelSelection.instanceId)
+          : undefined;
+        const replyTarget = m.replyToId ? transcript.find((candidate) => candidate.id === m.replyToId) : undefined;
         const row =
           // a member can hit a permission ask mid-turn; without this the
           // card never rendered here and the bot waited out its timeout.
@@ -253,7 +207,7 @@ export const Transcript = memo(function Transcript({
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "options" && m.card?.requestId && m.card.questionRequest ? (
             <div className="flex justify-start">
-              <QuestionCard threadId={group.threadId} bot={memberOf(m.from?.botId)} message={m} />
+              <QuestionCard threadId={group.threadId} message={m} />
             </div>
           ) : m.kind === "options" && m.card?.requestId && m.card.tool ? (
             <div className="flex justify-start">
@@ -280,7 +234,13 @@ export const Transcript = memo(function Transcript({
               />
             </div>
           ) : m.kind === "activity" && m.tool ? (
-            roomActivityVisible(m, showToolCalls) ? (
+            m.tool.name.startsWith("error:") ? (
+              <ErrorRow
+                message={m.tool.name.slice(6).trim()}
+                setupInstance={m.tool.setup ? activityEngine : undefined}
+                claudeUpdateInstance={m.tool.claudeUpdate ? claudeUpdateTarget(activityEngine) : undefined}
+              />
+            ) : roomActivityVisible(m, showToolCalls) ? (
               <RoomToolChip message={m} roomId={group.id} />
             ) : null
           ) : m.kind === "compaction" ? (
@@ -297,41 +257,34 @@ export const Transcript = memo(function Transcript({
                       onClick={() => onReply(m)}
                       aria-label={t("chat.replyToMessage")}
                       title={t("chat.reply")}
-                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
+                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
                     >
-                      <MessageSquareReply size={14} />
+                      <ReplyIcon size={14} />
                     </button>
-                    <PinToggle group={group} message={m} />
                   </>
                 )}
-                <div
-                  className={cn(
-                    "w-fit max-w-[min(42rem,78%)] rounded-2xl text-[15px] leading-relaxed",
+                <div className="flex w-fit max-w-[min(42rem,78%)] flex-col">
+                  {replyTarget && (
+                    <ReplyQuote
+                      message={replyTarget}
+                      fallbackName={t("room.fallbackBot")}
+                      onJump={() =>
+                        dispatch({ type: "focusMessage", threadId: group.threadId, messageId: replyTarget.id })
+                      }
+                    />
+                  )}
+                  <div
+                    className={cn(
+                      "w-full rounded-2xl text-[15px] leading-relaxed",
                     !user && m.id === emergingId && "turn-answer",
                     // A bot message that is only attachments is just the files: no bubble.
-                    !user && !m.text?.trim() && !m.replyToId && m.attachments?.length
+                    !user && !m.text?.trim() && m.attachments?.length
                       ? "text-ink"
                       : user ? "chat-text whitespace-pre-wrap bg-bubble-user px-4 py-2.5 text-ink" : "bg-card px-4 py-2.5 text-ink",
                   )}
                 >
-                  {m.replyToId && (() => {
-                    const target = transcript.find((candidate) => candidate.id === m.replyToId);
-                    return target ? (
-                      <div className="mb-2">
-                        <ReplyQuote
-                          message={target}
-                          fallbackName={t("room.fallbackBot")}
-                          compact
-                          onJump={() =>
-                            dispatch({ type: "focusMessage", threadId: group.threadId, messageId: target.id })
-                          }
-                        />
-                      </div>
-                    ) : null;
-                  })()}
                   {user ? (
                     <>
-                      {attachments && <AttachmentGallery images={attachments.images} files={attachments.files} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} className={!attachments.display ? "mb-0" : undefined} />}
                       <ThreadRefText text={attachments?.display ?? m.text ?? ""} peers={members} everyone={!group.dm} />
                       {m.via === "api" && (
                         <div className="mt-1 text-[11px] text-ink-secondary">Sent through the API, not typed here</div>
@@ -340,9 +293,9 @@ export const Transcript = memo(function Transcript({
                   ) : (
                     <>
                       {m.text ? <ChatMarkdown text={m.text} mentionPeers={members} everyone={!group.dm} message={{ threadId: group.threadId, messageId: m.id }} /> : null}
-                      <MessageAttachmentGallery text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} className={m.text ? "mt-2" : undefined} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
                     </>
                   )}
+                  </div>
                 </div>
                 {!user && (
                   <>
@@ -351,25 +304,30 @@ export const Transcript = memo(function Transcript({
                       onClick={() => onReply(m)}
                       aria-label={t("chat.replyToMessage")}
                       title={t("chat.reply")}
-                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:bg-raised hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
+                      className="rounded-md p-1.5 text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:opacity-100 group-hover:opacity-100 group-focus-within:opacity-100 touch:opacity-70"
                     >
-                      <MessageSquareReply size={14} />
+                      <ReplyIcon size={14} />
                     </button>
-                    <PinToggle group={group} message={m} />
                   </>
                 )}
               </div>
+              {user && attachments && (
+                <div className="mt-1.5 flex w-full justify-end">
+                  <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
+                </div>
+              )}
+              {!user && (
+                <div className="mt-1.5 flex w-full justify-start">
+                  <MessageAttachments text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
+                </div>
+              )}
               {!user && m.routedBy && <RoutedByLine routedBy={m.routedBy} />}
             </div>
           ) : null;
         if (!row) return null;
         return (
           <div key={m.id} className="contents" data-mid={m.id}>
-            {newDay && (
-              <div className="py-3 text-center text-[13px] text-ink-secondary">
-                {dayLabel(m.at)} {formatTime(m.at)}
-              </div>
-            )}
+            {newDay && <DaySeparator at={m.at} />}
             {!user && m.from && newCluster && !(m.kind === "activity" && m.comm) && (
               <ClusterLabel bot={memberOf(m.from.botId)} name={m.from.name} color={m.from.color} />
             )}
@@ -544,7 +502,7 @@ function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onToggle: ()
     return (
       <button
         onClick={onToggle}
-        className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
+        className="rounded-md p-1.5 text-ink-secondary hover:text-ink"
         title={t("room.folder.chipTitle")}
       >
         <Folder size={14} />
@@ -555,7 +513,7 @@ function RoomWorkingFolderChip({ group, onToggle }: { group: Group; onToggle: ()
   return (
     <button
       onClick={onToggle}
-      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+      className="flex max-w-[180px] items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
       title={t("chat.workingFolder", { folder })}
     >
       <Folder size={12} />
@@ -934,7 +892,7 @@ function RoomSetup({ group, members }: { group: Group; members: Bot[] }) {
             type="button"
             onClick={() => void finish("skip")}
             disabled={saving}
-            className="rounded-xl px-3 py-2 text-left text-[13px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-50"
+            className="rounded-xl px-3 py-2 text-left text-[13px] text-ink-secondary hover:text-ink disabled:opacity-50"
           >
             {t("room.setup.skip")}
           </button>
@@ -961,6 +919,7 @@ export function GroupView({ group }: {
   const { dragStyle: headerDragStyle, noDragStyle: headerNoDragStyle, controlsShiftStyle } = useCaptionChrome();
   const stream = useStreaming();
   const streaming = stream.streaming[group.threadId];
+  const reasoning = stream.reasoning[group.threadId];
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
@@ -1000,8 +959,17 @@ export function GroupView({ group }: {
   const waiting =
     Boolean(speaker && showWorkingDots(true, group.messages.at(-1), speaker.id)) || awaited !== undefined;
   const wasWaiting = useRef(false);
+  // Live tokens mean the settled row is already visible; skip its entrance.
+  const streamedRef = useRef(false);
+  const [streamedSettle, setStreamedSettle] = useState(false);
   const [popping, setPopping] = useState<{ id: string; botId?: string } | null>(null);
   const poppingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useLayoutEffect(() => {
+    if (streaming?.trim() || reasoning?.trim()) streamedRef.current = true;
+  }, [streaming, reasoning]);
+  useEffect(() => {
+    if (!group.working && !group.busyBotId) streamedRef.current = false;
+  }, [group.working, group.busyBotId]);
   useEffect(() => () => {
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
   }, []);
@@ -1009,6 +977,8 @@ export function GroupView({ group }: {
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
     poppingTimer.current = null;
     wasWaiting.current = false;
+    streamedRef.current = false;
+    setStreamedSettle(false);
     setPopping(null);
   }, [group.id, group.threadId]);
   useEffect(() => {
@@ -1017,6 +987,9 @@ export function GroupView({ group }: {
   useLayoutEffect(() => {
     if (lastGroupMessage?.role !== "bot" || lastGroupMessage.kind !== "text" || !wasWaiting.current) return;
     wasWaiting.current = false;
+    const streamed = streamedRef.current;
+    streamedRef.current = false;
+    setStreamedSettle(streamed);
     setPopping({
       id: lastGroupMessage.id,
       botId: lastGroupMessage.from?.botId,
@@ -1080,7 +1053,7 @@ export function GroupView({ group }: {
   }, []);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, setupPending ? null : transcriptKey);
 
-  useEffect(() => setBottomFollow(true), [group.id, setBottomFollow]);
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
 
   const appliedFocus = useRef<number | null>(null);
   useEffect(() => {
@@ -1107,7 +1080,7 @@ export function GroupView({ group }: {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [group.id, group.messages.length, streaming, group.busyBotId, group.working, composerDock.pad]);
+  }, [group.id, transcriptKey, group.messages.length, streaming, reasoning, group.busyBotId, group.working, composerDock.pad]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1156,11 +1129,6 @@ export function GroupView({ group }: {
     dispatch({ type: "loadOlderMessages", threadId: group.threadId });
   };
   const oldestId = group.messages[0]?.id;
-  // The inverse of the new-thread guard below: a thread known to be blank
-  // has nothing to start anew from and nothing to export, so both header
-  // buttons hide. Group transcripts arrive atomically, so an empty list
-  // with no scrollback is a truly empty thread.
-  const threadIsEmpty = group.messages.length === 0 && !group.hasMore;
   useLayoutEffect(() => {
     const el = scrollRef.current;
     const captured = preExpandHeight.current;
@@ -1212,7 +1180,7 @@ export function GroupView({ group }: {
           // @container so the header can wrap in a narrow column. A container
           // query never matches the container itself, so the row that has to
           // wrap is the child below, not this element.
-          "@container/roomhead px-5 py-3",
+          "@container/roomhead px-5 py-2",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
         )}
@@ -1252,24 +1220,6 @@ export function GroupView({ group }: {
           // control row 16px (visual only) below the 26px overlay.
           style={controlsShiftStyle}
         >
-          {!remoteClient && !setupPending && !group.dm && !threadIsEmpty && (
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "newGroupTask", groupId: group.id })}
-              aria-label={t("thread.new")}
-              title={t("thread.new")}
-              className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              <Plus size={18} />
-            </button>
-          )}
-          {!threadIsEmpty && (
-          <ExportTranscriptMenu
-            title={group.name}
-            messages={group.messages}
-            isGroup
-          />
-          )}
           <GroupUsageChip usage={group.usage} />
           {!remoteClient && !setupPending && !group.dm && <RoomWorkingFolderChip group={group} onToggle={() => setFolderOpen((open) => !open)} />}
           {!remoteClient && !setupPending && !group.dm && <DefaultResponderSelect group={group} members={members} />}
@@ -1361,37 +1311,6 @@ export function GroupView({ group }: {
         </div>
       )}
 
-      {/* Pinned message banner — resolves against the room's full transcript */}
-      {(() => {
-        const pinned = group.messages.find((m) => m.id === group.pinnedMessageId && m.kind === "text");
-        const text = pinned ? (pinned.text ?? "").replace(/\s+/g, " ").trim() : "";
-        if (!pinned || !text) return null;
-        const sender = pinned.role === "user" ? t("chat.you") : (pinned.from?.name ?? t("room.aBot"));
-        return (
-          <div className="w-full px-5">
-            <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
-              <Pin size={12} className="shrink-0 text-accent" />
-              <button
-                onClick={() => dispatch({ type: "focusMessage", threadId: group.threadId, messageId: pinned.id })}
-                className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-                title={t("chat.pinnedJump")}
-              >
-                <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
-                <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
-              </button>
-              <button
-                onClick={() => dispatch({ type: "patchGroup", groupId: group.id, patch: { pinnedMessageId: "" } })}
-                aria-label={t("chat.unpinMessage")}
-                title={t("chat.unpin")}
-                className={cn("shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink", remoteClient && "hidden")}
-              >
-                <X size={13} />
-              </button>
-            </div>
-          </div>
-        );
-      })()}
-
       <div className="relative min-h-0 flex-1">
       <div
         ref={scrollRef}
@@ -1432,7 +1351,7 @@ export function GroupView({ group }: {
         ) : (
         <div
           ref={transcriptRef}
-          className="flex w-full flex-col gap-3"
+          className="flex min-h-full w-full flex-col gap-3"
           style={{ paddingBottom: composerDock.pad }}
           role="log"
           // off, as in ChatView: TranscriptAnnouncer speaks once per reply
@@ -1464,7 +1383,7 @@ export function GroupView({ group }: {
             <div className="flex justify-center pt-2">
               <button
                 onClick={showEarlier}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
               >
                 {t("chat.showEarlier", { count: hiddenCount })}
               </button>
@@ -1474,7 +1393,7 @@ export function GroupView({ group }: {
               <button
                 onClick={loadOlder}
                 disabled={olderPending}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink disabled:opacity-60"
               >
                 {olderPending ? t("chat.loadingEarlier") : t("chat.loadEarlier")}
               </button>
@@ -1486,18 +1405,21 @@ export function GroupView({ group }: {
             locale={activeLocale()}
             messages={windowedMessages}
             transcript={group.messages}
-            emergingId={popping?.id}
+            emergingId={streamedSettle ? null : popping?.id}
             onReply={selectReply}
           />
           {laterCount > 0 && (
             <div className="flex justify-center">
               <button
                 onClick={showLater}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
               >
                 {t("chat.showLater", { count: laterCount })}
               </button>
             </div>
+          )}
+          {(speaker || presenceVisible) && (
+            <StreamingBubble threadId={group.threadId} text={streaming} reasoning={reasoning} />
           )}
           {(speaker || presenceVisible) && (
             <TurnPresence
@@ -1514,7 +1436,7 @@ export function GroupView({ group }: {
               }
               visible={presenceVisible}
               label={activityLabel}
-              answering={popping !== null}
+              answering={Boolean(streaming?.trim()) || popping !== null}
               since={speaker ? group.turnStartedAt ?? null : null}
             />
           )}

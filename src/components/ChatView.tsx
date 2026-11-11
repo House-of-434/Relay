@@ -1,32 +1,24 @@
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  AlertTriangle,
   ArrowDown,
   Check,
   ChevronLeft,
   ChevronRight,
   Copy,
   Crown,
-  MessageSquareReply,
   Pencil,
-  Pin,
-  PinOff,
-  Plus,
   RefreshCw,
-  Square,
   Webhook,
-  X,
 } from "lucide-react";
 import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
-import { useCaptionChrome, useDesktopCapabilities } from "@/components/DesktopCapabilities";
+import { useCaptionChrome } from "@/components/DesktopCapabilities";
 import { contextChip, contextDetail, contextShare, lastTurnDetail, usageDetail } from "@/lib/usage";
 import {
   api,
   currentTaskBot,
   useStore,
   useStreaming,
-  formatTime,
   messageVersions,
   openNotificationTarget,
   visibleMessages,
@@ -34,17 +26,10 @@ import {
   type InstanceInfo,
   type Message,
 } from "@/state/store";
-import { EngineSetup } from "./EngineSetup";
-import { CHATGPT_USAGE_URL } from "./ChatGptPlanStatus";
-import { openExternalLink } from "@/lib/app-links";
-import { ClaudeUpdatePrompt } from "./ClaudeUpdatePrompt";
-import { MacCuaRecoveryActions } from "./MacCuaRecoveryActions";
-import { macCuaPermissionMessage, missingMacCuaPermissions } from "@/lib/mac-cua-permissions";
-import { isProviderSafetyBlock, PROVIDER_SAFETY_GUIDANCE, PROVIDER_SAFETY_HELP_URL } from "../../shared/provider-safety";
 import { BotAvatar } from "./Avatar";
 import { TurnPresence } from "./TurnPresence";
 import { showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
-import { normalizeState, stateForBot } from "@/lib/mascot";
+import { normalizeState } from "@/lib/mascot";
 import { peerLine, type PeerLine } from "@/lib/peer-message";
 import { showWorkingDots } from "@/lib/turn-tail";
 import { liveActivityLabel } from "@/lib/live-activity";
@@ -62,19 +47,18 @@ import { ApprovalCard } from "./ApprovalCard";
 import { QuestionCard } from "./QuestionCard";
 import { Composer } from "./Composer";
 import { ReplyQuote } from "./ReplyQuote";
+import { ReplyIcon } from "./ReplyIcon";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
-import { AttachmentGallery, collectMessageFiles, splitMessageAttachments } from "./AttachmentGallery";
+import { MessageAttachments, collectMessageFiles, splitMessageAttachments, type GalleryFile } from "./AttachmentGallery";
 import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { ModelPicker } from "./ModelPicker";
-import { ExportTranscriptMenu } from "./ExportTranscriptMenu";
 
 import { effectivePlace, toolPlace, type EffectivePlace } from "@/lib/place";
 import { cn } from "@/lib/cn";
 import { activeLocale, t } from "@/lib/i18n";
-import { COMPACT_BUBBLE } from "@/lib/compact-chip";
 import { useFocusMessage } from "@/lib/focus-message";
 import { groupTranscript, isRecoveryActivity } from "@/lib/activity-runs";
 import { ActivityRun } from "./ActivityRun";
@@ -95,31 +79,17 @@ import { useCanWriteIn } from "@/lib/cloud-guest";
 import { latestReply, type TranscriptSnapshot } from "@/lib/transcript-announcer";
 import { pendingApprovals } from "./PendingApproval";
 import { TranscriptAnnouncer } from "./TranscriptAnnouncer";
+import { DaySeparator } from "./DaySeparator";
+import { ErrorRow, claudeUpdateTarget } from "./ErrorRow";
+import { StreamingBubble } from "./StreamingBubble";
+
+export { ErrorRow, claudeUpdateTarget } from "./ErrorRow";
 
 /** Long user messages collapse behind a fade so pasted walls of text don't
  * bury the conversation; bots get full markdown. */
 const USER_COLLAPSE_CHARS = 600;
 const USER_COLLAPSE_LINES = 8;
 const noop = () => {};
-
-/** "Today" / "Yesterday" / "Mon, Aug 11" — real dates, not a hardcoded label. */
-function dayLabel(at: number): string {
-  const d = new Date(at);
-  const now = new Date();
-  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
-  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86_400_000);
-  if (diffDays === 0) return t("chat.day.today");
-  if (diffDays === 1) return t("chat.day.yesterday");
-  return d.toLocaleDateString(activeLocale(), { weekday: "short", month: "short", day: "numeric" });
-}
-
-function DaySeparator({ at }: { at: number }) {
-  return (
-    <div className="py-3 text-center text-[13px] text-ink-secondary">
-      {dayLabel(at)} {formatTime(at)}
-    </div>
-  );
-}
 
 /** Hover/focus-revealed copy control shared by user + bot bubbles. */
 function CopyButton({ text, className }: { text: string; className?: string }) {
@@ -138,80 +108,6 @@ function CopyButton({ text, className }: { text: string; className?: string }) {
       {copied ? <Check size={14} className="text-success" /> : <Copy size={14} />}
     </button>
   );
-}
-
-/** A failed turn: a real error block with a retry, not a truncated pill.
- *
- * A `setup` error — CLI missing, or installed but not signed in — shows what
- * to do instead of a Retry, because retrying hits the same wall every time.
- * Once the engine reports itself fixed the card flips back to Retry, which
- * (with the on-focus re-probe) happens by itself when the user returns from
- * the terminal. */
-export function ErrorRow({
-  message,
-  onRetry,
-  setupInstance,
-  claudeUpdateInstance,
-}: {
-  message: string;
-  onRetry?: () => void;
-  setupInstance?: InstanceInfo;
-  /** The Claude engine to update when this turn failed because its Claude
-   * Code is too old for the model. */
-  claudeUpdateInstance?: InstanceInfo;
-}) {
-  const { capabilities, ready } = useDesktopCapabilities();
-  const failedPermissions = missingMacCuaPermissions(message);
-  const currentPermissions = missingMacCuaPermissions(capabilities.localComputer.message);
-  const macCuaReason = ready && capabilities.host.platform === "darwin" &&
-    capabilities.localComputer.available === false && capabilities.localComputer.reasonCode !== "remote-server" &&
-    message.startsWith("CUA Driver is not ready for this computer — ") &&
-    failedPermissions.length > 0 && failedPermissions.join(",") === currentPermissions.join(",")
-    ? macCuaPermissionMessage(currentPermissions)
-    : null;
-  return (
-    <div className="flex justify-start">
-      <div className="w-fit max-w-[min(42rem,78%)] rounded-xl border border-danger/30 bg-danger/10 px-3.5 py-2.5 text-[13.5px] text-danger">
-        <div className="flex items-start gap-2">
-          <AlertTriangle size={15} className="mt-0.5 shrink-0" />
-          <span className="min-w-0 break-words">{macCuaReason ?? message}</span>
-        </div>
-        {macCuaReason && <details className="mt-2 text-[12px] text-ink-secondary"><summary className="cursor-pointer">{t("computer.mac.permission.driverDetail")}</summary><p className="mt-1 break-words">{message}</p></details>}
-        {macCuaReason &&
-          <MacCuaRecoveryActions reason={message} />}
-        {message.includes("subscription_sharing_usage_limit_exceeded") ? (
-          <a href={CHATGPT_USAGE_URL} target="_blank" rel="noopener noreferrer" className="mt-2 inline-flex rounded-lg bg-ink px-3 py-1.5 text-[12.5px] font-medium text-app" onClick={(event) => {
-            if (window.ogb?.openExternal) { event.preventDefault(); void openExternalLink(CHATGPT_USAGE_URL); }
-          }}>{t("engineSetup.chatgpt.manageUsage")}</a>
-        ) : claudeUpdateInstance ? (
-          <ClaudeUpdatePrompt instance={claudeUpdateInstance} onRetry={onRetry} />
-        ) : isProviderSafetyBlock(message) ? (
-          <p className="mt-2 text-[12.5px] leading-relaxed text-ink-secondary">
-            {PROVIDER_SAFETY_GUIDANCE}{" "}
-            <a href={PROVIDER_SAFETY_HELP_URL} target="_blank" rel="noreferrer" className="underline">About provider safety checks</a>
-          </p>
-        ) : setupInstance &&
-        !(setupInstance.snapshot.state === "available" && setupInstance.snapshot.authenticated !== false) ? (
-          <EngineSetup instance={setupInstance} className="mt-2 text-ink-secondary" />
-        ) : (
-          onRetry && (
-            <button
-              onClick={onRetry}
-              className="mt-1.5 flex items-center gap-1.5 rounded-full border border-danger/30 px-2.5 py-1 text-[12.5px] hover:bg-danger/15"
-            >
-              <RefreshCw size={12} /> {t("chat.retry")}
-            </button>
-          )
-        )}
-      </div>
-    </div>
-  );
-}
-
-/** Only a local, editable Claude Code engine can be updated from chat; a
- * company-managed one is the organisation's to update. */
-export function claudeUpdateTarget(engine: InstanceInfo | undefined): InstanceInfo | undefined {
-  return engine?.driverKind === "claudeAgent" && !engine.readOnly ? engine : undefined;
 }
 
 /** One bad markdown node must not white-screen the app — the transcript
@@ -234,7 +130,9 @@ class MessageBoundary extends Component<{ children: ReactNode; fallbackText: str
 }
 
 /** Inline editor a user bubble turns into: Enter sends (forking the
- * conversation), Esc cancels. Shift+Enter for a newline, like everywhere. */
+ * conversation), Esc cancels. Shift+Enter for a newline, like everywhere.
+ * The bubble keeps its original fitted size and grows with the draft
+ * (`field-sizing: content`), rather than jumping to the full bubble width. */
 function BubbleEditor({
   initial,
   onCancel,
@@ -256,7 +154,7 @@ function BubbleEditor({
     if (draft.trim()) onSubmit(draft.trim());
   };
   return (
-    <div className="w-full max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
+    <div className="w-fit max-w-[min(42rem,78%)] rounded-2xl border border-hairline/40 bg-bubble-user px-4 py-3">
       <textarea
         ref={ref}
         value={draft}
@@ -269,13 +167,13 @@ function BubbleEditor({
           }
           if (e.key === "Escape") onCancel();
         }}
-        rows={Math.min(10, Math.max(2, draft.split("\n").length))}
-        className="w-full resize-none bg-transparent text-[15px] leading-relaxed text-ink focus:outline-none"
+        rows={2}
+        className="max-h-40 w-full resize-none overflow-y-auto bg-transparent text-[15px] leading-relaxed text-ink [field-sizing:content] focus:outline-none"
       />
       <div className="mt-2 flex items-center justify-end gap-2">
         <button
           onClick={onCancel}
-          className="rounded-full px-3 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className="rounded-full px-3 py-1 text-[13px] text-ink-secondary hover:text-ink"
         >
           {t("common.cancel")}
         </button>
@@ -297,29 +195,30 @@ function Bubble({
   emerging = false,
   eagerAttachments = false,
   editing,
-  isLastBotText,
   onStartEdit,
   onCancelEdit,
   onSubmitEdit,
-  onRegenerate,
   replyTarget,
   onReply,
+  hideAttachments = false,
+  extraAttachments,
 }: {
   bot: Bot;
   message: Message;
   emerging?: boolean;
   eagerAttachments?: boolean;
   editing: boolean;
-  isLastBotText: boolean;
   onStartEdit: () => void;
   onCancelEdit: () => void;
   onSubmitEdit: (text: string) => void;
-  onRegenerate?: () => void;
   replyTarget?: Message;
   onReply: () => void;
+  /** Attachments the transcript hoisted onto this (terminal) message. */
+  extraAttachments?: { images: string[]; files: GalleryFile[] };
+  /** Folded narration messages carry no attachments of their own. */
+  hideAttachments?: boolean;
 }) {
   const { state, dispatch } = useStore();
-  const remoteClient = window.ogb?.remoteClient?.active === true;
   // A user-role line another bot delivered (ask_bot, delegate_bot,
   // start_thread) is that bot speaking, not the person: it takes the
   // bot side of the chat under the peer's name, with the model-facing
@@ -340,8 +239,10 @@ function Bubble({
   const visibleText = webhookView?.task ?? attachments?.display ?? text;
   const hasAttachments = Boolean(attachments && (attachments.images.length || attachments.files.length));
   // A message that is only attachments is just the files: no bubble around them.
-  const attachmentsOnly = !webhookView && !replyTarget && !visibleText.trim() &&
-    (user ? hasAttachments : generatedPaths.length + linkedFiles.length > 0);
+  // Turn-hoisted attachments count for the terminal message beside them.
+  const hoisted = hideAttachments ? undefined : extraAttachments;
+  const attachmentsOnly = !webhookView && !visibleText.trim() &&
+    (user ? hasAttachments : generatedPaths.length + linkedFiles.length + (hoisted?.images.length ?? 0) + (hoisted?.files.length ?? 0) > 0);
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -387,28 +288,23 @@ function Bubble({
               title={t("chat.reply")}
               className={messageActionClass}
             >
-              <MessageSquareReply size={14} />
-            </button>
-            <button
-              onClick={() =>
-                dispatch({
-                  type: "updateTask",
-                  botId: bot.id,
-                  threadId: bot.threadId,
-                  patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
-                })
-              }
-              aria-label={bot.pinnedMessageId === message.id ? t("chat.unpinMessage") : t("chat.pinMessage")}
-              title={bot.pinnedMessageId === message.id ? t("chat.unpinHint") : t("chat.pinHint")}
-              className={cn(messageActionClass, remoteClient && "hidden")}
-            >
-              {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
+              <ReplyIcon size={14} />
             </button>
           </MessageActions>
         )}
-        <div
-          className={cn(
-            "w-fit max-w-[min(42rem,78%)] rounded-2xl text-[15px] leading-relaxed",
+        <div className="flex w-fit max-w-[min(42rem,78%)] flex-col">
+          {replyTarget && (
+            <ReplyQuote
+              message={replyTarget}
+              fallbackName={bot.name}
+              onJump={() =>
+                dispatch({ type: "focusMessage", threadId: bot.threadId, messageId: replyTarget.id })
+              }
+            />
+          )}
+          <div
+            className={cn(
+              "w-full rounded-2xl text-[15px] leading-relaxed",
             emerging && "turn-answer",
             user && webhookView
               ? "overflow-hidden border border-accent/25 bg-card text-ink shadow-[0_10px_30px_rgba(0,0,0,0.18)]"
@@ -419,18 +315,6 @@ function Bubble({
                   : "bg-card px-4 py-2.5 text-ink",
           )}
         >
-          {replyTarget && (
-            <div className="mb-2">
-              <ReplyQuote
-                message={replyTarget}
-                fallbackName={bot.name}
-                compact
-                onJump={() =>
-                  dispatch({ type: "focusMessage", threadId: bot.threadId, messageId: replyTarget.id })
-                }
-              />
-            </div>
-          )}
           {user && webhookView ? (
             <div className="min-w-[300px] max-w-[520px]">
               <div className="flex items-center gap-2 border-b border-accent/15 bg-accent/[0.055] px-4 py-2.5 text-[11.5px] font-medium text-accent">
@@ -447,7 +331,6 @@ function Bubble({
             </div>
           ) : user ? (
             <>
-              {attachments && <AttachmentGallery images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} className={!visibleText ? "mb-0" : undefined} />}
               {visibleText && (
                 <div
                   className={cn("chat-text", collapsible && "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_60%,transparent)]")}
@@ -476,23 +359,13 @@ function Bubble({
               {text ? (
                 <ChatMarkdown text={text} mentionPeers={mentionPeers} message={{ threadId: bot.threadId, messageId: message.id }} />
               ) : null}
-              <AttachmentGallery images={generatedPaths} files={linkedFiles} message={{ threadId: bot.threadId, messageId: message.id }} className={text ? "mt-2" : "mb-0"} eager={eagerAttachments} />
             </MessageBoundary>
           )}
+          </div>
         </div>
         {!user && (
           <MessageActions side="bot">
             {text && <CopyButton text={text} />}
-            {isLastBotText && !bot.busy && onRegenerate && (
-              <button
-                onClick={onRegenerate}
-                aria-label={t("chat.regenerate")}
-                title={t("chat.regenerate")}
-                className={messageActionClass}
-              >
-                <RefreshCw size={14} />
-              </button>
-            )}
             <button
               type="button"
               onClick={onReply}
@@ -500,32 +373,36 @@ function Bubble({
               title={t("chat.reply")}
               className={messageActionClass}
             >
-              <MessageSquareReply size={14} />
-            </button>
-            <button
-              onClick={() =>
-                dispatch({
-                  type: "updateTask",
-                  botId: bot.id,
-                  threadId: bot.threadId,
-                  patch: { pinnedMessageId: bot.pinnedMessageId === message.id ? "" : message.id },
-                })
-              }
-              aria-label={bot.pinnedMessageId === message.id ? t("chat.unpinMessage") : t("chat.pinMessage")}
-              title={bot.pinnedMessageId === message.id ? t("chat.unpinHint") : t("chat.pinHint")}
-              className={cn(messageActionClass, remoteClient && "hidden")}
-            >
-              {bot.pinnedMessageId === message.id ? <PinOff size={14} /> : <Pin size={14} />}
+              <ReplyIcon size={14} />
             </button>
           </MessageActions>
         )}
       </div>
+      {!hideAttachments && (
+        <>
+          {user && !webhookView && attachments && hasAttachments && (
+            <div className="mt-1.5 flex w-full justify-end">
+              <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} />
+            </div>
+          )}
+          {!user && (
+            <div className="mt-1.5 flex w-full justify-start">
+              <MessageAttachments
+                images={[...generatedPaths, ...(extraAttachments?.images ?? [])]}
+                files={[...linkedFiles, ...(extraAttachments?.files ?? [])]}
+                message={{ threadId: bot.threadId, messageId: message.id }}
+                eager={eagerAttachments}
+              />
+            </div>
+          )}
+        </>
+      )}
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
           <button
             onClick={() => switchTo(versions[versionIndex - 1])}
             disabled={versionIndex <= 0 || bot.busy}
-            className="rounded p-0.5 hover:bg-raised hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+            className="rounded p-0.5 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
             title={t("chat.previousVersion")}
           >
             <ChevronLeft size={14} />
@@ -536,7 +413,7 @@ function Bubble({
           <button
             onClick={() => switchTo(versions[versionIndex + 1])}
             disabled={versionIndex >= versions.length - 1 || bot.busy}
-            className="rounded p-0.5 hover:bg-raised hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
+            className="rounded p-0.5 hover:text-ink disabled:opacity-30 disabled:hover:bg-transparent"
             title={t("chat.nextVersion")}
           >
             <ChevronRight size={14} />
@@ -592,7 +469,7 @@ function ActivityChip({ message, place = "auto" }: { message: Message; place?: E
         <button
           onClick={() => dispatch({ type: "select", id: comm.groupId })}
           title={t("chat.openConversationWith", { name: comm.withName })}
-          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary hover:text-ink"
         >
           <BotAvatar bot={withBot ?? { name: comm.withName, color: comm.withColor }} state="happy" size={16} />
           <span className="max-w-[480px] truncate">{tool.name}</span>
@@ -616,7 +493,6 @@ const MessagesList = memo(function MessagesList({
   locale,
   transcript,
   editingId,
-  lastBotTextId,
   emergingId,
   canRetryLast,
   engine,
@@ -634,7 +510,6 @@ const MessagesList = memo(function MessagesList({
   /** Active-branch messages, including ones outside the mounted window. */
   transcript: Message[];
   editingId: string | null;
-  lastBotTextId: string | undefined;
   emergingId?: string | null;
   canRetryLast: boolean;
   /** This bot's engine, for rendering setup help on a `setup` error. */
@@ -650,6 +525,23 @@ const MessagesList = memo(function MessagesList({
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
   const items = useMemo(() => groupTranscript(messages), [messages, locale]);
+  // A turn's attachments move out of the "Worked for" fold onto the
+  // terminal answer instead: the fold hides them behind the label.
+  const turnAttachments = useMemo(() => {
+    const map = new Map<string, { images: string[]; files: GalleryFile[] }>();
+    for (const item of items) {
+      if (item.kind !== "turn") continue;
+      const images: string[] = [];
+      const files: GalleryFile[] = [];
+      for (const message of item.messages) {
+        const attached = splitMessageAttachments(message.attachments);
+        images.push(...attached.images);
+        files.push(...attached.files);
+      }
+      if (images.length || files.length) map.set(item.turnId, { images, files });
+    }
+    return map;
+  }, [items]);
   // Where this conversation works, for the place icon on screen and page tools.
   const place = effectivePlace(bot, bot.tasks?.find((task) => task.threadId === bot.threadId));
   const newestMessageId = messages.at(-1)?.id;
@@ -665,7 +557,14 @@ const MessagesList = memo(function MessagesList({
   const focusedId = focus && !focus.consumed && focus.threadId === bot.threadId ? focus.messageId : null;
   return (
     <>
-      {messages.length === 0 && !bot.busy && (
+      {messages.length === 0 && bot.awaitingThreadSnapshot && (
+        <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24" aria-busy="true" data-testid="transcript-loading">
+          <div className="size-16 animate-pulse rounded-full bg-raised" />
+          <div className="h-3 w-32 animate-pulse rounded-full bg-raised" />
+          <div className="h-3 w-52 animate-pulse rounded-full bg-raised" />
+        </div>
+      )}
+      {messages.length === 0 && !bot.busy && !bot.awaitingThreadSnapshot && (
         <div className="flex flex-1 flex-col items-center justify-center gap-3 py-24 text-center">
           <BotAvatar bot={bot} state="idle" size={64} motion="none" motionKey={0} />
           <RenameTitle
@@ -705,8 +604,8 @@ const MessagesList = memo(function MessagesList({
                     <Bubble
                       bot={bot}
                       message={message}
+                      hideAttachments
                       editing={false}
-                      isLastBotText={false}
                       onStartEdit={noop}
                       onCancelEdit={noop}
                       onSubmitEdit={noop}
@@ -753,7 +652,7 @@ const MessagesList = memo(function MessagesList({
               // draw must fall back to its text on every open, not take the
               // whole page down every time this chat is selected.
               const card = m.card?.requestId && m.card.questionRequest ? (
-                <QuestionCard threadId={bot.threadId} bot={bot} message={m} />
+                <QuestionCard threadId={bot.threadId} message={m} />
               ) : m.card?.requestId && m.card.tool ? (
                 <ApprovalCard bot={bot} message={m} />
               ) : shouldHideOnboardingCard(m, transcript) ? null : (
@@ -823,11 +722,10 @@ const MessagesList = memo(function MessagesList({
                   emerging={m.id === emergingId}
                   eagerAttachments={m.id === newestMessageId || m.id === newestUserMessageId}
                   editing={editingId === m.id}
-                  isLastBotText={m.id === lastBotTextId}
+                  extraAttachments={m.turnTerminal && m.turnId ? turnAttachments.get(m.turnId) : undefined}
                   onStartEdit={() => onStartEdit(m.id)}
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
-                  onRegenerate={onRegenerate}
                   replyTarget={m.replyToId ? bot.messages.find((candidate) => candidate.id === m.replyToId) : undefined}
                   onReply={() => onReply(m)}
                 />
@@ -845,54 +743,6 @@ const MessagesList = memo(function MessagesList({
     </>
   );
 });
-
-/** The one pinned message, above the transcript: sender, one line, click to
- * jump, X to unpin. Resolves the pin id against the full message list; a
- * pin that no longer resolves renders nothing (edited away or deleted). */
-function PinnedBanner({
-  bot,
-  pinnedId,
-  messages,
-  onJump,
-  onUnpin,
-}: {
-  bot: Bot;
-  pinnedId?: string;
-  messages: Message[];
-  onJump: (messageId: string) => void;
-  onUnpin?: () => void;
-}) {
-  const pinned = messages.find((m) => m.id === pinnedId);
-  if (!pinned || pinned.kind !== "text") return null;
-  const pinnedPeer = peerLine(pinned);
-  const sender =
-    pinned.role === "user" ? (pinnedPeer?.name ?? t("chat.you")) : (pinned.from?.name ?? bot.name);
-  const text = (pinnedPeer?.body ?? pinned.text ?? "").replace(/\s+/g, " ").trim();
-  if (!text) return null;
-  return (
-    <div className="w-full px-5">
-      <div className="mb-2 flex items-center gap-2 rounded-lg border border-accent/25 bg-accent/[0.07] px-3 py-1.5">
-        <Pin size={12} className="shrink-0 text-accent" />
-        <button
-          onClick={() => onJump(pinned.id)}
-          className="flex min-w-0 flex-1 items-baseline gap-2 text-left"
-          title={t("chat.pinnedJump")}
-        >
-          <span className="shrink-0 text-[11.5px] font-medium text-accent">{sender}</span>
-          <span className="truncate text-[12.5px] text-ink-secondary">{text}</span>
-        </button>
-        {onUnpin && <button
-          onClick={onUnpin}
-          aria-label={t("chat.unpinMessage")}
-          title={t("chat.unpin")}
-          className="shrink-0 rounded p-0.5 text-ink-secondary hover:bg-raised hover:text-ink"
-        >
-          <X size={13} />
-        </button>}
-      </div>
-    </div>
-  );
-}
 
 export function ChatView({ bot: profile }: {
   bot: Bot;
@@ -915,7 +765,6 @@ export function ChatView({ bot: profile }: {
   const streaming = stream.streaming[bot.threadId];
   const reasoning = stream.reasoning[bot.threadId];
   const provisioning = state.provisioning[bot.id];
-  const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     bot.threadId,
     `bot:${bot.id}:${bot.threadId}`,
@@ -969,11 +818,6 @@ export function ChatView({ bot: profile }: {
     [messages, transcriptWindow.start, transcriptWindow.end],
   );
 
-  const lastBotTextId = useMemo(
-    () => [...messages].reverse().find((m) => m.role === "bot" && m.kind === "text")?.id,
-    [messages],
-  );
-
   // one message at a time may be in edit mode
   const [editingId, setEditingId] = useState<string | null>(null);
   useEffect(() => setEditingId(null), [bot.id, bot.threadId]);
@@ -1008,8 +852,18 @@ export function ChatView({ bot: profile }: {
       showWorkingDots(bot.busy, lastMessage),
   );
   const wasWaiting = useRef(false);
+  // Did this turn show live tokens? If so the settled bubble is already on
+  // screen and must not replay the "grow up from the mascot" entrance.
+  const streamedRef = useRef(false);
+  const [streamedSettle, setStreamedSettle] = useState(false);
   const [popping, setPopping] = useState<string | null>(null);
   const poppingTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useLayoutEffect(() => {
+    if (streaming?.trim() || reasoning?.trim()) streamedRef.current = true;
+  }, [streaming, reasoning]);
+  useEffect(() => {
+    if (!bot.busy) streamedRef.current = false;
+  }, [bot.busy]);
   useEffect(() => () => {
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
   }, []);
@@ -1017,8 +871,10 @@ export function ChatView({ bot: profile }: {
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
     poppingTimer.current = null;
     wasWaiting.current = false;
+    streamedRef.current = false;
+    setStreamedSettle(false);
     setPopping(null);
-  }, [bot.id]);
+  }, [bot.id, bot.threadId]);
   useEffect(() => {
     if (waiting) wasWaiting.current = true;
   }, [waiting]);
@@ -1026,6 +882,9 @@ export function ChatView({ bot: profile }: {
     if (lastMessage?.role !== "bot" || lastMessage.kind !== "text" || !wasWaiting.current) return;
     wasWaiting.current = false;
     const messageId = lastMessage.id;
+    const streamed = streamedRef.current;
+    streamedRef.current = false;
+    setStreamedSettle(streamed);
     if (poppingTimer.current) clearTimeout(poppingTimer.current);
     setPopping(messageId);
     poppingTimer.current = setTimeout(() => {
@@ -1074,7 +933,7 @@ export function ChatView({ bot: profile }: {
   }, []);
   useBottomFollowResize(scrollRef, transcriptRef, followRef, transcriptKey);
 
-  useEffect(() => setBottomFollow(true), [bot.id, setBottomFollow]);
+  useEffect(() => setBottomFollow(true), [transcriptKey, setBottomFollow]);
 
   // A search result may be hundreds of rows before the mounted tail. Open a
   // bounded window around it first; useFocusMessage then scrolls and flashes
@@ -1102,7 +961,7 @@ export function ChatView({ bot: profile }: {
     if (!el || !followRef.current) return;
     el.scrollTo({ top: el.scrollHeight });
     previousScrollTop.current = el.scrollTop;
-  }, [bot.id, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
+  }, [bot.id, transcriptKey, messages.length, streaming, reasoning, bot.busy, composerDock.pad]);
 
   // Expanding prepends rows: capture the height first, then after the commit
   // shift scrollTop by the growth so the message under the cursor stays put
@@ -1192,12 +1051,6 @@ export function ChatView({ bot: profile }: {
   const routineExecution = state.routineRuns.find((run) => run.target === "bot" && run.botId === bot.id && run.threadId === bot.threadId);
   const resultsThreadId = routineExecution?.resultsThreadId ?? routineExecution?.sourceThreadId;
   const canOpenResults = resultsThreadId && [...state.bots, ...state.groups].some((owner) => owner.threadId === resultsThreadId || owner.tasks?.some((task) => task.threadId === resultsThreadId));
-  // The inverse of the new-thread guard below: a thread known to be blank
-  // has nothing to start anew from and nothing to export, so both header
-  // buttons hide. An unloaded thread counts as non-empty — the buttons must
-  // still work while the snapshot is on its way.
-  const threadIsEmpty = !bot.awaitingThreadSnapshot && messages.length === 0 && !bot.hasMore;
-
   return (
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       {/* Header */}
@@ -1208,7 +1061,7 @@ export function ChatView({ bot: profile }: {
           // when the column is narrow (side panel open, small window). A
           // container query never matches the container itself, so the row
           // that has to wrap is the child below, not this element.
-          "@container/chathead px-5 py-3",
+          "@container/chathead px-5 py-2",
           // Room for the drawer button, which overlays this corner below md.
           "pl-11 md:pl-5",
         )}
@@ -1218,20 +1071,7 @@ export function ChatView({ bot: profile }: {
             rename pencil landed under the export button. Below 30rem the
             header wraps: name line on top, chips underneath on the right. */}
         <div data-chathead-row className="flex items-center justify-between @max-[30rem]/chathead:flex-wrap @max-[30rem]/chathead:gap-y-1">
-        <div data-chathead-identity className="flex min-w-0 items-center gap-2.5 rounded-lg px-1.5 py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
-          <span className="flex size-10 shrink-0 items-center justify-center rounded-lg">
-            <BotAvatar
-              bot={bot}
-              state={stateForBot({ ...bot, messages })}
-              size={28}
-              motion={mascotMotion?.kind ?? "none"}
-              motionKey={mascotMotion?.nonce ?? 0}
-            />
-          </span>
-          <span className="truncate text-[15px] font-semibold text-ink">
-            {bot.name}
-          </span>
-          <span aria-hidden="true" className="shrink-0 text-[15px] text-ink-tertiary">/</span>
+        <div data-chathead-identity className="flex min-w-0 flex-1 items-center gap-2.5 rounded-lg py-1 @max-[30rem]/chathead:basis-full" style={headerNoDragStyle}>
           <ThreadSwitcher
             currentThreadId={bot.threadId}
             currentTitle={bot.tasks?.find((task) => task.threadId === bot.threadId)?.title ?? bot.name}
@@ -1266,37 +1106,6 @@ export function ChatView({ bot: profile }: {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
-          {!remoteClient && !threadIsEmpty && (
-            <button
-              type="button"
-              onClick={() => dispatch({ type: "newTask", botId: bot.id })}
-              aria-label={t("thread.new")}
-              title={t("thread.new")}
-              className="rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink"
-            >
-              <Plus size={18} />
-            </button>
-          )}
-          {!threadIsEmpty && (
-          <ExportTranscriptMenu
-            title={bot.name}
-            messages={messages}
-            botName={bot.name}
-          />
-          )}
-          {(bot.busy || bot.waitingForTeammates) && (
-            <button
-              onClick={() => dispatch({ type: "interrupt", botId: bot.id, threadId: bot.threadId })}
-              className={cn(
-                "flex items-center gap-1.5 rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink",
-                COMPACT_BUBBLE,
-              )}
-              title={t("chat.stopTurn")}
-            >
-              <Square size={12} className="fill-current" />
-              <span className="@max-4xl/chathead:hidden">{t("chat.stop")}</span>
-            </button>
-          )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
         </div>
@@ -1306,7 +1115,7 @@ export function ChatView({ bot: profile }: {
       {routineExecution && <div className="mx-5 mb-2 flex flex-wrap items-center gap-2 rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[11.5px] text-ink-secondary">
         <span className="min-w-0 flex-1 truncate">{t("routines.executionDetails", { name: routineExecution.routineName })}</span>
         {canOpenResults && resultsThreadId && <button type="button" onClick={() => openNotificationTarget(dispatch, { botId: bot.id, threadId: resultsThreadId }, state)} className="rounded px-2 py-1 text-accent hover:bg-raised">{t("routines.results.back")}</button>}
-        <button type="button" onClick={() => dispatch({ type: "showRoutines", section: "logs", routineId: routineExecution.routineId, botId: bot.id })} className="rounded px-2 py-1 hover:bg-raised hover:text-ink">{t("routines.logs")}</button>
+        <button type="button" onClick={() => dispatch({ type: "showRoutines", section: "logs", routineId: routineExecution.routineId, botId: bot.id })} className="rounded px-2 py-1 hover:text-ink">{t("routines.logs")}</button>
       </div>}
 
       {/* Error banner */}
@@ -1324,20 +1133,6 @@ export function ChatView({ bot: profile }: {
           </div>
         </div>
       )}
-
-      {/* Pinned message banner */}
-      <PinnedBanner
-        bot={bot}
-        pinnedId={bot.pinnedMessageId}
-        messages={messages}
-        onJump={(messageId) =>
-          dispatch({ type: "focusMessage", threadId: bot.threadId, messageId })
-        }
-        onUnpin={remoteClient ? undefined : () =>
-          dispatch({ type: "updateTask", botId: bot.id, threadId: bot.threadId, patch: { pinnedMessageId: "" } })
-        }
-      />
-
 
       {/* Messages + composer share one pane so bubbles scroll into the pill
           instead of dying on a rectangular clip above a black dock. */}
@@ -1382,7 +1177,7 @@ export function ChatView({ bot: profile }: {
       >
         <div
           ref={transcriptRef}
-          className="flex w-full flex-col gap-3"
+          className="flex min-h-full w-full flex-col gap-3"
           style={{ paddingBottom: composerDock.pad }}
           role="log"
           // off: a polite log re-reads every tick and chip while the bot
@@ -1394,7 +1189,7 @@ export function ChatView({ bot: profile }: {
             <div className="flex justify-center pt-2">
               <button
                 onClick={showEarlier}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
               >
                 {t("chat.showEarlier", { count: hiddenCount })}
               </button>
@@ -1404,7 +1199,7 @@ export function ChatView({ bot: profile }: {
               <button
                 onClick={loadOlder}
                 disabled={olderPending}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink disabled:opacity-60"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink disabled:opacity-60"
               >
                 {olderPending ? t("chat.loadingEarlier") : t("chat.loadEarlier")}
               </button>
@@ -1416,8 +1211,7 @@ export function ChatView({ bot: profile }: {
             messages={windowedMessages}
             transcript={messages}
             editingId={editingId}
-            lastBotTextId={lastBotTextId}
-            emergingId={popping}
+            emergingId={streamedSettle ? null : popping}
             canRetryLast={!bot.busy && Boolean(lastUserMessage)}
             engine={state.instances.find((i) => i.instanceId === bot.modelSelection.instanceId)}
             onStartEdit={startEdit}
@@ -1430,7 +1224,7 @@ export function ChatView({ bot: profile }: {
             <div className="flex justify-center">
               <button
                 onClick={showLater}
-                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:bg-raised hover:text-ink"
+                className="rounded-full border border-hairline/40 bg-panel px-3 py-1 text-[12.5px] text-ink-secondary hover:text-ink"
               >
                 {t("chat.showLater", { count: laterCount })}
               </button>
@@ -1444,6 +1238,7 @@ export function ChatView({ bot: profile }: {
               </div>
             </div>
           )}
+          <StreamingBubble threadId={bot.threadId} text={streaming} reasoning={reasoning} />
           <TurnPresence
             avatar={
               // BotAvatar, not a bare MausAvatar: an uploaded profile image
@@ -1459,7 +1254,7 @@ export function ChatView({ bot: profile }: {
             }
             visible={presenceVisible}
             label={activityLabel}
-            answering={popping !== null}
+            answering={Boolean(streaming?.trim()) || popping !== null}
             since={busySince}
           />
         </div>
@@ -1579,6 +1374,9 @@ function UsageChip({ bot }: { bot: Bot }) {
     // a bug (issue #527); past 80% of the window the fix is a new thread
     share?.tone === "danger" ? t("chat.usage.contextNudge") : null,
   ].filter(Boolean);
+  const percent = share?.percent;
+  const fill = percent === undefined ? 0 : Math.min(1, Math.max(0, percent / 100));
+  const ring = 2 * Math.PI * 9;
   return (
     <div className="relative" ref={menuRef}>
       <button
@@ -1586,11 +1384,33 @@ function UsageChip({ bot }: { bot: Bot }) {
         onClick={() => setOpen((prev) => !prev)}
         aria-haspopup="dialog"
         aria-expanded={open}
-        className="whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums text-ink-secondary hover:bg-raised hover:text-ink @max-4xl/chathead:px-2"
+        aria-label={lines.join("\n")}
+        className={cn(
+          "text-ink-secondary hover:text-ink",
+          percent === undefined
+            ? "whitespace-nowrap rounded-full border border-hairline/40 bg-raised/60 px-2.5 py-1 text-[12px] tabular-nums @max-4xl/chathead:px-2"
+            : "flex size-8 items-center justify-center rounded-md",
+        )}
         title={lines.join("\n")}
         data-testid="usage-chip"
       >
-        <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
+        {percent === undefined ? (
+          <span className={cn(share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")} data-testid="usage-context">{ctx}</span>
+        ) : (
+          <>
+            <span className={cn("flex", share?.tone === "danger" ? "text-danger" : share?.tone === "warning" ? "text-warning" : "")}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true" className="shrink-0">
+              <circle cx="12" cy="12" r="9" stroke="currentColor" strokeOpacity="0.25" strokeWidth="3" />
+              <circle
+                cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" strokeLinecap="round"
+                strokeDasharray={ring} strokeDashoffset={ring * (1 - fill)} transform="rotate(-90 12 12)"
+                className="transition-[stroke-dashoffset] duration-300"
+              />
+            </svg>
+            </span>
+            <span className="sr-only" data-testid="usage-context">{ctx}</span>
+          </>
+        )}
       </button>
       {motion.shown && (
         <div

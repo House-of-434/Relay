@@ -425,6 +425,46 @@ body {
   background: transparent;
 }
 
+/* Thin, scroll-only scrollbars for short dropdowns (thread switcher): the
+   lane appears while the list is being scrolled and hides ~800ms after it
+   stops (see the `is-scrolling` toggle on the menu). Hover alone never
+   reveals it, so an idle menu reads as borderless.
+
+   The lane is 5px wide and the menu gives up its right padding to it, so
+   the list keeps one even gutter instead of padding plus lane.
+   `scrollbar-width` would make Chrome ignore the webkit rules below and use
+   its own (wider) thin lane, so the standard properties are scoped to the
+   browsers that need them.
+
+   The gutter is reserved even when the list is short: without it the lane
+   appears only once the list overflows, and the selected row jumps from the
+   card's edge to its padding between one entry and many. */
+.scroll-thin-autohide {
+  scrollbar-gutter: stable;
+}
+.scroll-thin-autohide::-webkit-scrollbar {
+  width: 5px;
+}
+/* a permanent lane must not draw the arrow buttons that come with it */
+.scroll-thin-autohide::-webkit-scrollbar-button {
+  display: none;
+}
+.scroll-thin-autohide::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+.scroll-thin-autohide.is-scrolling::-webkit-scrollbar-thumb {
+  background: var(--color-scrollbar);
+}
+@supports not selector(::-webkit-scrollbar) {
+  .scroll-thin-autohide {
+    scrollbar-width: thin;
+    scrollbar-color: transparent transparent;
+  }
+  .scroll-thin-autohide.is-scrolling {
+    scrollbar-color: var(--color-scrollbar) transparent;
+  }
+}
+
 @keyframes panel-in {
   from { transform: translateX(28px); opacity: 0; }
   to { transform: translateX(0); opacity: 1; }

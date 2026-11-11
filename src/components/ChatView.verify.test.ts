@@ -41,7 +41,6 @@ vi.mock("./DesktopCapabilities", async (importOriginal) => ({
 }));
 // The thread controls read live model lists; they are not what this file tests.
 vi.mock("./ModelPicker", () => ({ ModelPicker: () => createElement("span", { "data-test-model-control": true }) }));
-vi.mock("./ApprovalModeSelector", () => ({ ApprovalModeSelector: () => createElement("span", { "data-test-approval-control": true }) }));
 
 const { ChatView } = await import("./ChatView");
 afterAll(() => vi.unstubAllGlobals());

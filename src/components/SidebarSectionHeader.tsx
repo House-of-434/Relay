@@ -64,12 +64,12 @@ export function SidebarSectionHeader({
                 ? t("sidebar.section.expand", { name })
                 : t("sidebar.section.collapse", { name })
           }
-          className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-raised/50"
+          className="group flex min-w-0 flex-1 items-center gap-0.5 rounded-md px-1 py-0.5 text-left"
         >
           <span className="truncate text-[12px] font-semibold text-ink-secondary">
             {name}
           </span>
-          <Chevron size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />
+          <Chevron size={13} className="shrink-0 text-ink-secondary transition-colors group-hover:text-ink" aria-hidden="true" />
           {attention && attention.waiting > 0 && (
             <span
               aria-hidden="true"
@@ -104,31 +104,35 @@ export function SidebarSectionHeader({
           {attentionLabel && <span className="sr-only">{attentionLabel}</span>}
         </div>
       )}
-      {onDelete && (
-        <button
-          type="button"
-          onClick={onDelete}
-          aria-label={t("sidebar.section.deleteAria", { name })}
-          title={t("sidebar.section.deleteAria", { name })}
-          className="flex size-6 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-danger/10 hover:text-danger"
-        >
-          <Trash2 size={13} aria-hidden="true" />
-        </button>
-      )}
-      {reorderable && (
-        <span
-          aria-hidden="true"
-          draggable
-          title={t("sidebar.section.dragToReorder")}
-          onDragStart={onDragStart}
-          onDragEnd={onDragEnd}
-          className={cn(
-            "flex size-6 shrink-0 cursor-grab items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink",
-            dragging && "opacity-40",
+      {(onDelete || reorderable) && (
+        <div className="ml-auto flex shrink-0 items-center gap-0.5" aria-hidden={reorderable && !onDelete ? true : undefined}>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={onDelete}
+              aria-label={t("sidebar.section.deleteAria", { name })}
+              title={t("sidebar.section.deleteAria", { name })}
+              className="flex size-5 shrink-0 items-center justify-center rounded text-ink-secondary hover:bg-danger/10 hover:text-danger"
+            >
+              <Trash2 size={12} aria-hidden="true" />
+            </button>
           )}
-        >
-          <GripVertical size={13} />
-        </span>
+          {reorderable && (
+            <span
+              aria-hidden="true"
+              draggable
+              title={t("sidebar.section.dragToReorder")}
+              onDragStart={onDragStart}
+              onDragEnd={onDragEnd}
+              className={cn(
+                "flex size-5 shrink-0 cursor-grab items-center justify-center rounded text-ink-secondary hover:bg-raised hover:text-ink",
+                dragging && "opacity-40",
+              )}
+            >
+              <GripVertical size={12} />
+            </span>
+          )}
+        </div>
       )}
     </div>
   );

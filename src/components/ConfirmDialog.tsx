@@ -1,6 +1,5 @@
 import { useEffect, useRef, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { AlertTriangle } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 
@@ -112,14 +111,16 @@ export function ConfirmDialogCard({
       aria-labelledby="confirm-dialog-title"
       aria-describedby="confirm-dialog-body"
       className={cn(
-        "w-full max-w-[420px] rounded-2xl border bg-panel p-5 shadow-2xl",
-        danger ? "border-danger/30" : "border-hairline/50",
+        "w-full max-w-[420px] rounded-2xl border border-hairline/50 bg-panel p-4 shadow-2xl",
+
       )}
     >
       <div className="flex items-start gap-3">
+        {icon && (
         <span className={cn("mt-0.5 shrink-0", danger ? "text-danger" : "text-warning")}>
-          {icon ?? <AlertTriangle size={18} />}
+          {icon}
         </span>
+        )}
         <div className="min-w-0">
           <h2 id="confirm-dialog-title" className="text-[15px] font-semibold text-ink">
             {title}
@@ -129,13 +130,13 @@ export function ConfirmDialogCard({
           </p>
         </div>
       </div>
-      <div className="mt-5 flex justify-end gap-2">
+      <div className="mt-4 flex justify-end gap-2">
         <button
           ref={cancelRef}
           type="button"
           onClick={onCancel}
           disabled={pending}
-          className="rounded-xl px-4 py-2 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
         >
           Cancel
         </button>
@@ -144,8 +145,8 @@ export function ConfirmDialogCard({
           onClick={onConfirm}
           disabled={pending}
           className={cn(
-            "rounded-xl px-4 py-2 text-[13px] font-medium",
-            danger ? "bg-danger text-white hover:brightness-110" : "bg-accent text-white hover:brightness-110",
+            "rounded-lg px-3 py-1.5 text-[13px] font-medium",
+            danger ? "bg-danger/15 text-danger hover:bg-danger/25" : "bg-accent text-white hover:brightness-110",
           )}
         >
           {confirmLabel}

@@ -250,18 +250,41 @@ function buildPolygon(w: number, h: number, sides: number, round: number): strin
   return p.close()
 }
 
-/** Blob Studio's `star`. It emits only lines, so every edge is a `lineToCubic`. */
-function buildStar(w: number, h: number, points: number, inner: number): string {
+/**
+ * A star with rounded tips and valleys. Straight edges made the points read as
+ * sharp spikes; every vertex is now cut back along both neighbouring edges and
+ * joined with a quadratic through the vertex, so the whole outline flows.
+ * `round` is the fraction of the shorter adjacent edge consumed by each corner.
+ */
+function buildStar(w: number, h: number, points: number, inner: number, round = 0.45): string {
   const n = Math.max(3, Math.round(points))
-  const p = new Path()
+  const verts: [number, number][] = []
   for (let i = 0; i < n * 2; i++) {
     const a = (i / (n * 2)) * Math.PI * 2 - Math.PI / 2
     const k = i % 2 === 0 ? 1 : inner
-    const x = 100 + Math.cos(a) * (w / 2) * k
-    const y = 100 + Math.sin(a) * (h / 2) * k
-    if (i === 0) p.moveTo(x, y)
-    else p.lineTo(x, y)
+    verts.push([100 + Math.cos(a) * (w / 2) * k, 100 + Math.sin(a) * (h / 2) * k])
   }
+  const N = verts.length
+  const dist = (a: [number, number], b: [number, number]) => Math.hypot(b[0] - a[0], b[1] - a[1])
+  const corners = verts.map((v, i) => {
+    const prev = verts[(i - 1 + N) % N]
+    const next = verts[(i + 1) % N]
+    const dp = dist(v, prev)
+    const dn = dist(v, next)
+    const r = Math.min(dp, dn) * round
+    return {
+      v,
+      a: [v[0] + ((prev[0] - v[0]) / dp) * r, v[1] + ((prev[1] - v[1]) / dp) * r] as [number, number],
+      b: [v[0] + ((next[0] - v[0]) / dn) * r, v[1] + ((next[1] - v[1]) / dn) * r] as [number, number],
+    }
+  })
+  const p = new Path().moveTo(corners[0].b[0], corners[0].b[1])
+  for (let i = 1; i < N; i++) {
+    p.lineTo(corners[i].a[0], corners[i].a[1])
+    p.quadTo(corners[i].v[0], corners[i].v[1], corners[i].b[0], corners[i].b[1])
+  }
+  p.lineTo(corners[0].a[0], corners[0].a[1])
+  p.quadTo(corners[0].v[0], corners[0].v[1], corners[0].b[0], corners[0].b[1])
   return p.close()
 }
 

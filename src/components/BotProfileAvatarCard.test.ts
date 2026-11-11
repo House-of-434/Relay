@@ -1,3 +1,4 @@
+import { mascotBodyFor } from "@/lib/mascot";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -41,17 +42,27 @@ describe("BotProfileAvatarCard body picker", () => {
   it("renders one option per body catalog entry, labeled by name", () => {
     const markup = renderCard(makeBot());
 
-    expect(markup).toContain(">Body<");
+    expect(markup).toContain(">Mascot body<");
     for (const id of MASCOT_BODY_IDS) {
       expect(markup).toContain(`aria-label="Use the ${MASCOT_BODIES[id].name} body"`);
     }
   });
 
-  it("marks the current body pressed and the rest unpressed, defaulting to cursor", () => {
+  it("offers the body texture choice, defaulting to pixel", () => {
     const markup = renderCard(makeBot());
+    expect(markup).toContain(">Background<");
+    expect(markup).toContain(">pixel<");
+    expect(markup).toContain(">none<");
+  });
 
-    expect(markup).toContain(`aria-pressed="true" aria-label="Use the ${MASCOT_BODIES.cursor.name} body"`);
-    expect(markup).toContain(`aria-pressed="false" aria-label="Use the ${MASCOT_BODIES.star.name} body"`);
+  it("marks the effective body pressed — the seeded one when the bot chose none", () => {
+    const bot = makeBot();
+    const markup = renderCard(bot);
+    const effective = mascotBodyFor(bot);
+
+    expect(markup).toContain(`aria-pressed="true" aria-label="Use the ${MASCOT_BODIES[effective].name} body"`);
+    const other = MASCOT_BODY_IDS.find((id) => id !== effective)!;
+    expect(markup).toContain(`aria-pressed="false" aria-label="Use the ${MASCOT_BODIES[other].name} body"`);
   });
 
   it("reflects an explicitly chosen body", () => {
