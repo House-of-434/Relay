@@ -67,6 +67,9 @@ export interface SaveBotAttachmentInput {
 export interface SavedBotAttachment {
   attachment: BotAttachment;
   bytes: number;
+  /** The canonical source path that was read. Internal only: the Files
+   * registry uses it to mint an id when the source is a managed thread file. */
+  sourcePath: string;
 }
 
 export async function saveBotAttachment(input: SaveBotAttachmentInput): Promise<SavedBotAttachment> {
@@ -82,7 +85,7 @@ export async function saveBotAttachment(input: SaveBotAttachmentInput): Promise<
     if (extensionForMime(mime)) {
       if (file.bytes > IMAGE_MAX_BYTES) throw statusError(413, `image exceeds ${IMAGE_MAX_BYTES} bytes`);
       const saved = saveImage(await file.handle.readFile(), mime);
-      return { attachment: { kind: "image", path: saved.path, mime: saved.mime }, bytes: saved.bytes };
+      return { attachment: { kind: "image", path: saved.path, mime: saved.mime }, bytes: saved.bytes, sourcePath: file.path };
     }
     if (!extensionForFileMime(mime)) {
       throw statusError(415, `${file.name} is not a supported attachment type. Supported: ${ATTACH_SUPPORTED_TYPES}.`);
@@ -91,7 +94,7 @@ export async function saveBotAttachment(input: SaveBotAttachmentInput): Promise<
     const saved = await saveFile(file.handle.createReadStream({ start: 0, autoClose: false }), name || basename(file.name), mime, {
       expectedBytes: file.bytes,
     });
-    return { attachment: { kind: "file", path: saved.path, mime: saved.mime, name: saved.name }, bytes: saved.bytes };
+    return { attachment: { kind: "file", path: saved.path, mime: saved.mime, name: saved.name }, bytes: saved.bytes, sourcePath: file.path };
   } finally {
     await file.handle.close().catch(() => undefined);
   }

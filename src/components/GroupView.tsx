@@ -924,6 +924,10 @@ export function GroupView({ group }: {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
+  // Anchor the jump pill to the input pill, not the whole dock: a selected
+  // reply stacked above the composer must not push it up over that card.
+  const composerPillRef = useRef<HTMLDivElement>(null);
+  const composerPill = useComposerDockPad(composerPillRef);
   const [follow, setFollow] = useState(true);
   const followRef = useRef(true);
   const previousScrollTop = useRef(0);
@@ -1456,10 +1460,11 @@ export function GroupView({ group }: {
             });
           }}
           aria-label={t("chat.jumpToLatestAria")}
-          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-          style={{ bottom: composerDock.height }}
+          title={t("chat.jumpToLatest")}
+          className="animate-pop-in absolute left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-hairline/40 bg-raised text-ink shadow-lg hover:bg-raised-hover"
+          style={{ bottom: composerPill.pad }}
         >
-          <ArrowDown size={13} /> {t("chat.jumpToLatest")}
+          <ArrowDown size={15} />
         </button>
       )}
 
@@ -1473,6 +1478,7 @@ export function GroupView({ group }: {
         onClearReply={clearReply}
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
+        composerRef={composerPillRef}
       />
       </div>
       </div>

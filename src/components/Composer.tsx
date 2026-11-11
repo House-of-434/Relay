@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type Ref, type SetStateAction } from "react";
 import { ArrowUp, BookOpen, Clock, Paperclip, Square, Target, Users, X } from "lucide-react";
 import { useStore, visibleMessages, currentTaskBot, type Bot, type Group, type Message } from "@/state/store";
 import { cn } from "@/lib/cn";
@@ -94,6 +94,7 @@ export function Composer({
   onConsumeReply,
   onRestoreReply,
   locked: setupLocked = false,
+  composerRef,
 }: {
   bot?: Bot;
   group?: Group;
@@ -105,6 +106,10 @@ export function Composer({
   onRestoreReply?: (message: Message, threadId: string) => void;
   /** New rooms keep the composer inert until their setup is saved or skipped. */
   locked?: boolean;
+  /** The input pill itself, so the view can anchor overlays to the composer
+   * rather than to everything stacked above it (a selected reply, queued
+   * chips, attachments). */
+  composerRef?: Ref<HTMLDivElement>;
 }) {
   const bot = profile ? currentTaskBot(profile) : undefined;
   const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
@@ -865,7 +870,7 @@ export function Composer({
             data-composer-backdrop
             className="pointer-events-none absolute -left-5 -right-5 -bottom-3 top-1/2 bg-app"
           />
-        <div data-tour="composer" className="relative z-[1] rounded-3xl bg-composer px-2 py-1.5 ring-1 ring-composer-ring">
+        <div ref={composerRef} data-tour="composer" className="relative z-[1] rounded-3xl bg-composer px-2 py-1.5 ring-1 ring-composer-ring">
         <div className="flex items-end gap-1">
           <input
             ref={fileInput}

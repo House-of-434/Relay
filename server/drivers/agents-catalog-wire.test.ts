@@ -102,22 +102,22 @@ const FULL = { direct: "direct+skills+shared", room: "room+own-thread+skills+sha
  * by more than 2%, and may not undercut it by more than 2% either: a smaller
  * catalog is the goal, so lock the win in by lowering the number. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "direct": 48507,
-  "direct+shared": 50252,
-  "direct+skills": 50433,
-  "direct+skills+shared": 52178,
-  "room": 46513,
-  "room+shared": 48258,
-  "room+skills": 48439,
-  "room+skills+shared": 50184,
-  "room+own-thread": 47800,
-  "room+own-thread+shared": 49545,
-  "room+own-thread+skills": 49726,
-  "room+own-thread+skills+shared": 51471,
-  "direct+skills+shared+cloud-home": 51252,
-  "room+own-thread+skills+shared+cloud-home": 50545,
-  "external": 3030,
-  "external+everything": 3030,
+  "direct": 50342,
+  "direct+shared": 52087,
+  "direct+skills": 52268,
+  "direct+skills+shared": 54013,
+  "room": 46569,
+  "room+shared": 48314,
+  "room+skills": 48495,
+  "room+skills+shared": 50240,
+  "room+own-thread": 48125,
+  "room+own-thread+shared": 49870,
+  "room+own-thread+skills": 50051,
+  "room+own-thread+skills+shared": 51796,
+  "direct+skills+shared+cloud-home": 53087,
+  "room+own-thread+skills+shared+cloud-home": 50870,
+  "external": 3287,
+  "external+everything": 3287,
 };
 
 const RPC_PREFIX = '{"jsonrpc":"2.0","id":1,"result":';

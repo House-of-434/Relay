@@ -36,6 +36,7 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ThreadChip } from "./ThreadChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
+import { SidebarIcon } from "./SidebarIcon";
 import { useMenuMotion } from "./MenuMotion";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
@@ -758,6 +759,11 @@ export function ChatView({ bot: profile }: {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
+  // The input pill alone. The jump pill hugs this, so a selected reply (or
+  // queued chips and attachments stacked above it) does not push the jump
+  // pill up over them.
+  const composerPillRef = useRef<HTMLDivElement>(null);
+  const composerPill = useComposerDockPad(composerPillRef);
   // A guest on an OMB Cloud home writes only in conversations it opened.
   const canWrite = useCanWriteIn(bot.threadId);
 
@@ -1095,7 +1101,6 @@ export function ChatView({ bot: profile }: {
               <Crown size={11} aria-hidden="true" /> <span className="@max-4xl/chathead:sr-only">{t("chat.chiefOfStaff")}</span>
             </span>
           )}
-          {bot.busy && <WorkingDots className="text-ink-secondary" />}
           {!bot.busy && bot.waitingForTeammates && <span className="truncate text-[12px] text-ink-secondary" role="status">Teammates working</span>}
         </div>
         <div
@@ -1107,6 +1112,21 @@ export function ChatView({ bot: profile }: {
           style={controlsShiftStyle}
         >
           <UsageChip bot={bot} />
+          {!remoteClient && (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "toggleFiles", open: !state.filesOpen })}
+              aria-label={t("files.open")}
+              title={t("files.open")}
+              aria-pressed={state.filesOpen}
+              className={cn(
+                "rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink",
+                state.filesOpen && "bg-raised text-ink",
+              )}
+            >
+              <SidebarIcon size={18} />
+            </button>
+          )}
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
         </div>
         </div>
@@ -1267,10 +1287,11 @@ export function ChatView({ bot: profile }: {
         <button
           onClick={jumpToLatest}
           aria-label={t("chat.jumpToLatestAria")}
-          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-          style={{ bottom: composerDock.height }}
+          title={t("chat.jumpToLatest")}
+          className="animate-pop-in absolute left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-hairline/40 bg-raised text-ink shadow-lg hover:bg-raised-hover"
+          style={{ bottom: composerPill.pad }}
         >
-          <ArrowDown size={13} /> {t("chat.jumpToLatest")}
+          <ArrowDown size={15} />
         </button>
       )}
 
@@ -1311,6 +1332,7 @@ export function ChatView({ bot: profile }: {
         onClearReply={clearReply}
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
+        composerRef={composerPillRef}
         onEditLast={lastUserMessage && !lastUserMessageHasAttachments && !bot.busy && !lastUserMessage.id.startsWith("optimistic-")
           ? () => setEditingId(lastUserMessage.id)
           : undefined}

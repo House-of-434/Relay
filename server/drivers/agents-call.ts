@@ -451,16 +451,44 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     if (!stdout && !stderr && !body.timedOut) lines.push("(no output)");
     return { text: lines.join("\n"), ...(exitCode !== 0 || body.timedOut ? { isError: true } : {}) };
   }
+  if (name === "list_files") {
+    const threadId = typeof args.thread_id === "string" ? args.thread_id.trim() : "";
+    const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
+    if (threadId) query.set("threadId", threadId);
+    const r = await api(`/api/internal/files?${query.toString()}`);
+    if (r.error) return { text: String(r.error), isError: true };
+    if (r.external === true) return { text: "This conversation uses a custom working folder, so Relay cannot list its files here.", isError: true };
+    if (r.unsupported === "ownerless") return { text: "This conversation has no owner, so Relay cannot assign file ids.", isError: true };
+    const files = Array.isArray(r.files) ? r.files.filter(jsonRecord) : [];
+    if (!files.length) return { text: "No files in this conversation yet." };
+    const lines = files.map((file) => `- ${String(file.name)} (${String(file.fileId)}, ${Number(file.bytes) || 0} bytes) ${String(file.relativePath)}`);
+    const truncated = r.truncated === true ? "\nThe list is truncated; open the Files panel to see more." : "";
+    return { text: `Files, newest first:\n${lines.join("\n")}${truncated}` };
+  }
+  if (name === "fetch_file") {
+    const fileId = String(args.file_id ?? "").trim();
+    if (!/^file_[a-z0-9]{6,32}$/.test(fileId)) return { text: "fetch_file needs a fileId from list_files, attach_file, or a handoff.", isError: true };
+    const r = await api(`/api/internal/files/${encodeURIComponent(fileId)}/fetch`, { method: "POST", body: "{}" });
+    if (r.error) return { text: String(r.error), isError: true };
+    return {
+      text: `Copied ${String(r.name ?? "the file")} to ${String(r.path)} for this turn. The copy is temporary and is not added to Files.`,
+    };
+  }
   if (name === "attach_file") {
+    const path = typeof args.path === "string" ? args.path.trim() : "";
+    const fileId = typeof args.fileId === "string" ? args.fileId.trim() : "";
+    if (!path === !fileId) return { text: "attach_file needs exactly one of path or fileId.", isError: true };
     const { ok, body } = await apiResponse("/api/internal/attach-file", {
       method: "POST",
-      body: JSON.stringify({ path: args.path, ...(typeof args.name === "string" ? { name: args.name } : {}) }),
+      body: JSON.stringify({ ...(path ? { path } : {}), ...(fileId ? { fileId } : {}), ...(typeof args.name === "string" ? { name: args.name } : {}) }),
     });
     if (!ok) return { text: String(body.error ?? "Could not attach that file."), isError: true };
     const name = String(body.name ?? "the file");
     const ref = typeof body.ref === "string" ? body.ref : "";
+    const returnedId = typeof body.fileId === "string" ? body.fileId : "";
     return {
       text: `Attached ${name} (${Number(body.bytes ?? 0)} bytes). It now appears in the chat with a preview: reply with just the file name and never quote its contents.`
+        + (returnedId ? ` File id: ${returnedId}.` : "")
         + (ref ? ` To email it, pass {"source":"attachment","ref":"${ref}"} in the attachments of gmail_send_email.` : ""),
     };
   }
@@ -667,6 +695,10 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       depth: DEPTH,
     };
     if (reason) body.reason = reason;
+    const fileIds = Array.isArray(args.file_ids)
+      ? args.file_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim())
+      : [];
+    if (fileIds.length) body.fileIds = fileIds;
     const r = await api(`/api/internal/delegate-bot`, { method: "POST", body: JSON.stringify(body) });
     const delivery = deliveryNote(r);
     if (r.error) return { text: `Couldn't queue the delegation: ${r.error}${delivery ? `\n\n${delivery}` : ""}`, isError: true };
@@ -774,6 +806,10 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     const body: Record<string, unknown> = { fromBotId: BOT_ID, fromThreadId: THREAD_ID, title, message, depth: DEPTH };
     if (toBotId) body.toBotId = toBotId;
     if (folder) body.folder = folder;
+    const fileIds = Array.isArray(args.file_ids)
+      ? args.file_ids.filter((id): id is string => typeof id === "string" && id.trim().length > 0).map((id) => id.trim())
+      : [];
+    if (fileIds.length) body.fileIds = fileIds;
     const r = await api("/api/internal/threads", { method: "POST", body: JSON.stringify(body) });
     // A refusal opened nothing. A "failed" state opened the thread and could
     // not start its turn — that one still counts, and still has an id.

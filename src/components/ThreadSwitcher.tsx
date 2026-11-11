@@ -172,7 +172,7 @@ export function ThreadSwitcher({
                     "group/thread flex w-full items-center rounded-lg",
                     // Hover never touches the selected row: dimming the
                     // highlight under the cursor reads as losing selection.
-                    current ? "bg-selected" : "hover:bg-raised/70",
+                    current ? "bg-selected" : "hover:bg-menu-hover",
                   )}
                 >
                   <button

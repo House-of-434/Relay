@@ -293,6 +293,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
         bot_id: { type: "string", description: "The target bot's id (from list_bots or your roster); a unique teammate name also resolves." },
         message: { type: "string", description: "What the peer should do / answer." },
         reason: { type: "string", description: "Optional one-line reason for the delegation (shown to the user as a chip)." },
+        file_ids: { type: "array", items: { type: "string", description: "A file id to hand to the peer, for example file_7f3k2m9q." }, maxItems: 10, description: "Optional: files the peer may attach or fetch by id. Each id must already belong to the same owner." },
       },
       required: ["bot_id", "message"],
     },
@@ -364,6 +365,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
         message: { type: "string", description: "The complete first message of the thread — everything the run needs, since it will not see this conversation." },
         bot_id: { type: "string", description: "Optional: the teammate's id from list_bots. Leave out to open the thread on yourself." },
         folder: { type: "string", description: "Optional: the name of one of that bot's existing folders to file the thread under. Leave out unless the person named one." },
+        file_ids: { type: "array", items: { type: "string", description: "A file id to hand to the new thread, for example file_7f3k2m9q." }, maxItems: 10, description: "Optional: files the new thread may attach or fetch by id. Each id must already belong to the same owner." },
       },
       required: ["title", "message"],
     },
@@ -383,17 +385,42 @@ const toolDefinitions = (externalRuntime: boolean) => [
     },
   },
   {
+    name: "list_files",
+    description:
+      "List the files in this conversation's Relay folder. Returns each file's id, name, size and modified time. Use a file id with attach_file to share a file in chat, or with fetch_file when you need to read or run it. This is a read: it starts nothing and changes nothing. Files in a custom working folder or a Local VM are not listed here.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        thread_id: { type: "string", description: "Optional: another of your own thread ids. Omit to list this conversation." },
+      },
+    },
+  },
+  {
+    name: "fetch_file",
+    description:
+      "Copy a file from one of your conversations into a temporary folder for this turn and return its local path. Use this when you need to read, run, or process a file another conversation or teammate produced. The copy is temporary, is deleted when the turn ends, and never appears in the Files list. Pass the fileId from list_files, attach_file, or a handoff.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        file_id: { type: "string", description: "The file id, for example file_7f3k2m9q." },
+      },
+      required: ["file_id"],
+    },
+  },
+  {
     name: "attach_file",
     description:
-      "Attach a finished file to the chat so the user can preview and download it: an image, video, audio clip, PDF, spreadsheet, slide deck or other document you made. Pass its path: a path inside your computer's /home/cua/workspace (for example /home/cua/workspace/report.pdf), or a file in your working folder. Do this instead of pasting a VM path as a link; a path inside a VM cannot be opened from chat. Supported: images (png, jpg, gif, webp), video (mp4, webm, mov), audio (mp3, m4a, aac, wav, ogg, opus, flac), pdf, Word/Excel/PowerPoint and OpenDocument files, and csv, tsv, txt, md, json, rtf. Up to 25 MB (images 10 MB). Finish writing the file first, then call this directly: it reports an error if the file is missing, so you do not need to list or open the folder to check. After attaching, name the file in your reply — never quote its contents; the card already previews them. The result includes a ref: to email that file, pass {\"source\":\"attachment\",\"ref\":<ref>} in gmail_send_email attachments.",
+      "Attach a finished file to the chat so the user can preview and download it: an image, video, audio clip, PDF, spreadsheet, slide deck or other document. Pass path for a file in this conversation, or fileId for a file another conversation or teammate produced. A path inside your computer's /home/cua/workspace is supported; a path inside a VM cannot be opened from chat. Supported: images (png, jpg, gif, webp), video (mp4, webm, mov), audio (mp3, m4a, aac, wav, ogg, opus, flac), pdf, Word/Excel/PowerPoint and OpenDocument files, and csv, tsv, txt, md, json, rtf. Up to 25 MB (images 10 MB). Finish writing the file first, then call this directly: it reports an error if the file is missing. After attaching, name the file in your reply — never quote its contents; the card already previews them. The result includes a fileId and a ref: to email that file, pass {\"source\":\"attachment\",\"ref\":<ref>} in gmail_send_email attachments.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
         path: { type: "string", description: "The file's path, for example /home/cua/workspace/report.pdf." },
+        fileId: { type: "string", description: "A file id from list_files, attach_file, or a handoff. Use instead of path for another conversation's file." },
         name: { type: "string", description: "Optional file name to show the user. Defaults to the file's own name." },
       },
-      required: ["path"],
     },
   },
   {
@@ -847,6 +874,8 @@ export const SHARED_COMPUTER_TOOL_NAMES = new Set(["list_shared_computers", "sha
 // Ordinary direct chats use this same bounded coordinator. Goal-owned turns
 // retain their independent loop and cannot start a second coordinator.
 const ROOM_ONLY_TOOLS = new Set(["list_room_targets", "coordinate_bots"]);
+// Files are a direct-thread surface in v1. A room has no per-thread folder.
+const DIRECT_FILES_TOOL_NAMES = new Set(["list_files", "fetch_file"]);
 const ROOM_REPLACED_TOOLS = new Set(["ask_bot", "delegate_bot", "check_delegation", "wait_delegation", "start_thread", "send_to_thread", "wait_thread"]);
 const EXTERNAL_TOOL_NAMES = new Set(["list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation"]);
 const WATCHER_TOOL_NAMES = new Set(["create_options_card"]);
@@ -883,7 +912,7 @@ function catalogTools(profile: CatalogProfile) {
   return profile.externalRuntime
     ? BOT_SCOPED_TOOLS.filter(tool => EXTERNAL_TOOL_NAMES.has(tool.name))
     : profile.coordinating
-    ? SHAREABLE_TOOLS.filter(tool => !ROOM_REPLACED_TOOLS.has(tool.name) || (tool.name === "start_thread" && profile.ownThreadCreation))
+    ? SHAREABLE_TOOLS.filter(tool => (!ROOM_REPLACED_TOOLS.has(tool.name) || (tool.name === "start_thread" && profile.ownThreadCreation)) && !DIRECT_FILES_TOOL_NAMES.has(tool.name))
       .map(tool => tool.name === "start_thread" ? {
         ...tool,
         description: "Open a separate job on yourself with its own history and run, without switching the person's selected conversation. Use only when the user requests independent jobs (for example one review per pull request). Give a short specific title and complete instructions; you can open at most five per turn. This is not a teammate handoff: use coordinate_bots for teammates and their automatic replies. Self-opened jobs cannot recursively open more jobs. If refused, do not retry; explain what remains.",

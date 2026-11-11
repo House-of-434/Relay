@@ -95,6 +95,15 @@ function open(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS scribe_join_intents_active ON scribe_join_intents(url_key, status);
     CREATE INDEX IF NOT EXISTS scribe_join_intents_status ON scribe_join_intents(status, created_at);
+    CREATE TABLE IF NOT EXISTS files (
+      id TEXT PRIMARY KEY,
+      owner_user_id TEXT NOT NULL,
+      bot_id TEXT,
+      thread_id TEXT,
+      path TEXT NOT NULL UNIQUE
+    );
+    CREATE INDEX IF NOT EXISTS files_owner ON files(owner_user_id);
+    CREATE INDEX IF NOT EXISTS files_thread ON files(owner_user_id, bot_id, thread_id);
   `);
   // Databases created before the optional passcode column existed need it added;
   // CREATE TABLE IF NOT EXISTS is a no-op on them.
@@ -1041,6 +1050,58 @@ export function latestSaidByBot(threadIds: readonly string[], botId: string, sin
     at: row.at,
     head: row.head.replace(/\s+/g, " ").trim(),
   }));
+}
+
+
+export interface FileRecord {
+  id: string;
+  ownerUserId: string;
+  botId?: string;
+  threadId?: string;
+  path: string;
+}
+
+function fileRecord(row: { id: string; owner_user_id: string; bot_id: string | null; thread_id: string | null; path: string }): FileRecord {
+  return {
+    id: row.id,
+    ownerUserId: row.owner_user_id,
+    ...(row.bot_id ? { botId: row.bot_id } : {}),
+    ...(row.thread_id ? { threadId: row.thread_id } : {}),
+    path: row.path,
+  };
+}
+
+const FILE_COLUMNS = "id, owner_user_id, bot_id, thread_id, path";
+
+export function fileRecordById(id: string): FileRecord | null {
+  const row = db().prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE id = ?`).get(id) as
+    | { id: string; owner_user_id: string; bot_id: string | null; thread_id: string | null; path: string }
+    | undefined;
+  return row ? fileRecord(row) : null;
+}
+
+export function fileRecordByPath(path: string): FileRecord | null {
+  const row = db().prepare(`SELECT ${FILE_COLUMNS} FROM files WHERE path = ?`).get(path) as
+    | { id: string; owner_user_id: string; bot_id: string | null; thread_id: string | null; path: string }
+    | undefined;
+  return row ? fileRecord(row) : null;
+}
+
+/** Insert a file row, or return the row already registered for this path.
+ * The caller retries a fresh id if it ever loses the unique-id race. */
+export function insertFileRecord(record: FileRecord): FileRecord | null {
+  const result = db()
+    .prepare("INSERT OR IGNORE INTO files (id, owner_user_id, bot_id, thread_id, path) VALUES (?, ?, ?, ?, ?)")
+    .run(record.id, record.ownerUserId, record.botId ?? null, record.threadId ?? null, record.path);
+  return result.changes === 1 ? record : fileRecordByPath(record.path);
+}
+
+export function deleteFileRecord(id: string): void {
+  db().prepare("DELETE FROM files WHERE id = ?").run(id);
+}
+
+export function deleteFileRecordByPath(path: string): void {
+  db().prepare("DELETE FROM files WHERE path = ?").run(path);
 }
 
 export interface MemoryFileStat {

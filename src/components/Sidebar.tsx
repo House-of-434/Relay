@@ -78,6 +78,7 @@ import { DesktopWorkspaceSwitcher } from "./DesktopWorkspaceSwitcher";
 import { useCloudOwner } from "./CloudOwner";
 import { SidebarProfileMenu } from "./SidebarProfileMenu";
 import { SidebarSectionHeader } from "./SidebarSectionHeader";
+import { SidebarIcon } from "./SidebarIcon";
 
 const SECTION_LABEL_KEYS: Record<string, LocaleKey> = {
   [PINNED_SECTION_ID]: "sidebar.section.pinned",
@@ -358,7 +359,7 @@ function RoomContextMenu({
             setDraft(group.name);
             setRenaming(true);
           }}
-          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
+          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
         >
           <Pencil size={15} className="text-ink-secondary" />
           {isBotChat ? t("sidebar.room.renameChat") : t("sidebar.room.renameChannel")}
@@ -370,7 +371,7 @@ function RoomContextMenu({
             onClose();
             onMoveToSection(group.id);
           }}
-          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
+          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
         >
           <FolderPlus size={15} className="text-ink-secondary" />
           {t("sidebar.section.moveToContext")}
@@ -381,7 +382,7 @@ function RoomContextMenu({
           dispatch({ type: "deleteGroup", groupId: group.id });
           onClose();
         }}
-        className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-danger hover:bg-raised/70"
+        className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-danger hover:bg-menu-hover"
       >
         <Trash2 size={15} />
         {isBotChat ? t("sidebar.room.deleteChat") : t("sidebar.room.deleteChannel")}
@@ -546,7 +547,7 @@ function SectionPicker({
               onClick={() => assign(section)}
               className={cn(
                 "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
-                section === sectionCurrent ? "bg-raised text-ink" : "text-ink hover:bg-raised/70 rounded-lg",
+                section === sectionCurrent ? "bg-raised text-ink" : "text-ink hover:bg-menu-hover rounded-lg",
               )}
             >
               <span className="truncate">{section}</span>
@@ -588,7 +589,7 @@ function SectionPicker({
           <div className="mx-2 my-1 border-t border-hairline/40" />
           <button
             onClick={() => assign("")}
-            className="flex w-full items-center gap-3 rounded-lg px-3.5 py-2 text-left text-[13px] text-danger hover:bg-raised/70"
+            className="flex w-full items-center gap-3 rounded-lg px-3.5 py-2 text-left text-[13px] text-danger hover:bg-menu-hover"
           >
             <FolderMinus size={15} />
             {t("sidebar.section.removeFromContext")}
@@ -676,7 +677,7 @@ export function BotContextMenu({
       className={cn(
         "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px]",
         opts?.danger ? "text-danger" : "text-ink",
-        opts?.disabled ? "cursor-default opacity-40" : "rounded-lg hover:bg-raised/70",
+        opts?.disabled ? "cursor-default opacity-40" : "rounded-lg hover:bg-menu-hover",
       )}
     >
       {icon}
@@ -694,7 +695,7 @@ export function BotContextMenu({
       aria-label={t("sidebar.bot.actions", { name: bot.name })}
       onKeyDown={navigateSidebarMenu}
       style={{ top: shown.y, left: shown.x }}
-      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[156px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-2xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[156px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-2xl border border-menu-border bg-menu px-1.5 py-1.5 shadow-xs shadow-black/10", motion.className)} {...motion.exitProps}
     >
       {remoteClient ? [
         item(<FolderPlus size={15} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
@@ -764,7 +765,7 @@ export function BotDeleteMenuItem({ deleting, onClick }: { deleting: boolean; on
       title={deleting ? t("sidebar.bot.deleteCheckingTitle") : undefined}
       className={cn(
         "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px] text-danger",
-        deleting ? "cursor-default opacity-40" : "rounded-lg hover:bg-raised/70",
+        deleting ? "cursor-default opacity-40" : "rounded-lg hover:bg-menu-hover",
       )}
     >
       {deleting ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
@@ -1325,7 +1326,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                   {/* Group opacity, not the alpha ink token: PanelLeft's divider
                       stroke overlaps the rect border, and two semi-transparent
                       strokes composite brighter where they cross. */}
-<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" aria-hidden="true"><path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 3.5v17M3 12c0-4.243 0-6.364 1.318-7.682C5.636 3 7.758 3 12 3c4.243 0 6.364 0 7.682 1.318C21 5.636 21 7.758 21 12c0 4.243 0 6.364-1.318 7.682C18.364 21 16.242 21 12 21c-4.243 0-6.364 0-7.682-1.318C3 18.364 3 16.242 3 12Z"/></svg>
+                  <SidebarIcon className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" />
                 </span>
               </button>
             )}
@@ -1443,7 +1444,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     dispatch({ type: "toggleNewBot", open: true });
                   }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
                 >
                   <BotIcon size={15} className="text-ink-secondary" />
                   <span className="flex-1">{t("sidebar.newBot")}</span>
@@ -1453,14 +1454,14 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     setNewRoom(true);
                   }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
                 >
                   <Users size={15} className="text-ink-secondary" />
                   {t("sidebar.newChannel.title")}
                 </button>
                 {!remoteClient && <button
                   onClick={() => { setPlusOpen(false); setNewTeam(true); }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
                 >
                   <FolderPlus size={15} className="text-ink-secondary" /> {t("team.create")}
                 </button>}
@@ -1471,7 +1472,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     setTeamLibraryOpen(true);
                   }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-raised/70"
+                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
                 >
                   <Library size={15} className="text-ink-secondary" />
                   {t("sidebar.teamLibrary")}
@@ -1490,7 +1491,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             title={t("sidebar.toggle.close")}
             className="group hidden size-10 items-center justify-center rounded-md text-ink-secondary hover:text-ink md:flex"
           >
-            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" aria-hidden="true"><path fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 3.5v17M3 12c0-4.243 0-6.364 1.318-7.682C5.636 3 7.758 3 12 3c4.243 0 6.364 0 7.682 1.318C21 5.636 21 7.758 21 12c0 4.243 0 6.364-1.318 7.682C18.364 21 16.242 21 12 21c-4.243 0-6.364 0-7.682-1.318C3 18.364 3 16.242 3 12Z"/></svg>
+            <SidebarIcon className="text-ink opacity-60 transition-opacity group-hover:opacity-100 group-focus-visible:opacity-100 touch:opacity-100" />
           </button>
         )}
         </div>

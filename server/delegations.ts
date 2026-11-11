@@ -44,6 +44,9 @@ export interface DelegationItem {
    * "any thread running". Absent = a classic delegation into the target's
    * active thread. */
   targetThreadId?: string;
+  /** Files the delegating thread hands to the target. The target resolves
+   * them by id; no host path ever rides the handoff. */
+  fileIds?: string[];
 }
 
 interface PendingDelegationItem extends DelegationItem {
@@ -494,6 +497,10 @@ export function _loadPending(): void {
         }
         if (typeof item.targetThreadId === "string" && item.targetThreadId) {
           loaded.targetThreadId = item.targetThreadId;
+        }
+        if (Array.isArray(item.fileIds)) {
+          const fileIds = item.fileIds.filter((id): id is string => typeof id === "string" && /^file_[a-z0-9]{6,32}$/.test(id)).slice(0, 10);
+          if (fileIds.length) loaded.fileIds = fileIds;
         }
         return [loaded];
       });
@@ -1023,12 +1030,13 @@ async function processOne(
   const channel = getOrCreateChannel(bus.store, sender, target, originatingGroup);
   mirrorExchange(bus, sender, target, item.message, channel, sourceThreadId);
   const reasonLine = item.reason ? `\n\n[Reason: ${item.reason}]` : "";
+  const fileLine = item.fileIds?.length ? `\n\n[Files for this task: ${item.fileIds.join(", ")}]` : "";
   // A fresh thread's first line gets the shared peer-provenance note from
   // the harness (which knows whether the opener was unattended); the
   // classic handoff keeps the prefix it has always had.
   const prefixed = item.targetThreadId
-    ? item.message
-    : `[Delegated by @${sender.name}, another bot in this Relay workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}`;
+    ? `${item.message}${fileLine}`
+    : `[Delegated by @${sender.name}, another bot in this Relay workspace. Do the work and reply directly.]\n\n${item.message}${reasonLine}${fileLine}`;
   await runTarget(item.toBotId, prefixed, item.depth + 1, sourceThreadId, channel, item.id, sender.id, item.targetThreadId);
   return "dispatched";
 }

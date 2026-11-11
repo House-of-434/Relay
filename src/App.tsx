@@ -15,6 +15,7 @@ import { NewBotDialog } from "@/components/NewBotDialog";
 import { PluginsPanel, type ConnectionAccount, type ConnectionService, type GithubConnection, type NotionConnection } from "@/components/PluginsPanel";
 import { ComputerPanel } from "@/components/ComputerPanel";
 import { DocPane } from "@/components/DocPane";
+import { FilesPanel } from "@/components/FilesPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
 import { SettingsModal } from "@/components/SettingsModal";
 import { WorkspaceBackupRecovery } from "@/components/WorkspaceBackupSettings";
@@ -482,6 +483,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
         />
       )}
       {!remoteClient && state.inspectorOpen && bot && <InspectorPanel key={bot.threadId} bot={bot} />}
+      {!remoteClient && state.filesOpen && bot && <FilesPanel key={`files:${bot.threadId}`} bot={bot} />}
       {!remoteClient && state.docPane && (
         <DocPane
           key={`doc:${state.docPane.threadId}:${state.docPane.messageId}:${state.docPane.path}`}

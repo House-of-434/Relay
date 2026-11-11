@@ -1,6 +1,6 @@
 import { metricSchema, barChartSchema, lineChartSchema, pieChartSchema } from "../schemas/index.ts";
 import { defineComponent } from "@openuidev/react-lang";
-import React from "react";
+import React, { useLayoutEffect, useRef, useState } from "react";
 
 export const Metric = defineComponent({
   name: "Metric",
@@ -21,112 +21,180 @@ function getMax(data: Array<{ label: string; value: number }>) {
   return Math.max(...data.map((d) => (typeof d.value === "number" ? d.value : 0)), 1);
 }
 
-export const BarChart = defineComponent({
-  name: "BarChart",
-  description: "Bar chart",
-  props: barChartSchema,
-  component: ({ props }: any) => {
-    const data = Array.isArray(props.data) ? props.data : [];
-    const max = getMax(data);
-    const height = 100;
-    const topPadding = 14;
-    const bottomPadding = 24;
-    const barWidth = 28;
-    const gap = 16;
-    const minPerBar = 64;
-    const chartWidth = Math.max(data.length * (barWidth + gap) + gap, data.length > 0 ? data.length * minPerBar : 160);
-    const viewBoxHeight = height + topPadding + bottomPadding;
+type Datum = { label: string; value: number };
 
-    return React.createElement(
+const LABEL_FONT_PX = 9;
+const LABEL_CHAR_PX = LABEL_FONT_PX * 0.58;
+
+/** Rough rendered width of an x-axis label at the chart's 9px type. */
+function labelWidth(label: string): number {
+  return Math.min(120, Math.max(16, label.length * LABEL_CHAR_PX));
+}
+
+/** The card's content width, so a chart fills it instead of stopping at a
+ * fixed pixel size. 0 until measured (streaming, static render). */
+function useChartWidth(minWidth: number): [React.RefObject<HTMLDivElement | null>, number] {
+  const ref = useRef<HTMLDivElement>(null);
+  const [measured, setMeasured] = useState(0);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const apply = () => setMeasured(el.getBoundingClientRect().width);
+    apply();
+    const observer = new ResizeObserver(apply);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+  return [ref, Math.max(Math.round(measured) || 0, minWidth)];
+}
+
+function BarChartView({ data, title }: { data: Datum[]; title?: string }) {
+  const max = getMax(data);
+  const height = 100;
+  const topPadding = 14;
+  const [ref, chartWidth] = useChartWidth(Math.max(data.length * 64, 160));
+  const slot = chartWidth / Math.max(data.length, 1);
+  // Rotate the labels the moment their glyphs would run into the next slot.
+  const crowded = data.some((d) => labelWidth(String(d.label)) + 6 > slot);
+  const bottomPadding = crowded ? 44 : 24;
+  const viewBoxHeight = height + topPadding + bottomPadding;
+  const barWidth = Math.max(8, Math.min(28, slot * 0.55));
+
+  return React.createElement(
+    "div",
+    { className: "p-2" },
+    title ? React.createElement("div", { className: "mb-2 text-[12px] font-semibold text-ink" }, title) : null,
+    React.createElement(
       "div",
-      { className: "p-2" },
-      props.title ? React.createElement("div", { className: "mb-2 text-[12px] font-semibold text-ink" }, props.title) : null,
+      { ref, className: "w-full min-w-0" },
       React.createElement(
         "div",
         { className: "overflow-x-auto", style: { WebkitOverflowScrolling: "touch", touchAction: "pan-x" } },
         React.createElement(
           "div",
-          { style: { minWidth: chartWidth, width: chartWidth } },
+          { style: { width: chartWidth } },
           React.createElement(
             "svg",
-            { viewBox: `0 0 ${chartWidth} ${viewBoxHeight}`, className: "h-auto", style: { width: "100%", maxWidth: "100%" }, role: "img", "aria-label": props.title || "Bar chart", preserveAspectRatio: "xMidYMid meet" },
-            data.map((d: any, i: number) => {
+            { viewBox: `0 0 ${chartWidth} ${viewBoxHeight}`, className: "h-auto", style: { width: "100%" }, role: "img", "aria-label": title || "Bar chart", preserveAspectRatio: "xMidYMid meet" },
+            data.map((d, i) => {
               const val = typeof d.value === "number" ? d.value : 0;
               const barH = val > 0 ? (val / max) * height : 0;
-              const x = gap + i * (barWidth + gap);
+              const x = i * slot + (slot - barWidth) / 2;
+              const center = i * slot + slot / 2;
               const y = topPadding + (height - barH);
               const zeroY = topPadding + height - 2;
-              const label = String(d.label);
+              const labelY = topPadding + height + (crowded ? 16 : 12);
+              const labelX = crowded ? center + 2 : center;
               return React.createElement(
                 React.Fragment,
                 { key: i },
                 val > 0
                   ? React.createElement("rect", { x, y, width: barWidth, height: barH, className: "fill-accent", rx: 3 })
                   : React.createElement("rect", { x, y: zeroY, width: barWidth, height: 2, className: "fill-ink-secondary/40", rx: 1 }),
-                React.createElement("text", { x: x + barWidth / 2, y: topPadding + height + 12, textAnchor: "middle", className: "fill-ink-secondary", style: { fontSize: "9px" } }, label),
+                React.createElement(
+                  "text",
+                  {
+                    x: labelX,
+                    y: labelY,
+                    textAnchor: crowded ? "end" : "middle",
+                    transform: crowded ? `rotate(-40 ${labelX} ${labelY})` : undefined,
+                    className: "fill-ink-secondary",
+                    style: { fontSize: `${LABEL_FONT_PX}px` },
+                  },
+                  String(d.label),
+                ),
                 val > 0
-                  ? React.createElement("text", { x: x + barWidth / 2, y: y - 4, textAnchor: "middle", className: "fill-ink", style: { fontSize: "9px", fontWeight: 500 } }, String(val))
-                  : React.createElement("text", { x: x + barWidth / 2, y: zeroY - 4, textAnchor: "middle", className: "fill-ink-secondary", style: { fontSize: "8px" } }, "0"),
+                  ? React.createElement("text", { x: center, y: y - 4, textAnchor: "middle", className: "fill-ink", style: { fontSize: "9px", fontWeight: 500 } }, String(val))
+                  : React.createElement("text", { x: center, y: zeroY - 4, textAnchor: "middle", className: "fill-ink-secondary", style: { fontSize: "8px" } }, "0"),
               );
             }),
           ),
         ),
       ),
-    );
-  },
+    ),
+  );
+}
+
+export const BarChart = defineComponent({
+  name: "BarChart",
+  description: "Bar chart",
+  props: barChartSchema,
+  component: ({ props }: any) =>
+    React.createElement(BarChartView, {
+      data: Array.isArray(props.data) ? props.data : [],
+      title: props.title,
+    }),
 });
 
-export const LineChart = defineComponent({
-  name: "LineChart",
-  description: "Line chart",
-  props: lineChartSchema,
-  component: ({ props }: any) => {
-    const data = Array.isArray(props.data) ? props.data : [];
-    const max = getMax(data);
-    const height = 100;
-    const topPadding = 10;
-    const bottomPadding = 20;
-    const pointSpacing = 48;
-    const minChartWidth = 200;
-    const width = Math.max(data.length * pointSpacing, minChartWidth);
-    if (data.length === 0) {
-      return React.createElement("div", { className: "p-2 text-ink-secondary text-[12px]" }, "No data");
-    }
-    const points = data
-      .map((d: any, i: number) => {
-        const x = (i / Math.max(data.length - 1, 1)) * (width - 40) + 20;
-        const y = topPadding + height - ((typeof d.value === "number" ? d.value : 0) / max) * (height - 20) - 10;
-        return `${x},${y}`;
-      })
-      .join(" ");
-    return React.createElement(
+function LineChartView({ data, title }: { data: Datum[]; title?: string }) {
+  const max = getMax(data);
+  const height = 100;
+  const topPadding = 10;
+  const [ref, width] = useChartWidth(Math.max(data.length * 48, 200));
+  if (data.length === 0) {
+    return React.createElement("div", { className: "p-2 text-ink-secondary text-[12px]" }, "No data");
+  }
+  const sidePad = Math.min(24, Math.max(8, width * 0.06));
+  const span = Math.max(width - 2 * sidePad, 1);
+  const slot = data.length > 1 ? span / (data.length - 1) : width;
+  const crowded = data.some((d) => labelWidth(String(d.label)) + 6 > slot);
+  const bottomPadding = crowded ? 44 : 24;
+  const viewBoxHeight = height + topPadding + bottomPadding;
+  const xAt = (i: number) => (data.length > 1 ? sidePad + (i / (data.length - 1)) * span : width / 2);
+  const yAt = (d: Datum) => topPadding + height - ((typeof d.value === "number" ? d.value : 0) / max) * (height - 20) - 10;
+  const points = data.map((d, i) => `${xAt(i)},${yAt(d)}`).join(" ");
+  const labelY = topPadding + height + (crowded ? 16 : 14);
+
+  return React.createElement(
+    "div",
+    { className: "p-2" },
+    title ? React.createElement("div", { className: "mb-2 text-[12px] font-semibold text-ink" }, title) : null,
+    React.createElement(
       "div",
-      { className: "p-2" },
-      props.title ? React.createElement("div", { className: "mb-2 text-[12px] font-semibold text-ink" }, props.title) : null,
+      { ref, className: "w-full min-w-0" },
       React.createElement(
         "div",
         { className: "overflow-x-auto", style: { WebkitOverflowScrolling: "touch", touchAction: "pan-x" } },
         React.createElement(
           "div",
-          { style: { minWidth: width, width: width } },
+          { style: { width } },
           React.createElement(
             "svg",
-            { viewBox: `0 0 ${width} ${height + topPadding + bottomPadding}`, className: "h-auto", style: { width: "100%", maxWidth: "100%" }, role: "img", "aria-label": props.title || "Line chart", preserveAspectRatio: "xMidYMid meet" },
+            { viewBox: `0 0 ${width} ${viewBoxHeight}`, className: "h-auto", style: { width: "100%" }, role: "img", "aria-label": title || "Line chart", preserveAspectRatio: "xMidYMid meet" },
             React.createElement("polyline", { points, fill: "none", stroke: "currentColor", className: "stroke-accent", strokeWidth: "2" }),
-            data.map((d: any, i: number) => {
-              const x = (i / Math.max(data.length - 1, 1)) * (width - 40) + 20;
-              const y = topPadding + height - ((typeof d.value === "number" ? d.value : 0) / max) * (height - 20) - 10;
-              return React.createElement("circle", { key: i, cx: x, cy: y, r: 3, className: "fill-accent" });
-            }),
-            data.map((d: any, i: number) => {
-              const x = (i / Math.max(data.length - 1, 1)) * (width - 40) + 20;
-              return React.createElement("text", { key: `l${i}`, x, y: topPadding + height + 14, textAnchor: "middle", className: "fill-ink-secondary", style: { fontSize: "9px" } }, d.label);
+            data.map((d, i) => React.createElement("circle", { key: i, cx: xAt(i), cy: yAt(d), r: 3, className: "fill-accent" })),
+            data.map((d, i) => {
+              const x = xAt(i);
+              return React.createElement(
+                "text",
+                {
+                  key: `l${i}`,
+                  x: crowded ? x + 2 : x,
+                  y: labelY,
+                  textAnchor: crowded ? "end" : "middle",
+                  transform: crowded ? `rotate(-40 ${x + 2} ${labelY})` : undefined,
+                  className: "fill-ink-secondary",
+                  style: { fontSize: `${LABEL_FONT_PX}px` },
+                },
+                String(d.label),
+              );
             }),
           ),
         ),
       ),
-    );
-  },
+    ),
+  );
+}
+
+export const LineChart = defineComponent({
+  name: "LineChart",
+  description: "Line chart",
+  props: lineChartSchema,
+  component: ({ props }: any) =>
+    React.createElement(LineChartView, {
+      data: Array.isArray(props.data) ? props.data : [],
+      title: props.title,
+    }),
 });
 
 export const PieChart = defineComponent({
