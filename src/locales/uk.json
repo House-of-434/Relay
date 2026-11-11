@@ -580,7 +580,6 @@
   "task.updated.days": "{count} дн тому",
   "task.unreadMany": "Непрочитані гілки",
   "task.deleteConfirm": "Видалити гілку?",
-  "task.deleteBody": "«{title}» та її розмова буде видалена. Цю дію не можна скасувати.",
   "folder.settings": "Налаштування папки",
   "folder.markRead": "Позначити папку прочитаною",
   "folder.markingRead": "Позначаємо папку прочитаною…",

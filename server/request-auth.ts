@@ -330,6 +330,12 @@ export const CLIENT_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: Reg
   { methods: ["POST"], path: /^\/api\/attachments$/ },
   { methods: ["GET"], path: /^\/api\/attachments\/[\w.-]+$/ },
   { methods: ["POST"], path: /^\/api\/files$/ },
+  // Files library reads: thread listing, all files, and one file's metadata
+  // or bytes. Deletion stays admin-only; only the desktop UI offers it today.
+  { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/threads\/[\w-]+\/files$/ },
+  { methods: ["GET"], path: /^\/api\/files$/ },
+  { methods: ["GET"], path: /^\/api\/files\/file_[a-z0-9]{6,32}$/ },
+  { methods: ["GET"], path: /^\/api\/files\/file_[a-z0-9]{6,32}\/content$/ },
   // voice: labels and audio, never the key
   { methods: ["GET"], path: /^\/api\/tts\/voices$/ },
   { methods: ["POST"], path: /^\/api\/tts\/prepare$/ },

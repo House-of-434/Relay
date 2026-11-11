@@ -52,6 +52,15 @@
           "reason": {
             "type": "string",
             "description": "Optional one-line reason for the delegation (shown to the user as a chip)."
+          },
+          "file_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "description": "A file id to hand to the peer, for example file_7f3k2m9q."
+            },
+            "maxItems": 10,
+            "description": "Optional: files the peer may attach or fetch by id. Each id must already belong to the same owner."
           }
         },
         "required": [

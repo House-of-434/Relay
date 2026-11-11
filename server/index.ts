@@ -3,12 +3,12 @@
 // folds one SSE event stream; every provider process runs here.
 import { AsyncLocalStorage } from "node:async_hooks";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, realpathSync, rmSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, mkdirSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import { rm as removeDirectory } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { basename, extname, join } from "node:path";
+import { basename, extname, join, resolve as resolvePath } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
 
 import { z } from "zod";
@@ -612,6 +612,8 @@ import { createScribeJoinRoutes } from "./routes/scribe-join.ts";
 import { createBrowserTakeoverRoutes } from "./routes/browser-takeover.ts";
 import { createBotPresetRoutes } from "./routes/bot-presets.ts";
 import { createBotMemoryRoutes } from "./routes/bot-memory.ts";
+import { createFilesRoutes } from "./routes/files.ts";
+import { FILE_ID_PATTERN, listThreadFiles, managedFilesRoot, managedThreadRoot, mintFileId, resolveFile } from "./file-library.ts";
 import { createDeciderRoutes } from "./routes/decider.ts";
 
 const PORT = Number(process.env.RELAY_PORT || process.env.OGB_PORT || 8799);
@@ -2040,6 +2042,7 @@ function revokeInternalCapabilityGeneration(threadId: string, generation: string
   }
   inheritedMailAttachmentsByGeneration.delete(generation);
   internalGenerationByProviderTurn.deleteGeneration(threadId, generation);
+  try { rmSync(join(DATA_DIR, "turn-scratch", threadId, generation), { recursive: true, force: true }); } catch {}
 }
 
 function revokeInternalCapabilitiesForThread(threadId: string): void {
@@ -2052,11 +2055,13 @@ function revokeInternalCapabilitiesForThread(threadId: string): void {
   for (const [token, capability] of internalCapabilities) {
     if (capability.threadId === threadId) internalCapabilities.delete(token);
   }
+  try { rmSync(join(DATA_DIR, "turn-scratch", threadId), { recursive: true, force: true }); } catch {}
 }
 
 function revokeAllInternalCapabilities(): void {
   computerSelectionTurns.clear();
   internalCapabilities.clear();
+  try { rmSync(join(DATA_DIR, "turn-scratch"), { recursive: true, force: true }); } catch {}
   // foreignTurns stays: a turn that is not provably the owner's can still
   // write while its engine is torn down, and its own end (which revokes its
   // generation by id) is what judges it (server/lending-memory.ts).
@@ -13150,6 +13155,29 @@ function connectorThread(botId: string, threadId: string) {
   return null;
 }
 
+/** File ids a bot hands to a peer. Ids, never paths: each one must already
+ * resolve for the sending bot's owner. The target resolves them again when
+ * it attaches or fetches them. */
+function validatedFileIds(value: unknown, sender: BotRecord): { fileIds?: string[] } | { error: string } {
+  if (value === undefined) return {};
+  if (!Array.isArray(value)) return { error: "fileIds must be an array of file ids" };
+  if (value.length > 10) return { error: "at most 10 files can ride one handoff" };
+  const owner = sender.ownerUserId?.toLowerCase();
+  if (!owner) return { error: "this conversation has no owner, so file ids are unavailable" };
+  const fileIds: string[] = [];
+  for (const raw of value) {
+    const fileId = typeof raw === "string" ? raw.trim() : "";
+    if (!FILE_ID_PATTERN.test(fileId)) return { error: "fileIds contains an invalid file id" };
+    if (!resolveFile(owner, fileId)) return { error: `no such file: ${fileId}` };
+    if (!fileIds.includes(fileId)) fileIds.push(fileId);
+  }
+  return fileIds.length ? { fileIds } : {};
+}
+
+function withFileIdNote(message: string, fileIds: string[] | undefined): string {
+  return fileIds?.length ? `${message}\n\n[Files for this task: ${fileIds.join(", ")}]` : message;
+}
+
 /** The teammate whose emailed request opened this work: directly routed,
  * or one delegation hop away (a Scout thread working a request Mercury was
  * mailed). Server-stamped in both cases — never model input — so auto
@@ -14927,6 +14955,11 @@ ROUTES.push(createBotMemoryRoutes({
     broadcast({ kind: "config", ...configStatus() });
   },
 }));
+ROUTES.push(createFilesRoutes({
+  bot: (id) => store.bot(id),
+  taskByThread: (botId, threadId) => store.taskByThread(botId, threadId),
+  canSeeBot: (auth, botId) => subjectVisible({ kind: "bot", id: botId }, visibleTo(viewerFor(auth))),
+}));
 ROUTES.push(createDeciderRoutes({ decider }));
 
 const toolResults = new ToolResults();
@@ -15838,16 +15871,81 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         store.setTaskClosedBy(owner.id, threadId, { botId: from.id, name: from.name, at: Date.now() });
         return json(res, 200, { closed: true, threadId, title: task.title, botName: owner.name });
       }
+      if (method === "GET" && path === "/api/internal/files") {
+        const from = internalSender;
+        const requestedThread = url.searchParams.get("threadId")?.trim() || internalCapability.threadId;
+        const task = store.taskByThread(from.id, requestedThread);
+        if (!task) return json(res, 404, { error: "no such thread — call list_threads for the ones you can see" });
+        const owner = from.ownerUserId?.toLowerCase();
+        if (!owner) return json(res, 200, { files: [], truncated: false, unsupported: "ownerless" });
+        const managed = managedThreadRoot(owner, from.id, requestedThread);
+        const effective = task.cwd !== undefined ? task.cwd : from.cwd;
+        if (effective !== undefined) {
+          try {
+            if (effective === null || resolvePath(effective) !== resolvePath(managed)) {
+              return json(res, 200, { files: [], truncated: false, external: true });
+            }
+          } catch {
+            return json(res, 200, { files: [], truncated: false, external: true });
+          }
+        }
+        const listed = listThreadFiles(owner, from.id, requestedThread);
+        return json(res, 200, {
+          files: listed.files.map((file) => ({
+            fileId: file.fileId, name: file.name, relativePath: file.relativePath,
+            bytes: file.bytes, mtimeMs: file.mtimeMs, mime: file.mime,
+          })),
+          truncated: listed.truncated,
+        });
+      }
+      m = method === "POST" ? path.match(/^\/api\/internal\/files\/(file_[a-z0-9]{6,32})\/fetch$/) : null;
+      if (m) {
+        const owner = internalSender.ownerUserId?.toLowerCase();
+        if (!owner) return json(res, 400, { error: "this conversation has no owner, so file ids are unavailable" });
+        const resolved = resolveFile(owner, m[1]!);
+        if (!resolved) return json(res, 404, { error: "no such file" });
+        try {
+          // A run-scoped copy, never a registered File: the bot needs a local
+          // input, but the library must not grow a second copy of anything.
+          const scratch = join(DATA_DIR, "turn-scratch", internalCapability.threadId, internalCapability.generation);
+          mkdirSync(scratch, { recursive: true, mode: 0o700 });
+          const destination = join(scratch, `${resolved.record.id}-${basename(resolved.record.path)}`);
+          copyFileSync(resolved.record.path, destination);
+          return json(res, 200, { ok: true, path: destination, name: basename(resolved.record.path), bytes: resolved.bytes });
+        } catch {
+          return json(res, 500, { error: "could not prepare that file" });
+        }
+      }
       if (method === "POST" && path === "/api/internal/attach-file") {
         const from = internalSender;
         const threadId = internalCapability.threadId;
         const source = connectorThread(from.id, threadId);
         if (!source) return json(res, 403, { error: "source conversation does not belong to sender" });
         const body = await readInternalBody();
-        const requestedPath = typeof body.path === "string" ? body.path : "";
+        const requestedPathValue = typeof body.path === "string" ? body.path : "";
+        const requestedFileId = typeof body.fileId === "string" ? body.fileId.trim() : "";
         const requestedName = typeof body.name === "string" ? body.name : undefined;
+        if (Boolean(requestedPathValue) === Boolean(requestedFileId)) {
+          return json(res, 400, { error: "pass exactly one of path or fileId" });
+        }
+        if (requestedFileId && !FILE_ID_PATTERN.test(requestedFileId)) {
+          return json(res, 400, { error: "fileId is invalid" });
+        }
+        const owner = from.ownerUserId?.toLowerCase();
+        let requestedPath = requestedPathValue;
+        let roots = messageFileRootsForThread(from.id, threadId).filter((root) => root !== ATTACHMENTS_DIR);
+        if (requestedFileId) {
+          if (!owner) return json(res, 400, { error: "this conversation has no owner, so file ids are unavailable" });
+          const resolved = resolveFile(owner, requestedFileId);
+          if (!resolved) return json(res, 404, { error: "no such file" });
+          requestedPath = resolved.record.path;
+          // The id is the authority, not a caller-supplied path. Keep the
+          // read inside this user's managed root even though the registry
+          // already checked it.
+          roots = [managedFilesRoot(owner)];
+        }
         try {
-          const vm = await attachmentVmForTurn(internalCapability);
+          const vm = requestedFileId ? undefined : await attachmentVmForTurn(internalCapability);
           const outcome = await attachForTurn(internalCapability, MAX_ATTACHED_FILES_PER_TURN, {
             save: () => {
               // The agents capability carries no VM; the thread's claimed desktop does.
@@ -15855,7 +15953,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
                 path: requestedPath,
                 name: requestedName,
                 // The attachment store is not a source: only the bot's own files are.
-                roots: messageFileRootsForThread(from.id, threadId).filter((root) => root !== ATTACHMENTS_DIR),
+                roots,
                 ...(vm ? { guest: { root: VM_WORKSPACE_GUEST, host: vm.workspaceDir } } : {}),
               });
             },
@@ -15886,9 +15984,10 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           const label = saved.attachment.kind === "file"
             ? saved.attachment.name
             : (requestedName?.trim() || requestedPath.split(/[\\/]/).at(-1) || "image");
+          const fileId = requestedFileId || (owner ? mintFileId(owner, saved.sourcePath)?.id : undefined);
           // The store name is opaque and path-free: the model can hand it back
           // to gmail_send_email without ever seeing an absolute path.
-          return json(res, 200, { ok: true, name: label, bytes: saved.bytes, ref: basename(saved.attachment.path) });
+          return json(res, 200, { ok: true, name: label, bytes: saved.bytes, ref: basename(saved.attachment.path), ...(fileId ? { fileId } : {}) });
         } catch (error) {
           const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 500;
           const message = status === 404
@@ -16952,6 +17051,8 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const toBotRef = String(body.toBotId ?? "");
         const message = String(body.message ?? "").trim();
         const reason = typeof body.reason === "string" && body.reason.trim() ? body.reason.trim() : undefined;
+        const handedFiles = validatedFileIds(body.fileIds, internalSender);
+        if ("error" in handedFiles) return json(res, 400, { error: handedFiles.error });
         if (
           body.depth !== undefined &&
           (!Number.isInteger(body.depth) || body.depth < 0 || body.depth !== internalCapability.depth)
@@ -16979,7 +17080,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const queued = queueDelegation(
           commsBus,
           from,
-          { toBotId, message, reason, depth },
+          { toBotId, message, reason, depth, ...(handedFiles.fileIds ? { fileIds: handedFiles.fileIds } : {}) },
           MAX_COMMS_DEPTH,
           fromThreadId,
         );
@@ -17400,8 +17501,11 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           return json(res, 403, { error: "the recursion depth does not match this turn" });
         }
         const title = String(body.title ?? "").trim();
-        const message = String(body.message ?? "").trim();
-        if (!title || !message) return json(res, 400, { error: "title and message are required" });
+        const rawMessage = String(body.message ?? "").trim();
+        const handedFiles = validatedFileIds(body.fileIds, internalSender);
+        if ("error" in handedFiles) return json(res, 400, { error: handedFiles.error });
+        const message = withFileIdNote(rawMessage, handedFiles.fileIds);
+        if (!title || !rawMessage) return json(res, 400, { error: "title and message are required" });
         if (title.length > 80) return json(res, 400, { error: "title must be at most 80 characters" });
         // the title is quoted into chips and the sidebar, one line each
         if (!fitsOnOneLine(title)) return json(res, 400, { error: "title must fit on one line" });

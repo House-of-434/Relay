@@ -854,6 +854,8 @@ export interface AppState {
   computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
   inspectorOpen: boolean;
+  /** the per-thread Files library (and its All Files view). */
+  filesOpen: boolean;
   /** document open in the right-side pane; null = closed. The granting
    * message (threadId + messageId) is the fetch capability. */
   docPane: WireDocRef | null;
@@ -1127,6 +1129,7 @@ export type Action =
   | { type: "toggleNewBot"; open?: boolean }
   | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
+  | { type: "toggleFiles"; open?: boolean }
   | { type: "openDocPane"; ref: WireDocRef }
   | { type: "closeDocPane" }
   | { type: "focusMessage"; threadId: string; messageId: string }
@@ -1911,6 +1914,7 @@ export function reducer(state: AppState, action: Action): AppState {
         computerOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
+        filesOpen: open ? false : state.filesOpen,
         docPane: open ? null : state.docPane,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
@@ -1922,6 +1926,19 @@ export function reducer(state: AppState, action: Action): AppState {
         inspectorOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
+        filesOpen: open ? false : state.filesOpen,
+        docPane: open ? null : state.docPane,
+        appSettingsOpen: open ? false : state.appSettingsOpen,
+      };
+    }
+    case "toggleFiles": {
+      const open = action.open ?? !state.filesOpen;
+      return {
+        ...state,
+        filesOpen: open,
+        settingsOpen: open ? false : state.settingsOpen,
+        computerOpen: open ? false : state.computerOpen,
+        inspectorOpen: open ? false : state.inspectorOpen,
         docPane: open ? null : state.docPane,
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
@@ -1933,6 +1950,7 @@ export function reducer(state: AppState, action: Action): AppState {
         settingsOpen: false,
         computerOpen: false,
         inspectorOpen: false,
+        filesOpen: false,
         appSettingsOpen: false,
       };
     }
@@ -1949,6 +1967,7 @@ export function reducer(state: AppState, action: Action): AppState {
         settingsOpen: open ? false : state.settingsOpen,
         computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
+        filesOpen: open ? false : state.filesOpen,
         docPane: open ? null : state.docPane,
         pluginsOpen: open ? false : state.pluginsOpen,
       };
@@ -2265,6 +2284,7 @@ export const initialState: AppState = {
   botCreationPending: false,
   computerOpen: false,
   inspectorOpen: false,
+  filesOpen: false,
   docPane: null,
   appSettingsOpen: false,
   appSettingsSection: "general",

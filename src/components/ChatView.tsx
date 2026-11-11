@@ -6,6 +6,7 @@ import {
   ChevronRight,
   Copy,
   Crown,
+  FolderOpen,
   Pencil,
   RefreshCw,
   Webhook,
@@ -1106,6 +1107,21 @@ export function ChatView({ bot: profile }: {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
+          {!remoteClient && (
+            <button
+              type="button"
+              onClick={() => dispatch({ type: "toggleFiles", open: !state.filesOpen })}
+              aria-label={t("files.open")}
+              title={t("files.open")}
+              aria-pressed={state.filesOpen}
+              className={cn(
+                "rounded-md p-1.5 text-ink-secondary hover:bg-raised hover:text-ink",
+                state.filesOpen && "bg-raised text-ink",
+              )}
+            >
+              <FolderOpen size={18} />
+            </button>
+          )}
           <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
         </div>
