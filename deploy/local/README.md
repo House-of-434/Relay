@@ -79,6 +79,16 @@ HTTPS. The app proxies `/auth/*`, `/api/*`, and
 `/.well-known/relay/*` to the BFF (`:8798`) and everything else (static
 UI) to the harness (`:8799`) — same split as the dev Vite proxy.
 
+## Local takeover browser (no VNC)
+
+For UI and handoff testing on a workstation, run the Tool Layer with
+`RELAY_TAKEOVER_LOCAL_BROWSER=1` and `NODE_ENV` unset or `development`.
+Bladebro's real-browser lane opens Chrome on the host, the card gets a real
+screenshot, and `/internal/browser-takeover/viewer` returns
+`{ local: true }`; the card shows the hand-check controls beneath the
+preview instead of an embedded noVNC frame. Never set this flag in
+production: the container's Xvfb/x11vnc viewer is the production path.
+
 ## Verify the browser gate
 
 ```sh

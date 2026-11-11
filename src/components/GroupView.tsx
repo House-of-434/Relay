@@ -34,6 +34,7 @@ import { ExportTranscriptMenu } from "./ExportTranscriptMenu";
 import { ReplyQuote } from "./ReplyQuote";
 import { ConnectorCard } from "./ConnectorCard";
 import { SecretRequestCard } from "./SecretRequestCard";
+import { TakeoverCard } from "./TakeoverCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { GoalRunCard } from "./GoalRunCard";
 import { AttachmentGallery, MessageAttachmentGallery } from "./AttachmentGallery";
@@ -244,7 +245,9 @@ export const Transcript = memo(function Transcript({
           // only accepts an "answer", so routing it to the approval box
           // would offer an Allow the broker rejects. A structured ask is
           // one of those questions, and answers in its own card.
-          m.kind === "secret" && m.secret && m.from?.botId ? (
+          m.kind === "takeover" && m.takeover && m.from?.botId ? (
+            <TakeoverCard botId={m.from.botId} threadId={group.threadId} message={m} />
+          ) : m.kind === "secret" && m.secret && m.from?.botId ? (
             <SecretRequestCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "connector" && m.connector && m.from?.botId ? (
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />

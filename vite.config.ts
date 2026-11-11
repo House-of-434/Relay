@@ -13,9 +13,10 @@ const { version } = JSON.parse(
 ) as { version: string };
 
 export default defineConfig(({ mode }) => {
-  const env = loadEnv(mode, process.cwd(), ["RELAY_UI_PORT", "RELAY_BFF_PORT"]);
+  const env = loadEnv(mode, process.cwd(), ["RELAY_UI_PORT", "RELAY_BFF_PORT", "RELAY_TOOL_PORT"]);
   const uiPort = Number(process.env.RELAY_UI_PORT || env.RELAY_UI_PORT) || 5199;
   const bffPort = Number(process.env.RELAY_BFF_PORT || env.RELAY_BFF_PORT) || 8798;
+  const toolPort = Number(process.env.RELAY_TOOL_PORT || env.RELAY_TOOL_PORT) || 8787;
 
   return {
   plugins: [react(), tailwindcss()],
@@ -65,6 +66,10 @@ export default defineConfig(({ mode }) => {
       },
       "/.well-known/relay/environment": {
         target: `http://127.0.0.1:${bffPort}`,
+      },
+      "/_viewer": {
+        target: `http://127.0.0.1:${toolPort}`,
+        ws: true,
       },
     },
   },

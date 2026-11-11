@@ -15,8 +15,8 @@
  */
 
 import { execFile as execFileCallback } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { promisify } from "node:util";
 
 import {
@@ -39,6 +39,46 @@ export const BLADE_MAX_BUFFER_BYTES = 16 * 1024 * 1024;
 export const BLADE_URL_MAX_LENGTH = 2048;
 const BLADE_PROBE_TIMEOUT_MS = 15_000;
 const BLADE_ARTIFACT_PAGE_LIMIT = 8_000;
+/** Suppress Chrome's unsupported-flag infobar. The takeover viewer enters
+ * fullscreen separately, so page/form state survives. */
+const CHROME_FLAGS = "--test-type";
+
+/** Bladebro starts its own Xvfb for headful Chrome, so the viewer must attach
+ * to the display it actually chose, not the one we asked for. Match the
+ * daemon's Chrome (by workspace user-data-dir) to the sibling Xvfb process. */
+export async function findHeadfulDisplay(workspaceRoot: string, procRoot = "/proc"): Promise<string | null> {
+  const pids = (await readdir(procRoot)).filter((name) => /^\d+$/.test(name));
+  const displays = new Map<number, string>();
+  for (const pid of pids) {
+    const args = await procCmdline(procRoot, pid);
+    if (!args || basename(args[0] ?? "") !== "Xvfb") continue;
+    const display = args.find((arg) => /^:\d+$/.test(arg));
+    if (!display) continue;
+    const ppid = await procPpid(procRoot, pid);
+    if (ppid !== null) displays.set(ppid, display);
+  }
+  if (displays.size === 0) return null;
+  const userDataDir = `--user-data-dir=${workspaceRoot}/`;
+  for (const pid of pids) {
+    const args = await procCmdline(procRoot, pid);
+    if (!args?.some((arg) => arg.startsWith(userDataDir) && arg.includes("/profil"))) continue;
+    const ppid = await procPpid(procRoot, pid);
+    const display = ppid === null ? undefined : displays.get(ppid);
+    if (display) return display;
+  }
+  return null;
+}
+
+async function procCmdline(procRoot: string, pid: string): Promise<string[] | null> {
+  const raw = await readFile(join(procRoot, pid, "cmdline"), "utf8").catch(() => null);
+  return raw === null ? null : raw.split("\0").filter(Boolean);
+}
+
+async function procPpid(procRoot: string, pid: string): Promise<number | null> {
+  const status = await readFile(join(procRoot, pid, "status"), "utf8").catch(() => "");
+  const match = /^PPid:\s+(\d+)$/m.exec(status);
+  return match ? Number(match[1]) : null;
+}
 
 export interface SpawnResult {
   exitCode: number | null;
@@ -105,6 +145,73 @@ export interface BrowserText {
 
 export type ReadMode = "content" | "outline" | "find" | "artifact";
 export type ExtractKind = "auto" | "links" | "forms";
+
+export interface BrowserActInput {
+  action: "click" | "type" | "fill" | "select" | "press" | "scroll" | "hover";
+  target?: string;
+  selector?: string;
+  text?: string;
+  option?: string;
+  fields?: Record<string, string>;
+  submit?: string;
+  key?: string;
+  dx?: number;
+  dy?: number;
+}
+
+const ACT_TEXT_MAX = 2_000;
+const ACT_TARGET_MAX = 512;
+const ACT_KEY_MAX = 40;
+const ACT_FIELDS_MAX = 24;
+
+function actField(value: unknown, name: string, max = ACT_TARGET_MAX): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > max) {
+    throw new Error(`browser_act ${name} must be ${max} characters or fewer`);
+  }
+  return value;
+}
+
+/** Map one validated interaction to Bladebro's `act` argv. */
+export function actArgs(input: BrowserActInput): string[] {
+  const target = (): string[] => input.selector
+    ? ["--selector", actField(input.selector, "selector")]
+    : [actField(input.target, "target")];
+  switch (input.action) {
+    case "click":
+    case "hover":
+      return ["act", input.action, ...target()];
+    case "type":
+      return ["act", "type", ...target(), actField(input.text, "text", ACT_TEXT_MAX)];
+    case "select":
+      return ["act", "select", ...target(), actField(input.option, "option", ACT_TEXT_MAX)];
+    case "press":
+      return ["act", "press", actField(input.key, "key", ACT_KEY_MAX)];
+    case "scroll": {
+      const dx = Number.isFinite(input.dx) ? Math.trunc(input.dx!) : 0;
+      const dy = Number.isFinite(input.dy) ? Math.trunc(input.dy!) : 0;
+      if (dx === 0 && dy === 0) throw new Error("browser_act scroll needs dx or dy");
+      return ["act", "scroll", String(dx), String(dy)];
+    }
+    case "fill": {
+      const fields = input.fields;
+      if (!fields || typeof fields !== "object" || Array.isArray(fields)) {
+        throw new Error("browser_act fill needs a fields object");
+      }
+      const entries = Object.entries(fields);
+      if (entries.length === 0 || entries.length > ACT_FIELDS_MAX) {
+        throw new Error(`browser_act fill needs 1-${ACT_FIELDS_MAX} fields`);
+      }
+      for (const [key, value] of entries) {
+        actField(key, "field name", ACT_TARGET_MAX);
+        actField(value, "field value", ACT_TEXT_MAX);
+      }
+      const args = ["act", "fill", JSON.stringify(fields)];
+      if (input.submit !== undefined) args.push("--submit", actField(input.submit, "submit"));
+      return args;
+    }
+  }
+}
+
 
 /** Argv elements the adapter will never pass: remote endpoints, the
  * real-browser lane, and surfaces we do not use (direct MCP mount,
@@ -285,7 +392,7 @@ export class BladeBrowserPool {
   /** Curated daemon environment, built from scratch: only allowlisted keys,
    * never ambient env, never model input. HOME is contained to the
    * workspace so Chrome's disk writes cannot escape it either. */
-  buildEnv(workspaceRoot: string, fresh: boolean): Record<string, string> {
+  buildEnv(workspaceRoot: string, fresh: boolean, display?: string): Record<string, string> {
     const env: Record<string, string> = {
       PATH: this.path,
       HOME: workspaceRoot,
@@ -300,14 +407,74 @@ export class BladeBrowserPool {
     if (this.proxy) env.BLADE_PROXY = this.proxy;
     if (this.timezone) env.BLADE_TZ = this.timezone;
     if (this.locale) env.BLADE_LOCALE = this.locale;
+    // Headful takeover Chrome renders on the session's own X display; the
+    // research lane ignores it. Never read ambient DISPLAY: unrelated
+    // sessions must not share a screen.
+    if (display) env.DISPLAY = display;
+    env.BLADE_CHROME_FLAGS = CHROME_FLAGS;
     assertNoForbiddenEnv(env);
     return env;
   }
 
-  async open(userId: unknown, url: string, fresh = false): Promise<BrowserText> {
+  async open(userId: unknown, url: string, fresh = false, display?: string): Promise<BrowserText> {
     const target = assertHttpUrl(url);
-    const text = await this.run(userId, ["nav", target], fresh);
+    const text = await this.run(userId, ["nav", target], fresh, false, display);
     return this.boundResult(userId, "open", text);
+  }
+
+  /** Headful takeover mode: the browser renders on the session's own X display,
+   * which the viewer reaches over VNC, and kiosk hides Chrome's tab/address
+   * bars. Used only inside an active human takeover; research paths stay
+   * headless. `rb visible on` returns `{ok, setting, value}` with no `text`,
+   * so it is parsed leniently. */
+  async headfulOpen(userId: unknown, url: string | undefined, display?: string): Promise<BrowserText> {
+    await this.runSetting(userId, ["rb", "visible", "on"], display);
+    if (!url) return { text: "" };
+    const text = await this.run(userId, ["nav", assertHttpUrl(url)], false, false, display);
+    return this.boundResult(userId, "open", text);
+  }
+
+  /** Display Bladebro chose for this workspace's headful Chrome. It starts
+   * its own Xvfb, so this can differ from any DISPLAY we passed. */
+  async headfulDisplay(userId: unknown, timeoutMs = 8_000): Promise<string> {
+    if (process.platform !== "linux") throw new Error("live display is not available on this platform");
+    const root = this.workspaceFor(userId);
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const display = await findHeadfulDisplay(root).catch(() => null);
+      if (display) return display;
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("live display did not start");
+  }
+
+  /** Local-development takeover: drive a real Chrome window on the host
+   * instead of a container X display. Opt-in only; never enabled in prod. */
+  async localHeadfulOpen(userId: unknown, url?: string): Promise<BrowserText> {
+    await this.runSetting(userId, ["rb", "visible", "on"]);
+    if (!url) return { text: "" };
+    const text = await this.run(userId, ["nav", assertHttpUrl(url)], false, false);
+    return this.boundResult(userId, "open", text);
+  }
+
+  /** Setting command (no page text): success means exit 0 + ok:true. */
+  private async runSetting(userId: unknown, args: string[], display?: string): Promise<void> {
+    assertSafeArgs(args, true);
+    if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
+    const tracked = this.trackWorkspace(userId);
+    await this.sweepIdle(tracked.id);
+    const result = await this.spawn(this.binary, [...args, "--json"], {
+      env: this.buildEnv(tracked.root, false, display),
+      timeoutMs: BLADE_ACTION_TIMEOUT_MS,
+      maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
+    });
+    if (result.exitCode === 0) {
+      try {
+        const json = JSON.parse(result.stdout) as { ok?: unknown };
+        if (json.ok === true) return;
+      } catch { /* fall through */ }
+    }
+    throw new Error(`headful setup failed: ${(result.stderr || result.stdout || "no readable output").slice(0, 400)}`);
   }
 
   async read(
@@ -317,6 +484,7 @@ export class BladeBrowserPool {
     artifact?: string,
     offset?: number,
     limit?: number,
+    display?: string,
   ): Promise<BrowserText> {
     if (mode === "artifact") {
       if (typeof artifact !== "string" || artifact.length === 0) {
@@ -330,15 +498,61 @@ export class BladeBrowserPool {
         : mode === "outline"
           ? ["see", "outline"]
           : ["see", "--find", requireQuery(query)];
-    const text = await this.run(userId, args, false);
+    const text = await this.run(userId, args, false, false, display);
     return this.boundResult(userId, "read", text);
   }
 
-  async extract(userId: unknown, url: string | null, kind: ExtractKind = "auto"): Promise<BrowserText> {
+  /** Native-CDP interaction for the interactive lane: clicks, typing,
+   * fills, native selects, keys, scroll and hover. No eval / arbitrary JS. */
+  async act(userId: unknown, input: BrowserActInput, display?: string): Promise<BrowserText> {
+    const args = actArgs(input);
+    const text = await this.run(userId, args, false, false, display);
+    return this.boundResult(userId, "act", text);
+  }
+
+  async extract(userId: unknown, url: string | null, kind: ExtractKind = "auto", display?: string): Promise<BrowserText> {
     const args =
       url === null ? ["see", "extract", kind] : ["see", "extract", kind, assertHttpUrl(url)];
-    const text = await this.run(userId, args, false);
+    const text = await this.run(userId, args, false, false, display);
     return this.boundResult(userId, "extract", text);
+  }
+
+  /** One-shot viewport PNG for the takeover card. The daemon writes the image
+   * into this user's artifacts directory; the data URL is the only copy that
+   * leaves the tool layer. Returns null instead of failing the card. */
+  async vision(userId: unknown, display?: string): Promise<{ dataUrl: string } | null> {
+    if (!(await this.probe())) return null;
+    const tracked = this.trackWorkspace(userId);
+    await this.sweepIdle(tracked.id);
+    assertSafeArgs(["vision"]);
+    let result: SpawnResult;
+    try {
+      result = await this.spawn(this.binary, ["vision", "--json"], {
+        env: this.buildEnv(tracked.root, false, display),
+        timeoutMs: BLADE_ACTION_TIMEOUT_MS,
+        maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
+      });
+    } catch {
+      return null;
+    }
+    if (result.exitCode !== 0) return null;
+    let parsed: { ok?: unknown; image_path?: unknown };
+    try {
+      parsed = JSON.parse(result.stdout) as { ok?: unknown; image_path?: unknown };
+    } catch {
+      return null;
+    }
+    if (parsed.ok !== true || typeof parsed.image_path !== "string") return null;
+    const artifacts = artifactsDirFor(tracked.root);
+    const resolved = resolve(parsed.image_path);
+    const rel = relative(artifacts, resolved);
+    if (rel === "" || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return null;
+    const bytes = await readFile(resolved).catch(() => null);
+    if (!bytes || bytes.length < 512 || bytes.length > 1_500_000) return null;
+    const png = bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47;
+    const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
+    if (!png && !jpeg) return null;
+    return { dataUrl: `data:image/${png ? "png" : "jpeg"};base64,${bytes.toString("base64")}` };
   }
 
   /** Page one of our own spilled artifacts. Paths are workspace-relative;
@@ -401,15 +615,15 @@ export class BladeBrowserPool {
     }
   }
 
-  private async run(userId: unknown, args: string[], fresh: boolean): Promise<string> {
-    assertSafeArgs(args);
+  private async run(userId: unknown, args: string[], fresh: boolean, allowRb = false, display?: string): Promise<string> {
+    assertSafeArgs(args, allowRb);
     if (!(await this.probe())) {
       throw new Error("research browser is unavailable on this host");
     }
     const tracked = this.trackWorkspace(userId);
     await this.sweepIdle(tracked.id);
     const result = await this.spawn(this.binary, [...args, "--json"], {
-      env: this.buildEnv(tracked.root, fresh),
+      env: this.buildEnv(tracked.root, fresh, display),
       timeoutMs: BLADE_ACTION_TIMEOUT_MS,
       maxBufferBytes: BLADE_MAX_BUFFER_BYTES,
     });
@@ -448,8 +662,9 @@ function requireQuery(query: string | undefined): string {
   return query;
 }
 
-export function assertSafeArgs(args: string[]): void {
+export function assertSafeArgs(args: string[], allowRb = false): void {
   for (const arg of args) {
+    if (arg === "rb" && allowRb) continue;
     if (FORBIDDEN_ARGS.has(arg)) throw new Error(`forbidden bladebro argument: ${arg}`);
   }
 }

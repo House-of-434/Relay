@@ -2,12 +2,24 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { Agent } from "../domain/permissions.js";
-import { authorizeBrowser } from "../domain/permissions.js";
-import type { BladeBrowserPool, ExtractKind, ReadMode } from "../infra/bladebro.js";
+import { authorizeBrowser, authorizeBrowserHuman } from "../domain/permissions.js";
+import type { BladeBrowserPool, BrowserActInput, ExtractKind, ReadMode } from "../infra/bladebro.js";
+import type { TakeoverSessionManager } from "../infra/takeover-session.js";
+import type { TakeoverDisplayPool } from "../infra/takeover-display.js";
+import { TAKEOVER_TTL_MS, takeoverBusyMessage } from "../infra/takeover-session.js";
+import { RelayBrowserTakeoverClient } from "../infra/browser-takeover.js";
+import { assertCredentialSafe } from "../infra/credential-guard.js";
 
 export interface BladeBrowserContext {
   pool: BladeBrowserPool;
   userId: string;
+  botId: string;
+  threadId: string;
+  actorAssertion: string;
+  bffInternalUrl: string;
+  bffCapability: string | undefined;
+  sessions?: TakeoverSessionManager;
+  displays?: TakeoverDisplayPool;
 }
 
 function toolError(error: unknown) {
@@ -22,25 +34,55 @@ function withArtifactNote(text: string, artifact: string | undefined): string {
 
 const READ_MODES = ["content", "outline", "find", "artifact"] as const;
 const EXTRACT_KINDS = ["auto", "links", "forms"] as const;
+const ACT_ACTIONS = ["click", "type", "fill", "select", "press", "scroll", "hover"] as const;
 
 /** Scout's browser: interactive navigation, persistent page state, and
  * site-aware structured extraction inside the calling user's own browser
- * workspace. */
+ * workspace. The interactive lane (a handed-back session) additionally
+ * allows native-CDP actions, bound to this bot and thread only. */
 export function registerBrowserTools(server: McpServer, agent: Agent, context: BladeBrowserContext): void {
-  const { pool, userId } = context;
+  const { pool, userId, botId, threadId, actorAssertion, bffInternalUrl, bffCapability, sessions, displays } = context;
+  const takeover = new RelayBrowserTakeoverClient({ bffInternalUrl, capability: bffCapability });
+  const actor = { userId, botId, threadId };
+
+  const guardTakeover = (): void => {
+    if (sessions?.isUserTakeover(userId)) throw new Error("the person has control of the interactive browser; wait for them to hand it back");
+  };
+  /** The live daemon is one per profile. An unrelated task must not reuse it:
+   * doing so would restart the daemon and lose the person's page. */
+  const guardForeignSession = (): void => {
+    if (!sessions) return;
+    if (sessions.agentSession(actor)) return;
+    const other = sessions.sessionForUser(userId);
+    if (!other) return;
+    console.warn(
+      `[takeover] foreign browser call: session=${other.botId}/${other.threadId} actor=${botId}/${threadId}`,
+    );
+    throw new Error(takeoverBusyMessage(other.state));
+  };
+  /** The live display when this exact bot/thread owns the handed-back
+   * session. Unrelated tasks never attach to it. */
+  const liveDisplay = (): string | undefined => {
+    const session = sessions?.agentSession(actor);
+    if (!session) return undefined;
+    sessions?.touchByUser(userId);
+    return session.display;
+  };
 
   server.registerTool(
     "browser_open",
     {
       description:
-        "Open a URL in the persistent research browser. Use for clicking, navigating, expanding content, interacting with pages, or maintaining state across steps. Returns bounded page text.",
+        "Open a URL in the persistent browser. During a handed-back sign-in session it navigates the same live page; otherwise it uses the headless research lane. Returns bounded page text.",
       inputSchema: { url: z.string().min(1).max(2048) },
       annotations: { readOnlyHint: true },
     },
     async ({ url }) => {
       try {
         authorizeBrowser(agent, "open");
-        const result = await pool.open(userId, url);
+        guardTakeover();
+        guardForeignSession();
+        const result = await pool.open(userId, url, false, liveDisplay());
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
         return toolError(error);
@@ -65,7 +107,9 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     async ({ mode, query, artifact, offset, limit }) => {
       try {
         authorizeBrowser(agent, "read");
-        const result = await pool.read(userId, mode as ReadMode, query, artifact, offset, limit);
+        guardTakeover();
+        guardForeignSession();
+        const result = await pool.read(userId, mode as ReadMode, query, artifact, offset, limit, liveDisplay());
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
         return toolError(error);
@@ -87,9 +131,127 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
     async ({ url, kind }) => {
       try {
         authorizeBrowser(agent, "extract");
-        const result = await pool.extract(userId, url ?? null, (kind ?? "auto") as ExtractKind);
+        guardTakeover();
+        guardForeignSession();
+        const result = await pool.extract(userId, url ?? null, (kind ?? "auto") as ExtractKind, liveDisplay());
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_act",
+    {
+      description:
+        "Interact with the live page in a handed-back browser session: click a control, type into a field, choose a native select option, press a key, or scroll. Only available after the person hands the browser back; it never attaches to an unrelated task. Inspect the page first, and never enter credentials for the person.",
+      inputSchema: {
+        action: z.enum(ACT_ACTIONS),
+        target: z.string().min(1).max(512).optional(),
+        selector: z.string().min(1).max(512).optional(),
+        text: z.string().min(1).max(2000).optional(),
+        option: z.string().min(1).max(2000).optional(),
+        key: z.string().min(1).max(40).optional(),
+        fields: z.record(z.string().min(1).max(512), z.string().min(1).max(2000)).optional(),
+        submit: z.string().min(1).max(512).optional(),
+        dx: z.number().int().min(-4000).max(4000).optional(),
+        dy: z.number().int().min(-4000).max(4000).optional(),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ action, target, selector, text, option, key, fields, submit, dx, dy }) => {
+      try {
+        authorizeBrowser(agent, "act");
+        guardTakeover();
+        guardForeignSession();
+        const display = liveDisplay();
+        if (!display) throw new Error("interactive browser is not active for this task; call browser_request_human first");
+        const input: BrowserActInput = { action, target, selector, text, option, key, fields, submit, dx, dy };
+        if (action === "type" || action === "fill") {
+          const forms = await pool.extract(userId, null, "forms", display).catch(() => null);
+          assertCredentialSafe(input, forms?.text ?? null);
+        }
+        const result = await pool.act(userId, input, display);
+        return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    "browser_request_human",
+    {
+      description:
+        "Ask the person to take over the live browser for any step only they can complete — a sign-in, CAPTCHA/Cloudflare wall, verification code, required form field, payment confirmation, or similar. This is independent of the Works on computer setting; it works when Works on is Off. Navigate to the exact page first with browser_open/browser_act when needed. Pass `url` to put the person on that page, or omit it to hand over the current page. Opens one persistent browser session and a card in this chat; the person completes the step (or just hands it back) and your turn ends. Relay resumes this task on the same page. Never ask for or accept credentials in chat.",
+      inputSchema: {
+        url: z.string().min(1).max(2048).optional(),
+        reason: z.string().trim().min(1).max(240),
+      },
+      annotations: { readOnlyHint: false },
+    },
+    async ({ url, reason }) => {
+      // Local development can drive a real Chrome window on the host instead
+      // of the container X/VNC stack. Never enabled in production.
+      const localBrowser = process.env.RELAY_TAKEOVER_LOCAL_BROWSER === "1" && process.env.NODE_ENV !== "production";
+      if (!sessions || (!localBrowser && !displays)) return toolError(new Error("live browser is not configured"));
+      let sessionId = "";
+      let generation = 0;
+      let created = false;
+      let lease: { display: string } | null = null;
+      try {
+        authorizeBrowserHuman(agent);
+        guardTakeover();
+        guardForeignSession();
+        let host = url ? new URL(url).hostname.slice(0, 120) : "";
+        const owned = sessions.requestHuman(actor);
+        sessionId = owned.session.id;
+        generation = owned.session.generation;
+        created = owned.created;
+        if (localBrowser) {
+          await pool.localHeadfulOpen(userId, url);
+        } else {
+          if (!displays) throw new Error("live browser is not configured");
+          lease = await displays.acquire(userId);
+          await pool.headfulOpen(userId, url);
+          const display = await pool.headfulDisplay(userId);
+          lease = await displays.attach(userId, display);
+          sessions.attachDisplay(sessionId, display);
+          console.log(`[takeover] viewer session=${sessionId} display=${display}`);
+        }
+        // One-shot preview for the card; a failed capture must not fail the
+        // request or leave the browser behind.
+        const screenshot = await pool.vision(userId, lease?.display).catch(() => null);
+        const expiresAt = new Date(Date.now() + TAKEOVER_TTL_MS).toISOString();
+        console.log(
+          `[takeover] request session=${sessionId} bot=${botId} thread=${threadId} reason=${reason.slice(0, 240)}`,
+        );
+        await takeover.requestCard(actorAssertion, {
+          sessionId,
+          generation,
+          title: host || "Live browser",
+          expiresAt,
+          ...(screenshot ? { screenshot: screenshot.dataUrl } : {}),
+        });
+        return {
+          content: [
+            {
+              type: "text",
+              text: "A live browser card is ready in this chat. End this turn; Relay resumes the task automatically after the person hands it back. If they dismiss it or the card expires, the task stops and you can continue when they write again.",
+            },
+          ],
+        };
+      } catch (error) {
+        // A failed card must not leave a browser, display, or takeover behind.
+        if (sessionId) {
+          try {
+            if (created) sessions.release(sessionId, generation);
+            else sessions.handBack(sessionId, generation);
+          } catch { /* already settled */ }
+        }
+        if (lease && created && displays) displays.release(userId);
+        if (created) await pool.stopWorkspace(userId).catch(() => {});
         return toolError(error);
       }
     },

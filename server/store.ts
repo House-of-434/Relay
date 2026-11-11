@@ -312,6 +312,13 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       error: out.secret.error ? redactSecretsInText(out.secret.error) : undefined,
     };
   }
+  if (out.takeover) {
+    out.takeover = {
+      ...out.takeover,
+      title: redactSecretsInText(out.takeover.title),
+      error: out.takeover.error ? redactSecretsInText(out.takeover.error) : undefined,
+    };
+  }
   return out;
 }
 
@@ -2772,7 +2779,6 @@ export class Store {
   seedRelayAgentsForOwner(ownerUserId: string | undefined, seeds: readonly {
     role: RelayAgentRole;
     profile: NonNullable<Parameters<Store["createBot"]>[0]>;
-    replacesSoulHashes?: readonly string[];
   }[]) {
     const owned = (bot: BotRecord) => ownerUserId === undefined || bot.ownerUserId === ownerUserId;
     const present = new Map(this.bots.filter(owned).flatMap((bot) => bot.relayAgent ? [[bot.relayAgent, bot] as const] : []));
@@ -2780,16 +2786,6 @@ export class Store {
     for (const seed of seeds) {
       const existing = present.get(seed.role);
       if (existing) {
-        // A seed whose previous text is still there verbatim is upgraded in
-        // place. A customized soul has a different hash and is left alone.
-        if (
-          seed.profile.soul !== undefined
-          && existing.soul !== seed.profile.soul
-          && existing.soulHash !== undefined
-          && seed.replacesSoulHashes?.includes(existing.soulHash)
-        ) {
-          this.setSoul(existing.id, seed.profile.soul);
-        }
         // Server-owned default: a seeded agent runs at Auto so its sandboxed
         // tools do not stop to ask on every turn; outward actions keep their
         // own confirmations (a calendar card, a draft shown in chat).

@@ -47,7 +47,7 @@ export function surfaceOfComputerKind(kind: "box" | "vps" | "vm" | "local" | nul
 }
 
 const OFF_NOTE =
-  " This bot's \"Works on\" setting is Off, so no computer is mounted this turn: you cannot open a page, click, or type on any screen. If the user asks for something that needs one, tell them Works on is Off in this bot's settings — never claim you are opening a browser you do not have.";
+  " This bot's \"Works on\" setting is Off, so no computer is mounted this turn: you cannot use Relay's computer (desktop) tools — no screenshot, click, or type on any screen. The Tool Layer browser is separate from this setting: browser_open/browser_read/browser_extract still work for public research, and browser_request_human opens a user takeover when a login or Cloudflare wall needs the person. Tell them \"Works on\" is Off for computer tasks, but never claim the research browser is unavailable.";
 
 /** Decide what a turn mounts. One place per turn: a computer destination
  * mounts only that computer (web work happens in its own browser), Off
@@ -130,7 +130,7 @@ export function surfacePrompt(
     ? SURFACE_AUTHORITY.replace("explain the mismatch and ask the user to change the conversation's computer selector", "inspect connected choices with select_computer and select the requested available place; on a pending result end this turn so Relay can reconnect the correct tools and continue the original request")
     : SURFACE_AUTHORITY);
   else if (!opts.note && !opts.canSelect) {
-    text = " No computer tools are mounted this turn. You cannot open apps, click, or inspect a screen through Relay. If asked for screen work, explain this and ask the user to choose and connect a computer in the Computer panel; do not claim to have opened or checked it.";
+    text = " No computer tools are mounted this turn. You cannot open apps, click, or inspect a screen through Relay's computer tools. If asked for screen work, explain this and ask the user to choose and connect a computer in the Computer panel; do not claim to have opened or checked it. The Tool Layer browser (browser_open/browser_read/browser_extract for research, browser_request_human when a login wall needs the user) is separate from computer mounting and still applies.";
   }
   if (opts.pinned) {
     text += ` This conversation is pinned to ${surfaceLabel(opts.pinned)}; changing places requires ${opts.canSelect ? "select_computer or " : ""}the conversation's computer selector, not a different tool name.`;

@@ -2874,5 +2874,17 @@
   "computer.phase.showSleepingBoat": "Auto found a sleeping cloud computer. It was not woken or changed.",
   "computer.phase.showPendingBoat": "Auto found an existing cloud computer that is not ready. It was not changed.",
   "computer.badge.autoBoat": "cloud boat · Auto · read-only",
-  "computer.addBoatKey": "Add a Boat API key to give this bot a cloud computer — it spins up right here."
+  "computer.addBoatKey": "Add a Boat API key to give this bot a cloud computer — it spins up right here.",
+  "takeover.title": "Live browser",
+  "takeover.dismiss": "Dismiss",
+  "takeover.working": "Opening…",
+  "takeover.doneNote": "Handed back — the bot is continuing on this page.",
+  "takeover.dismissedNote": "Stopped — the bot will not continue this task.",
+  "takeover.expiredNote": "Expired — the bot stopped. Send a new message to continue.",
+  "takeover.close": "Close",
+  "takeover.iframeTitle": "Live browser",
+  "takeover.openHint": "Open live browser",
+  "takeover.hint": "Complete the step or make your changes, then hand it back to let the bot continue.",
+  "takeover.handBack": "Hand back to bot",
+  "takeover.handBackShort": "Hand back"
 }

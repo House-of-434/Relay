@@ -64,6 +64,22 @@ export interface BladeConfig {
   proxy: string | undefined;
   timezone: string | undefined;
   locale: string | undefined;
+  /** Headful human-takeover sessions allowed at once (default 2). */
+  takeoverMaxConcurrent: number;
+  /** Idle timeout for an interactive session (default 10 minutes). */
+  takeoverIdleMs: number;
+  /** Safety ceiling from session creation (default 12 hours). */
+  takeoverMaxLifetimeMs: number;
+}
+
+export function takeoverMaxConcurrent(env: NodeJS.ProcessEnv = process.env): number {
+  const n = Number(env.RELAY_TAKEOVER_MAX_CONCURRENT ?? "2");
+  return Number.isInteger(n) && n > 0 ? n : 2;
+}
+
+function positiveMs(value: string | undefined, fallback: number): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.floor(n) : fallback;
 }
 
 export interface SearchConfig {
@@ -113,5 +129,8 @@ export function bladeConfig(env: NodeJS.ProcessEnv = process.env): BladeConfig {
     proxy: env.BLADE_PROXY,
     timezone: env.BLADE_TZ,
     locale: env.BLADE_LOCALE,
+    takeoverMaxConcurrent: takeoverMaxConcurrent(env),
+    takeoverIdleMs: positiveMs(env.RELAY_TAKEOVER_IDLE_MS, 60 * 60_000),
+    takeoverMaxLifetimeMs: positiveMs(env.RELAY_TAKEOVER_MAX_LIFETIME_MS, 12 * 60 * 60_000),
   };
 }

@@ -363,7 +363,7 @@ export interface WireMessage {
   roomRequest?: { id: string; phase: "request" | "result" };
   id: string;
   role: "bot" | "user";
-  kind: "text" | "options" | "activity" | "connector" | "secret" | "routine.run" | "goal.run" | "digest" | "compaction";
+  kind: "text" | "options" | "activity" | "connector" | "secret" | "takeover" | "routine.run" | "goal.run" | "digest" | "compaction";
   text?: string;
   digest?: TurnDigest;
   compaction?: {
@@ -385,6 +385,9 @@ export interface WireMessage {
   card?: OptionCardData;
   connector?: ConnectorCardData;
   secret?: SecretRequestCardData;
+  /** A browser takeover intervention. Safe metadata only: the viewer token,
+   * cookies, and profile paths are never persisted here. */
+  takeover?: TakeoverCardData;
   /** One idempotently updated status card for a routine run. */
   routineRun?: RoutineRunCardData;
   /** Terminal receipt for a bounded multi-bot channel goal. */
@@ -523,6 +526,27 @@ export interface ConnectorCardData {
   error?: string;
   dismissed?: boolean;
   resumed?: boolean;
+}
+
+/** A human-intervention card raised by the research browser. The card is a
+ * typed purpose on the credential-card lifecycle, not a credential: it
+ * carries no secret and no viewer token. */
+export interface TakeoverCardData {
+  kind: "browser_takeover";
+  sessionId: string;
+  generation: number;
+  title: string;
+  status: "pending" | "done" | "dismissed" | "expired";
+  /** ISO timestamp; the card and its browser resources end here. */
+  expiresAt: string;
+  /** The person whose turn raised the card. Only this person or the workspace
+   * owner may open the viewer or settle it. Absent on older cards and direct
+   * threads, where the owner is the only possible requester. */
+  requestedBy?: string;
+  /** A one-shot preview image is available from the card's screenshot route. */
+  hasScreenshot?: boolean;
+  resumed?: boolean;
+  error?: string;
 }
 
 export interface SecretRequestCardData {
