@@ -31,7 +31,7 @@ describe("cursor face data", () => {
     expect(FACE_BOX).toBe(228.541);
     expect(FACE_CENTRE).toEqual([120, 122.5]);
     expect(GAZE_TRAVEL).toEqual({ x: 13.2, y: 8.4 });
-    expect(MOUTH_STROKE).toBe(7.5);
+    expect(MOUTH_STROKE).toBe(10);
   });
 
   it("hangs the mouth below the eye pair", () => {

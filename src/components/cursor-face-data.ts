@@ -123,7 +123,7 @@ export const MOUTHS: number[][] = [
 ]
 
 /** Mouth thickness, in face-space units. */
-export const MOUTH_STROKE = 7.5
+export const MOUTH_STROKE = 10
 
 /**
  * The mouth hangs off the eyes: centred under the pair, tilted with them, and pushed clear

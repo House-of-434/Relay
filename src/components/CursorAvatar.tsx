@@ -22,6 +22,7 @@
 import React, { useEffect, useId, useMemo, useRef } from 'react'
 
 import { MASCOT_BODIES } from "../../shared/mascot-bodies"
+import { boringPattern, type BoringVariant } from "./boring-patterns"
 import {
   EXPRESSIONS,
   EXPRESSION_COUNT,
@@ -121,39 +122,25 @@ export const MOTION = {
   excited: { bob: [9, 520], sway: [3, 1040], squash: 0.35 },
   surprised: { enter: [1.14, 340], jitter: [0.8, 120] },
   suspicious: { sway: [2.4, 2600], tilt: -3 },
-  angry: { jitter: [1.3, 95], tilt: 2 },
   drowsy: { pulse: [0.026, 5000], tilt: 3 },
   happy: { bob: [5, 820], squash: 0.28 },
   curious: { sway: [3.4, 1900], tilt: -4 },
-  confused: { sway: [3, 2200] },
-  bored: { pulse: [0.016, 5200], tilt: 2 },
   proud: { bob: [1.6, 2400], pulse: [0.02, 2400] },
-  shy: { pulse: [0.016, 3000], tilt: 4 },
   sad: { pulse: [0.02, 4600], tilt: 3 },
-  laughing: { bob: [7, 430], squash: 0.4 },
   scared: { jitter: [2.2, 75] },
   playful: { bob: [6, 620], sway: [5, 1240], squash: 0.3 },
   celebrate: { bob: [10, 480], sway: [4, 960], squash: 0.35 },
 
   // Agent morphs — the mascot standing in for a process.
-  orbit: { circle: [6, 3200] },
   radar: { sway: [6, 2400], pulse: [0.012, 2400] },
-  progress: { pulse: [0.022, 1600] },
 
   // Product cycle.
   spawning: { enter: [0.02, 820], pulse: [0.014, 3600] },
-  humming: { pulse: [0.016, 2800] },
   loading: { sway: [2.2, 1500], pulse: [0.012, 1500] },
-  dictating: { bob: [2, 2000] },
   writing: { bob: [1.6, 1100] },
   sending: { bob: [3, 900] },
-  receiving: { bob: [3, 900] },
-  uploading: { bob: [3, 1000] },
   notifying: { bob: [4, 700], sway: [2.5, 700] },
   alerting: { jitter: [2.6, 85] },
-  dragging: { tilt: -6, sway: [2, 900] },
-  bouncing: { bob: [12, 560], squash: 0.45 },
-  'powering-down': { settle: 0.05, tilt: 4 },
 } satisfies Record<CursorState, BodyMotion>
 
 /** How long a `settle` takes to reach its resting scale. */
@@ -230,11 +217,6 @@ const GLYPH_BANG =
   '<path fill="{{GRADIENT}}" d="M99 58 Q99 43 114.3 43 Q129.6 43 129.6 58 L123 150 Q122 161 114.3 161 Q106.6 161 105.6 150 Z"/>' +
   '<circle fill="{{GRADIENT}}" cx="114.3" cy="188" r="15"/>'
 
-/** The question mark for genuine confusion. Stroked, so it stays light against the body. */
-const GLYPH_QUERY =
-  '<path fill="none" stroke="{{GRADIENT}}" stroke-width="19" stroke-linecap="round" ' +
-  'd="M88 76 A27 27 0 1 1 114.3 112 L114.3 132"/>' +
-  '<circle fill="{{GRADIENT}}" cx="114.3" cy="170" r="13"/>'
 
 export const EFFECTS: EffectsByState = {
   // Celebration — the loud burst.
@@ -242,21 +224,15 @@ export const EFFECTS: EffectsByState = {
   // piece thrown much past ~130 from centre would be clipped mid-flight.
   celebrate: { confetti: { count: 16, period: 1500, life: 1300, origin: 74, spread: 54 } },
   excited: { confetti: { count: 9, period: 2000, life: 1100, origin: 72, spread: 44 } },
-  laughing: { confetti: { count: 7, period: 2400, life: 1000, origin: 70, spread: 38 } },
 
   // Work in flight — ribbons circling the body.
-  orbit: { trails: { count: 3, period: 2600, radius: 128 } },
   radar: { trails: { count: 2, period: 2000, radius: 132 } },
-  progress: { trails: { count: 3, period: 1800, radius: 124 } },
   loading: { trails: { count: 2, period: 2200, radius: 126 } },
-  uploading: { trails: { count: 2, period: 1700, radius: 122 } },
   sending: { trails: { count: 2, period: 1500, radius: 120 } },
-  receiving: { trails: { count: 2, period: 1500, radius: 120 } },
 
   // The mascot standing aside to show a symbol.
   alerting: { glyph: { markup: GLYPH_BANG, period: 2600, hold: 1100 } },
   notifying: { glyph: { markup: GLYPH_BANG, period: 4200, hold: 900 } },
-  confused: { glyph: { markup: GLYPH_QUERY, period: 5200, hold: 1200 } },
 }
 
 const SVG_NS = 'http://www.w3.org/2000/svg'
@@ -443,35 +419,21 @@ export type CursorState =
   | "excited"
   | "surprised"
   | "suspicious"
-  | "angry"
   | "drowsy"
   | "happy"
   | "curious"
-  | "confused"
-  | "bored"
   | "proud"
-  | "shy"
   | "sad"
-  | "laughing"
   | "scared"
   | "playful"
   | "celebrate"
-  | "orbit"
   | "radar"
-  | "progress"
   | "spawning"
-  | "humming"
   | "loading"
-  | "dictating"
   | "sending"
-  | "receiving"
-  | "uploading"
   | "writing"
   | "notifying"
   | "alerting"
-  | "bouncing"
-  | "dragging"
-  | "powering-down"
 
 /**
  * Which expressions a state cycles through. The first is its resting face, chosen as the
@@ -533,10 +495,6 @@ export const POOLS = {
     14,
     23
   ],
-  angry: [
-    7,
-    16
-  ],
   drowsy: [
     22,
     4,
@@ -554,35 +512,15 @@ export const POOLS = {
     0,
     15
   ],
-  confused: [
-    8,
-    14,
-    5
-  ],
-  bored: [
-    0,
-    4,
-    22
-  ],
   proud: [
     2,
     15,
     8
   ],
-  shy: [
-    24,
-    0,
-    13
-  ],
   sad: [
     22,
     4,
     13
-  ],
-  laughing: [
-    2,
-    11,
-    17
   ],
   scared: [
     21,
@@ -599,17 +537,7 @@ export const POOLS = {
     8,
     17
   ],
-  orbit: [
-    6,
-    0,
-    8
-  ],
   radar: [
-    6,
-    0,
-    8
-  ],
-  progress: [
     6,
     0,
     8
@@ -618,34 +546,14 @@ export const POOLS = {
     3,
     0
   ],
-  humming: [
-    6,
-    0,
-    8
-  ],
   loading: [
     6,
     0,
     8
   ],
-  dictating: [
-    1,
-    10,
-    19
-  ],
   sending: [
     6,
     0,
-    8
-  ],
-  receiving: [
-    19,
-    0,
-    8
-  ],
-  uploading: [
-    15,
-    9,
     8
   ],
   writing: [
@@ -661,19 +569,6 @@ export const POOLS = {
     21,
     3
   ],
-  bouncing: [
-    2,
-    17
-  ],
-  dragging: [
-    3,
-    15,
-    0
-  ],
-  "powering-down": [
-    22,
-    13
-  ]
 } satisfies Record<CursorState, number[]>
 
 /** How long a state holds an expression before drifting to another, in ms. */
@@ -718,10 +613,6 @@ const EXPR_CADENCE = {
     2600,
     4500
   ],
-  angry: [
-    2200,
-    3800
-  ],
   drowsy: [
     4000,
     8000
@@ -734,29 +625,13 @@ const EXPR_CADENCE = {
     1800,
     3200
   ],
-  confused: [
-    2200,
-    3800
-  ],
-  bored: [
-    3500,
-    6000
-  ],
   proud: [
     3500,
     6000
   ],
-  shy: [
-    3000,
-    5500
-  ],
   sad: [
     4000,
     7000
-  ],
-  laughing: [
-    1200,
-    2400
   ],
   scared: [
     900,
@@ -770,15 +645,7 @@ const EXPR_CADENCE = {
     1400,
     2600
   ],
-  orbit: [
-    4000,
-    8000
-  ],
   radar: [
-    4000,
-    8000
-  ],
-  progress: [
     4000,
     8000
   ],
@@ -786,27 +653,11 @@ const EXPR_CADENCE = {
     1200,
     1200
   ],
-  humming: [
-    5000,
-    9000
-  ],
   loading: [
     6000,
     10000
   ],
-  dictating: [
-    4000,
-    8000
-  ],
   sending: [
-    4000,
-    8000
-  ],
-  receiving: [
-    4000,
-    8000
-  ],
-  uploading: [
     4000,
     8000
   ],
@@ -822,18 +673,6 @@ const EXPR_CADENCE = {
     2000,
     3600
   ],
-  bouncing: [
-    3000,
-    6000
-  ],
-  dragging: [
-    1600,
-    3000
-  ],
-  "powering-down": [
-    6000,
-    9000
-  ]
 } satisfies Record<CursorState, [number, number]>
 
 /** Blink cadence in ms, or null for states that never blink. */
@@ -872,10 +711,6 @@ const BLINK = {
     4500,
     8000
   ],
-  angry: [
-    3500,
-    7000
-  ],
   drowsy: null,
   happy: [
     2500,
@@ -885,29 +720,13 @@ const BLINK = {
     2500,
     5500
   ],
-  confused: [
-    2800,
-    5500
-  ],
-  bored: [
-    4000,
-    8000
-  ],
   proud: [
     3500,
     7000
   ],
-  shy: [
-    3000,
-    6000
-  ],
   sad: [
     4000,
     8000
-  ],
-  laughing: [
-    2500,
-    5000
   ],
   scared: [
     1200,
@@ -921,31 +740,16 @@ const BLINK = {
     2200,
     4500
   ],
-  orbit: null,
   radar: null,
-  progress: null,
   spawning: null,
-  humming: [
-    4000,
-    8000
-  ],
   loading: null,
-  dictating: null,
   sending: null,
-  receiving: null,
-  uploading: null,
   writing: null,
   notifying: [
     2000,
     4000
   ],
   alerting: null,
-  bouncing: null,
-  dragging: [
-    2200,
-    4500
-  ],
-  "powering-down": null
 } satisfies Record<CursorState, [number, number] | null>
 
 /** Grouping, for pickers and docs. */
@@ -963,39 +767,22 @@ export const STATE_GROUPS = {
     "excited",
     "surprised",
     "suspicious",
-    "angry",
     "drowsy",
     "happy",
     "curious",
-    "confused",
-    "bored",
     "proud",
-    "shy",
     "sad",
-    "laughing",
     "scared",
     "playful",
     "celebrate"
   ],
-  "Morphes agent": [
-    "orbit",
-    "radar",
-    "progress"
-  ],
   "Cycle produit": [
     "spawning",
-    "humming",
     "loading",
-    "dictating",
     "writing",
     "sending",
-    "receiving",
-    "uploading",
     "notifying",
-    "alerting",
-    "dragging",
-    "bouncing",
-    "powering-down"
+    "alerting"
   ]
 } satisfies Record<string, CursorState[]>
 
@@ -1009,6 +796,23 @@ const noTimestamp = (): number | null => null
 
 const toPath = (ring: Ring) =>
   'M' + ring.map(p => p[0].toFixed(2) + ' ' + p[1].toFixed(2)).join('L') + 'Z'
+
+/** A rounded eye centred on (cx, cy). Two arcs make a full ellipse. */
+const dotPath = (cx: number, cy: number, rx: number, ry: number) => {
+  const y = cy.toFixed(2)
+  return (
+    `M${(cx - rx).toFixed(2)} ${y}` +
+    `a${rx} ${ry} 0 1 0 ${(rx * 2).toFixed(2)} 0` +
+    `a${rx} ${ry} 0 1 0 ${(-rx * 2).toFixed(2)} 0Z`
+  )
+}
+
+/** Half-width and half-height of the simple dot eye, in face-space units. */
+const DOT_EYE = { rx: 9, ry: 13 }
+
+/** The smile is authored small in the expression tables; this widens it to sit
+ * under the dot eyes without changing each expression's own character. */
+const MOUTH_SCALE = 1.6
 
 const clone = (rings: Ring[]): Ring[] =>
   rings.map(r => r.map((p): [number, number] => [p[0], p[1]]))
@@ -1155,6 +959,25 @@ export interface CursorAvatarProps {
   paused?: boolean
   /** Silhouette to wear. Defaults to the baked-in mascot silhouette. */
   silhouette?: CursorSilhouette
+  /**
+   * Body texture drawn behind the face, clipped to the silhouette. Null draws
+   * none (the flat gradient shows through). The pattern is deterministic from
+   * `seed`, so a bot keeps its texture across screens and renames.
+   */
+  pattern?: { seed: string; colors: string[]; variant: BoringVariant } | null
+  /** How opaque the texture is over the gradient; defaults to 1 when the face is hidden. */
+  patternOpacity?: number
+  /**
+   * Shape of the eyes. "dots" is the simple rounded pair; "rings" is the
+   * expressive 48-point engine. Both follow the same face anchor, so either
+   * sits centred on the silhouette.
+   */
+  eyeStyle?: "dots" | "rings"
+  /**
+   * Draw the eyes and mouth over the texture. Off leaves the pattern as the
+   * inner content — the shapes and body motion still animate.
+   */
+  face?: boolean
   gradient?: [string, string, string]
   eyeColor?: string
   title?: string | null
@@ -1189,6 +1012,10 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       autoExpression = true,
       paused = false,
       silhouette = DEFAULT_SILHOUETTE,
+      pattern = null,
+      patternOpacity,
+      face = true,
+      eyeStyle = "dots",
       gradient = DEFAULT_GRADIENT,
       eyeColor = "#ffffff",
       title,
@@ -1207,6 +1034,18 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     const trailLayer = useRef<SVGGElement | null>(null)
     const confettiLayer = useRef<SVGGElement | null>(null)
     const glyphLayer = useRef<SVGGElement | null>(null)
+    const patternLayer = useRef<SVGGElement | null>(null)
+    const patternSeed = pattern?.seed
+    const patternColors = pattern?.colors.join(',')
+    const patternVariant = pattern?.variant
+    const patternMarkup = useMemo(() => {
+      if (!patternSeed || !patternColors || !patternVariant) return null
+      return boringPattern({
+        seed: patternSeed,
+        colors: patternColors.split(','),
+        variant: patternVariant,
+      })
+    }, [patternSeed, patternColors, patternVariant])
 
     // Respect the OS setting unless the caller states a preference explicitly.
     const prefersReducedMotion = useMemo(
@@ -1234,6 +1073,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       stateStart: 0,
       lastState,
       lastBodyTransform: '',
+      lastPatternTransform: '',
       // what the parked loop last painted; '' means "never" so a mascot that
       // mounts paused still gets its one resting-face paint
       pausedPaint: '',
@@ -1244,6 +1084,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         turn,
         spring,
         eyeScale,
+        eyeStyle,
         paused,
         lookAround,
         motionStrength,
@@ -1258,6 +1099,7 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
       turn,
       spring,
       eyeScale,
+      eyeStyle,
       paused,
       lookAround,
       motionStrength,
@@ -1362,7 +1204,12 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
           const longitude = baseLongitude + radians
           const depth = Math.cos(longitude)
           const perspective = Math.max(depth, 0.02) / Math.max(Math.cos(baseLongitude), 0.02)
-          el.setAttribute('d', toPath(ring))
+          el.setAttribute(
+            'd',
+            (p.eyeStyle ?? 'dots') === 'dots'
+              ? dotPath(c[0], c[1], DOT_EYE.rx, DOT_EYE.ry)
+              : toPath(ring)
+          )
           el.setAttribute(
             'transform',
             `translate(${(SPHERE_C + SPHERE_R * Math.sin(longitude) + gx).toFixed(2)} ${(
@@ -1379,7 +1226,13 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
         // Mouth: same sphere projection as the eyes, but blinking never touches it.
         const mouthEl = mouth.current
         if (mouthEl) {
-          const spec = displayedMouth(e)
+          const baseMouth = displayedMouth(e)
+          const spec = [
+            baseMouth[0] * MOUTH_SCALE,
+            baseMouth[1] * MOUTH_SCALE,
+            baseMouth[2],
+            baseMouth[3],
+          ]
           const frameGeom = mouthFrame(rings, spec)
           const baseLongitude = Math.asin(clamp((frameGeom.x - SPHERE_C) / SPHERE_R, -1, 1))
           const longitude = baseLongitude + radians
@@ -1395,6 +1248,40 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
             ).toFixed(2)} ${(-frameGeom.y).toFixed(2)})`
           )
           mouthEl.style.opacity = depth > 0.02 ? '1' : '0'
+        }
+
+        // The body texture drifts as a secondary action: it lags the body rather than
+        // leading it. Idle holds perfectly still so dozens of sidebar avatars don't
+        // repaint forever; only a live state spends the frames.
+        const patternEl = patternLayer.current
+        if (patternEl) {
+          const elapsed = now - e.stateStart
+          const strength = p.motionStrength ?? 1
+          let transform = ''
+          if (strength > 0) {
+            if (p.state === 'celebrate') {
+              transform = `rotate(${((elapsed / 1000) * 30).toFixed(2)} ${SPHERE_C} ${SPHERE_C})`
+            } else if (
+              p.state === 'working' ||
+              p.state === 'sending'
+            ) {
+              const s = 1 + Math.sin((elapsed / 1600) * Math.PI * 2) * 0.03 * strength
+              transform = `translate(${SPHERE_C} ${SPHERE_C}) scale(${s.toFixed(4)}) translate(${-SPHERE_C} ${-SPHERE_C})`
+            } else if (
+              p.state === 'thinking' ||
+              p.state === 'searching' ||
+              p.state === 'curious' ||
+              p.state === 'loading'
+            ) {
+              const deg = Math.sin((elapsed / 4000) * Math.PI * 2) * 6 * strength
+              transform = `rotate(${deg.toFixed(2)} ${SPHERE_C} ${SPHERE_C})`
+            }
+          }
+          if (transform !== e.lastPatternTransform) {
+            e.lastPatternTransform = transform
+            if (transform) patternEl.setAttribute('transform', transform)
+            else patternEl.removeAttribute('transform')
+          }
         }
 
         // The body. One-shot entrances need time since the state began, so track that here
@@ -1485,6 +1372,10 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
     const paint = `url(#${uid}-grad)`
     const paintRef = useRef(paint)
     paintRef.current = paint
+    // With the face off, the texture is the content, so it fills the body
+    // rather than tinting it. With the face on it must stay quiet enough for
+    // white eyes to read on top.
+    const textureOpacity = patternOpacity ?? (face ? 0.42 : 1)
 
     const dimension = size.constructor === Number ? `${size}px` : size
     const label = title === undefined ? `${silhouette.name} mascot` : title
@@ -1525,19 +1416,33 @@ export const CursorAvatar = React.forwardRef<CursorAvatarHandle, CursorAvatarPro
           <g ref={bodyContent}>
           <g transform={silhouette.fit || undefined} dangerouslySetInnerHTML={{ __html: body }} />
           <g clipPath={`url(#${uid}-clip)`}>
-            <g transform={anchorTransform(silhouette.anchor)}>
-              <path ref={eye0} fill={eyeColor} />
-              <path ref={eye1} fill={eyeColor} />
-              {showMouth && (
-                <path
-                  ref={mouth}
-                  fill="none"
-                  stroke={eyeColor}
-                  strokeWidth={mouthStroke}
-                  strokeLinecap="round"
+            {patternMarkup && (
+              <g ref={patternLayer}>
+                <g
+                  style={{ opacity: textureOpacity }}
+                  transform={`translate(${SPHERE_C} ${SPHERE_C}) scale(${(
+                    (FACE_BOX * 1.15) /
+                    patternMarkup.size
+                  ).toFixed(4)}) translate(${-patternMarkup.size / 2} ${-patternMarkup.size / 2})`}
+                  dangerouslySetInnerHTML={{ __html: patternMarkup.markup }}
                 />
-              )}
-            </g>
+              </g>
+            )}
+            {face && (
+              <g transform={anchorTransform(silhouette.anchor)}>
+                <path ref={eye0} fill={eyeColor} />
+                <path ref={eye1} fill={eyeColor} />
+                {showMouth && (
+                  <path
+                    ref={mouth}
+                    fill="none"
+                    stroke={eyeColor}
+                    strokeWidth={mouthStroke}
+                    strokeLinecap="round"
+                  />
+                )}
+              </g>
+            )}
           </g>
           </g>
           <g ref={glyphLayer} style={{ opacity: 0 }} />

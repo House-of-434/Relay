@@ -381,6 +381,8 @@ export interface Bot {
   mascotExpression?: string | null;
   /** Which body the bot wears. Unknown/absent values fall back to the cursor. */
   mascotBody?: MascotBodyId | null;
+  /** Body texture behind the face. Absent means "pixel"; "none" is flat. */
+  bodyTexture?: "pixel" | "none" | null;
   /** App-owned image attachment used for this bot's profile. */
   avatarUrl?: string | null;
   /** Mascot, or the crop applied to avatarUrl. */

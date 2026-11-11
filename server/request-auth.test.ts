@@ -136,6 +136,9 @@ describe("scopes", () => {
   it("limits a client's bot and room edits to display fields, naming the field it refused", () => {
     expect(clientBotPatchViolation({ unread: true })).toBeNull();
     expect(clientBotPatchViolation({ pinned: true, color: "green" })).toBeNull();
+    expect(clientBotPatchViolation({ avatarUrl: "/api/attachments/a.png", avatarCrop: "circle" })).toBeNull();
+    expect(clientBotPatchViolation({ avatarZoom: 1.5, avatarFocusX: 0.2, avatarFocusY: 0.8 })).toBeNull();
+    expect(clientBotPatchViolation({ mascotBody: "blob", bodyTexture: "none" })).toBeNull();
     expect(clientBotPatchViolation({ unread: true, autoApprove: true })).toBe("autoApprove");
     expect(clientBotPatchViolation({ cwd: "/" })).toBe("cwd");
     expect(clientBotPatchViolation([])).toBe("body");

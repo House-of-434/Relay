@@ -1,7 +1,9 @@
 import { CURSOR_STATES, type CursorState } from "@/components/CursorAvatar";
+import { hashCode } from "@/components/boring-patterns";
+import { MASCOT_BODY_IDS, botMascotBody, type MascotBodyId } from "../../shared/mascot-bodies";
 import { lastNonReceipt } from "./receipts";
 
-/** The mascot's behaviour vocabulary — CursorAvatar's 39 states, under the
+/** The mascot's behaviour vocabulary — CursorAvatar's states, under the
  * app's historical names. */
 export type MausState = CursorState;
 export const MAUS_STATES = CURSOR_STATES;
@@ -14,35 +16,22 @@ export const STATE_GROUPS = {
     "excited",
     "surprised",
     "suspicious",
-    "angry",
     "drowsy",
     "happy",
     "curious",
-    "confused",
-    "bored",
     "proud",
-    "shy",
     "sad",
-    "laughing",
     "scared",
     "playful",
     "celebrate",
   ],
-  "Agent morphs": ["orbit", "radar", "progress"],
   "Product cycle": [
     "spawning",
-    "humming",
     "loading",
-    "dictating",
     "writing",
     "sending",
-    "receiving",
-    "uploading",
     "notifying",
     "alerting",
-    "dragging",
-    "bouncing",
-    "powering-down",
   ],
 } satisfies Record<string, MausState[]>;
 
@@ -60,6 +49,22 @@ export const MAUS_COLOR_NAMES = [
 ] as const;
 
 export type MausColor = (typeof MAUS_COLOR_NAMES)[number];
+
+/**
+ * The body a bot wears when it has not chosen one. Left unset, every bot would
+ * wear the same cursor and the roster would read as one character repeated; a
+ * seed picks the silhouette instead, so two bots rarely share a shape. The
+ * bot's id is the seed, so a rename never changes it.
+ */
+export function mascotBodyFor(bot: {
+  id?: string | null;
+  name?: string | null;
+  mascotBody?: MascotBodyId | null;
+}): MascotBodyId {
+  if (bot.mascotBody) return botMascotBody(bot.mascotBody);
+  const seed = bot.id?.trim() || bot.name?.trim() || "bot";
+  return MASCOT_BODY_IDS[hashCode(seed) % MASCOT_BODY_IDS.length];
+}
 
 export const MAUS_COLORS = {
   green: "#009957",
@@ -92,7 +97,7 @@ export const MAUS_MOTIONS = [
 export type MausMotion = "none" | (typeof MAUS_MOTIONS)[number];
 
 /**
- * The face used to be ten hand-drawn SVGs; it is now the engine's 39 states.
+ * The face used to be ten hand-drawn SVGs; it is now the engine's state vocabulary.
  * Bots saved under the old vocabulary still carry one of these ten names, so
  * they are translated on read rather than migrated in place — a bot's stored
  * face should survive a downgrade too.
@@ -126,14 +131,14 @@ export function normalizeState(value: string | null | undefined): MausState | nu
 /**
  * The states worth offering in the appearance picker.
  *
- * The engine carries 39, but many are transient beats the app drives itself
+ * The engine can carry transient beats the app drives itself
  * (`sending`, `alerting`, `powering-down`) and make no sense as a bot's resting
  * face. More importantly, states share resting faces: `happy`, `excited` and
  * `playful` all rest on expression 2, and `curious`, `surprised` and `scared`
  * all rest on 3 — they differ in which faces they *drift* to, which a static
  * swatch cannot show. Offering them all gave 15 buttons showing 8 pictures.
  *
- * Across all 39 states there are only 11 distinct resting faces, so this is one
+ * Across the states there are only 11 distinct resting faces, so this is one
  * state per face, chosen for the clearest name. Every swatch looks different.
  */
 export const PICKABLE_STATES: MausState[] = [

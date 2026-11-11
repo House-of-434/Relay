@@ -17,6 +17,11 @@ import {
   type MausState,
 } from "@/lib/mascot";
 import { EXPRESSION_COUNT } from "@/components/CursorAvatar";
+import {
+  BORING_VARIANTS,
+  paletteFor,
+  type BoringVariant,
+} from "@/components/boring-patterns";
 import "./styles.css";
 import "./mascot-preview.css";
 
@@ -93,6 +98,8 @@ function Tuner({
   setColor,
   forward,
   setForward,
+  patternVariant,
+  setPatternVariant,
 }: {
   tuning: Tuning;
   setTuning: (t: Tuning) => void;
@@ -104,6 +111,8 @@ function Tuner({
   setColor: (c: MausColor) => void;
   forward: boolean;
   setForward: (v: boolean) => void;
+  patternVariant: BoringVariant | "none";
+  setPatternVariant: (v: BoringVariant | "none") => void;
 }) {
   const handle = useRef<MausAvatarHandle>(null);
   const changed = (Object.keys(DEFAULTS) as (keyof Tuning)[]).filter(
@@ -126,6 +135,15 @@ function Tuner({
           turn={tuning.turn}
           forward={forward}
           gaze={{ x: tuning.gazeX, y: tuning.gazeY }}
+          pattern={
+            patternVariant === "none"
+              ? null
+              : {
+                  seed: "preview-bot",
+                  colors: paletteFor(MAUS_COLORS[color]),
+                  variant: patternVariant,
+                }
+          }
         />
         <div className="tuner-readout">
           <strong>{state}</strong>
@@ -186,6 +204,27 @@ function Tuner({
               >
                 <span className="swatch" style={{ background: MAUS_COLORS[c] }} />
                 {c}
+              </button>
+            ))}
+          </div>
+
+          <h3>Body texture</h3>
+          <div className="chips">
+            <button
+              type="button"
+              className={patternVariant === "none" ? "on" : ""}
+              onClick={() => setPatternVariant("none")}
+            >
+              none
+            </button>
+            {BORING_VARIANTS.map((v) => (
+              <button
+                key={v}
+                type="button"
+                className={patternVariant === v ? "on" : ""}
+                onClick={() => setPatternVariant(v)}
+              >
+                {v}
               </button>
             ))}
           </div>
@@ -260,6 +299,11 @@ function MotionCard({
           motion={motion}
           motionKey={replayAll * 100 + replayOne}
           label={`${motion} motion`}
+          pattern={{
+            seed: `motion-${motion}`,
+            colors: paletteFor(MAUS_COLORS[color ?? MOTION_COLORS[index]]),
+            variant: "pixel",
+          }}
         />
       </div>
       <footer className="motion-meta">
@@ -283,6 +327,7 @@ function Preview() {
   const [expression, setExpression] = useState<number | undefined>(undefined);
   const [color, setColor] = useState<MausColor>("green");
   const [forward, setForward] = useState(true);
+  const [patternVariant, setPatternVariant] = useState<BoringVariant | "none">("pixel");
 
   useEffect(() => {
     const interval = window.setInterval(() => setReplayAll((value) => value + 1), 4600);
@@ -293,7 +338,7 @@ function Preview() {
     <main className="preview-shell">
       <header className="preview-header">
         <div>
-          <p className="eyebrow">Morphing face engine · 25 expressions · 39 states</p>
+          <p className="eyebrow">Morphing face engine · 25 expressions · 26 states</p>
           <h1>Maus motion library</h1>
           <p className="intro">
             The app&rsquo;s lit body with the face engine behind it. Expressions morph on a
@@ -318,6 +363,8 @@ function Preview() {
         setColor={setColor}
         forward={forward}
         setForward={setForward}
+        patternVariant={patternVariant}
+        setPatternVariant={setPatternVariant}
       />
 
       <section className="motion-grid" aria-label="Mascot motion library">
@@ -360,7 +407,13 @@ function Preview() {
                 </div>
                 {PICKABLE_STATES.map((s) => (
                   <div className="mascot-cell" key={`${c}-${s}`}>
-                    <MausAvatar color={c} state={s} size={86} label={`${c} ${s} maus`} />
+                    <MausAvatar
+                      color={c}
+                      state={s}
+                      size={86}
+                      label={`${c} ${s} maus`}
+                                  pattern={{ seed: `matrix-${c}`, colors: paletteFor(MAUS_COLORS[c]), variant: "pixel" }}
+                    />
                   </div>
                 ))}
               </div>

@@ -252,6 +252,8 @@ export interface WireBot {
   color: MausColor;
   mascotExpression?: MausExpression | null;
   mascotBody?: MascotBodyId | null;
+  /** Body texture behind the face. Absent means "pixel"; "none" is flat. */
+  bodyTexture?: "pixel" | "none" | null;
   /** App-owned attachment served as this bot's custom profile image;
    * always present on the wire, null when the bot has none. */
   avatarUrl: string | null;

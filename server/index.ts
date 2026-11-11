@@ -20176,7 +20176,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           else section = trimmed;
         }
       }
-      for (const key of ["unread", "cloudBackend", "color", "mascotExpression", "mascotBody", "pinned", "hidden"] as const) {
+      for (const key of ["unread", "cloudBackend", "color", "mascotExpression", "mascotBody", "bodyTexture", "pinned", "hidden"] as const) {
         if (body[key] !== undefined) patch[key] = body[key];
       }
       const computerSpecified = Object.prototype.hasOwnProperty.call(body, "computer");

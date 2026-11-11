@@ -13,6 +13,8 @@ export type BotUpdatePatch = Partial<
     | "autoStartVps"
     | "color"
     | "mascotExpression"
+    | "mascotBody"
+    | "bodyTexture"
     | "avatarUrl"
     | "avatarCrop"
     | "avatarZoom"

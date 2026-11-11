@@ -45,6 +45,35 @@ describe("MausAvatar body", () => {
     expect(markup).not.toContain("{{GRADIENT}}");
     expect(markup).toContain("url(#");
   });
+
+  it("draws no body texture unless one is given", () => {
+    expect(render({})).not.toContain("opacity:0.42");
+  });
+
+  it("draws the body texture over the gradient at partial opacity", () => {
+    const markup = render({
+      pattern: { seed: "atlas", colors: ["#ff0000", "#00ff00"], variant: "pixel" },
+    });
+    expect(markup).toContain("opacity:0.42");
+  });
+});
+
+describe("BotAvatar's body texture", () => {
+  it("draws the texture behind the expressive face", () => {
+    const markup = renderBot({ id: "atlas" });
+    expect(markup).toContain("opacity:0.42");
+    expect(markup).toContain('fill="#ffffff"');
+  });
+
+  it("uses the pixel grid as the texture by default", () => {
+    const markup = renderBot({ id: "atlas", bodyTexture: "pixel" });
+    expect(markup).toContain('width="10" height="10"');
+  });
+
+  it("draws no texture when the bot sets it to none", () => {
+    const markup = renderBot({ id: "atlas", bodyTexture: "none" });
+    expect(markup).not.toContain('width="10" height="10"');
+  });
 });
 
 describe("BotAvatar's two avatar outcomes", () => {
