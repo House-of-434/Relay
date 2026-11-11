@@ -338,6 +338,7 @@ export function SidebarProfileMenu() {
       <SidebarPopoverMenu
         items={items}
         ariaLabel={name}
+        menuWidthClass="w-[190px]"
         renderTrigger={({ open }) => (
           <span
             className={cn(

@@ -96,16 +96,22 @@
   --color-panel: #111111;
   --color-raised: #2f2f2f;
   --color-raised-hover: #3d3d3d;
-  /* a chosen row inside a menu or list. Midnight reuses its hover tone;
-     Lagoon takes a lighter wash than `raised-hover` so the sheet stays calm. */
+  /* a chosen row inside a menu or list. Both skins reuse their hover tone so
+     the selection reads at least as strongly as a hovered row. */
   --color-selected: #3d3d3d;
-  /* the composer pill. Both skins paint it in `raised`; the ring stays
-     transparent everywhere else for a future skin that needs a tone of
-     its own. */
+  /* the composer pill. Both skins paint it in `raised`; the ring is invisible
+     on the dark skin and a thin edge on the light one, where a white pill on
+     a near-white ground would otherwise lose its boundary. */
   --color-composer: #2f2f2f;
   --color-composer-ring: transparent;
   /* popover and right-click menus, painted in `card`. */
   --color-menu: #262626;
+  /* the edge of a popover menu. Light skins match the composer's thin edge;
+     the dark skin keeps a quiet hairline. */
+  --color-menu-border: #3d3d3d;
+  /* a menu row under the cursor. `raised` cannot be reused: on the light
+     skin it is white, so `bg-raised/70` vanished on a white menu. */
+  --color-menu-hover: #2c2c2c;
   --color-card: #262626;
   --color-inset: #191919;
   /* a control ON a card. The dark skin takes its `raised` value; the light
@@ -174,6 +180,8 @@
   --color-composer-ring: transparent;
   --color-card: #262626;
   --color-menu: #262626;    /* = card: unchanged */
+  --color-menu-border: #3d3d3d;
+  --color-menu-hover: #2c2c2c;
   --color-inset: #191919;
   --color-control: #2f2f2f;       /* = raised: Midnight is unchanged */
   --color-hairline: #333333;
@@ -202,63 +210,65 @@
 }
 
 /* ── Lagoon ────────────────────────────────────────────────────────────────
-   Cool daylight, and the default skin: glazed ceramic grounds with the
-   brand green carrying every action. The neutrals keep their green-blue
-   cast (#eef2f2), so the surface reads cool, and the logo's deep green
-   belongs to the ground instead of sitting on top of it. Even the ink
-   is a very dark petrol rather than a neutral black — on a tinted ground a
-   truly neutral black reads as a foreign object.
+   Daylight, and the default skin: warm neutral grounds (an off-white in the
+   spirit of Perplexity's light mode) with the brand green kept for accents,
+   focus, and status — the same restraint as Midnight. The surfaces carry no
+   green cast; only the ground is warmed a touch (#f4f4f1) so pure-white
+   cards and raised fills still separate from it. Green lives on action:
+   accent, focus ring, and the user bubble's text never sits on a tinted
+   surface.
 
    Corners are the most generous of the two (8px / 14px): glass and ceramic
    round more than sheet metal.
    ───────────────────────────────────────────────────────────────────────── */
 [data-skin="lagoon"] {
   --code-color-scheme: light;
-  /* The tint is the point, so it is carried by the surfaces, not by a button:
-     the ground sits 13 points of green-blue above its red channel, which is
-     what makes the skin read as cool at a glance. Raised surfaces stay pure
-     white as the contrast anchor — tinting those too turns the whole thing
-     to soup. */
-  --color-app: #dfeceb;
-  --color-panel: #ecf4f3;
+  /* Neutral scale lifted from a Perplexity-style light theme: a near-white
+     ground, white raised surfaces, and a dark petrol ink (#0b2833) rather
+     than a flat black. The sidebar (panel) sits a step BELOW the ground, the
+     way their bg-subtle does; cards sit above it. No surface carries a green
+     cast. Values are darkened slightly from their #fbfbfb base so white cards
+     clear the surface-separation floor. */
+  --color-app: #f8f8f8;
+  --color-panel: #f1f1f1;
   --color-raised: #ffffff;
-  --color-raised-hover: #cfe4e1;
-  /* lighter than `raised-hover`: the row is chosen, not hovered, so it reads
-     as a gentle wash rather than the user bubble's own tone */
-  --color-selected: #e7f2f0;
+  --color-raised-hover: #e9e9e9;
+  /* = raised-hover, matching Midnight: a chosen row must read at least as
+     strongly as a hovered one. */
+  --color-selected: #e9e9e9;
   --color-composer: #ffffff;    /* = raised: unchanged */
-  --color-composer-ring: transparent;
+  /* on a white ground the pill needs a thin edge to read as a field */
+  --color-composer-ring: #d8dcdd;
   --color-card: #ffffff;
   --color-menu: #ffffff;    /* = card: unchanged */
-  --color-inset: #d5e8e5;
-  --color-control: #c3dcd9;       /* Lagoon's surfaces climb white → panel →
-                                     app → inset → hover in small steps, so a
-                                     control has to sit below the lot to clear
-                                     every one it can land on: 1.44:1 on a
-                                     card, 1.29:1 on the panel, 1.13:1 on an
-                                     inset row, 1.09:1 under the hover tone. */
-  --color-hairline: #aebfbd;      /* 1.60:1 — level with the other three */
+  --color-menu-border: #d8dcdd;   /* = composer ring: one thin edge on white */
+  --color-menu-hover: #f5f5f5;    /* subtle enough to stay clear of the #e9e9e9 selected row */
+  --color-inset: #ebebeb;
+  --color-control: #dedede;       /* sits below white → app → panel → inset →
+                                     hover so a control clears every surface it
+                                     can land on. */
+  --color-hairline: #c4c8ca;      /* darkened from their 15%-teal border to
+                                     clear the 1.5:1 floor on the ground */
 
-  --color-ink: #14201f;           /* dark petrol; a neutral black would read
-                                     as a foreign object on a tinted ground */
-  --color-ink-secondary: #4d5c5b; /* 7.0:1 on white, 5.8:1 on the ground */
-  --color-ink-tertiary: #566564;
+  --color-ink: #0b2833;           /* their primary ink: dark petrol */
+  --color-ink-secondary: #475d65; /* ~75% of the ink over white */
+  --color-ink-tertiary: #56676e;
 
   --color-accent: #1c7a4c;        /* the logo green, carries white at 5.3:1 */
   --color-accent-border: #3fae6e;
   --color-accent-text: #0f5c36;   /* 7.9:1 on a card */
   --color-focus: #1c7a4c;         /* the ring rides the accent */
   --color-accent-ink: #ffffff;
-  --color-bubble-user: #cfe4e1;
-  --color-bubble-user-ink: #14201f;   /* = ink: unchanged */
+  --color-bubble-user: #ebebeb;
+  --color-bubble-user-ink: #0b2833;   /* = ink: unchanged */
 
   --color-success: #2f6b4f;
   --color-danger: #a8382f;
   --color-danger-ink: #ffffff;
   --color-success-ink: #ffffff;
   --color-warning: #7a5a2a;
-  --color-scrollbar: #a6b8b6;
-  --color-maus-line: #4d5c5b;
+  --color-scrollbar: #c4c8ca;
+  --color-maus-line: #475d65;
 
   --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     Roboto, sans-serif;

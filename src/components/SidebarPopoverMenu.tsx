@@ -47,6 +47,7 @@ export function SidebarPopoverMenu({
   items,
   ariaLabel,
   openOnHover = false,
+  menuWidthClass = "w-[184px]",
   renderTrigger,
 }: {
   /** `data-tour` id for the trigger button */
@@ -54,6 +55,9 @@ export function SidebarPopoverMenu({
   items: SidebarMenuItem[];
   ariaLabel: string;
   openOnHover?: boolean;
+  /** Width of the popover. The profile row sits under the bot list but wants
+   * a narrower sheet, so it passes its own width here. */
+  menuWidthClass?: string;
   renderTrigger: (state: {
     open: boolean;
     attention: boolean;
@@ -155,7 +159,8 @@ export function SidebarPopoverMenu({
           aria-label={ariaLabel}
           {...motion.exitProps}
           className={cn(
-            "absolute bottom-full left-0 z-40 mb-1 w-[184px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-2xl shadow-black/50",
+            "absolute bottom-full left-0 z-40 mb-1 overflow-hidden rounded-xl border border-menu-border bg-menu px-1.5 py-1.5 shadow-xs shadow-black/10",
+            menuWidthClass,
             motion.className,
           )}
         >
@@ -173,7 +178,7 @@ export function SidebarPopoverMenu({
                 }}
                 className={cn(
                   "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px] disabled:opacity-60",
-                  item.active ? "rounded-lg bg-raised text-ink" : "text-ink rounded-lg hover:bg-raised/70",
+                  item.active ? "rounded-lg bg-raised text-ink" : "text-ink rounded-lg hover:bg-menu-hover",
                 )}
               >
                 {item.icon && (

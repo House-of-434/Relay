@@ -6,7 +6,6 @@ import {
   ChevronRight,
   Copy,
   Crown,
-  FolderOpen,
   Pencil,
   RefreshCw,
   Webhook,
@@ -37,6 +36,7 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ThreadChip } from "./ThreadChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
+import { SidebarIcon } from "./SidebarIcon";
 import { useMenuMotion } from "./MenuMotion";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
@@ -759,6 +759,11 @@ export function ChatView({ bot: profile }: {
   const transcriptRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
+  // The input pill alone. The jump pill hugs this, so a selected reply (or
+  // queued chips and attachments stacked above it) does not push the jump
+  // pill up over them.
+  const composerPillRef = useRef<HTMLDivElement>(null);
+  const composerPill = useComposerDockPad(composerPillRef);
   // A guest on an OMB Cloud home writes only in conversations it opened.
   const canWrite = useCanWriteIn(bot.threadId);
 
@@ -1107,6 +1112,7 @@ export function ChatView({ bot: profile }: {
           // buttons clear the 26px overlay while the rest of the layout stays.
           style={controlsShiftStyle}
         >
+          <UsageChip bot={bot} />
           {!remoteClient && (
             <button
               type="button"
@@ -1119,10 +1125,9 @@ export function ChatView({ bot: profile }: {
                 state.filesOpen && "bg-raised text-ink",
               )}
             >
-              <FolderOpen size={18} />
+              <SidebarIcon size={18} />
             </button>
           )}
-          <UsageChip bot={bot} />
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
         </div>
         </div>
@@ -1283,10 +1288,11 @@ export function ChatView({ bot: profile }: {
         <button
           onClick={jumpToLatest}
           aria-label={t("chat.jumpToLatestAria")}
-          className="animate-pop-in absolute left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-hairline/40 bg-raised px-3 py-1.5 text-[12.5px] text-ink shadow-lg hover:bg-raised-hover"
-          style={{ bottom: composerDock.height }}
+          title={t("chat.jumpToLatest")}
+          className="animate-pop-in absolute left-1/2 z-10 flex size-8 -translate-x-1/2 items-center justify-center rounded-full border border-hairline/40 bg-raised text-ink shadow-lg hover:bg-raised-hover"
+          style={{ bottom: composerPill.pad }}
         >
-          <ArrowDown size={13} /> {t("chat.jumpToLatest")}
+          <ArrowDown size={15} />
         </button>
       )}
 
@@ -1327,6 +1333,7 @@ export function ChatView({ bot: profile }: {
         onClearReply={clearReply}
         onConsumeReply={consumeReply}
         onRestoreReply={restoreReply}
+        composerRef={composerPillRef}
         onEditLast={lastUserMessage && !lastUserMessageHasAttachments && !bot.busy && !lastUserMessage.id.startsWith("optimistic-")
           ? () => setEditingId(lastUserMessage.id)
           : undefined}

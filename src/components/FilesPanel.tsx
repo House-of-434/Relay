@@ -160,7 +160,7 @@ export function FilesPanel({ bot }: { bot: Bot }) {
         {files.map((file) => {
           const active = selected?.fileId === file.fileId;
           return (
-            <div key={file.fileId} className={cn("group/file flex items-center gap-2 px-3", active ? "bg-selected" : "hover:bg-raised/70")}>
+            <div key={file.fileId} className={cn("group/file flex items-center gap-2 px-3", active ? "bg-selected" : "hover:bg-menu-hover")}>
               <button type="button" onClick={() => choose(file)} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-1 py-2 text-left">
                 <FileIcon file={file} />
                 <span className="min-w-0 flex-1">

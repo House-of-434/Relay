@@ -822,7 +822,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
         title={save.state === "saved" && save.savedTo ? t("attach.savedTo", { path: save.savedTo }) : file.name}
         className={cn("group", shell, className)}
       >
-        <div className="flex items-center transition-colors hover:bg-raised/70">
+        <div className="flex items-center transition-colors hover:bg-menu-hover">
           <button
             type="button"
             onClick={() => dispatch({
@@ -866,7 +866,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
         onClick={() => void save.save()}
         disabled={save.state === "saving"}
         aria-label={saveLabel}
-        className="flex min-h-12 w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-raised/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-wait disabled:hover:bg-transparent"
+        className="flex min-h-12 w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-wait disabled:hover:bg-transparent"
       >
         <FileText size={14} className="shrink-0" aria-hidden="true" />
         <span className="min-w-0 flex-1">
