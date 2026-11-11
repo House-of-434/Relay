@@ -350,6 +350,24 @@ export const CLIENT_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: Reg
   { methods: ["POST"], path: /^\/api\/calendar-calls\/[\w-]+\/room$/ },
   // webhook list is secret-free; creating or rotating one is not
   { methods: ["GET"], path: /^\/api\/webhooks$/ },
+  // own user skills (users/<userId>/skills): the handler binds /me to the
+  // caller's own signed-in user id, so a client session can only ever touch
+  // its own folder — nothing here reaches another user's skills or memory.
+  { methods: ["GET", "POST", "PUT", "PATCH", "DELETE"], path: /^\/api\/users\/me\/skills(\/[a-z0-9-]+)?$/ },
+  // bot memory panel (MEMORY.md, topics, journal, upkeep): memory is
+  // bot-owned, so the handler additionally requires the caller to own the
+  // bot (bot.ownerUserId) or hold admin scope. A client session for another
+  // person gets 403 there, never a read.
+  { methods: ["GET", "POST", "PUT", "DELETE"], path: /^\/api\/bots\/[\w-]+\/memory(\/.+)?$/ },
+  // per-bot skills (import/enable/delete): skills are user-reusable context,
+  // so the handler likewise requires bot ownership or admin scope.
+  { methods: ["GET", "POST", "PATCH", "DELETE"], path: /^\/api\/bots\/[\w-]+\/skills(\/[a-z0-9-]+)?$/ },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/skill-template$/ },
+  // bot soul (personality file): user-owned like memory/skills, so the
+  // handler requires bot ownership or admin scope. The assembled system
+  // prompt preview stays admin-only — it reveals Relay instructions.
+  { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/soul$/ },
+  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/soul\/(apply-file|discard-file)$/ },
   // configured-or-not booleans; the handler strips the few identifying fields for clients
   { methods: ["GET"], path: /^\/api\/config$/ },
 ];

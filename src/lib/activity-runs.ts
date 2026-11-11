@@ -28,6 +28,7 @@ export function isRecoveryActivity(message: Message): boolean {
  * so live progress is never hidden behind a fold. */
 function foldable(message: Message): boolean {
   const tool = message.tool;
+  if (message.kind === "text" && message.attachments?.length) return false;
   if (message.kind !== "activity" || !tool) return false;
   if (message.comm || message.threadRef || isRecoveryActivity(message)) return false;
   if (tool.ok !== true) return false;
