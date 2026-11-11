@@ -3,7 +3,7 @@
 // has. Bytes are read through the file-id routes; no host path ever reaches
 // the renderer.
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, Download, FileCode2, FileImage, FileText, FolderOpen, Loader2, RefreshCw, Trash2, X } from "lucide-react";
+import { ChevronLeft, Download, FileCode2, FileImage, FileText, FolderOpen, Loader2, Trash2, X } from "lucide-react";
 
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
@@ -145,9 +145,6 @@ export function FilesPanel({ bot }: { bot: Bot }) {
             </button>
           ))}
         </div>
-        <button onClick={() => void load()} className="ml-auto rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink" title={t("files.refresh")} aria-label={t("files.refresh")}>
-          <RefreshCw size={14} className={cn(loading && "animate-spin")} />
-        </button>
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto py-1">

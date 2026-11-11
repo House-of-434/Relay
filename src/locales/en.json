@@ -1157,7 +1157,6 @@
   "files.views": "File views",
   "files.thisThread": "This thread",
   "files.allFiles": "All files",
-  "files.refresh": "Refresh files",
   "files.loading": "Loading…",
   "files.external": "This conversation works in a custom folder, so Relay does not list its files here. {path}",
   "files.ownerless": "This conversation has no owner, so Relay cannot assign file ids.",
