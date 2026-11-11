@@ -1101,7 +1101,6 @@ export function ChatView({ bot: profile }: {
               <Crown size={11} aria-hidden="true" /> <span className="@max-4xl/chathead:sr-only">{t("chat.chiefOfStaff")}</span>
             </span>
           )}
-          {bot.busy && <WorkingDots className="text-ink-secondary" />}
           {!bot.busy && bot.waitingForTeammates && <span className="truncate text-[12px] text-ink-secondary" role="status">Teammates working</span>}
         </div>
         <div

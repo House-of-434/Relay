@@ -23,6 +23,9 @@ When choosing to generate UI, output one fenced \`openui\` code block containing
 - When structured data benefits from visual presentation, use the appropriate OpenUI component.
 - When using OpenUI for a table or chart, do not duplicate the same data in a Markdown table.
 
+### Spacing
+- Stack and Row already space their children; pass \`gap\` to tune it and \`gap="none"\` only when children must sit flush.
+
 ### Available Components
 Stack(children?: any, gap?: string | number, align?: string, justify?: string) — Vertical stack layout
 Row(children?: any, gap?: string | number, align?: string, justify?: string) — Horizontal row layout

@@ -10,8 +10,8 @@ const gapMap: Record<string, string> = {
   lg: "gap-6",
 };
 
-const gapClass = (gap: string | number | undefined) => {
-  if (gap === undefined || gap === null) return "";
+const gapClass = (gap: string | number | undefined, fallback: string) => {
+  if (gap === undefined || gap === null) return fallback;
   if (typeof gap === "number") return `gap-${gap}`;
   if (typeof gap === "string") return gapMap[gap] || "";
   return "";
@@ -44,7 +44,7 @@ export const Stack = defineComponent({
   component: ({ props, renderNode }: any) =>
     React.createElement(
       "div",
-      { className: `flex flex-col ${gapClass(props.gap)} ${alignClass(props.align)} ${justifyClass(props.justify)} min-w-0` },
+      { className: `flex flex-col ${gapClass(props.gap, "gap-3")} ${alignClass(props.align)} ${justifyClass(props.justify)} min-w-0` },
       renderNode(props.children),
     ),
 });
@@ -56,7 +56,7 @@ export const Row = defineComponent({
   component: ({ props, renderNode }: any) =>
     React.createElement(
       "div",
-      { className: `flex flex-row flex-wrap ${gapClass(props.gap)} ${alignClass(props.align)} ${justifyClass(props.justify)} min-w-0` },
+      { className: `flex flex-row flex-wrap ${gapClass(props.gap, "gap-2")} ${alignClass(props.align)} ${justifyClass(props.justify)} min-w-0` },
       renderNode(props.children),
     ),
 });
