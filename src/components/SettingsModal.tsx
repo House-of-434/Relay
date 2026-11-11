@@ -459,9 +459,9 @@ export function SettingsModal() {
   useEffect(() => {
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     const dialog = dialogRef.current;
-    const search = dialog?.querySelector<HTMLInputElement>("[data-settings-search]");
-    if (search?.checkVisibility()) search.focus();
-    else dialog?.focus();
+    // The search field stays unfocused on open: autofocusing it painted the
+    // focus border on every open, which read as a persistent highlight.
+    dialog?.focus();
 
     const onKey = (event: KeyboardEvent) => {
       // A child editor owns Escape and its focus trap, including while saving.

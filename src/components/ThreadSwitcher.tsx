@@ -1,7 +1,7 @@
 // Thread switcher for the chat header: the "Bot / thread" title is the
 // trigger, and the dropdown lists every thread the bot owns, newest first.
 // Bot-opened subthreads (a Scout deep-research report, a delegated follow-up)
-// sit in the same list with an "Opened by <name>" provenance line — they are
+// sit in the same list, tagged with the bot that opened them — they are
 // ordinary threads the person can continue in, not a separate kind.
 // Switching only moves the VIEW (switchTask); a turn running elsewhere keeps
 // running. The entries arrive pre-sorted from the snapshot's tasks array, so
@@ -33,6 +33,29 @@ function entryTime(entry: ThreadSwitcherEntry): number {
   return entry.updatedAt ?? entry.createdAt;
 }
 
+/** A bot-opened conversation is titled `@<opener>` (or `@<opener> · <label>`
+ * for parallel work) on the server, which reads as a bare mention rather than
+ * a thread name. The header wants the whole attribution ("<opener>'s
+ * Conversation"); a dropdown row names the thread plainly ("Conversation") and
+ * leans on the opener pill beside it. A work thread keeps its label in both.
+ * Any name a person chose is returned unchanged. */
+export function threadTitles(title: string, openedByName?: string): { header: string; row: string } {
+  const opener = openedByName?.trim();
+  if (!opener) return { header: title, row: title };
+  if (title.trim() === `@${opener}`) {
+    return {
+      header: t("thread.switcher.pairTitle", { name: opener }),
+      row: t("thread.switcher.pairName"),
+    };
+  }
+  const workPrefix = `@${opener} · `;
+  if (title.startsWith(workPrefix)) {
+    const label = title.slice(workPrefix.length) || title;
+    return { header: label, row: label };
+  }
+  return { header: title, row: title };
+}
+
 export function ThreadSwitcher({
   currentThreadId,
   currentTitle,
@@ -48,6 +71,13 @@ export function ThreadSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
+  // The lane shows only mid-scroll: a scroll event raises it, 800ms of
+  // stillness lowers it again. Hover alone never reveals it.
+  const [scrolling, setScrolling] = useState(false);
+  const scrollTimer = useRef<number | null>(null);
+  useEffect(() => () => {
+    if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
+  }, []);
   const motion = useMenuMotion(open);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -71,6 +101,8 @@ export function ThreadSwitcher({
   const visible = entries
     .filter((entry: ThreadSwitcherEntry) => !entry.hidden)
     .sort((a: ThreadSwitcherEntry, b: ThreadSwitcherEntry) => entryTime(b) - entryTime(a));
+  const currentEntry = entries.find((entry) => entry.threadId === currentThreadId);
+  const headerTitle = threadTitles(currentTitle, currentEntry?.openedByName).header;
 
   const choose = (threadId: string) => {
     setOpen(false);
@@ -80,6 +112,15 @@ export function ThreadSwitcher({
   const requestDelete = (threadId: string) => {
     setOpen(false);
     setPendingDeleteThreadId(threadId);
+  };
+
+  const onMenuScroll = () => {
+    setScrolling(true);
+    if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
+    scrollTimer.current = window.setTimeout(() => {
+      scrollTimer.current = null;
+      setScrolling(false);
+    }, 800);
   };
 
   return (
@@ -96,18 +137,25 @@ export function ThreadSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         aria-label={t("thread.switcher.label")}
-        title={currentTitle}
+        title={headerTitle}
         className="flex w-fit max-w-full items-center gap-1 rounded-md py-0.5 pl-2 text-[15px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
-        <span className="min-w-0 truncate font-medium">{currentTitle}</span>
+        <span className="min-w-0 truncate font-medium">{headerTitle}</span>
         <ChevronDown size={15} className={cn("shrink-0 transition-transform", open && "rotate-180")} />
       </button>
 
       {motion.shown && (
+        // The card keeps its padding; the list scrolls inside it and is pulled
+        // into the card's right padding (-mr-1.5), so the scroll lane lands
+        // on that padding instead of adding width beside it.
+        <div
+          className={cn("absolute left-0 top-full z-40 mt-1 flex max-h-[min(20rem,50vh)] w-full flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-card pt-1.5 pb-1.5 pr-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+        >
         <div
           role="menu"
           aria-label={t("thread.switcher.label")}
-          className={cn("absolute left-0 top-full z-40 mt-1 max-h-[min(20rem,50vh)] w-full overflow-y-auto rounded-2xl border border-hairline/50 bg-card px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+          onScroll={onMenuScroll}
+          className={cn("scroll-thin-autohide -mr-1.5 min-h-0 flex-1 overflow-y-auto pl-1.5 pr-0", scrolling && "is-scrolling")}
         >
           {visible.length === 0 ? (
             <div className="px-3 py-2 text-[12px] text-ink-secondary">
@@ -116,9 +164,7 @@ export function ThreadSwitcher({
           ) : (
             visible.map((entry) => {
               const current = entry.threadId === currentThreadId;
-              const meta = entry.openedByName
-                ? t("thread.switcher.openedBy", { name: entry.openedByName })
-                : null;
+              const opener = entry.openedByName?.trim() ? entry.openedByName.trim() : null;
               return (
                 <div
                   key={entry.threadId}
@@ -136,8 +182,20 @@ export function ThreadSwitcher({
                     onClick={() => choose(entry.threadId)}
                     className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
                   >
-                    <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">{entry.title}</span>
-                    {meta && <span className="max-w-[8rem] shrink-0 truncate text-[11px] text-ink-tertiary">{meta}</span>}
+                    <span className="flex min-w-0 flex-1 items-center gap-2">
+                      {opener && (
+                        <span
+                          title={opener}
+                          className="max-w-[8rem] shrink-0 truncate rounded-full border border-hairline/30 bg-raised px-1.5 py-px text-[10.5px] leading-4 text-ink-secondary"
+                        >
+                          <span aria-hidden="true">{opener}</span>
+                          <span className="sr-only">{t("thread.switcher.openedBy", { name: opener })}</span>
+                        </span>
+                      )}
+                      <span className="min-w-0 flex-1 truncate text-[13.5px] text-ink">
+                        {threadTitles(entry.title, entry.openedByName).row}
+                      </span>
+                    </span>
                     {entry.unread && !current && (
                       <span aria-hidden="true" className="size-2 shrink-0 rounded-full bg-accent" />
                     )}
@@ -158,6 +216,7 @@ export function ThreadSwitcher({
               );
             })
           )}
+        </div>
         </div>
       )}
 
