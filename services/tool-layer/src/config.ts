@@ -130,7 +130,7 @@ export function bladeConfig(env: NodeJS.ProcessEnv = process.env): BladeConfig {
     timezone: env.BLADE_TZ,
     locale: env.BLADE_LOCALE,
     takeoverMaxConcurrent: takeoverMaxConcurrent(env),
-    takeoverIdleMs: positiveMs(env.RELAY_TAKEOVER_IDLE_MS, 10 * 60_000),
+    takeoverIdleMs: positiveMs(env.RELAY_TAKEOVER_IDLE_MS, 60 * 60_000),
     takeoverMaxLifetimeMs: positiveMs(env.RELAY_TAKEOVER_MAX_LIFETIME_MS, 12 * 60 * 60_000),
   };
 }

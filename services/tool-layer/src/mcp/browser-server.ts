@@ -2,12 +2,13 @@ import { z } from "zod";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 
 import type { Agent } from "../domain/permissions.js";
-import { authorizeBrowser } from "../domain/permissions.js";
+import { authorizeBrowser, authorizeBrowserHuman } from "../domain/permissions.js";
 import type { BladeBrowserPool, BrowserActInput, ExtractKind, ReadMode } from "../infra/bladebro.js";
 import type { TakeoverSessionManager } from "../infra/takeover-session.js";
 import type { TakeoverDisplayPool } from "../infra/takeover-display.js";
 import { TAKEOVER_TTL_MS, takeoverBusyMessage } from "../infra/takeover-session.js";
-import { RelayBrowserTakeoverClient, takeoverRequestKey } from "../infra/browser-takeover.js";
+import { RelayBrowserTakeoverClient } from "../infra/browser-takeover.js";
+import { assertCredentialSafe } from "../infra/credential-guard.js";
 
 export interface BladeBrowserContext {
   pool: BladeBrowserPool;
@@ -33,7 +34,7 @@ function withArtifactNote(text: string, artifact: string | undefined): string {
 
 const READ_MODES = ["content", "outline", "find", "artifact"] as const;
 const EXTRACT_KINDS = ["auto", "links", "forms"] as const;
-const ACT_ACTIONS = ["click", "type", "select", "press", "scroll"] as const;
+const ACT_ACTIONS = ["click", "type", "fill", "select", "press", "scroll", "hover"] as const;
 
 /** Scout's browser: interactive navigation, persistent page state, and
  * site-aware structured extraction inside the calling user's own browser
@@ -148,22 +149,29 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       inputSchema: {
         action: z.enum(ACT_ACTIONS),
         target: z.string().min(1).max(512).optional(),
+        selector: z.string().min(1).max(512).optional(),
         text: z.string().min(1).max(2000).optional(),
-        option: z.string().min(1).max(200).optional(),
+        option: z.string().min(1).max(2000).optional(),
         key: z.string().min(1).max(40).optional(),
+        fields: z.record(z.string().min(1).max(512), z.string().min(1).max(2000)).optional(),
+        submit: z.string().min(1).max(512).optional(),
         dx: z.number().int().min(-4000).max(4000).optional(),
         dy: z.number().int().min(-4000).max(4000).optional(),
       },
       annotations: { readOnlyHint: false },
     },
-    async ({ action, target, text, option, key, dx, dy }) => {
+    async ({ action, target, selector, text, option, key, fields, submit, dx, dy }) => {
       try {
         authorizeBrowser(agent, "act");
         guardTakeover();
         guardForeignSession();
         const display = liveDisplay();
         if (!display) throw new Error("interactive browser is not active for this task; call browser_request_human first");
-        const input: BrowserActInput = { action, target, text, option, key, dx, dy };
+        const input: BrowserActInput = { action, target, selector, text, option, key, fields, submit, dx, dy };
+        if (action === "type" || action === "fill") {
+          const forms = await pool.extract(userId, null, "forms", display).catch(() => null);
+          assertCredentialSafe(input, forms?.text ?? null);
+        }
         const result = await pool.act(userId, input, display);
         return { content: [{ type: "text", text: withArtifactNote(result.text, result.artifact) }] };
       } catch (error) {
@@ -179,7 +187,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
         "Ask the person to take over the live browser for any step only they can complete — a sign-in, CAPTCHA/Cloudflare wall, verification code, required form field, payment confirmation, or similar. This is independent of the Works on computer setting; it works when Works on is Off. Navigate to the exact page first with browser_open/browser_act when needed. Pass `url` to put the person on that page, or omit it to hand over the current page. Opens one persistent browser session and a card in this chat; the person completes the step (or just hands it back) and your turn ends. Relay resumes this task on the same page. Never ask for or accept credentials in chat.",
       inputSchema: {
         url: z.string().min(1).max(2048).optional(),
-        reason: z.string().min(1).max(240).optional(),
+        reason: z.string().trim().min(1).max(240),
       },
       annotations: { readOnlyHint: false },
     },
@@ -193,9 +201,11 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
       let created = false;
       let lease: { display: string } | null = null;
       try {
-        authorizeBrowser(agent, "request_human");
+        authorizeBrowserHuman(agent);
+        guardTakeover();
+        guardForeignSession();
         let host = url ? new URL(url).hostname.slice(0, 120) : "";
-        const owned = sessions.requestHuman(actor, threadId);
+        const owned = sessions.requestHuman(actor);
         sessionId = owned.session.id;
         generation = owned.session.generation;
         created = owned.created;
@@ -214,14 +224,13 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
         // request or leave the browser behind.
         const screenshot = await pool.vision(userId, lease?.display).catch(() => null);
         const expiresAt = new Date(Date.now() + TAKEOVER_TTL_MS).toISOString();
+        console.log(
+          `[takeover] request session=${sessionId} bot=${botId} thread=${threadId} reason=${reason.slice(0, 240)}`,
+        );
         await takeover.requestCard(actorAssertion, {
-          requestKey: takeoverRequestKey(userId, sessionId, generation),
           sessionId,
           generation,
           title: host || "Live browser",
-          // The UI owns the fixed instructional copy; only the agent's own
-          // reason travels with the card, once.
-          description: reason?.trim().slice(0, 240) ?? "",
           expiresAt,
           ...(screenshot ? { screenshot: screenshot.dataUrl } : {}),
         });
@@ -229,7 +238,7 @@ export function registerBrowserTools(server: McpServer, agent: Agent, context: B
           content: [
             {
               type: "text",
-              text: "A live browser card is ready in this chat. End this turn; Relay resumes the task automatically after the person hands it back, dismisses it, or the card expires.",
+              text: "A live browser card is ready in this chat. End this turn; Relay resumes the task automatically after the person hands it back. If they dismiss it or the card expires, the task stops and you can continue when they write again.",
             },
           ],
         };

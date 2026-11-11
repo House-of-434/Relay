@@ -405,7 +405,7 @@ async function handleBrowserTakeover(
 
   if (pathname === "/internal/browser-takeover/handback") {
     if (!session) {
-      sendJson(response, 200, { handed_back: false, url: "" });
+      sendJson(response, 200, { handed_back: false });
       return;
     }
     if (session.generation !== generation) {
@@ -413,11 +413,10 @@ async function handleBrowserTakeover(
       return;
     }
     if (session.state !== "user_takeover") {
-      // Already handed back: idempotent, and the URL is still available.
+      // Already handed back: idempotent.
       sharedViewerTokens.revokeSession(sessionId);
       sharedDisplays?.detach(userId);
-      const url = (await sharedBladePool?.currentUrl(userId, session.display)) ?? "";
-      sendJson(response, 200, { handed_back: true, url });
+      sendJson(response, 200, { handed_back: true });
       return;
     }
     try {
@@ -434,8 +433,7 @@ async function handleBrowserTakeover(
     if (session.display) {
       console.log(`[takeover] detach viewer session=${sessionId} display=${session.display}`);
     }
-    const url = (await sharedBladePool?.currentUrl(userId, session.display)) ?? "";
-    sendJson(response, 200, { handed_back: true, url });
+    sendJson(response, 200, { handed_back: true });
     return;
   }
 

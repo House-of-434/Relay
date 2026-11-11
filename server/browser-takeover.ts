@@ -5,26 +5,13 @@
  * actor assertion (the same scheme the MCP route uses), and the Tool Layer
  * re-checks that the session belongs to that user.
  */
-import { z } from "zod";
-
 import { signedActorContext } from "./relay-mcp.ts";
 import type { RelayAgentRole } from "../packages/relay-shared/relay-agent.ts";
 import type { TakeoverCardData, WireMessage } from "../shared/wire.ts";
 
-/** A takeover card older than this is terminal: release the browser, mark
- * the card expired, and resume the agent with the declined outcome. */
-export const BROWSER_TAKEOVER_TTL_MS = 30 * 60_000;
-
-export const browserTakeoverStartSchema = z.object({
-  request_key: z.string().uuid(),
-  session_id: z.string().min(1).max(128),
-  generation: z.number().int().min(1),
-  title: z.string().trim().min(1).max(200),
-  description: z.string().trim().min(1).max(600),
-  expires_at: z.string().datetime(),
-}).strict();
-
-export type BrowserTakeoverStart = z.infer<typeof browserTakeoverStartSchema>;
+/** The card window. Once it passes the card is terminal: release the browser
+ * and stop the task. A new request is needed to try again. */
+export const BROWSER_TAKEOVER_TTL_MS = 10 * 60_000;
 
 /** The latest browser-takeover card in a thread, when it is settled back to
  * the agent (`done`) rather than waiting on the person. A newer pending card
@@ -82,12 +69,9 @@ export class ToolLayerTakeoverClient {
     return { path, local };
   }
 
-  async handBack(actor: TakeoverActor, sessionId: string, generation: number): Promise<{ handedBack: boolean; url: string }> {
+  async handBack(actor: TakeoverActor, sessionId: string, generation: number): Promise<{ handedBack: boolean }> {
     const body = await this.post(actor, "/internal/browser-takeover/handback", { session_id: sessionId, generation });
-    return {
-      handedBack: body.handed_back === true,
-      url: typeof body.url === "string" ? body.url.slice(0, 2048) : "",
-    };
+    return { handedBack: body.handed_back === true };
   }
 
   async release(actor: TakeoverActor, sessionId: string, generation: number): Promise<boolean> {

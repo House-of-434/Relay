@@ -536,13 +536,13 @@ export interface TakeoverCardData {
   sessionId: string;
   generation: number;
   title: string;
-  description: string;
   status: "pending" | "done" | "dismissed" | "expired";
   /** ISO timestamp; the card and its browser resources end here. */
   expiresAt: string;
-  /** Idempotency key for the originating request, so a retried tool call
-   * reuses one card instead of creating another intervention. */
-  requestKey: string;
+  /** The person whose turn raised the card. Only this person or the workspace
+   * owner may open the viewer or settle it. Absent on older cards and direct
+   * threads, where the owner is the only possible requester. */
+  requestedBy?: string;
   /** A one-shot preview image is available from the card's screenshot route. */
   hasScreenshot?: boolean;
   resumed?: boolean;

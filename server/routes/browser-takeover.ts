@@ -8,8 +8,9 @@
  * The harness owns the card and the continuation; this route validates and
  * hands the safe metadata to the store.
  */
-import { z } from "zod";
 import type { IncomingMessage } from "node:http";
+
+import { browserTakeoverCardSchema } from "../../shared/takeover-wire.ts";
 
 import { isLoopbackHost, isProxied } from "../request-auth.ts";
 import { verifyActorAssertion } from "../relay-mcp.ts";
@@ -20,16 +21,6 @@ import { PASS, type RouteContext, type RouteHandler } from "./table.ts";
 export const BROWSER_TAKEOVER_PATH = "/api/internal/browser-takeover";
 const MAX_BODY_BYTES = 3 * 1024 * 1024;
 const MAX_SCREENSHOT_BYTES = 1_500_000;
-
-const bodySchema = z.object({
-  request_key: z.string().uuid(),
-  session_id: z.string().min(1).max(128),
-  generation: z.number().int().min(1),
-  title: z.string().trim().min(1).max(200),
-  description: z.string().trim().min(1).max(600),
-  expires_at: z.string().datetime(),
-  screenshot: z.string().max(2_100_000).optional(),
-}).strict();
 
 /** Accept only a PNG/JPEG data URL, strictly base64, within the size cap,
  * with bytes that match the declared image type. A bad preview is dropped;
@@ -59,11 +50,9 @@ export type BrowserTakeoverActor = {
 };
 
 export interface BrowserTakeoverCreateInput {
-  requestKey: string;
   sessionId: string;
   generation: number;
   title: string;
-  description: string;
   expiresAt: string;
   /** Validated one-shot PNG/JPEG data URL, or absent when the capture failed. */
   screenshot?: string;
@@ -130,16 +119,14 @@ export function createBrowserTakeoverRoutes(options: {
     } catch {
       return reject(ctx, 400, { error: "invalid request body" });
     }
-    const parsed = bodySchema.safeParse(raw);
+    const parsed = browserTakeoverCardSchema.safeParse(raw);
     if (!parsed.success) return reject(ctx, 400, { error: "invalid browser takeover request" });
 
     const screenshot = parseTakeoverScreenshot(parsed.data.screenshot);
     const result = options.create(actor, {
-      requestKey: parsed.data.request_key,
       sessionId: parsed.data.session_id,
       generation: parsed.data.generation,
       title: parsed.data.title,
-      description: parsed.data.description,
       expiresAt: parsed.data.expires_at,
       ...(screenshot ? { screenshot } : {}),
     });

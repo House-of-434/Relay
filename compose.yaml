@@ -90,7 +90,7 @@ services:
       RELAY_TOOL_PORT: "8787"
       RELAY_BLADE_ROOT: /data/blade
       # Headful login browser (headful Chrome under Xvfb inside this image).
-      RELAY_LOGIN_MAX_CONCURRENT: "2"
+      RELAY_TAKEOVER_MAX_CONCURRENT: "2"
       # Gmail/Calendar tools call the BFF's capability-gated internal routes.
       # Default is loopback, which is this container — point at `app`.
       RELAY_BFF_INTERNAL_URL: http://app:8798

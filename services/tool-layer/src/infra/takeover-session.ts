@@ -13,9 +13,11 @@ import { canonicalUserId } from "./workspace-identity.js";
 
 /** A sign-in card that never gets acted on expires after this long. The
  * harness card TTL is authoritative; this is the tool-layer fallback. */
-export const TAKEOVER_WINDOW_MS = 30 * 60_000;
-/** Normal cleanup: no interactive use for this long. */
-export const TAKEOVER_IDLE_MS = 10 * 60_000;
+export const TAKEOVER_WINDOW_MS = 10 * 60_000;
+/** Long agent-turn backstop: this much wall-clock without a single browser
+ * call means the turn is not using the page. Turn-end release is the normal
+ * path; the 12-hour hard cap is the ceiling. */
+export const TAKEOVER_IDLE_MS = 60 * 60_000;
 /** Safety ceiling only; never extended by activity. */
 export const TAKEOVER_MAX_LIFETIME_MS = 12 * 60 * 60_000;
 /** Viewer token TTL (matches the card's sign-in window). */
@@ -40,7 +42,6 @@ export interface TakeoverEvent {
   threadId: string;
   sessionId: string;
   generation: number;
-  taskIds: string[];
 }
 
 export interface TakeoverSession {
@@ -50,8 +51,6 @@ export interface TakeoverSession {
   threadId: string;
   generation: number;
   state: SessionState;
-  owner: string;
-  waiters: string[];
   /** X display the live browser renders on; survives handoff. */
   display?: string;
   createdAt: number;
@@ -78,24 +77,6 @@ export interface TakeoverSessionOptions {
   /** Cross-process reservation. Returns null when another process holds the
    * user's interactive session; the returned release is idempotent. */
   leaseFor?: (userId: string) => { release(): void } | null;
-}
-
-/** Orchestrator fan-out: resume each authorized waiter independently; one
- * failure never blocks the others. Pure over task ids. */
-export async function fanOutResume(
-  taskIds: string[],
-  resume: (taskId: string) => Promise<void>,
-): Promise<Array<{ taskId: string; ok: boolean; error?: string }>> {
-  const outcomes: Array<{ taskId: string; ok: boolean; error?: string }> = [];
-  for (const taskId of taskIds) {
-    try {
-      await resume(taskId);
-      outcomes.push({ taskId, ok: true });
-    } catch (error) {
-      outcomes.push({ taskId, ok: false, error: error instanceof Error ? error.message : "resume failed" });
-    }
-  }
-  return outcomes;
 }
 
 export class TakeoverSessionManager {
@@ -130,10 +111,6 @@ export class TakeoverSessionManager {
     return id ? this.sessions.get(id)?.state === "user_takeover" : false;
   }
 
-  sessionIdFor(userId: unknown): string | undefined {
-    return this.byUser.get(canonicalUserId(userId));
-  }
-
   /** Any live interactive session for this user, regardless of thread. Used
    * to keep unrelated tasks from reusing (and restarting) the live daemon. */
   sessionForUser(userId: unknown): TakeoverSession | null {
@@ -154,7 +131,7 @@ export class TakeoverSessionManager {
   /** User takes control: one session per user, bound to the originating
    * bot + thread. A competing thread gets a clear busy error; the owner is
    * never pre-empted. */
-  requestHuman(actor: SessionActor, taskId: string, display?: string): { session: TakeoverSession; created: boolean } {
+  requestHuman(actor: SessionActor, display?: string): { session: TakeoverSession; created: boolean } {
     this.sweepExpired();
     const uid = canonicalUserId(actor.userId);
     const existingId = this.byUser.get(uid);
@@ -172,7 +149,6 @@ export class TakeoverSessionManager {
       }
       if (display) existing.display = display;
       existing.lastUsedAt = this.now();
-      existing.waiters.push(taskId);
       return { session: existing, created: false };
     }
     const active = this.sessions.size;
@@ -190,8 +166,6 @@ export class TakeoverSessionManager {
       threadId: actor.threadId,
       generation: 1,
       state: "user_takeover",
-      owner: taskId,
-      waiters: [taskId],
       ...(display ? { display } : {}),
       createdAt: now,
       lastUsedAt: now,
@@ -270,18 +244,6 @@ export class TakeoverSessionManager {
     return this.sessions.get(sessionId);
   }
 
-  expire(sessionId: string, generation: number): void {
-    const session = this.sessions.get(sessionId);
-    if (!session || session.generation !== generation) return;
-    this.close(session, "expired");
-  }
-
-  /** Test seam: deterministic generation bump (new browser process). */
-  bumpGeneration(sessionId: string): void {
-    const session = this.sessions.get(sessionId);
-    if (session) session.generation += 1;
-  }
-
   private close(session: TakeoverSession, reason: CloseReason): void {
     if (!this.sessions.has(session.id)) return;
     this.sessions.delete(session.id);
@@ -299,7 +261,6 @@ export class TakeoverSessionManager {
       threadId: session.threadId,
       sessionId: session.id,
       generation: session.generation,
-      taskIds: [...session.waiters],
     });
   }
 }

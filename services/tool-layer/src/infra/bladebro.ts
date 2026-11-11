@@ -159,12 +159,14 @@ export interface BrowserActInput {
   dy?: number;
 }
 
-const ACT_TEXT_MAX = 512;
+const ACT_TEXT_MAX = 2_000;
+const ACT_TARGET_MAX = 512;
+const ACT_KEY_MAX = 40;
 const ACT_FIELDS_MAX = 24;
 
-function actField(value: unknown, name: string): string {
-  if (typeof value !== "string" || value.length === 0 || value.length > ACT_TEXT_MAX) {
-    throw new Error(`browser_act ${name} must be a short string`);
+function actField(value: unknown, name: string, max = ACT_TARGET_MAX): string {
+  if (typeof value !== "string" || value.length === 0 || value.length > max) {
+    throw new Error(`browser_act ${name} must be ${max} characters or fewer`);
   }
   return value;
 }
@@ -179,11 +181,11 @@ export function actArgs(input: BrowserActInput): string[] {
     case "hover":
       return ["act", input.action, ...target()];
     case "type":
-      return ["act", "type", ...target(), actField(input.text, "text")];
+      return ["act", "type", ...target(), actField(input.text, "text", ACT_TEXT_MAX)];
     case "select":
-      return ["act", "select", ...target(), actField(input.option, "option")];
+      return ["act", "select", ...target(), actField(input.option, "option", ACT_TEXT_MAX)];
     case "press":
-      return ["act", "press", actField(input.key, "key")];
+      return ["act", "press", actField(input.key, "key", ACT_KEY_MAX)];
     case "scroll": {
       const dx = Number.isFinite(input.dx) ? Math.trunc(input.dx!) : 0;
       const dy = Number.isFinite(input.dy) ? Math.trunc(input.dy!) : 0;
@@ -200,8 +202,8 @@ export function actArgs(input: BrowserActInput): string[] {
         throw new Error(`browser_act fill needs 1-${ACT_FIELDS_MAX} fields`);
       }
       for (const [key, value] of entries) {
-        actField(key, "field name");
-        actField(value, "field value");
+        actField(key, "field name", ACT_TARGET_MAX);
+        actField(value, "field value", ACT_TEXT_MAX);
       }
       const args = ["act", "fill", JSON.stringify(fields)];
       if (input.submit !== undefined) args.push("--submit", actField(input.submit, "submit"));
@@ -551,20 +553,6 @@ export class BladeBrowserPool {
     const jpeg = bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff;
     if (!png && !jpeg) return null;
     return { dataUrl: `data:image/${png ? "png" : "jpeg"};base64,${bytes.toString("base64")}` };
-  }
-
-  /** Current page URL on the (possibly handed-back) session. Empty when the
-   * browser cannot answer; the resume prompt then omits the URL. */
-  async currentUrl(userId: unknown, display?: string): Promise<string> {
-    try {
-      const text = await this.run(userId, ["act", "eval", "location.href"], false, false, display);
-      const match = /result:\s*("([^"\\]|\\.)*")/s.exec(text);
-      const raw = match ? match[1]! : text.trim().split("\n")[0] ?? "";
-      const parsed = JSON.parse(raw) as unknown;
-      return typeof parsed === "string" && parsed.length <= 2048 ? parsed : "";
-    } catch {
-      return "";
-    }
   }
 
   /** Page one of our own spilled artifacts. Paths are workspace-relative;

@@ -45,6 +45,10 @@ export class TakeoverDisplayPool {
   private readonly novncDir: string;
   private readonly readyTimeoutMs: number;
   private readonly byUser = new Map<string, Slot>();
+  /** Children are still exiting after a detach; do not reuse their ports
+   * until they are gone (a lingering x11vnc would serve the previous user's
+   * screen to the next one). */
+  private readonly pendingReleases = new Map<number, Promise<void>>();
 
   constructor(options: DisplayPoolOptions = {}) {
     this.maxSlots = options.maxSlots ?? 2;
@@ -62,6 +66,8 @@ export class TakeoverDisplayPool {
   async acquire(userId: string): Promise<DisplayLease> {
     const existing = this.byUser.get(userId);
     if (existing) return existing.lease;
+    // A released slot keeps its fixed ports until its children actually exit.
+    await Promise.all(this.pendingReleases.values());
     let index = -1;
     for (let i = 0; i < this.maxSlots; i++) {
       if (![...this.byUser.values()].some((slot) => slot.index === i)) {
@@ -87,10 +93,7 @@ export class TakeoverDisplayPool {
     const slot = this.byUser.get(userId);
     if (!slot) throw new Error("no live display slot");
     if (slot.lease.display === display && slot.children.length > 0) return slot.lease;
-    for (const child of slot.children) {
-      try { child.kill("SIGTERM"); } catch { /* already gone */ }
-    }
-    slot.children = [];
+    await this.stopChildren(slot);
     slot.lease.display = display;
     try {
       // A window manager gives Chrome's native popups (selects, date pickers,
@@ -134,9 +137,42 @@ export class TakeoverDisplayPool {
     const slot = this.byUser.get(userId);
     if (!slot) return;
     this.byUser.delete(userId);
-    for (const child of slot.children) {
-      try { child.kill("SIGTERM"); } catch { /* already gone */ }
-    }
+    const done = this.stopChildren(slot).finally(() => {
+      if (this.pendingReleases.get(slot.index) === done) this.pendingReleases.delete(slot.index);
+    });
+    this.pendingReleases.set(slot.index, done);
+  }
+
+  private async stopChildren(slot: Slot): Promise<void> {
+    const children = slot.children;
+    slot.children = [];
+    await Promise.all(children.map((child) => this.stopChild(child)));
+  }
+
+  /** SIGTERM, give the child a moment to release its port, then SIGKILL.
+   * Resolves only once the process has exited (or is already gone). */
+  private async stopChild(child: ChildProcess): Promise<void> {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    try { child.kill("SIGTERM"); } catch { /* already gone */ }
+    if (await this.waitForExit(child, 2_000)) return;
+    try { child.kill("SIGKILL"); } catch { /* already gone */ }
+    await this.waitForExit(child, 1_000);
+  }
+
+  private waitForExit(child: ChildProcess, timeoutMs: number): Promise<boolean> {
+    if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        child.off("exit", onExit);
+        resolve(false);
+      }, timeoutMs);
+      timer.unref?.();
+      const onExit = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      child.once("exit", onExit);
+    });
   }
 
   /** Full teardown on the session-close path. The display pool owns only the

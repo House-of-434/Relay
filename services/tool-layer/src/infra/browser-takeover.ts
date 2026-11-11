@@ -6,25 +6,12 @@
  * dual auth as the Scribe join route (shared capability + the original actor
  * assertion) and proxies to the harness, which re-verifies both.
  */
-import { createHash } from "node:crypto";
-
 export const BROWSER_TAKEOVER_INTERNAL_PATH = "/api/internal/browser-takeover/request";
 
-/** Deterministic idempotency key: one card per (user, session, generation),
- * so a retried tool call reuses the pending card instead of stacking another
- * intervention and another browser session. */
-export function takeoverRequestKey(userId: string, sessionId: string, generation: number): string {
-  const h = createHash("sha256").update(`browser-takeover:${userId}:${sessionId}:${generation}`).digest("hex");
-  const variant = ((parseInt(h[16]!, 16) & 0x3) | 0x8).toString(16);
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-5${h.slice(13, 16)}-${variant}${h.slice(17, 20)}-${h.slice(20, 32)}`;
-}
-
 export interface BrowserTakeoverCardInput {
-  requestKey: string;
   sessionId: string;
   generation: number;
   title: string;
-  description: string;
   expiresAt: string;
   /** One-shot PNG/JPEG data URL of the page the person is taking over. */
   screenshot?: string;
@@ -70,11 +57,9 @@ export class RelayBrowserTakeoverClient {
           "content-type": "application/json",
         },
         body: JSON.stringify({
-          request_key: input.requestKey,
           session_id: input.sessionId,
           generation: input.generation,
           title: input.title,
-          description: input.description,
           expires_at: input.expiresAt,
           ...(input.screenshot ? { screenshot: input.screenshot } : {}),
         }),

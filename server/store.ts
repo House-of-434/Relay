@@ -316,7 +316,6 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
     out.takeover = {
       ...out.takeover,
       title: redactSecretsInText(out.takeover.title),
-      description: redactSecretsInText(out.takeover.description),
       error: out.takeover.error ? redactSecretsInText(out.takeover.error) : undefined,
     };
   }

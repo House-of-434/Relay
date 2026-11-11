@@ -17,10 +17,8 @@ function message(over: Partial<NonNullable<Message["takeover"]>> = {}, text?: st
       sessionId: "login_1",
       generation: 1,
       title: "x.com",
-      description: "Finish the signup",
       status: "pending",
       expiresAt: "2026-01-01T00:00:00.000Z",
-      requestKey: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
       ...over,
     },
   };
@@ -55,10 +53,10 @@ describe("takeover card", () => {
     expect(html).not.toContain("Retry");
   });
 
-  it("offers Retry only when the continuation actually failed", () => {
+  it("shows the failure without offering a retry", () => {
     const failed = render(message({ status: "done", resumed: false, error: "turn admission blocked" }));
-    expect(failed).toContain("Retry");
     expect(failed).toContain("turn admission blocked");
+    expect(failed).not.toContain("Retry");
 
     const dismissed = render(message({ status: "dismissed", resumed: true }));
     expect(dismissed).toContain("Stopped — the bot will not continue this task.");

@@ -17,7 +17,7 @@ export class ViewerTokens {
   private readonly now: () => number;
 
   constructor(options: { ttlMs?: number; now?: () => number } = {}) {
-    this.ttlMs = options.ttlMs ?? 30 * 60_000;
+    this.ttlMs = options.ttlMs ?? 10 * 60_000;
     this.now = options.now ?? Date.now;
   }
 

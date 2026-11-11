@@ -168,10 +168,10 @@ export function authorizeCalendar(agent: Agent, capability: CalendarCapability):
 /** Research-browser operations are granted per agent, never per request.
  * Only Scout researches the open web; Mercury and Curator work from Relay
  * records, mail, and calendar. */
-export type BrowserCapability = "open" | "read" | "extract" | "act" | "request_human";
+export type BrowserCapability = "open" | "read" | "extract" | "act";
 
 export const BROWSER_PERMISSIONS: Record<Agent, readonly BrowserCapability[]> = {
-  scout: ["open", "read", "extract", "act", "request_human"],
+  scout: ["open", "read", "extract", "act"],
   mercury: [],
   curator: [],
 };
@@ -179,6 +179,14 @@ export const BROWSER_PERMISSIONS: Record<Agent, readonly BrowserCapability[]> = 
 export function authorizeBrowser(agent: Agent, capability: BrowserCapability): void {
   if (!BROWSER_PERMISSIONS[agent].includes(capability)) {
     throw new Error(`${capability} access denied for ${agent}`);
+  }
+}
+
+/** Handing the browser to a person is part of browser access, not a separate
+ * grant: any agent that can drive the browser can hand it back. */
+export function authorizeBrowserHuman(agent: Agent): void {
+  if (!BROWSER_PERMISSIONS[agent].includes("open")) {
+    throw new Error(`live browser takeover access denied for ${agent}`);
   }
 }
 

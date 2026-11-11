@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type SyntheticEvent } from "react";
-import { Check, Monitor, RotateCw, X } from "lucide-react";
+import { Check, Monitor, X } from "lucide-react";
 
 import { t } from "@/lib/i18n";
 import { api, type Message } from "@/state/store";
@@ -183,25 +183,13 @@ export function TakeoverCard({
       : takeover.status === "expired"
         ? t("takeover.expiredNote")
         : t("takeover.dismissedNote");
-    const retryable = takeover.resumed === false && Boolean(takeover.error);
     return (
       <div className="flex w-fit max-w-full flex-wrap items-center gap-2 rounded-xl border border-hairline/40 bg-panel px-3 py-2 text-[12px] text-ink-secondary" data-testid="takeover-card">
         {takeover.status === "done"
           ? <Check size={13} className="shrink-0 text-success" aria-hidden="true" />
           : <X size={13} className="shrink-0 text-ink-secondary" aria-hidden="true" />}
         <span>{note}</span>
-        {retryable ? (
-          <button
-            type="button"
-            onClick={() => settle(takeover.status === "done" ? "done" : "dismiss")}
-            disabled={acting}
-            className="inline-flex items-center gap-1 rounded-lg border border-hairline/50 px-2 py-1 text-[11px] disabled:opacity-60"
-          >
-            <RotateCw size={11} aria-hidden="true" />
-            {t("takeover.retry")}
-          </button>
-        ) : null}
-        {error || (!retryable ? null : takeover.error) ? (
+        {error || takeover.error ? (
           <span className="text-danger">{error ?? takeover.error}</span>
         ) : null}
       </div>

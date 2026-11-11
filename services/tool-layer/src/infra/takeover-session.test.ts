@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { fanOutResume, TakeoverSessionManager, takeoverBusyMessage } from "./takeover-session.js";
+import { TakeoverSessionManager, takeoverBusyMessage } from "./takeover-session.js";
 import { ViewerTokens } from "./takeover-viewer.js";
 
 const USER_A = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
@@ -16,10 +16,10 @@ const actor = (userId = USER_A, botId = BOT, threadId = THREAD) => ({ userId, bo
 
 test("one session per user; a competing thread gets busy", () => {
   const m = new TakeoverSessionManager();
-  const first = m.requestHuman(actor(), "task-1");
+  const first = m.requestHuman(actor());
   assert.equal(first.created, true);
   assert.equal(first.session.state, "user_takeover");
-  assert.throws(() => m.requestHuman(actor(USER_A, BOT_B, THREAD_B), "task-2"), /person is using the interactive browser/);
+  assert.throws(() => m.requestHuman(actor(USER_A, BOT_B, THREAD_B)), /person is using the interactive browser/);
   // The owner keeps control.
   assert.equal(m.ownedSession(USER_A, first.session.id)?.state, "user_takeover");
 });
@@ -28,18 +28,18 @@ test("busy copy distinguishes the person from a finishing agent turn", () => {
   assert.match(takeoverBusyMessage("user_takeover"), /person is using the interactive browser/);
   assert.match(takeoverBusyMessage("agent_active"), /still in use by another task; it will be released when that task finishes/);
   const m = new TakeoverSessionManager();
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   m.handBack(session.id, session.generation);
   assert.throws(
-    () => m.requestHuman(actor(USER_A, BOT_B, THREAD_B), "task-2"),
+    () => m.requestHuman(actor(USER_A, BOT_B, THREAD_B)),
     /still in use by another task/,
   );
 });
 
 test("a second user is never blocked by another user's session", () => {
   const m = new TakeoverSessionManager();
-  const a = m.requestHuman(actor(USER_A), "task-1");
-  const b = m.requestHuman(actor(USER_B), "task-2");
+  const a = m.requestHuman(actor(USER_A));
+  const b = m.requestHuman(actor(USER_B));
   assert.equal(a.created, true);
   assert.equal(b.created, true);
   assert.notEqual(a.session.id, b.session.id);
@@ -49,16 +49,15 @@ test("a second user is never blocked by another user's session", () => {
 
 test("the same thread joins the session instead of creating a second", () => {
   const m = new TakeoverSessionManager();
-  const first = m.requestHuman(actor(), "task-1");
-  const second = m.requestHuman(actor(), "task-2");
+  const first = m.requestHuman(actor());
+  const second = m.requestHuman(actor());
   assert.equal(second.created, false);
   assert.equal(second.session.id, first.session.id);
-  assert.deepEqual([...second.session.waiters].sort(), ["task-1", "task-2"]);
 });
 
 test("hand back keeps the session and flips control to the agent", () => {
   const m = new TakeoverSessionManager();
-  const { session } = m.requestHuman(actor(), "task-1", ":99");
+  const { session } = m.requestHuman(actor(), ":99");
   assert.equal(m.isUserTakeover(USER_A), true);
   assert.equal(m.handBack(session.id, session.generation), true);
   assert.equal(m.isUserTakeover(USER_A), false);
@@ -69,7 +68,7 @@ test("hand back keeps the session and flips control to the agent", () => {
 
 test("agentSession is bound to the exact bot and thread", () => {
   const m = new TakeoverSessionManager();
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   m.handBack(session.id, session.generation);
   assert.equal(m.agentSession(actor())?.id, session.id);
   assert.equal(m.agentSession(actor(USER_A, BOT_B, THREAD)), null);
@@ -79,15 +78,15 @@ test("agentSession is bound to the exact bot and thread", () => {
 
 test("release is idempotent once the session is gone", () => {
   const m = new TakeoverSessionManager();
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   assert.equal(m.release(session.id, session.generation), true);
   assert.equal(m.release(session.id, session.generation), false);
 });
 
 test("stale generation is fenced", () => {
   const m = new TakeoverSessionManager();
-  const { session } = m.requestHuman(actor(), "task-1");
-  m.bumpGeneration(session.id);
+  const { session } = m.requestHuman(actor());
+  session.generation += 1;
   assert.throws(() => m.release(session.id, 1), /stale/);
   assert.throws(() => m.handBack(session.id, 1), /stale/);
 });
@@ -96,7 +95,7 @@ test("idle closes an agent-active session; touch extends it", () => {
   let now = 1_000;
   const events: unknown[] = [];
   const m = new TakeoverSessionManager({ idleMs: 100, now: () => now, onEvent: (e) => events.push(e) });
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   m.handBack(session.id, session.generation);
   now += 90;
   m.touchByUser(USER_A);
@@ -113,7 +112,7 @@ test("the hard cap closes even an actively used session", () => {
   let now = 1_000;
   const events: unknown[] = [];
   const m = new TakeoverSessionManager({ idleMs: 100, maxLifetimeMs: 500, now: () => now, onEvent: (e) => events.push(e) });
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   m.handBack(session.id, session.generation);
   for (let i = 0; i < 6; i++) {
     now += 90;
@@ -128,7 +127,7 @@ test("an unclaimed sign-in expires after the user-takeover window", () => {
   let now = 1_000;
   const events: unknown[] = [];
   const m = new TakeoverSessionManager({ userTakeoverMs: 100, now: () => now, onEvent: (e) => events.push(e) });
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   now += 101;
   m.sweepExpired();
   assert.equal(m.get(session.id), undefined);
@@ -137,9 +136,9 @@ test("an unclaimed sign-in expires after the user-takeover window", () => {
 
 test("capacity is two sessions across users", () => {
   const m = new TakeoverSessionManager({ maxConcurrent: 2 });
-  m.requestHuman(actor(USER_A), "t1");
-  m.requestHuman(actor(USER_B), "t2");
-  assert.throws(() => m.requestHuman(actor(USER_C), "t3"), /capacity/);
+  m.requestHuman(actor(USER_A));
+  m.requestHuman(actor(USER_B));
+  assert.throws(() => m.requestHuman(actor(USER_C)), /capacity/);
 });
 
 test("a held cross-process lease refuses the session and is released on close", () => {
@@ -151,13 +150,13 @@ test("a held cross-process lease refuses the session and is released on close", 
       return { release: () => { released = true; held = false; } };
     },
   });
-  const { session } = m.requestHuman(actor(), "task-1");
+  const { session } = m.requestHuman(actor());
   assert.equal(held, true);
   m.release(session.id, session.generation);
   assert.equal(released, true);
 
   const blocked = new TakeoverSessionManager({ leaseFor: () => null });
-  assert.throws(() => blocked.requestHuman(actor(USER_B), "task-2"), /still in use by another task/);
+  assert.throws(() => blocked.requestHuman(actor(USER_B)), /still in use by another task/);
 });
 
 test("viewer tokens are scoped, short-lived, and revocable", () => {
@@ -173,14 +172,4 @@ test("viewer tokens are scoped, short-lived, and revocable", () => {
   const t2 = v.mint("sess-1", USER_A);
   v.revoke(t2.value);
   assert.equal(v.find(t2.value), undefined);
-});
-
-test("fan-out isolates failures: one blocked waiter does not stop others", async () => {
-  const resumed: string[] = [];
-  const outcomes = await fanOutResume(["a", "b", "c"], async (id) => {
-    if (id === "b") throw new Error("boom");
-    resumed.push(id);
-  });
-  assert.deepEqual(resumed.sort(), ["a", "c"]);
-  assert.equal(outcomes.find((o) => o.taskId === "b")?.ok, false);
 });

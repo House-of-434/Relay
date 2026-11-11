@@ -24,11 +24,9 @@ let routes: typeof import("./browser-takeover.ts");
 let dispatchRoutes: typeof import("./table.ts")["dispatchRoutes"];
 
 const body = (over: Record<string, unknown> = {}) => ({
-  request_key: "66666666-6666-4666-8666-666666666666",
   session_id: "login_1",
   generation: 1,
   title: "Sign in to linkedin.com",
-  description: "Sign in",
   expires_at: new Date(Date.now() + 60_000).toISOString(),
   ...over,
 });

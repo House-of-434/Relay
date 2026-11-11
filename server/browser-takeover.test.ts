@@ -10,10 +10,8 @@ const card = (over: Partial<TakeoverCardData> = {}): TakeoverCardData => ({
   sessionId: "login_1",
   generation: 1,
   title: "Sign in",
-  description: "Sign in",
   status: "done",
   expiresAt: "2026-01-01T00:00:00.000Z",
-  requestKey: "66666666-6666-4666-8666-666666666666",
   ...over,
 });
 
