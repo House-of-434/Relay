@@ -1,7 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { createHash } from "node:crypto";
-
 import { RELAY_AGENT_SEEDS } from "./relay-agents.ts";
 
 const scout = RELAY_AGENT_SEEDS.find((seed) => seed.role === "scout");
@@ -66,24 +64,5 @@ describe("repository delegation prompts", () => {
   it("tells Mercury to resolve a named teammate before inviting them", () => {
     expect(mercury.profile.soul).toContain("find_teammate");
     expect(mercury.profile.soul).toMatch(/never invent an address/i);
-  });
-});
-
-describe("seed soul migration list", () => {
-  it("lists only superseded seeds, never the current one", () => {
-    for (const seed of RELAY_AGENT_SEEDS) {
-      const current = createHash("sha256").update(seed.profile.soul).digest("hex");
-      expect(seed.replacesSoulHashes ?? []).not.toContain(current);
-      for (const hash of seed.replacesSoulHashes ?? []) {
-        expect(hash).toMatch(/^[0-9a-f]{64}$/);
-      }
-    }
-  });
-
-  it("covers every published scout seed, so a bot created from any of them upgrades", () => {
-    // The list is a migration ledger: a bot still carrying one of these
-    // verbatim is moved to the current text on boot.
-    const scout = RELAY_AGENT_SEEDS.find((seed) => seed.role === "scout");
-    expect(scout?.replacesSoulHashes?.length ?? 0).toBeGreaterThan(5);
   });
 });

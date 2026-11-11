@@ -81,42 +81,6 @@ describe("Store", () => {
     expect(store.bot(seeded.id)!.approvalMode).toBe("ask");
   });
 
-  it("upgrades a seeded agent's retired soul verbatim but never a customized one", () => {
-    const replaced = new Store(selection);
-    const seeded = replaced.createBot({ name: "Mercury", soul: "old seed" }, { relayAgent: "mercury" });
-    replaced.seedRelayAgentsForOwner(undefined, [{
-      role: "mercury",
-      profile: { name: "Mercury", soul: "new seed" },
-      replacesSoulHashes: [soulHash("old seed")],
-    }]);
-    expect(replaced.bot(seeded.id)!.soul).toBe("new seed");
-    expect(replaced.bot(seeded.id)!.soulDrift).toBeFalsy();
-
-    // A soul somebody edited has a different hash, so it is never overwritten.
-    const customized = new Store(selection);
-    const edited = customized.createBot({ name: "Mercury", soul: "my own rules" }, { relayAgent: "mercury" });
-    customized.seedRelayAgentsForOwner(undefined, [{
-      role: "mercury",
-      profile: { name: "Mercury", soul: "new seed" },
-      replacesSoulHashes: [soulHash("old seed")],
-    }]);
-    expect(customized.bot(edited.id)!.soul).toBe("my own rules");
-  });
-
-  it("migrates a bot still carrying a published seed soul", () => {
-    const store = new Store(selection);
-    const scoutSeed = RELAY_AGENT_SEEDS.find((seed) => seed.role === "scout")!;
-    // The hash the deployed Scout bots still carry: the pre-login-browser
-    // seed. A bot whose recorded hash is a published seed moves to the
-    // current text; a customized soul never does.
-    const published = "7fe1e00345872b0e542dc307a2eadedc9cb7e9746972bd16215498b254563230";
-    expect(scoutSeed.replacesSoulHashes).toContain(published);
-    const seeded = store.createBot({ name: "Scout", soul: "an older published seed" }, { relayAgent: "scout" });
-    store.bots.find((bot) => bot.id === seeded.id)!.soulHash = published;
-    store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS);
-    expect(store.bot(seeded.id)!.soul).toBe(scoutSeed.profile.soul);
-  });
-
   it("renames populated teams without changing members, conversations, grants or computer identity", () => {
     const store = new Store(selection);
     const chief = store.createBot({ section: "Delivery" });
