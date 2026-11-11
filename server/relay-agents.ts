@@ -30,11 +30,23 @@ export interface RelayAgentSeed {
 export const RELAY_AGENT_SEEDS: readonly RelayAgentSeed[] = [
   {
     role: "scout",
-    // Pre-login-browser soul: migrate verbatim carriers to the new text.
+    // Every published Scout seed this one supersedes. A bot still carrying
+    // one verbatim (its recorded soul hash matches) moves to the current text
+    // on boot; a customized soul has a different hash and is never touched.
     replacesSoulHashes: [
+      "7aaf99d0e8b8f94fdee4f458e9152b80291591ef4acc0abf07d785f7d8ec376f",
+      "8dcecf08bfceccb319ba318027b93506bd9cd475f0145799869e4f99ef66ca5a",
+      "73adb11269f4a5b38eac1ed5523b040231fac36cd8dcd3669d382e4af315db4c",
+      "7fe1e00345872b0e542dc307a2eadedc9cb7e9746972bd16215498b254563230",
+      "0e542346b64b873fa8de0cec27e6406acd73838d0c4de43083b37374d0bd594f",
+      "34414fe1bb84eecd3c33ee3b4f3a25a3a967a0ba0e9869e7208d8fe54671de23",
+      "5f674acec9d0d8bec5d4b9c2d8bb08d76be018bab1cc91748ebb4f9b4046492d",
+      "3c2605fd949e46051528b0f3609101837050a0bc8575ece8be1630676263e2f9",
+      "2c23cbaa5320ef0c6a531f0c3c8b7977f86969cf3d5dcbc3dd8c846a6dd6e668",
       "7e119890d9b1fcd7e70934864479498587bdeb3d3774cd624c4f14569d27f7d5",
       "b1e4484a29aff865ff76ad123e0d24852bdaafb83addb777f34dc35e7fc11a9f",
       "7b9f87b618bc1cceb25202f283d6b32f2d9f423cfba0e0e1b012a6afa68896f7",
+      "3e5d05b68e1ae27af05d493ecfc54504163a199f7b663b7d761bc8b0cfedea51",
       "bdfac62c7a6bcb84528efe1059456abb127a65eac76b9be86b3ffce937d094fc",
       "51e09fcd771a40a78d7fd269417aacd3490e133cbfd7bcaae1980cc367d29248",
     ],
@@ -48,9 +60,12 @@ export const RELAY_AGENT_SEEDS: readonly RelayAgentSeed[] = [
   },
   {
     role: "mercury",
-    // The pre-confirmation-in-chat soul told Mercury to call the retired
-    // propose_email_send card. Bots created before that change still carry it.
-    replacesSoulHashes: ["c73e1bb8802dd0b1aa9b532c3a8c1a00815fdbd5ed26ae0a1b2d2c1c0bc13be9"],
+    // Every published Mercury seed this one supersedes.
+    replacesSoulHashes: [
+      "c73e1bb8802dd0b1aa9b532c3a8c1a00815fdbd5ed26ae0a1b2d2c1c0bc13be9",
+      "37063ac71797567460aa9bcc51fe3d91bc3f69722a95b7bab2f878dcaded98ec",
+      "b177cc7246e8a1c84b23b64daef30bf09774f66ba419cc6224e276c3d5122f1d",
+    ],
     profile: {
       name: "Mercury",
       title: "Inbox & Calendar",
