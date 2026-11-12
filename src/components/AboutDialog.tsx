@@ -33,20 +33,21 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-6"
+      className="tactile-backdrop fixed inset-0 z-50 flex items-center justify-center p-6 max-md:items-end max-md:p-0"
       onMouseDown={(event) => event.target === event.currentTarget && onClose()}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="about-dialog-title"
-        className="w-full max-w-[360px] rounded-2xl border border-hairline/50 bg-panel p-6 text-center shadow-2xl"
+        className="tactile-dialog w-full max-w-[360px] p-6 text-center max-md:w-full"
       >
+        <div className="tactile-grab-handle -mt-3 mb-3" aria-hidden="true" />
         <img src="/app-icon.png" alt="" width={56} height={56} className="mx-auto size-14 rounded-2xl" />
-        <h2 id="about-dialog-title" className="mt-3 text-[17px] font-semibold text-ink">
+        <h2 id="about-dialog-title" className="mt-3 text-[16px] leading-6 font-medium text-ink">
           {APP_NAME}
         </h2>
-        <p className="mt-1 flex items-center justify-center gap-1.5 text-[13px] text-ink-secondary">
+        <p className="mt-1 flex items-center justify-center gap-1.5 text-[13px] leading-5 text-ink-secondary">
           <span>
             Version {appVersion()}
             {platform ? ` · ${platform}` : ""}
@@ -58,7 +59,7 @@ export function AboutDialog({ open, onClose }: { open: boolean; onClose: () => v
           ref={closeRef}
           type="button"
           onClick={onClose}
-          className="mt-5 w-full rounded-xl bg-raised px-4 py-2 text-[13px] font-medium text-ink hover:brightness-110"
+          className="ui-button mt-5 w-full"
         >
           Close
         </button>

@@ -106,7 +106,7 @@ describe("ThreadSwitcher", () => {
     expect(markup).toContain("My research");
   });
 
-  it("overlaps the scroll lane with the card's right padding", () => {
+  it("keeps the scroll lane inside balanced padding", () => {
     const markup = renderToStaticMarkup(createElement(ThreadSwitcher, {
       currentThreadId: "alpha",
       currentTitle: "Alpha",
@@ -114,13 +114,12 @@ describe("ThreadSwitcher", () => {
       onSelect: vi.fn(),
     }));
 
-    // The lane lands on the card's right padding instead of beside it: the
-    // card keeps its padding, and the list is pulled into it.
-    expect(markup).toContain("pr-1.5");
-    expect(markup).toContain("-mr-1.5");
-    expect(markup).toContain("pr-0");
-    expect(markup).toContain("scroll-thin-autohide");
-    // No extra bottom padding: the list ends where the card's padding ends.
+    // Rows sit the same distance from every card edge, so the highlight is
+    // inset equally left, right, top and bottom.
+    expect(markup).toContain("p-1.5");
+    expect(markup).toContain("thread-menu-scroll");
+    expect(markup).not.toContain("scroll-thin-autohide");
+    // The list ends where the card's padding ends.
     expect(markup).not.toContain("pb-3");
   });
 
@@ -136,7 +135,7 @@ describe("ThreadSwitcher", () => {
     expect(fixture.confirm).toMatchObject({
       open: false,
       title: "Delete thread?",
-      body: "This permanently deletes every transcript and session in this thread. This cannot be undone.",
+      body: "This permanently deletes every transcript and session in this thread. Its files stay in All Files. This cannot be undone.",
       confirmLabel: "Delete",
       tone: "danger",
     });

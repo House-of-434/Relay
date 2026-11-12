@@ -39,9 +39,9 @@ export function Card({
   children?: React.ReactNode;
 }) {
   return (
-    <div className="rounded-xl bg-card p-4">
-      {title && <div className="text-[15px] font-medium text-ink">{title}</div>}
-      {subtitle && <div className={title ? "mt-0.5 text-[13px] leading-relaxed text-ink-secondary" : "text-[13px] leading-relaxed text-ink-secondary"}>{subtitle}</div>}
+    <div className="tactile-card">
+      {title && <div className="text-[16px] leading-6 font-medium text-ink">{title}</div>}
+      {subtitle && <div className={title ? "mt-1 text-[13px] leading-5 text-ink-secondary" : "text-[13px] leading-5 text-ink-secondary"}>{subtitle}</div>}
       {children && <div className={title || subtitle ? "mt-4" : undefined}>{children}</div>}
     </div>
   );

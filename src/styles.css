@@ -333,6 +333,53 @@ body {
   overflow: hidden;
 }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   TACTILE DESIGN TOKENS
+   Roles and ratios from the tactile-design skill, remapped onto the two
+   project skins (lagoon = light, midnight = dark). Components below read
+   only these tokens + the skin colors — no literal px/hex in recipes.
+   Light raises with a 1px ring + crisp 1px drop; dark raises by being
+   lighter with a solid 0.5px outline + tight black drop. No big soft blurs.
+   ───────────────────────────────────────────────────────────────────────── */
+:root {
+  --tactile-ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+  --tactile-dur-hover: 150ms;
+  --tactile-dur-swap: 200ms;
+  --tactile-radius-control: 6px;
+  --tactile-radius-container: 8px;
+  --tactile-control-h: 36px;
+  --tactile-row-h: 38px;
+}
+@media screen and (max-width: 47.99rem) {
+  :root {
+    --tactile-control-h: 44px;
+    --tactile-row-h: 44px;
+  }
+}
+/* Light defaults (lagoon): shadow ink = petrol ink as RGB. Also the :root
+   fallback so surfaces render before a skin attribute is applied. */
+:root,
+[data-skin="lagoon"] {
+  --tactile-shadow-ink: 11 40 51;
+  --tactile-shadow-button: 0 1px 2px 0 rgb(var(--tactile-shadow-ink) / 0.12), 0 0 0 1px rgb(var(--tactile-shadow-ink) / 0.08);
+  --tactile-shadow-primary: 0 0 0 1px var(--color-card);
+  --tactile-shadow-card: 0 0 0 1px rgb(var(--tactile-shadow-ink) / 0.07), 0 1px 2px 0 rgb(var(--tactile-shadow-ink) / 0.12), 0 3px 4px -2px rgb(var(--tactile-shadow-ink) / 0.08);
+  --tactile-shadow-table: 0 1px 2px 0 rgb(var(--tactile-shadow-ink) / 0.12);
+  --tactile-shadow-menu: 0 0 0 1px rgb(var(--tactile-shadow-ink) / 0.08), 0 1px 2px 0 rgb(var(--tactile-shadow-ink) / 0.12), 0 4px 8px -4px rgb(var(--tactile-shadow-ink) / 0.16);
+  --tactile-shadow-modal: 0 0 0 1px rgb(var(--tactile-shadow-ink) / 0.07), 0 1px 2px 0 rgb(var(--tactile-shadow-ink) / 0.14), 0 6px 8px -4px rgb(var(--tactile-shadow-ink) / 0.14);
+  --tactile-backdrop: rgb(0 0 0 / 0.3);
+}
+/* Dark (midnight): solid 0.5px outlines + tight black drops, never a glow */
+[data-skin="midnight"] {
+  --tactile-shadow-button: 0 0 0 0.5px var(--color-menu-border), 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --tactile-shadow-primary: 0 0 0 0.5px var(--color-accent), 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --tactile-shadow-card: 0 0 0 0.5px var(--color-hairline), 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 3px 4px -2px rgb(0 0 0 / 0.4);
+  --tactile-shadow-table: 0 1px 2px 0 rgb(0 0 0 / 0.5);
+  --tactile-shadow-menu: 0 0 0 0.5px var(--color-menu-border), 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 4px 8px -4px rgb(0 0 0 / 0.5);
+  --tactile-shadow-modal: 0 0 0 0.5px var(--color-menu-border), 0 1px 2px 0 rgb(0 0 0 / 0.5), 0 6px 8px -4px rgb(0 0 0 / 0.5);
+  --tactile-backdrop: rgb(0 0 0 / 0.9);
+}
+
 /* Shared action rhythm. Existing skin tokens supply the colors and radius;
    use utilities for placement rather than inventing another button size. */
 @layer components {
@@ -342,41 +389,312 @@ body {
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    min-height: 2rem;
-    border-radius: var(--radius-lg, 0.5rem);
+    min-height: var(--tactile-control-h);
+    height: var(--tactile-control-h);
+    border-radius: var(--tactile-radius-control);
     font-size: 13px;
     font-weight: 500;
     line-height: 1.25rem;
-    transition: background-color 120ms ease, color 120ms ease;
+    letter-spacing: -0.01em;
+    transition-property: transform, scale, background-color, color;
+    transition-duration: var(--tactile-dur-hover);
+    transition-timing-function: var(--tactile-ease-out);
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
   }
+  /* Secondary: white + ring/drop in light; ground+2 + outline/drop in dark */
   .ui-button {
-    padding: 0.375rem 0.75rem;
-    border: 1px solid var(--color-hairline);
-    background: var(--color-control);
+    padding: 0 0.75rem;
+    border: 0;
+    background: var(--color-raised);
     color: var(--color-ink);
+    box-shadow: var(--tactile-shadow-button);
+  }
+  .ui-button > svg:first-child:not(:last-child),
+  .ui-button > span:first-child {
+    margin-left: -2px;
   }
   .ui-icon-button {
-    width: 2rem;
-    padding: 0.375rem;
+    width: var(--tactile-control-h);
+    min-width: var(--tactile-control-h);
+    padding: 0;
+    border: 0;
+    background: transparent;
     color: var(--color-ink-secondary);
+  }
+  /* Opt-in accent primary (brand green carries the commit action here).
+     One per surface. Solid fill, contrast ink, surface ring in light. */
+  .ui-button-primary {
+    background: var(--color-accent);
+    color: var(--color-accent-ink);
+    box-shadow: var(--tactile-shadow-primary);
   }
   .ui-button:enabled:hover,
   .ui-icon-button:enabled:hover {
     background: var(--color-raised-hover);
     color: var(--color-ink);
   }
-  .ui-button:enabled:active,
+  .ui-button-primary:enabled:hover {
+    background: var(--color-accent);
+    filter: brightness(1.08);
+    color: var(--color-accent-ink);
+  }
+  .ui-button:enabled:active {
+    scale: 0.97;
+    background: var(--color-raised-hover);
+  }
+  .ui-button-primary:enabled:active {
+    scale: 0.97;
+    filter: brightness(0.95);
+  }
   .ui-icon-button:enabled:active {
+    scale: 0.92;
     background: var(--color-raised);
+    color: var(--color-ink);
+  }
+  /* Round media/composer buttons (send, stop): tactile press on an
+     element that isn't .ui-button. 32px round target → .94 squeeze. */
+  .tactile-round-button {
+    transition-property: transform, scale, background-color, filter;
+    transition-duration: var(--tactile-dur-hover);
+    transition-timing-function: var(--tactile-ease-out);
+    touch-action: manipulation;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tactile-round-button:enabled:active {
+    scale: 0.94;
+  }
+  .tactile-round-button:disabled {
+    cursor: not-allowed;
   }
   .ui-button:disabled,
   .ui-icon-button:disabled {
     cursor: not-allowed;
-    opacity: 0.45;
+    opacity: 0.6;
+  }
+  .ui-icon-button:disabled {
+    opacity: 0.4;
+  }
+  .ui-button:disabled:enabled:active,
+  .ui-icon-button:disabled:enabled:active {
+    scale: 1;
+  }
+  .ui-button:focus-visible,
+  .ui-icon-button:focus-visible {
+    outline: 2px solid var(--color-focus);
+    outline-offset: 2px;
+  }
+  @media (pointer: coarse) {
+    .ui-button,
+    .ui-icon-button {
+      font-size: 15px;
+    }
   }
   @media (prefers-reduced-motion: reduce) {
     .ui-button,
-    .ui-icon-button { transition: none; }
+    .ui-icon-button { transition: none; scale: 1; }
+  }
+
+  /* ── Tactile card: one unit of related data. White + crisp ladder in
+     light; one step lighter + 0.5px outline + black drops in dark. ── */
+  .tactile-card {
+    background: var(--color-card);
+    border: 0;
+    border-radius: var(--tactile-radius-container);
+    box-shadow: var(--tactile-shadow-card);
+    padding: 1rem;
+  }
+  .tactile-card-clickable {
+    cursor: pointer;
+    transition-property: transform, scale, background-color;
+    transition-duration: var(--tactile-dur-hover);
+    transition-timing-function: var(--tactile-ease-out);
+  }
+  .tactile-card-clickable:hover {
+    background: var(--color-raised-hover);
+  }
+  .tactile-card-clickable:active {
+    scale: 0.99;
+  }
+
+  /* ── Tactile table: 38px rows, 0.5px frame, crisp drop, tabular figures ── */
+  .tactile-table-frame {
+    overflow: hidden;
+    border: 0.5px solid var(--color-hairline);
+    border-radius: var(--tactile-radius-container);
+    background: var(--color-card);
+    box-shadow: var(--tactile-shadow-table);
+  }
+  .tactile-table-frame table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+  }
+  .tactile-table-frame th {
+    height: var(--tactile-row-h);
+    padding: 0 0.75rem;
+    font-size: 13px;
+    font-weight: 500;
+    line-height: 1.25rem;
+    color: var(--color-ink);
+    text-align: left;
+    border-bottom: 0.5px solid var(--color-hairline);
+  }
+  .tactile-table-frame td {
+    height: var(--tactile-row-h);
+    padding: 0 0.75rem;
+    font-size: 13px;
+    line-height: 1.25rem;
+    color: var(--color-ink-secondary);
+    text-align: left;
+    vertical-align: middle;
+    border-bottom: 0.5px solid var(--color-hairline);
+  }
+  .tactile-table-frame td:first-child {
+    color: var(--color-ink);
+  }
+  .tactile-table-frame tr:last-child td {
+    border-bottom: 0;
+  }
+  .tactile-table-frame tbody tr {
+    transition: background-color var(--tactile-dur-hover) var(--tactile-ease-out);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .tactile-table-frame tbody tr:hover {
+      background: var(--color-raised-hover);
+    }
+  }
+
+  /* ── Tactile menu/dropdown: crisp ring + short drop, 36px items ── */
+  .tactile-menu {
+    background: var(--color-menu, var(--color-card));
+    border: 0;
+    border-radius: var(--tactile-radius-container);
+    box-shadow: var(--tactile-shadow-menu);
+    padding: 4px;
+    transform-origin: top center;
+  }
+  .tactile-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    min-height: 36px;
+    padding: 0 0.75rem;
+    margin: 1px 0;
+    border-radius: var(--tactile-radius-control);
+    font-size: 13px;
+    line-height: 1.25rem;
+    color: var(--color-ink);
+    transition: background-color var(--tactile-dur-hover) var(--tactile-ease-out);
+  }
+  @media (hover: hover) and (pointer: fine) {
+    .tactile-menu-item:hover {
+      background: var(--color-menu-hover);
+    }
+    /* A chosen row stays chosen under the pointer: hover never overrides it. */
+    .tactile-menu-item[data-chosen="true"]:hover {
+      background: var(--color-selected);
+    }
+  }
+  .tactile-menu-item[aria-current="true"],
+  .tactile-menu-item[data-chosen="true"] {
+    background: var(--color-selected);
+    color: var(--color-ink);
+  }
+  .tactile-trigger-chevron {
+    transition: rotate var(--tactile-dur-hover) var(--tactile-ease-out);
+  }
+  [aria-expanded="true"] > .tactile-trigger-chevron,
+  [data-open="true"] > .tactile-trigger-chevron {
+    rotate: 180deg;
+  }
+
+  /* ── Tactile dialog/modal + sheet: header/body/footer, Cancel left ── */
+  .tactile-backdrop {
+    background: var(--tactile-backdrop);
+    backdrop-filter: blur(2px);
+    -webkit-backdrop-filter: blur(2px);
+  }
+  .tactile-dialog {
+    background: var(--color-panel);
+    border: 0;
+    border-radius: var(--tactile-radius-container);
+    box-shadow: var(--tactile-shadow-modal);
+    outline: none;
+  }
+  .tactile-dialog-header {
+    padding: 1.25rem 1.25rem 1rem;
+  }
+  .tactile-dialog-body {
+    padding: 0 1.25rem 1rem;
+  }
+  .tactile-grab-handle {
+    display: none;
+  }
+  @media screen and (max-width: 47.99rem) {
+    .tactile-dialog {
+      border-radius: 14px 14px 0 0;
+      max-height: calc(100dvh - 24px);
+    }
+    .tactile-grab-handle {
+      display: block;
+      width: 36px;
+      height: 5px;
+      margin: 0 auto;
+      border-radius: 999px;
+      background: #fff;
+      box-shadow: inset 0 -0.5px 0 rgb(0 0 0 / 0.08), 0 0 0 0.5px rgb(0 0 0 / 0.12), 0 1px 2px rgb(0 0 0 / 0.28);
+    }
+    .tactile-grab-handle:active {
+      scale: 0.94;
+    }
+  }
+
+  /* ── Tactile chart: figure + bars that answer on press ── */
+  .tactile-chart-card {
+    background: var(--color-card);
+    border: 0;
+    border-radius: var(--tactile-radius-container);
+    box-shadow: var(--tactile-shadow-card);
+    padding: 1rem;
+  }
+  .tactile-figure {
+    font-size: 24px;
+    line-height: 2rem;
+    font-variant-numeric: tabular-nums;
+    color: var(--color-ink);
+  }
+  .tactile-figure-label {
+    font-size: 13px;
+    line-height: 1.25rem;
+    color: var(--color-ink-secondary);
+  }
+  .tactile-bar {
+    transition: opacity var(--tactile-dur-hover) var(--tactile-ease-out), transform var(--tactile-dur-hover) var(--tactile-ease-out);
+    transform-box: fill-box;
+    transform-origin: bottom;
+  }
+  .tactile-bar:active {
+    scale: 0.97;
+  }
+  @media (hover: hover) and (pointer: fine) {
+    svg:has(.tactile-bar:hover) .tactile-bar:not(:hover) {
+      opacity: 0.35;
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .ui-button,
+    .ui-icon-button,
+    .tactile-card-clickable,
+    .tactile-menu-item,
+    .tactile-bar { transition: none; }
+    .tactile-card-clickable:active,
+    .ui-button:enabled:active { scale: 1; }
   }
 }
 
@@ -473,6 +791,20 @@ body {
   .scroll-thin-autohide.is-scrolling {
     scrollbar-color: var(--color-scrollbar) transparent;
   }
+}
+
+/* The thread switcher list scrolls without a lane. A lane would reserve 5px
+   on the right only, making the rows look inset more on one side than the
+   other; hiding it keeps the card's padding symmetric. Scroll still works
+   with the wheel, trackpad and keyboard. */
+.thread-menu-scroll {
+  scrollbar-width: none;
+  scrollbar-gutter: auto;
+}
+.thread-menu-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
 }
 
 @keyframes panel-in {
