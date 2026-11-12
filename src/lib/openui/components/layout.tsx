@@ -68,14 +68,14 @@ export const Card = defineComponent({
   component: ({ props, renderNode }: any) =>
     React.createElement(
       "div",
-      { className: "rounded-xl bg-card border border-hairline/40 p-3" },
+      { className: "tactile-card" },
       props.title
-        ? React.createElement("div", { className: "text-[13px] font-medium text-ink" }, props.title)
+        ? React.createElement("div", { className: "text-[16px] leading-6 font-medium text-ink" }, props.title)
         : null,
       props.subtitle
         ? React.createElement(
             "div",
-            { className: props.title ? "mt-0.5 text-[12px] leading-relaxed text-ink-secondary" : "text-[12px] leading-relaxed text-ink-secondary" },
+            { className: props.title ? "mt-1 text-[13px] leading-5 text-ink-secondary" : "text-[13px] leading-5 text-ink-secondary" },
             props.subtitle,
           )
         : null,

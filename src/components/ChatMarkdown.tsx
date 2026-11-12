@@ -875,17 +875,19 @@ function ChatMarkdownComponent({ text, streaming = false, message, mentionPeers 
           table({ node, children }: BlockProps) {
             return (
               <div className="overflow-x-auto">
-                <table dir={blockDirection(node)} className="w-full border-collapse text-[13.5px]">{children}</table>
+                <div className="tactile-table-frame">
+                  <table dir={blockDirection(node)}>{children}</table>
+                </div>
               </div>
             );
           },
           th({ children }: { children?: ReactNode }) {
             return (
-              <th className="border-b border-hairline/40 px-2 py-1.5 text-start font-semibold">{children}</th>
+              <th className="text-start">{children}</th>
             );
           },
           td({ children }: { children?: ReactNode }) {
-            return <td className="border-b border-hairline/20 px-2 py-1.5 align-top">{children}</td>;
+            return <td>{children}</td>;
           },
           p({ node, children }: BlockProps) {
             // break-words because model output sometimes arrives as one long

@@ -71,13 +71,6 @@ export function ThreadSwitcher({
 }) {
   const [open, setOpen] = useState(false);
   const [pendingDeleteThreadId, setPendingDeleteThreadId] = useState<string | null>(null);
-  // The lane shows only mid-scroll: a scroll event raises it, 800ms of
-  // stillness lowers it again. Hover alone never reveals it.
-  const [scrolling, setScrolling] = useState(false);
-  const scrollTimer = useRef<number | null>(null);
-  useEffect(() => () => {
-    if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
-  }, []);
   const motion = useMenuMotion(open);
   const menuRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -114,15 +107,6 @@ export function ThreadSwitcher({
     setPendingDeleteThreadId(threadId);
   };
 
-  const onMenuScroll = () => {
-    setScrolling(true);
-    if (scrollTimer.current !== null) window.clearTimeout(scrollTimer.current);
-    scrollTimer.current = window.setTimeout(() => {
-      scrollTimer.current = null;
-      setScrolling(false);
-    }, 800);
-  };
-
   return (
     // Fixed width, matching the dropdown below: the thread name occupies the
     // same 238px in the header as the selector opens to, so switching threads
@@ -141,7 +125,7 @@ export function ThreadSwitcher({
         className="flex w-fit max-w-full items-center gap-1 rounded-md py-0.5 pl-2 text-[15px] text-ink-secondary hover:bg-raised hover:text-ink"
       >
         <span className="min-w-0 truncate font-medium">{headerTitle}</span>
-        <ChevronDown size={15} className={cn("shrink-0 transition-transform", open && "rotate-180")} />
+          <ChevronDown size={15} className={cn("tactile-trigger-chevron shrink-0")} />
       </button>
 
       {motion.shown && (
@@ -149,13 +133,12 @@ export function ThreadSwitcher({
         // into the card's right padding (-mr-1.5), so the scroll lane lands
         // on that padding instead of adding width beside it.
         <div
-          className={cn("absolute left-0 top-full z-40 mt-1 flex max-h-[min(20rem,50vh)] w-full flex-col overflow-hidden rounded-2xl border border-hairline/50 bg-card pt-1.5 pb-1.5 pr-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+          className={cn("tactile-menu absolute left-0 top-full z-40 mt-1.5 flex max-h-[min(20rem,50vh)] w-full flex-col overflow-hidden p-1.5", motion.className)} {...motion.exitProps}
         >
         <div
           role="menu"
           aria-label={t("thread.switcher.label")}
-          onScroll={onMenuScroll}
-          className={cn("scroll-thin-autohide -mr-1.5 min-h-0 flex-1 overflow-y-auto pl-1.5 pr-0", scrolling && "is-scrolling")}
+          className="thread-menu-scroll min-h-0 flex-1 overflow-y-auto"
         >
           {visible.length === 0 ? (
             <div className="px-3 py-2 text-[12px] text-ink-secondary">
@@ -168,19 +151,18 @@ export function ThreadSwitcher({
               return (
                 <div
                   key={entry.threadId}
-                  className={cn(
-                    "group/thread flex w-full items-center rounded-lg",
-                    // Hover never touches the selected row: dimming the
-                    // highlight under the cursor reads as losing selection.
-                    current ? "bg-selected" : "hover:bg-menu-hover",
-                  )}
+                  className="tactile-menu-item group/thread relative w-full p-0"
+                  data-chosen={current || undefined}
                 >
                   <button
                     type="button"
                     role="menuitem"
                     aria-current={current || undefined}
                     onClick={() => choose(entry.threadId)}
-                    className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2.5 py-1.5 text-left"
+                    className={cn(
+                      "flex min-w-0 w-full items-center gap-2 self-stretch px-2 text-left text-[13px] text-ink",
+                      onDelete && entry.deletable !== false ? "pr-8" : "pr-2",
+                    )}
                   >
                     <span className="flex min-w-0 flex-1 items-center gap-2">
                       {opener && (
@@ -207,9 +189,9 @@ export function ThreadSwitcher({
                       aria-label={`${t("task.deleteAria")}: ${entry.title}`}
                       title={t("task.deleteTitle")}
                       onClick={() => requestDelete(entry.threadId)}
-                      className="pointer-events-none mr-1 flex size-7 shrink-0 items-center justify-center rounded text-ink-secondary opacity-0 transition-opacity hover:text-ink focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 touch:pointer-events-auto touch:opacity-70"
+                      className="tactile-round-button pointer-events-none absolute right-1 top-1/2 flex size-[22px] -translate-y-1/2 items-center justify-center rounded text-ink-secondary opacity-0 transition-opacity hover:text-danger focus-visible:pointer-events-auto focus-visible:opacity-100 group-hover/thread:pointer-events-auto group-hover/thread:opacity-100 group-focus-within/thread:pointer-events-auto group-focus-within/thread:opacity-100 touch:pointer-events-auto touch:opacity-70"
                     >
-                      <Trash2 size={13} />
+                      <Trash2 size={14} />
                     </button>
                   )}
                 </div>

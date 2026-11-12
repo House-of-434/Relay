@@ -1057,7 +1057,7 @@ export function Composer({
           <button
             onClick={interruptTurn}
             aria-label={t("chat.stopTurn")}
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
+            className="tactile-round-button flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
             title={t("chat.stop")}
           >
             <Square size={14} className="fill-current" />
@@ -1082,7 +1082,7 @@ export function Composer({
                     : t("chat.send")
             }
             className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
+              "tactile-round-button flex size-8 shrink-0 items-center justify-center rounded-full text-white",
               busy && !canSteer
                   ? "bg-raised text-ink-secondary hover:bg-raised-hover"
                   : "bg-accent hover:brightness-110",

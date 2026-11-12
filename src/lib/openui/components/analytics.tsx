@@ -9,10 +9,10 @@ export const Metric = defineComponent({
   component: ({ props }: any) =>
     React.createElement(
       "div",
-      { className: "rounded-xl bg-card border border-hairline/40 p-3" },
-      React.createElement("div", { className: "text-[11px] text-ink-secondary" }, props.label),
-      React.createElement("div", { className: "mt-0.5 text-[20px] font-semibold text-ink" }, props.value),
-      props.delta ? React.createElement("div", { className: "mt-0.5 text-[11px] text-ink-secondary" }, props.delta) : null,
+      { className: "tactile-chart-card" },
+      React.createElement("div", { className: "tactile-figure" }, props.value),
+      React.createElement("div", { className: "tactile-figure-label" }, props.label),
+      props.delta ? React.createElement("div", { className: "mt-1 text-[12px] leading-4 text-ink-secondary" }, props.delta) : null,
     ),
 });
 
@@ -62,8 +62,8 @@ function BarChartView({ data, title }: { data: Datum[]; title?: string }) {
 
   return React.createElement(
     "div",
-    { className: "p-2" },
-    title ? React.createElement("div", { className: "mb-2 text-[12px] font-semibold text-ink" }, title) : null,
+    { className: "tactile-chart-card" },
+    title ? React.createElement("div", { className: "mb-4 text-[16px] leading-6 font-medium text-ink" }, title) : null,
     React.createElement(
       "div",
       { ref, className: "w-full min-w-0" },
@@ -89,7 +89,7 @@ function BarChartView({ data, title }: { data: Datum[]; title?: string }) {
                 React.Fragment,
                 { key: i },
                 val > 0
-                  ? React.createElement("rect", { x, y, width: barWidth, height: barH, className: "fill-accent", rx: 3 })
+                  ? React.createElement("rect", { x, y, width: barWidth, height: barH, className: "tactile-bar fill-accent", rx: 3 })
                   : React.createElement("rect", { x, y: zeroY, width: barWidth, height: 2, className: "fill-ink-secondary/40", rx: 1 }),
                 React.createElement(
                   "text",
@@ -104,7 +104,7 @@ function BarChartView({ data, title }: { data: Datum[]; title?: string }) {
                   String(d.label),
                 ),
                 val > 0
-                  ? React.createElement("text", { x: center, y: y - 4, textAnchor: "middle", className: "fill-ink", style: { fontSize: "9px", fontWeight: 500 } }, String(val))
+                  ? React.createElement("text", { x: center, y: y - 4, textAnchor: "middle", className: "fill-ink", style: { fontSize: "9px", fontWeight: 500, fontVariantNumeric: "tabular-nums" } }, String(val))
                   : React.createElement("text", { x: center, y: zeroY - 4, textAnchor: "middle", className: "fill-ink-secondary", style: { fontSize: "8px" } }, "0"),
               );
             }),
@@ -147,8 +147,8 @@ function LineChartView({ data, title }: { data: Datum[]; title?: string }) {
 
   return React.createElement(
     "div",
-    { className: "p-2" },
-    title ? React.createElement("div", { className: "mb-2 text-[12px] font-semibold text-ink" }, title) : null,
+    { className: "tactile-chart-card" },
+    title ? React.createElement("div", { className: "mb-4 text-[16px] leading-6 font-medium text-ink" }, title) : null,
     React.createElement(
       "div",
       { ref, className: "w-full min-w-0" },
@@ -229,8 +229,8 @@ export const PieChart = defineComponent({
     const colors = ["#1c7a4c", "#3fae6e", "#7bd8a8", "#0f5c36", "#2f6b4f", "#5a9e7a"];
     return React.createElement(
       "div",
-      { className: "p-2" },
-      props.title ? React.createElement("div", { className: "mb-1.5 text-[12px] font-semibold text-ink" }, props.title) : null,
+      { className: "tactile-chart-card" },
+      props.title ? React.createElement("div", { className: "mb-4 text-[16px] leading-6 font-medium text-ink" }, props.title) : null,
       React.createElement(
         "div",
         { className: "flex items-center gap-4" },
