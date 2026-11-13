@@ -31,6 +31,8 @@ export interface TakeoverActor {
   botId: string;
   threadId: string;
   agent: RelayAgentRole;
+  /** The provider turn generation that owns this browser session. */
+  turnId?: string;
 }
 
 export class ToolLayerTakeoverError extends Error {
@@ -77,6 +79,13 @@ export class ToolLayerTakeoverClient {
   async release(actor: TakeoverActor, sessionId: string, generation: number): Promise<boolean> {
     const body = await this.post(actor, "/internal/browser-takeover/release", { session_id: sessionId, generation });
     return body.released === true;
+  }
+
+  /** Turn-end close: the signed turnId selects the exact session. A delayed
+   * request for an older turn closes nothing. */
+  async closeSession(actor: TakeoverActor): Promise<boolean> {
+    const body = await this.post(actor, "/internal/browser-session/close", {});
+    return body.closed === true;
   }
 
   private async post(actor: TakeoverActor, path: string, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
