@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 
-import { assertCredentialSafe, parseFormFields } from "./credential-guard.js";
+import { assertCredentialSafe, parseFormFields, parsePageRefs, resolveActTargets } from "./credential-guard.js";
 
 const FORMS = `extract forms:
 [{"action":"https://example.com/login","method":"post","fields":[
@@ -46,4 +46,41 @@ test("refuses a fill field that the inspected form does not contain", () => {
     /browser_request_human/,
   );
   assert.doesNotThrow(() => assertCredentialSafe({ action: "fill", fields: { search: "shoes" } }, plain));
+});
+
+
+const PAGE = `e1 textbox "Email address" [email] *
+e2 textbox "Search" [text]
+e3 textbox "Password" [password]
+e4 button "Continue" (disabled)`;
+
+test("parses page refs with roles and field types", () => {
+  const refs = parsePageRefs(PAGE);
+  assert.equal(refs?.length, 4);
+  assert.deepEqual(refs?.[0], { ref: "e1", role: "textbox", label: "Email address", type: "email" });
+});
+
+test("fill resolves a label to a ref and passes refs to Bladebro", () => {
+  const resolved = resolveActTargets({ action: "fill", fields: { "Email address": "a@b.com" } }, PAGE);
+  assert.deepEqual(resolved.fields, { e1: "a@b.com" });
+});
+
+test("fill accepts a ref directly", () => {
+  const resolved = resolveActTargets({ action: "fill", fields: { e1: "a@b.com" } }, PAGE);
+  assert.deepEqual(resolved.fields, { e1: "a@b.com" });
+});
+
+test("fill refuses a password field and an unknown field", () => {
+  assert.throws(() => resolveActTargets({ action: "fill", fields: { Password: "secret" } }, PAGE), /password\/OTP\/card/);
+  assert.throws(() => resolveActTargets({ action: "fill", fields: { e99: "x" } }, PAGE), /not found on the current page/);
+});
+
+test("type resolves a label to a ref and drops the selector", () => {
+  const resolved = resolveActTargets({ action: "type", selector: "Email address", text: "a@b.com" }, PAGE);
+  assert.equal(resolved.target, "e1");
+  assert.equal(resolved.selector, undefined);
+});
+
+test("fill fails closed without a page model", () => {
+  assert.throws(() => resolveActTargets({ action: "fill", fields: { e1: "x" } }, null), /page model is unavailable/);
 });

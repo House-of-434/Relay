@@ -1950,6 +1950,11 @@ const INTERNAL_CAPABILITY_ORPHAN_MS = 30 * 24 * 60 * 60_000;
 const internalCapabilities = new Map<string, InternalCapability>();
 const activeInternalGenerationByThread = new Map<string, string>();
 const internalGenerationByProviderTurn = new ProviderTurnGenerationRegistry();
+/** Provider turn id -> internal generation, kept for the turn-end browser
+ * close. The registry consumes its owner on completion; this map lets the
+ * close request carry the exact turn identity. */
+const browserTurnGenerations = new Map<string, string>();
+const BROWSER_TURN_GENERATIONS_MAX = 5_000;
 const computerSelectionTurns = new Map<string, {
   generation: string;
   botId: string;
@@ -2067,12 +2072,20 @@ function revokeAllInternalCapabilities(): void {
   // generation by id) is what judges it (server/lending-memory.ts).
   activeInternalGenerationByThread.clear();
   internalGenerationByProviderTurn.clear();
+  browserTurnGenerations.clear();
   inheritedMailAttachmentsByGeneration.clear();
 }
 
 function bindInternalCapabilityToProviderTurn(threadId: string, generation: string, turnId?: string): void {
   if (turnId && !internalGenerationByProviderTurn.bind(threadId, generation, turnId)) {
     revokeInternalCapabilityGeneration(threadId, generation);
+    return;
+  }
+  if (turnId) {
+    browserTurnGenerations.set(turnId, generation);
+    while (browserTurnGenerations.size > BROWSER_TURN_GENERATIONS_MAX) {
+      browserTurnGenerations.delete(browserTurnGenerations.keys().next().value!);
+    }
   }
 }
 
@@ -13944,10 +13957,33 @@ function resumeKey(threadId: string, messageId: string): string {
   return `${threadId}:${messageId}`;
 }
 
-function takeoverActor(botId: string, threadId: string): TakeoverActor {
+function takeoverActor(botId: string, threadId: string, turnId?: string): TakeoverActor {
   const bot = store.bot(botId);
   if (!bot?.ownerUserId) throw new ToolLayerTakeoverError(403, "this bot has no owner workspace");
-  return { userId: bot.ownerUserId, botId: bot.id, threadId, agent: bot.relayAgent ?? "scout" };
+  return { userId: bot.ownerUserId, botId: bot.id, threadId, agent: bot.relayAgent ?? "scout", ...(turnId ? { turnId } : {}) };
+}
+
+/** Turn end closes the exact browser session that turn acquired. The signed
+ * turn id makes a delayed request harmless: it can never close a newer turn's
+ * session. The daemon, page and profile survive. */
+function closeBrowserSessionForThread(threadId: string, providerTurnId: string | undefined): void {
+  if (!providerTurnId) return;
+  const generation = browserTurnGenerations.get(providerTurnId);
+  if (!generation) return;
+  browserTurnGenerations.delete(providerTurnId);
+  const bot = store.botByThread(threadId);
+  if (!bot?.relayAgent || !bot.ownerUserId) return;
+  // Only Scout mounts the browser today. Other agents have no session to
+  // close and must not produce a failed control-plane call every turn.
+  if (bot.relayAgent !== "scout" || !RELAY_TOOL_URL) return;
+  try {
+    const actor = takeoverActor(bot.id, threadId, generation);
+    void takeoverControl.closeSession(actor).catch((error) => {
+      console.warn(`[browser] turn-end close failed thread=${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  } catch {
+    /* no owner workspace: nothing to close */
+  }
 }
 
 /** Only the workspace owner or the person whose turn raised the card may open
@@ -14220,6 +14256,7 @@ bus.subscribe((event: RuntimeEvent) => {
     // Before the drains: a card whose continuation is still waiting for a
     // slot must not release the browser that continuation will use.
     releaseSettledTakeoverForThread(event.threadId);
+    closeBrowserSessionForThread(event.threadId, event.turnId);
     drainConnectorResumes();
     drainCardResumes();
     drainTeamSetupResumes();
@@ -15600,7 +15637,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         let assertion: string;
         try {
           assertion = signedActorContext(
-            { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent },
+            { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent, turnId: internalCapability.generation },
             process.env.RELAY_TOOL_ACTOR_SECRET,
             undefined,
             {
