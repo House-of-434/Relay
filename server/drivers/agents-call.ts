@@ -6,7 +6,6 @@
 //
 // Nothing here reads the environment or holds state of its own. The caller
 // passes a ToolCallContext, and the per-turn counters live on it.
-import { CREDENTIAL_TARGETS, isCredentialTargetId } from "../../shared/credential-request.ts";
 import { parseOptionsCardInput, WATCHER_OPTIONS_CARD_BOT_ID } from "../../shared/options-card.ts";
 import { normalizeCronSchedule } from "../../shared/routine-schedule.ts";
 
@@ -311,17 +310,16 @@ function routineFields(args: Json): { fields: Json; error?: string } {
   const fields: Json = {};
   // list_routines returns the harness names. Accept those when a model
   // copies back a definition, as we already do for interval fields.
-  const destination = (value: unknown) => value === "box" ? "cloud" : value;
-  if (args.run_on != null && args.runOn != null && destination(args.run_on) !== destination(args.runOn)) {
+  const runOn = args.run_on ?? args.runOn;
+  if (args.run_on != null && args.runOn != null && args.run_on !== args.runOn) {
     return { fields, error: "Choose one run_on destination; run_on and runOn disagree." };
   }
   if (args.timeout_minutes != null && args.timeoutMinutes != null && args.timeout_minutes !== args.timeoutMinutes) {
     return { fields, error: "Choose one timeout_minutes limit; timeout_minutes and timeoutMinutes disagree." };
   }
-  const runOn = destination(args.run_on ?? args.runOn);
   const timeoutMinutes = args.timeout_minutes ?? args.timeoutMinutes;
-  if (runOn != null && runOn !== "maus" && runOn !== "cloud") {
-    return { fields, error: 'Use run_on="maus" for the bot’s current model and configured computer (including VPS), or run_on="box" only for the Boat-hosted agent. Legacy "cloud" also means Boat.' };
+  if (runOn != null && runOn !== "maus") {
+    return { fields, error: 'run_on only supports "maus", which uses the bot’s current model and configured computer.' };
   }
   if (timeoutMinutes != null && (
     typeof timeoutMinutes !== "number" || !Number.isInteger(timeoutMinutes) || timeoutMinutes < 5 || timeoutMinutes > 240
@@ -756,15 +754,6 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     }
     return { text: `Task ${taskId} ended without a reply — ${String(r.status ?? "unknown")}${r.result ? `: ${String(r.result)}` : ""}.`, isError: true };
   }
-  if (name === "select_computer") {
-    if (args.surface !== undefined && (typeof args.surface !== "string" || !["auto", "cloud", "vm", "local"].includes(args.surface))) {
-      return { text: "Choose auto, cloud, vm or local; omit surface to inspect connected choices.", isError: true };
-    }
-    const result = await api("/api/internal/computer/select", args.surface === undefined ? undefined : {
-      method: "POST", body: JSON.stringify({ surface: args.surface }),
-    });
-    return { text: JSON.stringify(result) };
-  }
   if (name === "list_threads") {
     const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });
     const r = await api(`/api/internal/threads?${query.toString()}`);
@@ -941,28 +930,6 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     if (r.error) return { text: `Couldn't manage room: ${r.error}`, isError: true };
     const message = typeof r.message === "string" ? r.message : `Updated room ${roomId}.`;
     return { text: message };
-  }
-  if (name === "request_credential") {
-    const credentialId = args.credential_id;
-    if (!isCredentialTargetId(credentialId)) {
-      return { text: "request_credential needs a supported credential_id.", isError: true };
-    }
-    const reason = typeof args.reason === "string" ? args.reason.trim().slice(0, 240) : "";
-    const r = await api("/api/internal/request-credential", {
-      method: "POST",
-      body: JSON.stringify({
-        fromBotId: BOT_ID,
-        fromThreadId: THREAD_ID,
-        credentialId,
-        ...(reason ? { reason } : {}),
-      }),
-    });
-    if (r.alreadyConfigured) {
-      return { text: `${r.label ?? CREDENTIAL_TARGETS[credentialId].label} is already configured. Continue the task.` };
-    }
-    return {
-      text: `A secure ${r.label ?? CREDENTIAL_TARGETS[credentialId].label} request is ready. The desktop app and a freshly QR-paired mobile app show its secure entry card; older mobile pairings explain how to pair again or finish on the computer. End this turn; Relay will resume the task after the user saves or declines. Never ask them to paste the key into chat.`,
-    };
   }
   if (name === "list_routines") {
     const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });

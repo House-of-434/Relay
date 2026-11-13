@@ -8,17 +8,11 @@ import { createHash, randomUUID } from "node:crypto";
 import { once } from "node:events";
 import { createServer, request, type Server } from "node:http";
 import { connect, type Socket } from "node:net";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { DatabaseSync } from "node:sqlite";
-import {
-  Aes256Gcm,
-  CipherSuite,
-  DhkemP256HkdfSha256,
-  HkdfSha256,
-} from "@hpke/core";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 
@@ -35,12 +29,6 @@ import {
   TEST_TOOL_ACTOR_SECRET,
 } from "./testing/owner.ts";
 import { FILE_MAX_BYTES, IMAGE_MAX_BYTES } from "./attachments.ts";
-import { computerPrompt, SIGN_IN_PROMPT } from "./system-prompt.ts";
-import {
-  PHONE_SECRET_INFO,
-  phoneSecretAAD,
-  type PhoneSecretContext,
-} from "./phone-secret.ts";
 
 const SERVER_DIR = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(SERVER_DIR, "..");
@@ -80,44 +68,6 @@ async function mintTestCapability(
   return ((await response.json()) as { token: string }).token;
 }
 
-const PHONE_SECRET_TEST_IDENTITY = {
-  type: "relay:phone-secret-key",
-  version: 1,
-  keyId: "taWSR_nZ7ojlH_0Z3tar6Q",
-  privateKey: {
-    kty: "EC",
-    crv: "P-256",
-    x: "g8FDXb91acXUNkuxNk7dWDQ0aN2zn6On2HeOGOvZOjs",
-    y: "bJelczS0LM82rfXV68PmSJhz2ePosj3fL974XckCpDU",
-    d: "5B-SwYLGXc04u4v7YLpzFrwj2JjysBFaJevOPl3h3Zg",
-  },
-} as const;
-const phoneSecretTestSuite = new CipherSuite({
-  kem: new DhkemP256HkdfSha256(),
-  kdf: new HkdfSha256(),
-  aead: new Aes256Gcm(),
-});
-
-async function sealPhoneSecretForTest(
-  context: Omit<PhoneSecretContext, "encapsulatedKey" | "ciphertext">,
-  value: string,
-): Promise<PhoneSecretContext> {
-  const publicKey = await phoneSecretTestSuite.kem.deserializePublicKey(Buffer.concat([
-    Buffer.from([4]),
-    Buffer.from(PHONE_SECRET_TEST_IDENTITY.privateKey.x, "base64url"),
-    Buffer.from(PHONE_SECRET_TEST_IDENTITY.privateKey.y, "base64url"),
-  ]));
-  const sender = await phoneSecretTestSuite.createSenderContext({
-    recipientPublicKey: publicKey,
-    info: new TextEncoder().encode(PHONE_SECRET_INFO),
-  });
-  const ciphertext = await sender.seal(new TextEncoder().encode(value), phoneSecretAAD(context));
-  return {
-    ...context,
-    encapsulatedKey: Buffer.from(sender.enc).toString("base64url"),
-    ciphertext: Buffer.from(ciphertext).toString("base64url"),
-  };
-}
 
 let child: ChildProcess;
 /** stands in for the boat provider so config saving never touches the network */
@@ -5395,611 +5345,6 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("leaves a failed credential-card continuation on the card without buzzing twice", async () => {
-    let botId: string | undefined;
-    let stream: Awaited<ReturnType<typeof openSse>> | undefined;
-    try {
-      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
-      const bot = (await api("POST", "/api/bots")).body.bot;
-      botId = bot.id;
-      expect((await api("PATCH", `/api/bots/${bot.id}`, {
-        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
-      })).status).toBe(200);
-      stream = await openSse(`${BASE}/api/events`);
-      await stream.until((frame) => frame.kind === "hello");
-
-      rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "stay active" })).status).toBe(202);
-      const dump = await readJsonFileWhenReady<{
-        mcpConfig: { mcpServers: { agents: { env: { RELAY_COMMS_TOKEN: string } } } };
-      }>(fakeClaudeDump);
-      const token = dump.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
-      const requested = await fetch(`${BASE}/api/internal/request-credential`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          fromBotId: bot.id,
-          fromThreadId: bot.threadId,
-          credentialId: "openaiImageApiKey",
-          reason: "needed for the task",
-        }),
-      });
-      expect(requested.status).toBe(201);
-      const { messageId } = (await requested.json()) as { messageId: string };
-      const directState = (await api("GET", "/api/bots?messages=20")).body.bots
-        .find((candidate: { id: string }) => candidate.id === bot.id);
-      const directCard = directState?.messages
-        .find((message: { id: string }) => message.id === messageId);
-      expect(directCard).toMatchObject({
-        kind: "secret",
-        text: "Securely provide the OpenAI API key from Relay on your phone or computer. It is never added to chat.",
-      });
-      expect(directCard.secret.description).toContain(
-        `${bot.name} can use it but never read it back.`,
-      );
-      expect(directCard).not.toHaveProperty("from");
-
-      const encryptedEnvelope = {
-        version: 1,
-        threadId: bot.threadId,
-        keyId: "A".repeat(22),
-        deviceId: "phone-1",
-        target: "openaiImageApiKey",
-        requestKey: directCard.secret.requestKey,
-        encapsulatedKey: "A".repeat(87),
-        ciphertext: "A".repeat(23),
-      };
-      const directProvision = await fetch(
-        `${BASE}/api/bots/${bot.id}/secret-cards/${messageId}/provide`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(encryptedEnvelope),
-        },
-      );
-      expect(directProvision.status).toBe(403);
-
-      const developmentProvision = await fetch(
-        `${BASE}/api/bots/${bot.id}/secret-cards/${messageId}/provide`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-relay-companion": "1",
-            "x-relay-companion-device": "phone-1",
-          },
-          body: JSON.stringify(encryptedEnvelope),
-        },
-      );
-      expect(developmentProvision.status).toBe(503);
-
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
-      await expect.poll(async () => {
-        const current = (await api("GET", "/api/bots?messages=0")).body.bots
-          .find((candidate: { id: string }) => candidate.id === bot.id);
-        return current?.busy;
-      }).toBe(false);
-      const originalUserMessage = directState?.messages.find(
-        (message: { role?: string; kind?: string; text?: string }) =>
-          message.role === "user" && message.kind === "text" && message.text === "stay active",
-      );
-      expect(originalUserMessage?.id).toEqual(expect.any(String));
-      expect((await api("POST", `/api/bots/${bot.id}/messages/${originalUserMessage.id}/edit`, {
-        text: "take another branch",
-      })).status).toBe(202);
-      expect((await api("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, {
-        threadId: bot.threadId,
-      })).status).toBe(404);
-      expect((await api("POST", `/api/bots/${bot.id}/interrupt`)).status).toBe(200);
-      await expect.poll(async () => {
-        const current = (await api("GET", "/api/bots?messages=0")).body.bots
-          .find((candidate: { id: string }) => candidate.id === bot.id);
-        return current?.busy;
-      }).toBe(false);
-      expect((await api("POST", `/api/bots/${bot.id}/active-branch`, {
-        messageId,
-      })).status).toBe(200);
-
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "cloud" })).status).toBe(200);
-      expect((await api("POST", `/api/bots/${bot.id}/secret-cards/${messageId}/dismiss`, {
-        threadId: bot.threadId,
-      })).status).toBe(200);
-
-      await expect.poll(async () => {
-        const current = (await api("GET", "/api/bots?messages=20")).body.bots
-          .find((candidate: { id: string }) => candidate.id === bot.id);
-        return current?.messages.find((message: { id: string }) => message.id === messageId)?.secret?.error;
-      }).toMatch(/box|cloud/i);
-      expect(stream.frames.some(
-        (frame) => frame.kind === "notify" && frame.notification?.kind === "turn-failed",
-      )).toBe(false);
-    } finally {
-      if (botId) await api("POST", `/api/bots/${botId}/interrupt`, {}).catch(() => undefined);
-      stream?.close();
-      if (botId) await api("DELETE", `/api/bots/${botId}`);
-      await api("PUT", "/api/config", { box: { token: "" } });
-      rmSync(fakeClaudeDump, { force: true });
-    }
-  });
-
-  it("supersedes an earlier pending credential card when the same key is asked for again", async () => {
-    let botId: string | undefined;
-    try {
-      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
-      const bot = (await api("POST", "/api/bots")).body.bot;
-      botId = bot.id;
-      const token = await mintTestCapability(BASE, bot.id, bot.threadId);
-      const request = (reason: string) => fetch(`${BASE}/api/internal/request-credential`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          fromBotId: bot.id,
-          fromThreadId: bot.threadId,
-          credentialId: "openaiImageApiKey",
-          reason,
-        }),
-      });
-
-      const first = await request("needed for the first task");
-      expect(first.status).toBe(201);
-      const firstCard = (await first.json()) as { messageId: string };
-      const second = await request("needed for the second task");
-      expect(second.status).toBe(201);
-      const secondCard = (await second.json()) as { messageId: string };
-      expect(secondCard.messageId).not.toBe(firstCard.messageId);
-
-      const state = (await api("GET", "/api/bots?messages=20")).body.bots
-        .find((candidate: { id: string }) => candidate.id === bot.id);
-      const card = (id: string) => state?.messages
-        .find((message: { id: string }) => message.id === id);
-      expect(card(firstCard.messageId)?.secret).toMatchObject({ superseded: true });
-      expect(card(secondCard.messageId)?.secret?.superseded).toBeUndefined();
-
-      // The replaced card is dead everywhere: dismissing it must not answer
-      // the newer request or resurrect the old one's continuation.
-      const stale = await api("POST", `/api/bots/${bot.id}/secret-cards/${firstCard.messageId}/dismiss`, {
-        threadId: bot.threadId,
-      });
-      expect(stale.status).toBe(409);
-      expect(stale.body.error).toMatch(/superseded by a newer one/i);
-      const fresh = await api("POST", `/api/bots/${bot.id}/secret-cards/${secondCard.messageId}/dismiss`, {
-        threadId: bot.threadId,
-      });
-      expect(fresh).toMatchObject({ status: 200, body: { dismissed: true } });
-    } finally {
-      if (botId) await api("DELETE", `/api/bots/${botId}`);
-      await api("PUT", "/api/config", { box: { token: "" } });
-    }
-  });
-
-  it("leaves the earlier pending credential card actionable when the fresh card append fails", async () => {
-    let botId: string | undefined;
-    try {
-      expect((await api("PUT", "/api/config", { box: { token: "" } })).status).toBe(200);
-      const bot = (await api("POST", "/api/bots")).body.bot;
-      botId = bot.id;
-      const token = await mintTestCapability(BASE, bot.id, bot.threadId);
-      const request = (reason: string) => fetch(`${BASE}/api/internal/request-credential`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({
-          fromBotId: bot.id,
-          fromThreadId: bot.threadId,
-          credentialId: "openaiImageApiKey",
-          reason,
-        }),
-      });
-
-      const first = await request("needed for the first task");
-      expect(first.status).toBe(201);
-      const firstCard = (await first.json()) as { messageId: string };
-
-      // Break persistence for the fresh card: a second connection holds the
-      // database write lock, so the append fails mid-request. The fresh card
-      // is appended before any supersede write, so this failure must leave
-      // the first card pending and actionable.
-      const lockDb = new DatabaseSync(join(home, ".relay", "messages.db"));
-      lockDb.exec("BEGIN IMMEDIATE");
-      try {
-        const failed = await request("needed for the second task");
-        expect(failed.status).toBeGreaterThanOrEqual(500);
-      } finally {
-        lockDb.exec("COMMIT");
-        lockDb.close();
-      }
-
-      const card = async (id: string) => (await api("GET", "/api/bots?messages=20")).body.bots
-        .find((candidate: { id: string }) => candidate.id === bot.id)?.messages
-        .find((message: { id: string }) => message.id === id);
-      expect((await card(firstCard.messageId))?.secret?.superseded).toBeUndefined();
-
-      const third = await request("needed for the third task");
-      expect(third.status).toBe(201);
-      const thirdCard = (await third.json()) as { messageId: string };
-      expect((await card(firstCard.messageId))?.secret).toMatchObject({ superseded: true });
-      expect((await card(thirdCard.messageId))?.secret?.superseded).toBeUndefined();
-    } finally {
-      if (botId) await api("DELETE", `/api/bots/${botId}`);
-      await api("PUT", "/api/config", { box: { token: "" } });
-    }
-  });
-
-  it("keeps credential-card ownership stable while an encrypted phone save is in flight", async () => {
-    const isolatedHome = mkdtempSync(join(tmpdir(), "relay-phone-secret-races-"));
-    const isolatedData = join(isolatedHome, ".relay");
-    const isolatedStatic = join(isolatedHome, "static");
-    const isolatedGate = join(isolatedHome, "credential-gate");
-    const isolatedPort = await freePortBlock([0, 1]);
-    const isolatedDump = join(isolatedHome, "fake-claude-dump.json");
-    const releaseFile = join(isolatedGate, "release");
-    mkdirSync(join(isolatedStatic, "assets"), { recursive: true });
-    mkdirSync(isolatedData, { recursive: true });
-    mkdirSync(isolatedGate, { recursive: true });
-    writeFileSync(join(isolatedStatic, "index.html"), "<!doctype html><title>Phone secret race test</title>");
-    writeFileSync(join(isolatedStatic, "assets", "smoke.css"), "body{}");
-    writeFileSync(join(isolatedData, "config.json"), JSON.stringify({
-      instances: {
-        claude: { driver: "claudeAgent", displayName: "Fixture Claude", config: { cli: FAKE_CLAUDE_CLI } },
-      },
-    }));
-    // Per-user workspaces: the isolated server needs its own owner session,
-    // following the main fixture pattern above.
-    const isolatedBasePhone = `http://127.0.0.1:${isolatedPort}`;
-    registerOwnerFetch(isolatedBasePhone, prepareOwnerSession(isolatedData));
-
-    // Model Electron's private utility-process bridge. Both encrypted saves
-    // pause after decryption, before the external credential config commit,
-    // so the public routes below exercise their real in-flight guards.
-    const desktopPrelude = `data:text/javascript,${encodeURIComponent(`
-      const { existsSync, writeFileSync } = await import("node:fs");
-      const { join } = await import("node:path");
-      const identity = ${JSON.stringify(PHONE_SECRET_TEST_IDENTITY)};
-      const gate = ${JSON.stringify(isolatedGate)};
-      const release = ${JSON.stringify(releaseFile)};
-      const { EventEmitter } = await import("node:events");
-      const messages = new EventEmitter();
-      let saves = Promise.resolve();
-      const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-      Object.defineProperty(process, "parentPort", {
-        value: {
-          on(event, callback) {
-            if (event !== "message") return;
-            messages.on(event, callback);
-            queueMicrotask(() => callback({ data: identity }));
-          },
-          postMessage(message) {
-            if (message?.type !== "relay:phone-secret-save") return;
-            writeFileSync(join(gate, message.requestId + ".started"), message.target);
-            saves = saves.then(async () => {
-              while (!existsSync(release)) await delay(10);
-              try {
-                const patch = message.target === "openaiImageApiKey"
-                  ? { imageGen: { key: message.value } }
-                  : null;
-                if (!patch) throw new Error("unsupported test credential target");
-                const response = await fetch(
-                  "http://127.0.0.1:" + process.env.RELAY_PORT + "/api/config?secretStorage=external",
-                  {
-                    method: "PUT",
-                    headers: { "content-type": "application/json" },
-                    body: JSON.stringify(patch),
-                  },
-                );
-                const body = await response.json().catch(() => null);
-                if (!response.ok) throw new Error(body?.error || "credential config failed");
-                messages.emit("message", { data: {
-                  type: "relay:phone-secret-save-result",
-                  requestId: message.requestId,
-                  ok: true,
-                } });
-              } catch (error) {
-                messages.emit("message", { data: {
-                  type: "relay:phone-secret-save-result",
-                  requestId: message.requestId,
-                  ok: false,
-                  error: error instanceof Error ? error.message : String(error),
-                } });
-              }
-            });
-          },
-        },
-      });
-    `)}`;
-    let isolatedStderr = "";
-    const isolatedChild = spawn(
-      process.execPath,
-      ["--import", desktopPrelude, join(SERVER_DIR, "index.ts")],
-      {
-        cwd: ROOT,
-        env: {
-          ...(process.env.PATH ? { PATH: process.env.PATH } : {}),
-          ...(process.env.SystemRoot ? { SystemRoot: process.env.SystemRoot } : {}),
-          HOME: isolatedHome,
-          USERPROFILE: isolatedHome,
-          RELAY_PORT: String(isolatedPort),
-          RELAY_WEBHOOK_PORT: String(isolatedPort + 1),
-          RELAY_STATIC_DIR: isolatedStatic,
-          FAKE_CLAUDE_MODE: "hang",
-          FAKE_CLAUDE_DUMP: isolatedDump,
-          RELAY_TOOL_ACTOR_SECRET: TEST_TOOL_ACTOR_SECRET,
-          RELAY_TEST_INTERNAL_CAPABILITY_KEY: TEST_CAPABILITY_KEY,
-        },
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    isolatedChild.stderr!.on("data", (chunk) => (isolatedStderr += chunk));
-    const isolatedApi = async (method: string, path: string, body?: unknown): Promise<{
-      status: number;
-      body: any;
-    }> => {
-      const response = await fetch(`http://127.0.0.1:${isolatedPort}${path}`, {
-        method,
-        headers: body ? { "content-type": "application/json" } : undefined,
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      return { status: response.status, body: await response.json() };
-    };
-    const requestCredential = async (
-      botId: string,
-      threadId: string,
-    ): Promise<{ messageId: string }> => {
-      const token = await mintTestCapability(`http://127.0.0.1:${isolatedPort}`, botId, threadId);
-      const response = await fetch(`http://127.0.0.1:${isolatedPort}/api/internal/request-credential`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          fromBotId: botId,
-          fromThreadId: threadId,
-          credentialId: "openaiImageApiKey",
-          reason: "needed for this task",
-        }),
-      });
-      expect(response.status).toBe(201);
-      return response.json() as Promise<{ messageId: string }>;
-    };
-    const provideRequests: Array<Promise<Response>> = [];
-    const earlyProvisionStatuses: number[] = [];
-
-    try {
-      await waitForIsolatedServer(isolatedChild, isolatedPort, () => isolatedStderr);
-      const createBot = async () => (await isolatedApi("POST", "/api/bots", {
-        modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
-        requireAvailableModel: true,
-      })).body.bot;
-      const direct = await createBot();
-      const channelOwner = await createBot();
-      const channelPeer = await createBot();
-      expect((await isolatedApi("PATCH", `/api/bots/${channelPeer.id}`, { chiefOfStaff: true })).status).toBe(200);
-      const roomChiefToken = await mintTestCapability(`http://127.0.0.1:${isolatedPort}`, channelPeer.id, channelPeer.threadId);
-
-      const directOriginalThread = direct.threadId as string;
-      const directAlternate = await isolatedApi("POST", `/api/bots/${direct.id}/tasks`, { title: "Alternate" });
-      expect(directAlternate.status).toBe(201);
-      expect((await isolatedApi(
-        "POST",
-        `/api/bots/${direct.id}/tasks/${directOriginalThread}`,
-      )).status).toBe(200);
-
-      const group = (await isolatedApi("POST", "/api/groups", {
-        name: "Credential ownership",
-        memberIds: [channelOwner.id, channelPeer.id],
-        setup: { bulletin: "", defaultResponder: { kind: "member", botId: channelOwner.id } },
-      })).body.group;
-      const groupOriginalThread = group.threadId as string;
-      const groupAlternate = await isolatedApi("POST", `/api/groups/${group.id}/tasks`, { title: "Alternate" });
-      expect(groupAlternate.status).toBe(201);
-      expect((await isolatedApi(
-        "POST",
-        `/api/groups/${group.id}/tasks/${groupOriginalThread}`,
-      )).status).toBe(200);
-
-      expect((await isolatedApi(
-        "POST",
-        `/api/bots/${direct.id}/messages`,
-        { text: "request a private key", threadId: directOriginalThread },
-      )).status).toBe(202);
-      await readJsonFileWhenReady(isolatedDump);
-      const directRequest = await requestCredential(direct.id, directOriginalThread);
-      expect((await isolatedApi("POST", `/api/bots/${direct.id}/interrupt`, { threadId: directOriginalThread })).status).toBe(200);
-      await expect.poll(async () => {
-        const state = (await isolatedApi("GET", "/api/bots?messages=0")).body;
-        return state.bots.find((bot: { id: string }) => bot.id === direct.id)?.busy;
-      }).toBe(false);
-      const groupRequest = await requestCredential(channelOwner.id, groupOriginalThread);
-
-      const state = (await isolatedApi("GET", "/api/bots?messages=20")).body;
-      const directState = state.bots.find((bot: { id: string }) => bot.id === direct.id);
-      const directCard = directState.messages.find(
-        (message: { id: string }) => message.id === directRequest.messageId,
-      );
-      const directUser = directState.messages.find(
-        (message: { role: string; text?: string }) => message.role === "user" && message.text === "request a private key",
-      );
-      const groupCard = state.groups
-        .find((candidate: { id: string }) => candidate.id === group.id).messages
-        .find((message: { id: string }) => message.id === groupRequest.messageId);
-      expect(directCard?.secret?.requestKey).toEqual(expect.any(String));
-      expect(directUser?.id).toEqual(expect.any(String));
-      expect(groupCard).toMatchObject({ from: { botId: channelOwner.id } });
-
-      const deviceId = "paired-phone";
-      const directEnvelope = await sealPhoneSecretForTest({
-        version: 1,
-        keyId: PHONE_SECRET_TEST_IDENTITY.keyId,
-        deviceId,
-        botId: direct.id,
-        threadId: directOriginalThread,
-        messageId: directRequest.messageId,
-        target: "openaiImageApiKey",
-        requestKey: directCard.secret.requestKey,
-      }, "sk-test-direct");
-      const groupEnvelope = await sealPhoneSecretForTest({
-        version: 1,
-        keyId: PHONE_SECRET_TEST_IDENTITY.keyId,
-        deviceId,
-        botId: channelOwner.id,
-        threadId: groupOriginalThread,
-        messageId: groupRequest.messageId,
-        target: "openaiImageApiKey",
-        requestKey: groupCard.secret.requestKey,
-      }, "sk-test-channel");
-      const provide = (botId: string, messageId: string, envelope: PhoneSecretContext) => fetch(
-        `http://127.0.0.1:${isolatedPort}/api/bots/${botId}/secret-cards/${messageId}/provide`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-relay-companion": "1",
-            "x-relay-companion-device": deviceId,
-          },
-          body: JSON.stringify(Object.fromEntries(
-            Object.entries(envelope).filter(([key]) => key !== "botId" && key !== "messageId"),
-          )),
-        },
-      );
-      // A newer request can supersede the card while its encrypted phone
-      // save is still in flight. The completing save must reject instead of
-      // marking the superseded card provided and dispatching its
-      // continuation; only the fresh card can still resolve. This runs on a
-      // third bot, before any credential is configured, so the ownership
-      // fixtures below keep their own cards untouched.
-      const raceBot = await createBot();
-      const raceThread = raceBot.threadId as string;
-      const supersededRequest = await requestCredential(raceBot.id, raceThread);
-      const raceCard = async (messageId: string) => (await isolatedApi("GET", "/api/bots?messages=20")).body.bots
-        .find((bot: { id: string }) => bot.id === raceBot.id).messages
-        .find((message: { id: string }) => message.id === messageId);
-      const supersededEnvelope = await sealPhoneSecretForTest({
-        version: 1,
-        keyId: PHONE_SECRET_TEST_IDENTITY.keyId,
-        deviceId,
-        botId: raceBot.id,
-        threadId: raceThread,
-        messageId: supersededRequest.messageId,
-        target: "openaiImageApiKey",
-        requestKey: (await raceCard(supersededRequest.messageId)).secret.requestKey,
-      }, "sk-test-superseded");
-      const supersededProvide = provide(raceBot.id, supersededRequest.messageId, supersededEnvelope);
-      await expect.poll(() => readdirSync(isolatedGate).filter((name) => name.endsWith(".started")).length).toBe(1);
-      const freshRequest = await requestCredential(raceBot.id, raceThread);
-      writeFileSync(releaseFile, "release");
-      const rejected = await supersededProvide;
-      expect(rejected.status).toBe(409);
-      expect(await rejected.json()).toMatchObject({ error: expect.stringMatching(/superseded by a newer one/i) });
-      expect((await raceCard(supersededRequest.messageId)).secret).toMatchObject({ superseded: true });
-      expect((await raceCard(supersededRequest.messageId)).secret.provided).not.toBe(true);
-      const freshEnvelope = await sealPhoneSecretForTest({
-        version: 1,
-        keyId: PHONE_SECRET_TEST_IDENTITY.keyId,
-        deviceId,
-        botId: raceBot.id,
-        threadId: raceThread,
-        messageId: freshRequest.messageId,
-        target: "openaiImageApiKey",
-        requestKey: (await raceCard(freshRequest.messageId)).secret.requestKey,
-      }, "sk-test-fresh-card");
-      const freshProvide = await provide(raceBot.id, freshRequest.messageId, freshEnvelope);
-      expect(freshProvide.status).toBe(200);
-      expect(await freshProvide.json()).toEqual({ provided: true, resumed: true });
-      // Hand the gate back to the ownership fixtures below: their saves must
-      // start held, with a clean slate of started markers.
-      for (const name of readdirSync(isolatedGate)) rmSync(join(isolatedGate, name));
-      provideRequests.push(...[
-        provide(direct.id, directRequest.messageId, directEnvelope),
-        provide(channelOwner.id, groupRequest.messageId, groupEnvelope),
-      ].map((request) => request.then((response) => {
-        earlyProvisionStatuses.push(response.status);
-        return response;
-      })));
-      await expect.poll(
-        () => ({
-          started: readdirSync(isolatedGate).filter((name) => name.endsWith(".started")).length,
-          earlyProvisionStatuses,
-        }),
-        { timeout: 20_000 },
-      ).toEqual({ started: 2, earlyProvisionStatuses: [] });
-
-      const expectLocked = async (result: Promise<{ status: number; body: any }>) => {
-        const response = await result;
-        expect(response.status).toBe(409);
-        expect(response.body.error).toMatch(/securely saving a credential/i);
-      };
-      await expectLocked(isolatedApi("POST", `/api/bots/${direct.id}/messages/${directUser.id}/edit`, {
-        text: "rewind under the save",
-        threadId: directOriginalThread,
-      }));
-      await expectLocked(isolatedApi("POST", `/api/bots/${direct.id}/active-branch`, {
-        messageId: directRequest.messageId,
-        threadId: directOriginalThread,
-      }));
-      await expectLocked(isolatedApi("POST", `/api/bots/${direct.id}/tasks`, { title: "Race" }));
-      await expectLocked(isolatedApi(
-        "POST",
-        `/api/bots/${direct.id}/tasks/${directAlternate.body.task.threadId}`,
-      ));
-      await expectLocked(isolatedApi("DELETE", `/api/bots/${direct.id}/tasks/${directOriginalThread}`));
-      await expectLocked(isolatedApi("DELETE", `/api/bots/${direct.id}`));
-
-      await expectLocked(isolatedApi("POST", `/api/groups/${group.id}/tasks`, { title: "Race" }));
-      await expectLocked(isolatedApi(
-        "POST",
-        `/api/groups/${group.id}/tasks/${groupAlternate.body.task.threadId}`,
-      ));
-      await expectLocked(isolatedApi("DELETE", `/api/groups/${group.id}/tasks/${groupOriginalThread}`));
-      await expectLocked(isolatedApi("PATCH", `/api/groups/${group.id}`, {
-        memberIds: [channelPeer.id],
-      }));
-      const chiefRosterChange = await chiefRoomRequest(`http://127.0.0.1:${isolatedPort}`, roomChiefToken, "manage-room", {
-        roomId: group.id, action: "set_members", memberIds: [channelOwner.id, channelPeer.id],
-      });
-      expect(chiefRosterChange.status).toBe(409);
-      expect(chiefRosterChange.body.error).toMatch(/securely saving a credential/i);
-      await expectLocked(isolatedApi("DELETE", `/api/groups/${group.id}`));
-      await expectLocked(isolatedApi("DELETE", `/api/bots/${channelOwner.id}`));
-      await expectLocked(isolatedApi("DELETE", `/api/bots/${channelPeer.id}`));
-
-      writeFileSync(releaseFile, "release");
-      const completed = await Promise.all(provideRequests);
-      for (const response of completed) {
-        expect(response.status).toBe(200);
-        expect(await response.json()).toEqual({ provided: true, resumed: true });
-      }
-
-      // A lost HTTP response may replay the exact randomized envelope, but a
-      // new envelope could contain a different value and must never inherit
-      // the first save's success result.
-      const exactRetry = await provide(direct.id, directRequest.messageId, directEnvelope);
-      expect(exactRetry.status).toBe(200);
-      expect(await exactRetry.json()).toEqual({ provided: true, resumed: true });
-      const replacementEnvelope = await sealPhoneSecretForTest({
-        version: 1,
-        keyId: PHONE_SECRET_TEST_IDENTITY.keyId,
-        deviceId,
-        botId: direct.id,
-        threadId: directOriginalThread,
-        messageId: directRequest.messageId,
-        target: "openaiImageApiKey",
-        requestKey: directCard.secret.requestKey,
-      }, "sk-test-replacement");
-      const replacement = await provide(direct.id, directRequest.messageId, replacementEnvelope);
-      expect(replacement.status).toBe(409);
-      expect(await replacement.json()).toMatchObject({ error: expect.stringMatching(/already completed/i) });
-    } finally {
-      writeFileSync(releaseFile, "release");
-      await Promise.allSettled(provideRequests);
-      await waitForExit(isolatedChild, { signal: "SIGTERM" });
-      unregisterOwnerFetch(isolatedBasePhone);
-      await removeTempDir(isolatedHome);
-    }
-    expectStoppedTestServerCleanly(isolatedChild, isolatedStderr);
-  }, 45_000);
-
   it("reports a failed routine once, not twice", async () => {
     // A routine reaches the same dispatch catch as an interactive turn and
     // then reports through onDispatchError, which raises routine-failed.
@@ -7255,40 +6600,23 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("Works on: Off withholds the computer and tells the model why", async () => {
-    // A bot set to Off mounts nothing. The dispatched prompt is the proof
-    // the model was told, and the settings preview must say the same.
+  it("never adds a Works on section, even when the bot is Off", async () => {
     const bot = (await api("POST", "/api/bots", { name: "Orbit" })).body.bot;
     try {
       expect((await api("PATCH", `/api/bots/${bot.id}`, {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
-
-      const previewIds = async () =>
-        (await api("GET", `/api/bots/${bot.id}/system-prompt`)).body.sections
-          .map((section: { id: string }) => section.id);
-      const previewText = async () =>
-        (await api("GET", `/api/bots/${bot.id}/system-prompt`)).body.sections
-          .map((section: { text: string }) => section.text).join("");
-
-      // Auto says nothing about Works on; the section is only there when the
-      // setting actually withholds something.
-      expect(await previewIds()).not.toContain("plan");
-
       expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
-      const ids = await previewIds();
-      expect(ids).toContain("plan");
-      expect(ids).not.toContain("browser");
-      const text = await previewText();
-      expect(text).toContain("\"Works on\" setting is Off");
-      expect(text).toContain("no computer is mounted this turn");
+      const preview = (await api("GET", `/api/bots/${bot.id}/system-prompt`)).body;
+      expect(preview.sections.map((section: { id: string }) => section.id)).not.toContain("plan");
+      expect(preview.sections.map((section: { id: string }) => section.id)).not.toContain("computer");
+      const text = preview.sections.map((section: { text: string }) => section.text).join("");
+      expect(text).not.toContain("\"Works on\" setting is Off");
 
-      // and the same sentence reaches a real turn, not only the preview
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", `/api/bots/${bot.id}/messages`, { text: "open a browser and check my calendar" })).status).toBe(202);
       const dispatched = (await readJsonFileWhenReady<{ systemPrompt: string }>(fakeClaudeDump, 15_000)).systemPrompt;
-      expect(dispatched).toContain("\"Works on\" setting is Off");
-      expect(dispatched).not.toContain("browser_navigate");
+      expect(dispatched).not.toContain("\"Works on\" setting is Off");
     } finally {
       await api("POST", `/api/bots/${bot.id}/interrupt`);
       await api("DELETE", `/api/bots/${bot.id}`);
@@ -7742,22 +7070,12 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it.each(["direct", "room"] as const)("resolves the same computer paragraph in the settings preview and %s turns", async (target) => {
-    // The paragraph a plan earns is decided once, by the shared resolver:
-    // what the preview shows and what a dispatched turn says cannot drift.
-    // The fleet mounts every capability for its dispatchable engines, so
-    // these cells pin the mountable span; the capability-gated cells live
-    // in the unit grid (no dispatchable engine lacks the capability, and
-    // the mounts refuse those plans before any prompt exists).
+  it.each(["direct", "room"] as const)("never assembles a Surface or Computer prompt in %s turns", async (target) => {
     const bot = (await api("POST", "/api/bots", { name: "Cadence" })).body.bot;
-    let boatBot: any;
     let room: any;
     const idle = (id: string) => expect.poll(async () =>
       (await api("GET", "/api/bots?messages=0")).body.bots.find((b: { id: string }) => b.id === id)?.busy,
     { timeout: 10_000 }).toBe(false);
-    const computerSection = async (id: string) =>
-      (await api("GET", `/api/bots/${id}/system-prompt`)).body.sections
-        .find((section: { id: string }) => section.id === "computer");
     const turnPrompt = async (path: string) => {
       rmSync(fakeClaudeDump, { force: true });
       expect((await api("POST", path, { text: "describe your computer tools" })).status).toBe(202);
@@ -7768,71 +7086,24 @@ describe("harness HTTP API", () => {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
       if (target === "room") {
-        room = (await api("POST", "/api/groups", { name: "Computer paragraph", memberIds: [bot.id] })).body.group;
+        room = (await api("POST", "/api/groups", { name: "Computer prompt", memberIds: [bot.id] })).body.group;
         expect((await api("PATCH", `/api/groups/${room.id}/setup`, { action: "skip" })).status).toBe(200);
       }
       const messagesPath = room ? `/api/groups/${room.id}/messages` : `/api/bots/${bot.id}/messages`;
-
-      // Off earns no paragraph anywhere: no section in the preview, none in
-      // the dispatched prompt.
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
-      expect(await computerSection(bot.id)).toBeUndefined();
-      const off = await turnPrompt(messagesPath);
+      const preview = (await api("GET", `/api/bots/${bot.id}/system-prompt`)).body;
+      for (const id of ["plan", "computer", "credential"]) {
+        expect(preview.sections.find((section: { id: string }) => section.id === id)).toBeUndefined();
+      }
+      const prompt = await turnPrompt(messagesPath);
+      expect(prompt).not.toMatch(/\bSurface\b|Works on|select_computer|request_credential|\bBoat\b/);
       for (const paragraph of ["isolated Cua sandbox", "your own cloud computer", "This is a VPS", "user's computer"]) {
-        expect(off).not.toContain(paragraph);
+        expect(prompt).not.toContain(paragraph);
       }
       await api("POST", `/api/bots/${bot.id}/interrupt`, {});
       await idle(bot.id);
-
-      // A Local VM plan previews exactly the paragraph the resolver gives
-      // it, by configured mode. The CI fleet has no VM runtime, so a real
-      // VM turn cannot be dispatched here; the settings-level text is the
-      // same wiring a dispatched VM turn uses.
-      expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "vm" })).status).toBe(200);
-      expect((await computerSection(bot.id)).text).toBe(computerPrompt("vm-shared"));
-      expect((await api("PATCH", "/api/config", { localVm: { mode: "per-bot", maxInstances: 1 } })).status).toBe(200);
-      expect((await computerSection(bot.id)).text).toBe(computerPrompt("vm-private"));
-      expect((await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } })).status).toBe(200);
-      expect((await computerSection(bot.id)).text).toBe(computerPrompt("vm-shared"));
-
-      // Cloud on the Boat backend swaps the engine to the boat agent, so the
-      // paragraph is agent-shaped: the preview carries only the sign-in
-      // policy, and the dispatched runner prompt carries that same policy
-      // and no desktop paragraph. Direct only: the room leg mounts through
-      // the identical attachBotBoat seam, and a second full boat-runner turn
-      // would only re-prove the driver, not the resolver.
-      if (target === "direct") {
-        expect((await api("PUT", "/api/config", { box: { token: "box_route" } })).status).toBe(200);
-        boatBot = (await api("POST", "/api/bots", { name: "Beacon" })).body.bot;
-        expect((await api("PATCH", `/api/bots/${boatBot.id}`, {
-          computer: "cloud", cloudBackend: "box",
-          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
-        })).status).toBe(200);
-        managedBoatRows = [{ id: "bx_8765432a", name: managedBoatNameForFixture(boatBot.id), state: "idle" }];
-        boatPromptBodies.length = 0;
-        expect((await computerSection(boatBot.id)).text).toBe(computerPrompt("box-agent"));
-        expect((await computerSection(boatBot.id)).text).toBe(SIGN_IN_PROMPT);
-        expect((await api("POST", `/api/bots/${boatBot.id}/messages`, { text: "describe your computer tools" })).status).toBe(202);
-        await expect.poll(() => boatPromptBodies.length, { timeout: 10_000 }).toBe(1);
-        const runnerPrompt = String(boatPromptBodies[0]!.prompt);
-        expect(runnerPrompt).toContain(SIGN_IN_PROMPT);
-        for (const paragraph of ["isolated Cua sandbox", "your own cloud computer", "This is a VPS", "user's computer"]) {
-          expect(runnerPrompt).not.toContain(paragraph);
-        }
-        await api("POST", `/api/bots/${boatBot.id}/interrupt`, {});
-        await idle(boatBot.id);
-      }
     } finally {
       if (room) await api("POST", `/api/groups/${room.id}/interrupt`, {}).catch(() => undefined);
       await api("POST", `/api/bots/${bot.id}/interrupt`, {}).catch(() => undefined);
-      if (boatBot) {
-        await api("POST", `/api/bots/${boatBot.id}/interrupt`, {}).catch(() => undefined);
-        await api("DELETE", `/api/bots/${boatBot.id}`).catch(() => undefined);
-      }
-      managedBoatRows = [];
-      boatPromptBodies.length = 0;
-      await api("PATCH", "/api/config", { localVm: { mode: "shared", maxInstances: 2 } }).catch(() => undefined);
-      await api("PUT", "/api/config", { box: { token: "" } }).catch(() => undefined);
       if (room) await api("DELETE", `/api/groups/${room.id}`).catch(() => undefined);
       await api("DELETE", `/api/bots/${bot.id}`).catch(() => undefined);
       rmSync(fakeClaudeDump, { force: true });
@@ -8108,122 +7379,6 @@ describe("harness HTTP API", () => {
     }
   });
 
-  it("tracks and cancels a queued channel credential continuation before provider dispatch", async () => {
-    const first = (await api("POST", "/api/bots", {})).body.bot;
-    const second = (await api("POST", "/api/bots", {})).body.bot;
-    const room = (await api("POST", "/api/groups", {
-      name: "Credential continuation",
-      memberIds: [first.id, second.id],
-      setup: { bulletin: "", defaultResponder: { kind: "member", botId: first.id } },
-    })).body.group;
-    try {
-      for (const bot of [first, second]) {
-        const selected = await api("PATCH", `/api/bots/${bot.id}`, {
-          modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
-        });
-        expect(selected.status).toBe(200);
-      }
-
-      rmSync(fakeClaudeDump, { force: true });
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "start the lead" })).status).toBe(202);
-      const firstDump = await readJsonFileWhenReady<{
-        pid: number;
-        mcpConfig: { mcpServers: { agents: { env: { RELAY_COMMS_TOKEN: string } } } };
-      }>(fakeClaudeDump);
-      expect(firstDump.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN).toMatch(/^[a-f0-9]{48}$/);
-      const token = await mintTestCapability(BASE, second.id, room.threadId);
-
-      const requested = await fetch(`${BASE}/api/internal/request-credential`, {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${token}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          fromBotId: second.id,
-          fromThreadId: room.threadId,
-          credentialId: "openaiImageApiKey",
-          reason: "needed for the queued task",
-        }),
-      });
-      expect(requested.status).toBe(201);
-      const { messageId } = (await requested.json()) as { messageId: string };
-
-      const roomCard = (await api("GET", "/api/bots?messages=20")).body.groups
-        .find((candidate: { id: string }) => candidate.id === room.id)?.messages
-        .find((message: { id: string }) => message.id === messageId);
-      expect(roomCard).toMatchObject({
-        kind: "secret",
-        text: "Securely provide the OpenAI API key from Relay on your phone or computer. It is never added to chat.",
-        from: { botId: second.id, name: second.name, color: second.color },
-      });
-
-      // Every channel member shares the same thread, but the card remains
-      // owned by the member that requested it. Another member cannot dismiss
-      // it (and likewise cannot bind a phone ciphertext to itself).
-      const wrongOwner = await api("POST", `/api/bots/${first.id}/secret-cards/${messageId}/dismiss`, {
-        threadId: room.threadId,
-      });
-      expect(wrongOwner.status).toBe(404);
-      const wrongOwnerPhone = await fetch(
-        `${BASE}/api/bots/${first.id}/secret-cards/${messageId}/provide`,
-        {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            "x-relay-companion": "1",
-            "x-relay-companion-device": "phone-1",
-          },
-          body: JSON.stringify({
-            version: 1,
-            threadId: room.threadId,
-            keyId: "A".repeat(22),
-            deviceId: "phone-1",
-            target: "openaiImageApiKey",
-            requestKey: roomCard.secret.requestKey,
-            encapsulatedKey: "A".repeat(87),
-            ciphertext: "A".repeat(23),
-          }),
-        },
-      );
-      expect(wrongOwnerPhone.status).toBe(404);
-
-      const resumed = await api("POST", `/api/bots/${second.id}/secret-cards/${messageId}/dismiss`, {
-        threadId: room.threadId,
-      });
-      expect(resumed).toEqual({ status: 200, body: { dismissed: true, resumed: true } });
-
-      const queued = (await api("GET", "/api/bots?messages=0")).body;
-      expect(queued.groups.find((group: { id: string }) => group.id === room.id)?.working).toBe(true);
-      const deletion = await api("DELETE", `/api/groups/${room.id}`);
-      expect(deletion.status).toBe(409);
-      expect(deletion.body.error).toMatch(/working/i);
-
-      expect((await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId })).status).toBe(200);
-      await expect.poll(async () => {
-        const state = (await api("GET", "/api/bots?messages=0")).body;
-        return {
-          working: state.groups.find((group: { id: string }) => group.id === room.id)?.working,
-          secondBusy: Boolean(state.bots.find((bot: { id: string }) => bot.id === second.id)?.busy),
-        };
-      }, { timeout: 5_000 }).toEqual({ working: false, secondBusy: false });
-
-      // The continuation sat behind the lead's hanging provider. Interrupting
-      // the room must cancel it before a second provider process is spawned.
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      expect(JSON.parse(readFileSync(fakeClaudeDump, "utf8")).pid).toBe(firstDump.pid);
-    } finally {
-      await api("POST", `/api/groups/${room.id}/interrupt`, { threadId: room.threadId });
-      await expect.poll(async () => {
-        const state = (await api("GET", "/api/bots?messages=0")).body;
-        return state.groups.find((group: { id: string }) => group.id === room.id)?.working;
-      }, { timeout: 5_000 }).toBe(false);
-      await api("DELETE", `/api/groups/${room.id}`);
-      await api("DELETE", `/api/bots/${first.id}`);
-      await api("DELETE", `/api/bots/${second.id}`);
-    }
-  });
-
   it("keeps chat-created routines inert until their durable card is confirmed", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     let routineId = "";
@@ -8258,26 +7413,6 @@ describe("harness HTTP API", () => {
       );
       expect(before.status).toBe(200);
       expect(z.object({ routines: z.array(z.unknown()) }).parse(await before.json()).routines).toEqual([]);
-
-      const unavailableCloud = await fetch(`${BASE}/api/internal/routine-requests`, {
-        method: "POST",
-        headers: internalHeaders,
-        body: JSON.stringify({
-          fromBotId: bot.id,
-          fromThreadId: bot.threadId,
-          action: "create",
-          routine: {
-            name: "Cloud brief",
-            instructions: "Summarize today's priorities in the Cloud VM.",
-            schedule: { type: "weekly", time: "09:00", weekdays: ["monday"] },
-            runOn: "cloud",
-          },
-        }),
-      });
-      expect(unavailableCloud.status).toBe(409);
-      expect(await unavailableCloud.json()).toMatchObject({
-        error: expect.stringMatching(/Boat API key|Cloud VM runner/i),
-      });
 
       const proposed = await fetch(`${BASE}/api/internal/routine-requests`, {
         method: "POST",
@@ -10584,11 +9719,9 @@ describe("bot memory API", () => {
         modelSelection: { instanceId: "claude", model: "claude-sonnet-5" },
       })).status).toBe(200);
       const withComputer = await api("GET", `/api/bots/${bot.id}/system-prompt`);
-      expect(withComputer.body.sections.find((section: { id: string }) => section.id === "plan").text).toContain("Local VM is an isolated desktop");
-      const computerSection = withComputer.body.sections.find((section: { id: string }) => section.id === "computer");
-      expect(computerSection.text).toContain(SIGN_IN_PROMPT);
-      expect(computerSection.text).not.toMatch(/never type their (?:credentials|password)/i);
-      expect(computerSection.text).not.toContain("At a sign-in, password, MFA, CAPTCHA");
+      expect(withComputer.body.sections.find((section: { id: string }) => section.id === "plan")).toBeUndefined();
+      expect(withComputer.body.sections.find((section: { id: string }) => section.id === "computer")).toBeUndefined();
+      expect(withComputer.body.sections.map((section: { text: string }) => section.text).join("")).not.toMatch(/\bSurface\b|Works on/);
       expect((await api("GET", "/api/bots/does-not-exist/system-prompt")).status).toBe(404);
     } finally {
       await api("DELETE", `/api/bots/${bot.id}`);

@@ -194,10 +194,9 @@ function cleanInput(input: WebhookTriggerInput): CleanWebhookInput {
   const name = input.name.trim().slice(0, 80);
   const prompt = input.prompt.trim().slice(0, 20_000);
   const botId = input.botId.trim();
-  const runOn = input.runOn ?? "maus";
+  const runOn = input.runOn === "cloud" ? "maus" : input.runOn ?? "maus";
   if (!name) fail(400, "Give the webhook a name");
   if (!botId) fail(400, "Choose a MAUS");
-  if (runOn !== "maus" && runOn !== "cloud") fail(400, "Choose where this webhook runs");
   const eventTypes = Array.from(new Set(
     (input.eventTypes ?? [])
       .map((value) => value.trim().slice(0, 200))
@@ -307,7 +306,10 @@ export class WebhookManager {
     try {
       const parsed = webhookFileSchema.safeParse(parseJson(readFileSync(this.file, "utf8")));
       if (!parsed.success) throw parsed.error;
-      this.webhooks = parsed.data.webhooks;
+      this.webhooks = parsed.data.webhooks.map((webhook) => ({
+        ...webhook,
+        runOn: webhook.runOn === "cloud" ? "maus" : webhook.runOn,
+      }));
       this.deliveries = parsed.data.deliveries.slice(-MAX_DELIVERIES);
       this.attempts = (parsed.data.attempts ?? []).slice(-MAX_ATTEMPTS);
     } catch {

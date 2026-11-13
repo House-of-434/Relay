@@ -299,8 +299,6 @@ export interface RoutineRequestServiceOptions {
   timeZone?: () => string;
   /** Server-owned effective mode of the source conversation, never request input. */
   autoApply?: (botId: string, threadId: string) => boolean;
-  /** Harness-owned readiness check for proposals that would execute in cloud. */
-  cloudReady?: (botId: string) => Promise<{ ready: boolean; reason?: string }>;
   /** Revalidates conversation ownership and capacity synchronously, directly
    * before the card append. This closes races across an async cloud probe. */
   canPersist?: (
@@ -393,8 +391,8 @@ function text(value: string, field: string, max: number): string {
   return redacted;
 }
 
-function runOn(value: RoutineRequestRunOn | undefined): RoutineRequestRunOn {
-  return value ?? "maus";
+function runOn(_value: RoutineRequestRunOn | undefined): RoutineRequestRunOn {
+  return "maus";
 }
 
 function duration(value: number | undefined): number {
@@ -847,7 +845,7 @@ function cardCopy(
   const nextRunAt = nextForOperation(operation, manager, now);
   const scheduleTimeZone = definition.schedule.type === "cron" ? definition.schedule.timeZone : timeZone;
   const when = operation.action === "run_now" ? "Now" : scheduleText(definition.schedule, timeZone);
-  const destination = definition.runOn === "cloud" ? "Boat-hosted agent" : "Bot’s current model and configured computer";
+  const destination = "Bot’s current model and configured computer";
   const current = operation.action === "create"
     ? null
     : manager.listRoutines().find((routine) => routine.id === operation.routineId) ?? null;
@@ -1092,7 +1090,6 @@ export class RoutineRequestService {
   private readonly routines: RoutineManager;
   private readonly now: () => number;
   private readonly timeZone: () => string;
-  private readonly cloudReady?: (botId: string) => Promise<{ ready: boolean; reason?: string }>;
   private readonly canPersist?: RoutineRequestServiceOptions["canPersist"];
   private readonly validateTarget?: RoutineRequestServiceOptions["validateTarget"];
   private readonly autoApply?: RoutineRequestServiceOptions["autoApply"];
@@ -1103,7 +1100,6 @@ export class RoutineRequestService {
     this.routines = options.routines;
     this.now = options.now ?? Date.now;
     this.timeZone = options.timeZone ?? (() => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC");
-    this.cloudReady = options.cloudReady;
     this.canPersist = options.canPersist;
     this.validateTarget = options.validateTarget;
     this.autoApply = options.autoApply;
@@ -1134,7 +1130,6 @@ export class RoutineRequestService {
       const refusal = this.validateTarget(botId, operation.forBot);
       if (refusal) throw new RoutineRequestError(refusal, 403);
     }
-    await this.requireCloudReadiness(operation, botId);
     // The readiness probe is asynchronous. Another request can edit or
     // delete the routine while it is in flight, so re-check the captured
     // revision before rendering and persisting the confirmation snapshot.
@@ -1212,27 +1207,6 @@ export class RoutineRequestService {
       } };
     }
     throw new RoutineRequestError(result.state === "invalid" ? result.error : "The routine change could not be applied", result.state === "invalid" ? result.status : 409);
-  }
-
-  private async requireCloudReadiness(operation: RoutineRequestOperation, proposerBotId: string): Promise<void> {
-    if (!this.cloudReady || operation.action === "pause" || operation.action === "delete") return;
-    const definition = effectiveDefinition(operation, this.routines);
-    if (definition?.runOn !== "cloud") return;
-    let readiness: { ready: boolean; reason?: string };
-    try {
-      const targetBotId = operation.action === "create"
-        ? operation.forBot?.botId ?? proposerBotId
-        : this.routines.listRoutines().find(routine => routine.id === operation.routineId)?.botId ?? proposerBotId;
-      readiness = await this.cloudReady(targetBotId);
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      throw new RoutineRequestError(`Could not verify cloud readiness: ${detail}`, 503);
-    }
-    if (readiness.ready) return;
-    throw new RoutineRequestError(
-      readiness.reason?.trim() || "Cloud execution is not configured yet. Set up a cloud computer first.",
-      409,
-    );
   }
 
   /**

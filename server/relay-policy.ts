@@ -10,7 +10,6 @@ export function relayComputerDisabled(env: NodeJS.ProcessEnv = process.env): boo
 const DISABLED_COMPUTER_ROUTES = [
   /^\/api\/(?:computers|local-computer|local-vm|team-computers|shared-computers)(?:\/|$)/,
   /^\/api\/bots\/[^/]+\/(?:computer|local-computer)(?:\/|$)/,
-  /^\/api\/bots\/[^/]+\/secret-cards\/[^/]+\/provide$/,
   /^\/api\/internal\/(?:computer(?:-[^/]+)?|phone|vm-exec|shared-computers)(?:\/|$)/,
   /^\/api\/desktop\/shared-computer-control$/,
   /^\/api\/(?:calls?|calendar-calls|phone)(?:\/|$)/,

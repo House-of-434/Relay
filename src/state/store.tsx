@@ -127,22 +127,6 @@ export interface ConnectorCardData {
   resumed?: boolean;
 }
 
-export interface SecretRequestCardData {
-  target: import("../../shared/credential-request").CredentialTargetId;
-  label: string;
-  description: string;
-  placeholder: string;
-  helpUrl: string;
-  requestKey: string;
-  provided?: boolean;
-  dismissed?: boolean;
-  /** A newer request for the same credential replaced this card; it no
-   * longer offers entry and cannot be provided or dismissed. */
-  superseded?: boolean;
-  resumed?: boolean;
-  error?: string;
-}
-
 export interface Message {
   id: string;
   role: "bot" | "user";
@@ -156,7 +140,6 @@ export interface Message {
   attachments?: import("../../shared/wire").WireMessage["attachments"];
   card?: OptionCardData;
   connector?: ConnectorCardData;
-  secret?: SecretRequestCardData;
   takeover?: import("../../shared/wire").TakeoverCardData;
   /** Lifecycle mirror for a routine whose real work lives in a fresh task. */
   routineRun?: RoutineRunCardData;

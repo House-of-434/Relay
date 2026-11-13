@@ -349,6 +349,7 @@ export class BladeBrowserPool {
   private readonly spawn: SpawnFn;
   private readonly now: () => number;
   private readonly workspaces = new Map<string, { lastUsed: number }>();
+  private readonly userLocks = new Map<string, Promise<void>>();
   private available: boolean | null = null;
 
   constructor(options: BladePoolOptions) {
@@ -416,6 +417,46 @@ export class BladeBrowserPool {
     return env;
   }
 
+  /** Serialize every browser operation and daemon reclaim for one user. The
+   * session lease and the daemon cannot race across this boundary. */
+  async withUserLock<T>(userId: unknown, work: () => Promise<T>): Promise<T> {
+    const id = canonicalUserId(userId);
+    const previous = this.userLocks.get(id) ?? Promise.resolve();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const tail = previous.then(() => gate);
+    this.userLocks.set(id, tail);
+    await previous;
+    try {
+      return await work();
+    } finally {
+      release();
+      if (this.userLocks.get(id) === tail) {
+        void tail.finally(() => { if (this.userLocks.get(id) === tail) this.userLocks.delete(id); });
+      }
+    }
+  }
+
+  /** Stop daemons that have been idle past the reclaim window, but only
+   * when the caller proves no session or operation needs them. */
+  async sweepIdleAll(canStop: (userId: string) => boolean): Promise<void> {
+    for (const [id, state] of Array.from(this.workspaces)) {
+      if (this.now() - state.lastUsed <= this.idleReclaimMs) continue;
+      await this.withUserLock(id, async () => {
+        const current = this.workspaces.get(id);
+        if (!current || this.now() - current.lastUsed <= this.idleReclaimMs) return;
+        if (!canStop(id)) return;
+        await this.stopWorkspace(id);
+      });
+    }
+  }
+
+  /** The page model: refs plus roles/types/labels. The credential guard reads
+   * this so fill/type addresses the same field the agent sees. */
+  async pageModel(userId: unknown, display?: string): Promise<string> {
+    return this.run(userId, ["see", "model"], false, false, display);
+  }
+
   async open(userId: unknown, url: string, fresh = false, display?: string): Promise<BrowserText> {
     const target = assertHttpUrl(url);
     const text = await this.run(userId, ["nav", target], fresh, false, display);
@@ -462,7 +503,6 @@ export class BladeBrowserPool {
     assertSafeArgs(args, true);
     if (!(await this.probe())) throw new Error("research browser is unavailable on this host");
     const tracked = this.trackWorkspace(userId);
-    await this.sweepIdle(tracked.id);
     const result = await this.spawn(this.binary, [...args, "--json"], {
       env: this.buildEnv(tracked.root, false, display),
       timeoutMs: BLADE_ACTION_TIMEOUT_MS,
@@ -523,7 +563,6 @@ export class BladeBrowserPool {
   async vision(userId: unknown, display?: string): Promise<{ dataUrl: string } | null> {
     if (!(await this.probe())) return null;
     const tracked = this.trackWorkspace(userId);
-    await this.sweepIdle(tracked.id);
     assertSafeArgs(["vision"]);
     let result: SpawnResult;
     try {
@@ -606,22 +645,12 @@ export class BladeBrowserPool {
     return { id, root };
   }
 
-  private async sweepIdle(currentUserId: string): Promise<void> {
-    for (const [id, state] of this.workspaces) {
-      if (id === currentUserId) continue;
-      if (this.now() - state.lastUsed > this.idleReclaimMs) {
-        await this.stopWorkspace(id);
-      }
-    }
-  }
-
   private async run(userId: unknown, args: string[], fresh: boolean, allowRb = false, display?: string): Promise<string> {
     assertSafeArgs(args, allowRb);
     if (!(await this.probe())) {
       throw new Error("research browser is unavailable on this host");
     }
     const tracked = this.trackWorkspace(userId);
-    await this.sweepIdle(tracked.id);
     const result = await this.spawn(this.binary, [...args, "--json"], {
       env: this.buildEnv(tracked.root, fresh, display),
       timeoutMs: BLADE_ACTION_TIMEOUT_MS,

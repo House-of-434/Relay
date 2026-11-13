@@ -11,7 +11,8 @@ describe("scout capability manifest", () => {
   it("states the tool-selection policy instead of enumerating every tool", () => {
     // Tools advertise themselves (name + description via MCP); the soul only
     // sets the policy: simplest tool that works, escalate when it falls short.
-    expect(scout.profile.soul).toContain("most appropriate available tool");
+    expect(scout.profile.soul).toContain("Use the simplest available tool that can reliably complete each task.");
+    expect(scout.profile.soul).not.toContain("most appropriate available tool");
     expect(scout.profile.soul).toMatch(/Escalate when results are incomplete/);
     expect(scout.profile.soul).toContain("specialized connectors");
   });
@@ -22,7 +23,6 @@ describe("scout capability manifest", () => {
     // through propose_deep_research, never as a routine or a conversational
     // go-ahead.
     expect(scout.profile.soul).toContain("propose_deep_research");
-    expect(scout.profile.soul).toContain("Never use propose_routine for one-shot research");
     expect(scout.profile.soul).toMatch(/once/i);
     expect(scout.profile.soul).not.toMatch(/go-ahead/i);
     // Background work waits for Relay's authorization, and the soul defers to
@@ -45,6 +45,22 @@ describe("scout capability manifest", () => {
     expect(scout.profile.soul).toMatch(/corroborat/);
     expect(scout.profile.soul).toMatch(/infer/);
   });
+
+  it("keeps the PR 1 browser policy and drops retired prompt paragraphs", () => {
+    expect(scout.profile.soul).toContain("Start the browser headless.");
+    expect(scout.profile.soul).toContain("browser_upgrade_headful");
+    expect(scout.profile.soul).toContain("browser_request_human");
+    expect(scout.profile.soul).not.toContain("Deep research is not a separate mode");
+    expect(scout.profile.soul).not.toContain("Never use propose_routine for one-shot research");
+    expect(scout.profile.soul).not.toContain("Email tasks are Mercury's");
+    expect(scout.profile.soul).not.toContain("a path pasted as text is not a deliverable");
+    expect(scout.profile.soul).not.toContain("If a tool result is truncated");
+  });
+
+  it("scopes the connector rule to granted connectors", () => {
+    expect(scout.profile.soul).toContain("When a granted connector covers an action, use it — not browser clicks");
+    expect(scout.profile.soul).not.toContain("Use connector tools, not browser clicks");
+  });
 });
 
 describe("repository delegation prompts", () => {
@@ -64,5 +80,9 @@ describe("repository delegation prompts", () => {
   it("tells Mercury to resolve a named teammate before inviting them", () => {
     expect(mercury.profile.soul).toContain("find_teammate");
     expect(mercury.profile.soul).toMatch(/never invent an address/i);
+  });
+
+  it("names no browser tools in Mercury's prompt", () => {
+    expect(mercury.profile.soul).not.toMatch(/browser_(?:open|read|act|extract|upgrade_headful|request_human)/);
   });
 });

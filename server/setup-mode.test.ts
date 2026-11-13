@@ -64,7 +64,7 @@ describe("setupSystemPrompt", () => {
   it("is the skill_manage-naming block when active with skills on", () => {
     expect(setupSystemPrompt(true, { skills: true })).toBe(SETUP_PROMPT);
     expect(SETUP_PROMPT.startsWith("\n\n")).toBe(true);
-    for (const tool of ["propose_profile", "propose_routine", "skill_manage", "request_credential"]) {
+    for (const tool of ["propose_profile", "propose_routine", "skill_manage"]) {
       expect(SETUP_PROMPT).toContain(tool);
     }
     expect(SETUP_PROMPT).toContain("at most four questions");
@@ -76,7 +76,6 @@ describe("setupSystemPrompt", () => {
       expect(prompt).not.toContain("skill_manage");
       expect(prompt).toContain("propose_profile");
       expect(prompt).toContain("propose_routine");
-      expect(prompt).toContain("request_credential");
       expect(prompt).toContain("describe procedures plainly in your standing instructions");
     }
   });
@@ -102,8 +101,7 @@ describe("setupSystemPrompt working-folder clause and result ordering", () => {
     expect(text).toContain("if applied, continue without another confirmation");
     expect(text).toContain("if pending, end the turn and wait");
     expect(text).toContain("Do not repeat the list or claim success from the permission mode alone");
-    expect(text).toContain("A credential request still needs the user's secure entry");
-    expect(text).toContain("Full Access does not supply answers, credentials, or broader permissions for another bot");
+    expect(text).toContain("Full Access does not supply answers or broader permissions for another bot");
     expect(text).not.toContain("each of which the user must confirm");
     expect(text).not.toContain("propose it paused");
   });

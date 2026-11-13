@@ -301,58 +301,6 @@ it("uses only the coordinator for teammates and lets the opener find and close t
   expect((await f.messages(child.threadId)).some((message: any) => message.text === "Implemented and reviewer confirmed checks")).toBe(true);
 }), 45_000);
 
-it("does not treat self-opened work or an abandoned human branch as new human authority", () => fixture(async f => {
-  await f.api("/api/config", { threads: { maxConcurrentPerBot: 1 } }, "PUT");
-  const room = (await f.cli("new-channel", "--name", "Updates", "--members", f.chief.id, "--section", "Leadership")).channel;
-  const post = (message: string, expectError = false) => ({ tool: "post_to_room", arguments: { group_id: room.id, message }, expectError });
-  f.plan[f.chief.id] = { turns: [
-    { steps: [post("First update"), post("Second update"), { tool: "start_thread", arguments: { title: "Independent job", message: "Continue the separate check." } }], reply: "Opened the independent job" },
-    { steps: [post("A self-opened job is not another human answer", true), { tool: "request_credential", arguments: { credential_id: "xaiApiKey", reason: "Fixture continuation" } }], reply: "Waiting for the fixture credential decision" },
-    { reply: "This alternative human branch will be abandoned" },
-    { steps: [{ tool: "start_thread", arguments: { title: "Recursive job", message: "Must not start." }, expectError: true }], reply: "Continuing only the original self-opened job" },
-    { steps: [post("A real user explicitly asked for this update")], reply: "Posted the requested update" },
-  ] };
-  f.save();
-  await f.cli("send", "--bot", f.chief.id, "--task", f.chief.activeTaskId, "--text", "Post two updates and open one independent check.");
-  await expect.poll(() => f.evidence().length, { timeout: 20_000 }).toBe(2);
-  const chief = (await f.api("/api/bots")).bots.find((bot: any) => bot.id === f.chief.id);
-  const child = chief.tasks.find((task: any) => task.title === "Independent job");
-  expect(child).toBeDefined();
-  const childWait = () => f.cli("wait", "--bot", f.chief.id, "--task", child.threadId, "--timeout", "20");
-  const providerFinished = async (turns: number) => {
-    await expect.poll(() => f.evidence().length, { timeout: 20_000 }).toBe(turns);
-    await expect.poll(async () => (await f.api("/api/bots")).bots.find((bot: any) => bot.id === f.chief.id)
-      .tasks.find((task: any) => task.threadId === child.threadId).busy).toBe(false);
-  };
-  await providerFinished(2);
-  expect((await childWait()).status).toBe("needs-user");
-  const attempt = f.evidence()[1].evidence.find((entry: any) => entry.step?.tool === "post_to_room");
-  expect(attempt.response.result.isError).toBe(true);
-  expect(attempt.response.result.content[0].text).toContain("nobody has answered");
-  expect((await f.messages(room.activeTaskId)).filter((message: any) => message.peerPost)).toHaveLength(2);
-  const secret = (await f.messages(child.threadId)).find((message: any) => message.kind === "secret");
-  expect(secret).toBeDefined();
-  const opening = (await f.messages(child.threadId)).find((message: any) => message.peerAsk?.botId === f.chief.id);
-  await f.api(`/api/bots/${f.chief.id}/messages/${opening.id}/edit`, { threadId: child.threadId, text: "An alternative human request." });
-  await providerFinished(3);
-  await f.api(`/api/bots/${f.chief.id}/active-branch`, { threadId: child.threadId, messageId: secret.id });
-  // The later human message remains in storage, but not in this active branch.
-  expect((await f.messages(child.threadId)).some((message: any) => message.text === "An alternative human request.")).toBe(true);
-  await f.api(`/api/bots/${f.chief.id}/secret-cards/${secret.id}/dismiss`, { threadId: child.threadId });
-  await providerFinished(4);
-  expect((await childWait()).status).toBe("settled");
-  const continuation = f.evidence().at(-1);
-  expect(continuation.evidence[0].result.tools.some((tool: any) => tool.name === "start_thread")).toBe(false);
-  const denied = continuation.evidence.find((entry: any) => entry.step?.tool === "start_thread");
-  expect(denied).toBeDefined();
-  expect(denied.response.error.message).toBe("Unknown tool: start_thread");
-  expect((await f.api("/api/bots")).bots.find((bot: any) => bot.id === f.chief.id).tasks).toHaveLength(2);
-  await f.cli("send", "--bot", f.chief.id, "--task", child.threadId, "--text", "Now I want you to post one new update.");
-  await providerFinished(5);
-  expect((await childWait()).status).toBe("settled");
-  expect((await f.messages(room.activeTaskId)).filter((message: any) => message.peerPost)).toHaveLength(3);
-}), 45_000);
-
 it("returns a nested coordinated result after Claude retries a transient provider exit", async () => {
   const scratch = mkdtempSync(join(tmpdir(), "relay-coordination-retry-"));
   try {

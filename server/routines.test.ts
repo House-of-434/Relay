@@ -2097,7 +2097,7 @@ describe("RoutineManager", () => {
     expect(h.manager.listRuns()[0]?.prompt).toBe("Inspect it");
   });
 
-  it("rejects local attachment context on cloud routines", () => {
+  it("runs stored legacy destinations on the bot's current computer", () => {
     const h = harness();
     const attachment = {
       id: "file-1",
@@ -2106,25 +2106,43 @@ describe("RoutineManager", () => {
       path: "/tmp/private.pdf",
       size: 42,
     };
-    expect(() => h.manager.create({
+    const legacy = h.manager.create({
       name: "Cloud review",
       prompt: "Review this",
       botId: "maus-cloud",
       runOn: "cloud",
       schedule: { type: "daily", time: "09:00", weekdays: [1] },
       attachments: [attachment],
-    })).toThrow(/only run on this computer/i);
-
-    const local = h.manager.create({
-      name: "Local review",
-      prompt: "Review this",
-      botId: "maus-local",
-      runOn: "maus",
-      schedule: { type: "daily", time: "09:00", weekdays: [1] },
-      attachments: [attachment],
     });
-    expect(() => h.manager.update(local.id, { runOn: "cloud" })).toThrow(/cloud file staging/i);
-    expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "maus", attachments: [attachment] });
+    expect(legacy).toMatchObject({ runOn: "maus", attachments: [attachment] });
+    expect(h.manager.update(legacy.id, { runOn: "cloud" })).toMatchObject({ runOn: "maus" });
+  });
+
+  it("loads a stored legacy box or cloud routine onto the bot's current computer", async () => {
+    const file = tempFile();
+    const now = new Date(2026, 7, 17, 8, 0, 0).getTime();
+    const due = now + 60_000;
+    writeFileSync(file, JSON.stringify({
+      routines: [{
+        id: "legacy-cloud", name: "Legacy cloud", prompt: "Work", target: "bot", botId: "maus-1",
+        runOn: "cloud", enabled: true, schedule: { type: "once", at: due }, durationMinutes: 30,
+        nextRunAt: due, createdAt: now, updatedAt: now,
+      }],
+      runs: [],
+    }));
+    const runOns: string[] = [];
+    const manager = new RoutineManager({
+      file,
+      now: () => due,
+      botState: () => "ready",
+      createTask: () => ({ threadId: "thread-legacy" }),
+      startTurn: async (_botId, _threadId, _prompt, runOn) => {
+        runOns.push(runOn);
+      },
+    });
+    expect(manager.listRoutines()[0]).toMatchObject({ runOn: "maus" });
+    await manager.tick();
+    expect(runOns).toEqual(["maus"]);
   });
 
   it("keeps room goals local and attachment-free", () => {
@@ -2137,7 +2155,6 @@ describe("RoutineManager", () => {
       groupId: "room-1",
       schedule: { type: "daily" as const, time: "09:00", weekdays: [1] },
     };
-    expect(() => h.manager.create({ ...base, runOn: "cloud" })).toThrow(/only run on this computer/i);
     expect(() => h.manager.create({
       ...base,
       attachments: [{ id: "brief", kind: "file", name: "brief.txt", path: "/tmp/brief.txt", size: 10 }],
@@ -2191,8 +2208,8 @@ describe("RoutineManager", () => {
     h.setBot("ready");
     await h.manager.tick();
 
-    expect(h.runOns).toEqual(["cloud"]);
-    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "cloud" });
+    expect(h.runOns).toEqual(["maus"]);
+    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "maus" });
     expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "maus" });
   });
 
@@ -2219,7 +2236,7 @@ describe("RoutineManager", () => {
     });
     expect(queued).not.toHaveProperty("durationMinutes");
     expect(h.started).toEqual([{ botId: "maus-webhook", threadId: "thread-1", prompt: "Handle ticket 42" }]);
-    expect(h.runOns).toEqual(["cloud"]);
+    expect(h.runOns).toEqual(["maus"]);
     expect(h.triggerSources).toEqual(["webhook"]);
     expect(h.taskActivations).toEqual([true]);
   });
@@ -2846,7 +2863,7 @@ describe("routine continuity", () => {
     expect(second.split("</previous-run>")).toHaveLength(2);
   });
 
-  it.each([{ botId: "maus-2" }, { runOn: "cloud" as const }])("does not carry reports across reassignment %j", async (patch) => {
+  it.each([{ botId: "maus-2" }])("does not carry reports across reassignment %j", async (patch) => {
     const h = harness();
     const anchorAt = new Date(2026, 7, 17, 9, 0, 0).getTime();
     const routine = h.manager.create({ name: "Private brief", prompt: "Write the brief", botId: "maus-1", schedule: everyHour(anchorAt), continuity: true });

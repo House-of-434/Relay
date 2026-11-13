@@ -14,10 +14,6 @@ import { z } from "zod";
 import {
   CalendarClock,
   Columns2,
-  Box,
-  Check,
-  Cloud,
-  Sparkles,
   Hand,
   Loader2,
   Monitor,
@@ -28,13 +24,12 @@ import {
   X,
 } from "lucide-react";
 import { api, currentTaskBot, useStore, type Bot } from "@/state/store";
-import { effectivePlace, isComputerPlace, placeLabelKey, placeOffered } from "@/lib/place";
+import { effectivePlace, isComputerPlace, placeOffered } from "@/lib/place";
 import type { CloudBackend } from "../../shared/wire";
 import { ApiKeyRow } from "./ApiKeys";
 import { cn } from "@/lib/cn";
 import { useCaptionChrome } from "@/components/DesktopCapabilities";
 import { isActiveTurnRefusal, isRemoteScreenshotContention } from "@/lib/remote-desktop";
-import { CloudBackendPicker } from "./CloudBackendPicker";
 import { useDesktopCapabilities } from "./DesktopCapabilities";
 import { RoutinesSection } from "./bot-settings/RoutinesSection";
 import { routineRunLabel, routineRunTone } from "@/lib/routine-display";
@@ -58,7 +53,6 @@ import {
   writeComputerPanelView,
   type ComputerPanelView,
 } from "@/lib/computer-panel-view";
-import { approvalModeFor } from "../../shared/approval-mode";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
@@ -1342,113 +1336,6 @@ export function ComputerPanel({
           <LinuxLocalControl />
           <MacLocalControl />
         </>}
-
-        {/* Computer source */}
-          <div className="mt-4 rounded-xl bg-card p-4">
-            <div className="text-[15px] font-medium text-ink">{t("computer.worksOn")}</div>
-            <p className="mt-1 text-[12px] leading-5 text-ink-secondary">
-              {t(state.config?.cloudHome ? "computer.worksOnHintCloudHome" : "computer.worksOnHint")}
-            </p>
-          <div role="group" aria-label={t("computer.destinationAria")} className="mt-3 grid auto-rows-fr grid-cols-2 gap-2">
-            {([
-              [null, "vm.dest.auto", "computer.dest.autoDesc", Sparkles],
-              ["cloud", "vm.dest.cloud", "computer.dest.cloudDesc", Cloud],
-              ["vm", "vm.dest.vm", "computer.dest.vmDesc", Box],
-              ["local", "vm.dest.local", "computer.dest.localDesc", Monitor],
-              ["off", "vm.dest.off", "computer.dest.offDesc", Power],
-            ] as const).filter(([mode]) => mode === null || mode === "off" || placeOffered(mode, state.config)).map(([mode, labelKey, descriptionKey, Icon]) => {
-                const selected = mode === null ? !profileBot.computer : profileBot.computer === mode;
-                // A place the enrolled organisation disallows is not offered.
-                const managedPolicy = state.config?.managedPolicy;
-                const managedKind = mode === "local" ? "thisComputer" : mode === "vm" ? "localVm" : mode === "cloud" ? (profileBot.cloudBackend === "vps" ? "vps" : "box") : null;
-                const managedBy = managedPolicy && managedKind && !managedPolicy.computers[managedKind] ? t("policy.managedBy", { organization: managedPolicy.organizationName }) : undefined;
-                const disabled = Boolean(managedBy) ||
-                  (mode === "cloud" && !cloudSupported) ||
-                  (mode === "vm" && !vmSupported) ||
-                  (mode === "local" && !localSelectable);
-                const unavailableTitle = managedBy ?? (
-                  mode === "vm" && !vmSupported
-                    ? t("computer.unavailableVm")
-                    : mode === "cloud" && !cloudSupported
-                      ? t("computer.unavailableCloud")
-                      : mode === "local" && !localSelectable
-                        ? localDisabledReason ?? t("computer.unavailableLocal")
-                        : undefined);
-                return (
-              <button
-                key={mode ?? "auto"}
-                disabled={disabled}
-                title={unavailableTitle}
-                onClick={() => {
-                  if ((mode === null && profileBot.computer === undefined) || mode === profileBot.computer) return;
-                  if (mode === "local" && approvalModeFor(profileBot) === "auto") {
-                    setLocalAutoWarningTarget(bot.id);
-                  }
-                  else updateComputerSelection({ computer: mode });
-                }}
-                type="button"
-                aria-pressed={selected}
-                className={cn(
-                  "min-w-0 rounded-lg border px-2.5 py-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-card",
-                  selected
-                    ? "border-accent/60 bg-accent/10 text-ink"
-                    : "border-hairline/50 bg-panel/30 text-ink-secondary",
-                  disabled
-                    ? "cursor-not-allowed"
-                    : "hover:border-accent/40 hover:bg-control/60",
-                )}
-              >
-                <span className="flex items-center gap-2 text-[12px] font-medium leading-4">
-                  {selected ? <Check size={14} className="shrink-0 text-accent" /> : <Icon size={14} className="shrink-0 text-ink-secondary" />}
-                  <span>{t(labelKey)}</span>
-                </span>
-                <span className="mt-1.5 block text-[11px] leading-4 text-ink-secondary">
-                  {managedBy ?? (disabled ? t("computer.unavailableHere") : t(descriptionKey))}
-                </span>
-              </button>
-                );
-            })}
-          </div>
-          {liveTask?.surface && (
-            <p className="mt-2 text-[11.5px] leading-5 text-ink-secondary" data-testid="place-pinned-note">
-              {t("place.pinnedNote", { place: t(placeLabelKey(liveTask.surface)) })}
-            </p>
-          )}
-          {profileBot.computer === "cloud" && (
-            <>
-              <CloudBackendPicker
-                compact
-                value={cloudBackend}
-                vpsSupported={vpsSupported}
-                onChange={(backend) => updateComputerSelection({ cloudBackend: backend })}
-              />
-            </>
-          )}
-          {profileBot.computer !== "cloud" && (
-            <div className="mt-3 border-t border-hairline/40 pt-3 text-[11.5px] leading-5 text-ink-secondary" aria-live="polite">
-              {!profileBot.computer ? (
-                currentTeamComputer
-                  ? `Auto uses ${currentTeamComputer.name}, shared with this team's other Auto bots. Choosing another destination overrides the team default.`
-                  : cloudBackend === "vps" && bot.autoStartVps
-                  ? t("computer.hint.vpsAuto")
-                  : localSelectable && !isLinux
-                    ? t("computer.hint.autoLocal")
-                    : t("computer.hint.autoCloud")
-              ) : profileBot.computer === "vm" ? (
-                <>
-                  {t("computer.hint.vm")}
-                  <button type="button" onClick={openVmSettings} className="mt-1 block font-medium text-accent hover:underline">
-                    {t("computer.vmSettingsLink")}
-                  </button>
-                </>
-              ) : profileBot.computer === "local" ? (
-                t("computer.hint.local")
-              ) : (
-                t("computer.hint.off")
-              )}
-            </div>
-          )}
-        </div>
 
         {/* A compact entry beneath the computer; the tab owns the full list. */}
         <button type="button" onClick={() => selectPanelView("routines")} className="mt-4 flex w-full items-start gap-3 rounded-xl bg-card p-4 text-left hover:bg-raised">

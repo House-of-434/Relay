@@ -582,7 +582,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       writeFileSync(finishFile, "finish");
       const after: any = await dump();
       expect(computer(after)).toBeTruthy();
-      expect(after.systemPrompt).toContain("Local VM");
+      expect(after.systemPrompt).not.toContain("This conversation is pinned");
       expect(after.systemPrompt).not.toContain("call select_computer");
       await idle(bot.id);
       const state = await api("GET", "/api/bots?messages=30");
@@ -684,7 +684,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
         rmSync(dumpFile, { force: true }); rmSync(finishFile, { force: true });
         await api("POST", `/api/bots/${bot.id}/messages`, { text, threadId: task.threadId });
         const sent = await dump() as { systemPrompt: string };
-        expect(sent.systemPrompt).toContain("Local VM");
+        expect(sent.systemPrompt).not.toContain("This conversation is pinned");
         expect(sent.systemPrompt).not.toContain("You can act on the user's computer");
         const c = computer(sent);
         expect(c).toBeTruthy();
@@ -715,8 +715,7 @@ describe("Group Local VM ownership on the real isolated server", () => {
       expect(c).toBeTruthy();
       expect(c.env.RELAY_CUA_COMMAND).toBe("/fixture/cua-driver");
       expect(c.args.some((arg: string) => arg.includes("container-mcp"))).toBe(false);
-      expect(sent.systemPrompt).toContain("You can act on the user's computer");
-      expect(sent.systemPrompt).toContain("tell them it is on this computer");
+      expect(sent.systemPrompt).not.toContain("This conversation is pinned");
       expect((await gate(c)).status).toBe(200);
       writeFileSync(finishFile, "finish");
       await idle(bots[0].id);

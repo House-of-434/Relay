@@ -144,24 +144,22 @@ describe("Edit Profile boundary markers in sections", () => {
   });
   afterEach(() => vi.unstubAllGlobals());
 
-  it("marks the Access groups: working folder Chief-proposable, works-on owner-only", () => {
+  it("marks the working folder Chief-proposable and drops the Works on card", () => {
     fixture.bots = [makeBot(), makeBot({ id: "chief-1", chiefOfStaff: true })];
     const markup = renderToStaticMarkup(
-      createElement(StoreProvider, null, createElement(AccessSection, { bot: makeBot(), derived: makeDerived() })),
+      createElement(StoreProvider, null, createElement(AccessSection, { bot: makeBot() })),
     );
     expect(markup).toContain(
       'Where this bot runs its shell and file tools.</div><div class="mt-1 text-[11.5px] leading-snug text-ink-secondary">Chief-proposable',
     );
-    expect(markup).toContain(
-      'Where this bot works (currently: auto).</div><div class="mt-1 text-[11.5px] leading-snug text-ink-secondary">Owner-only',
-    );
+    expect(markup).not.toContain("Where this bot works");
     expect(markup).toContain("Inbound triggers wired to this bot.");
   });
 
   it("shows no Access markers without a covering Chief", () => {
     fixture.bots = [makeBot()];
     const markup = renderToStaticMarkup(
-      createElement(StoreProvider, null, createElement(AccessSection, { bot: makeBot(), derived: makeDerived() })),
+      createElement(StoreProvider, null, createElement(AccessSection, { bot: makeBot() })),
     );
     expect(markup).not.toContain(CHIEF_COPY);
     expect(markup).not.toContain(OWNER_COPY);

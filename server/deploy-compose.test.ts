@@ -77,3 +77,15 @@ describe("deploy compose — capability separation", () => {
     expect(compose.services.app.environment?.RELAY_HARNESS_HOST).toBeUndefined();
   });
 });
+
+describe("deploy image — bundled skills", () => {
+  const dockerfile = readFileSync(join(ROOT, "deploy/local/Dockerfile"), "utf8");
+
+  it("copies the bundled skills into the runtime image", () => {
+    expect(dockerfile).toContain("COPY --from=build --chown=maus:maus /src/skills ./skills");
+  });
+
+  it("fails the build when /app/skills is missing", () => {
+    expect(dockerfile).toMatch(/RUN test -d \/app\/skills/);
+  });
+});

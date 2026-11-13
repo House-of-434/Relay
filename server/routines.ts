@@ -49,9 +49,9 @@ export type RoutineScheduleInput =
   | Exclude<RoutineSchedule, RoutineIntervalSchedule>
   | RoutineIntervalScheduleInput;
 
-/** `cloud` runs the agent itself inside the bot's Boat VM. `maus` keeps
- * using the provider selected on the MAUS and only borrows its configured
- * computer tools, if any. */
+/** `cloud` was Boat's historical destination; stored values are read as
+ * `maus`, which keeps using the provider selected on the MAUS and only
+ * borrows its configured computer tools, if any. */
 export type RoutineRunOn = "maus" | "cloud";
 export type RoutineTarget = "bot" | "room-goal";
 export type RoutineGoalStatus = Exclude<GroupGoalRunStatus, "working">;
@@ -794,18 +794,11 @@ function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" |
   if (target !== "bot" && target !== "room-goal") throw new Error("Choose a valid routine target");
   const groupId = typeof input.groupId === "string" ? input.groupId.trim() : "";
   if (target === "room-goal" && !groupId) throw new Error("Choose a room for this goal");
-  const runOn = input.runOn ?? "maus";
-  if (runOn !== "maus" && runOn !== "cloud") throw new Error("Choose where this routine runs");
+  const runOn: RoutineRunOn = "maus";
   const attachments = cleanAttachments(input.attachments);
   const timeoutMinutes = cleanTimeoutMinutes(input.timeoutMinutes);
-  if (target === "room-goal" && runOn === "cloud") {
-    throw new Error("Room goals can only run on this computer");
-  }
   if (target === "room-goal" && attachments.length > 0) {
     throw new Error("Room goals do not support attachments yet");
-  }
-  if (runOn === "cloud" && attachments.length > 0) {
-    throw new Error("Attachments can only run on this computer until cloud file staging is available");
   }
   const continuity = input.continuity === true;
   if (input.overlap !== undefined && input.overlap !== "skip" && input.overlap !== "queue") {
@@ -858,7 +851,7 @@ export class RoutineManager {
               schedule,
               target,
               groupId: loadGroupId(routine.groupId, target),
-              runOn: routine.runOn ?? "maus",
+              runOn: "maus",
               timeoutMinutes: loadTimeoutMinutes(routine.timeoutMinutes),
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
@@ -882,7 +875,7 @@ export class RoutineManager {
               target,
               goalStatus: loadGoalStatus(run.goalStatus, target),
               groupId: loadGroupId(run.groupId, target),
-              runOn: run.runOn ?? "maus",
+              runOn: "maus",
               timeoutMinutes: loadTimeoutMinutes(run.timeoutMinutes),
               attachments: loadAttachments(run.attachments),
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
@@ -1349,7 +1342,7 @@ export class RoutineManager {
       prompt: input.prompt,
       target: "bot",
       botId: input.botId,
-      runOn: input.runOn,
+      runOn: "maus",
       scheduledFor: input.receivedAt,
       status: "queued",
       manual: false,
