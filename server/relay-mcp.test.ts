@@ -1,17 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  RELAY_CAPABILITY_KEYS,
   RELAY_TOOL_PROXY_MARKER,
   bindRelayMcpForBot,
   isRelayMcpServer,
+  relayCapabilityKey,
   relaySigningOwner,
   relayToolMcpServer,
   relayToolProxySpec,
   signedActorContext,
   verifyActorAssertion,
 } from "./relay-mcp.ts";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
-const PROXY_PATH = "/opt/relay/relay-tool-proxy.js";
+const PROXY_PATH = SPAWNED_PROXIES.relayTool;
 const ACTOR = {
   userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
   botId: "3f2504e0-4f89-41d3-9a0c-0305e82c3301",
@@ -101,20 +104,56 @@ describe("Relay tool proxy spec", () => {
   });
 });
 
+describe("Relay capability keys", () => {
+  it("names the capability, not the bot role", () => {
+    expect(RELAY_CAPABILITY_KEYS).toEqual({ scout: "browser", mercury: "mail", curator: "brief" });
+    expect(relayCapabilityKey("scout")).toBe("browser");
+    expect(relayCapabilityKey("mercury")).toBe("mail");
+    expect(relayCapabilityKey("curator")).toBe("brief");
+  });
+});
+
 describe("Relay MCP route recognition", () => {
-  it("recognizes the harness proxy only under its own name and marker", () => {
-    expect(isRelayMcpServer("relay-scout", proxySpec)).toBe(true);
-    expect(isRelayMcpServer("relay-mercury", proxySpec)).toBe(false);
-    expect(isRelayMcpServer("relay-scout", { command: process.execPath, args: [PROXY_PATH], env: {} })).toBe(false);
-    // A configured stdio server cannot borrow the marker for another role.
-    expect(isRelayMcpServer("relay-scout", {
+  it("recognizes the harness proxy under its capability key and only that key", () => {
+    expect(isRelayMcpServer("browser", proxySpec)).toBe(true);
+    expect(isRelayMcpServer("relay-scout", proxySpec)).toBe(false);
+    expect(isRelayMcpServer("mail", proxySpec)).toBe(false);
+    expect(proxySpec.env.RELAY_AGENT).toBe("scout");
+  });
+
+  it("rejects a stdio entry that only copies the marker or the name", () => {
+    expect(isRelayMcpServer("browser", { command: process.execPath, args: [PROXY_PATH], env: {} })).toBe(false);
+    expect(isRelayMcpServer("browser", {
       command: process.execPath, args: [PROXY_PATH], env: { [RELAY_TOOL_PROXY_MARKER]: "1", RELAY_AGENT: "mercury" },
+    })).toBe(false);
+    // The marker is not enough when the proxy path is not ours.
+    expect(isRelayMcpServer("browser", {
+      command: process.execPath, args: ["/tmp/evil-proxy.js"], env: { ...proxySpec.env },
+    })).toBe(false);
+    // Nor when another command proxies the real entry point.
+    expect(isRelayMcpServer("browser", {
+      command: "/tmp/evil", args: [PROXY_PATH], env: { ...proxySpec.env },
+    })).toBe(false);
+    // A malformed Tool Layer origin fails closed.
+    expect(isRelayMcpServer("browser", {
+      ...proxySpec, env: { ...proxySpec.env, RELAY_TOOL_URL: "https://user:pw@tools.example.com" },
     })).toBe(false);
   });
 
-  it("still recognizes a URL-based Relay route and refuses malformed origins", () => {
-    expect(isRelayMcpServer("relay-scout", { type: "http", url: "http://127.0.0.1:8787/mcp/scout", headers: {} })).toBe(true);
-    expect(isRelayMcpServer("relay-scout", { type: "sse", url: "http://127.0.0.1:8787/mcp/scout", headers: {} })).toBe(false);
+  it("does not let a configured server borrow another role's proxy", () => {
+    const mercury = proxySpecFor("mercury");
+    expect(isRelayMcpServer("mail", mercury)).toBe(true);
+    expect(isRelayMcpServer("browser", mercury)).toBe(false);
+  });
+
+  it("still recognizes a URL-based Relay route and refuses SSE or malformed origins", () => {
+    const scout = { type: "http" as const, url: "http://127.0.0.1:8787/mcp/scout", headers: {} };
+    expect(isRelayMcpServer("browser", scout)).toBe(true);
+    expect(isRelayMcpServer("relay-scout", scout)).toBe(false);
+    expect(isRelayMcpServer("mail", scout)).toBe(false);
+    expect(isRelayMcpServer("browser", { ...scout, type: "sse" as const })).toBe(false);
+    expect(isRelayMcpServer("browser", { ...scout, url: "http://127.0.0.1:8787/mcp/bogus" })).toBe(false);
+    expect(isRelayMcpServer("browser", { ...scout, url: "https://user:pw@tools.example.com/mcp/scout" })).toBe(false);
     expect(relayToolMcpServer("scout", "http://tools:8787")).toEqual({
       type: "http", url: "http://tools:8787/mcp/scout", headers: {},
     });
@@ -139,12 +178,18 @@ describe("Relay signing owner", () => {
 });
 
 describe("Relay MCP bot binding", () => {
-  it("mounts the harness proxy in the bot's own role beside other custom servers", () => {
+  it("mounts the harness proxy under the bot's capability key beside other custom servers", () => {
     const notes = { type: "http" as const, url: "https://notes.example.test/mcp", headers: {} };
     const mounted = bindRelayMcpForBot("scout", { notes }, proxySpec);
-    expect(Object.keys(mounted).sort()).toEqual(["notes", "relay-scout"]);
-    expect(mounted["relay-scout"]).toEqual(proxySpec);
+    expect(Object.keys(mounted).sort()).toEqual(["browser", "notes"]);
+    expect(mounted.browser).toEqual(proxySpec);
+    expect(mounted["relay-scout"]).toBeUndefined();
     expect(mounted.notes).toEqual(notes);
+  });
+
+  it("binds each role to its own capability", () => {
+    expect(Object.keys(bindRelayMcpForBot("mercury", {}, proxySpecFor("mercury")))).toEqual(["mail"]);
+    expect(Object.keys(bindRelayMcpForBot("curator", {}, proxySpecFor("curator")))).toEqual(["brief"]);
   });
 
   it("mounts no Relay route for another role or a spoofed configured route", () => {
@@ -155,8 +200,10 @@ describe("Relay MCP bot binding", () => {
     expect(bindRelayMcpForBot(undefined, {}, proxySpecFor("scout"))).toEqual({});
     // A configured entry that names a Relay route is dropped, not mounted.
     const forged = { type: "http" as const, url: "http://127.0.0.1:8787/mcp/scout", headers: {} };
-    expect(bindRelayMcpForBot("scout", { "relay-scout": forged }, undefined)).toEqual({});
+    expect(bindRelayMcpForBot("scout", { browser: forged }, undefined)).toEqual({});
     const renamed = { type: "http" as const, url: "http://127.0.0.1:8787/mcp/curator", headers: {} };
     expect(bindRelayMcpForBot("scout", { notes: renamed }, undefined)).toEqual({});
+    // Nor can a configured stdio entry claim to be the harness proxy.
+    expect(bindRelayMcpForBot("scout", { browser: proxySpec }, undefined)).toEqual({});
   });
 });
