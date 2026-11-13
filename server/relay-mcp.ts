@@ -2,10 +2,27 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 import type { RelayAgentRole } from "../packages/relay-shared/relay-agent.ts";
 import type { McpServerSpec, RemoteMcpSpec, StdioMcpSpec } from "./contracts.ts";
+import { SPAWNED_PROXIES } from "./proxy-paths.ts";
 
 export type RelayAgent = RelayAgentRole;
 
 const AGENTS = new Set<RelayAgent>(["scout", "mercury", "curator"]);
+
+/** The model-facing MCP server key each role mounts under. Tool names name the
+ * capability, not the bot: Scout's tools read `mcp__browser__…`, Mercury's
+ * `mcp__mail__…`, Curator's `mcp__brief__…`. The Tool Layer route, the signed
+ * `agent` claim, and the route/agent equality check keep using the role. */
+export const RELAY_CAPABILITY_KEYS = {
+  scout: "browser",
+  mercury: "mail",
+  curator: "brief",
+} as const satisfies Record<RelayAgent, string>;
+
+/** The mount key a role's tools appear under, e.g. `browser` for Scout. */
+export function relayCapabilityKey(role: RelayAgent): string {
+  return RELAY_CAPABILITY_KEYS[role];
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const TURN_ID = /^[\w.:-]{1,128}$/;
@@ -170,6 +187,12 @@ function relayToolOrigin(baseUrl: string): string {
   return url.origin;
 }
 
+function isRelayToolOrigin(value: string | undefined): boolean {
+  if (typeof value !== "string" || !value.trim()) return false;
+  try { relayToolOrigin(value); return true; }
+  catch { return false; }
+}
+
 /** The private Tool Layer transport; users do not configure Relay MCP servers
  * in the Plugins UI. Kept as the URL validator and for compose-network smoke
  * checks — the actor's own calls ride the signed stdio proxy below. */
@@ -228,35 +251,54 @@ export function relaySigningOwner(
   return bot.ownerUserId && threadOwnerUserId === bot.ownerUserId ? bot.ownerUserId : undefined;
 }
 
-/** A server is the Relay route either because it is the signed stdio proxy the
- * harness built, or — defensively — a configured entry that names a Relay
- * route. Only the first is mounted; the second is dropped. */
-export function isRelayMcpServer(name: string, server: McpServerSpec): boolean {
-  if ("url" in server) {
-    const route = relayRoute(server.url);
-    return route !== null && route !== "invalid" && name === `relay-${route}` && server.type !== "sse";
-  }
-  const agent = server.env?.RELAY_AGENT;
-  return server.env?.[RELAY_TOOL_PROXY_MARKER] === "1" &&
-    typeof agent === "string" && AGENTS.has(agent as RelayAgent) && name === `relay-${agent}`;
+/** The agent a stdio spec really speaks for, judged by the proxy the harness
+ * builds rather than by the name the caller mounted it under: our own proxy
+ * entry point, the proxy marker, and a valid Tool Layer origin. Anything else
+ * — a different command, path, marker, or origin — is not a Relay route. */
+function relayProxyAgent(server: StdioMcpSpec): RelayAgent | null {
+  if (server.command !== process.execPath) return null;
+  if (!Array.isArray(server.args) || server.args.length !== 1 || server.args[0] !== SPAWNED_PROXIES.relayTool) return null;
+  const env = server.env;
+  if (!env || env[RELAY_TOOL_PROXY_MARKER] !== "1") return null;
+  const agent = env.RELAY_AGENT;
+  if (typeof agent !== "string" || !AGENTS.has(agent as RelayAgent)) return null;
+  if (!isRelayToolOrigin(env.RELAY_TOOL_URL)) return null;
+  if (!isRelayToolOrigin(env.RELAY_HARNESS_URL)) return null;
+  return agent as RelayAgent;
 }
 
-/** Mount the harness-owned Relay route (the signed stdio proxy) in the bot's
- * own role. The role comes from the bot's own relayAgent tag, so every
- * account's Scout binds relay-scout. A configured entry that masquerades as a
- * Relay route is refused; other custom MCP servers pass through unchanged. */
+/** Whether this server is the harness-owned Relay route, recognized by what it
+ * is — the signed proxy or a validated `/mcp/<role>` URL — and only when it is
+ * mounted under that role's capability key. The name is never evidence on its
+ * own: a custom server that copies a capability name still fails here, and an
+ * SSE entry or a forged proxy/URL is rejected. */
+export function isRelayMcpServer(name: string, server: McpServerSpec): boolean {
+  if ("url" in server) {
+    if (server.type === "sse") return false;
+    const route = relayRoute(server.url);
+    return route !== null && route !== "invalid" && name === relayCapabilityKey(route);
+  }
+  const agent = relayProxyAgent(server);
+  return agent !== null && name === relayCapabilityKey(agent);
+}
+
+/** Mount the harness-owned Relay route (the signed stdio proxy) under the
+ * bot's capability key, e.g. Scout binds `browser`. A configured entry that
+ * masquerades as a Relay route or the harness proxy is refused; other custom
+ * MCP servers pass through unchanged. */
 export function bindRelayMcpForBot(
   role: RelayAgent | undefined,
   configured: Record<string, McpServerSpec>,
   relaySpec?: McpServerSpec,
 ): Record<string, McpServerSpec> {
   const result: Record<string, McpServerSpec> = {};
-  const serversForBot = role && relaySpec && isRelayMcpServer(`relay-${role}`, relaySpec)
-    ? { ...configured, [`relay-${role}`]: relaySpec }
-    : configured;
-  for (const [name, server] of Object.entries(serversForBot)) {
+  for (const [name, server] of Object.entries(configured)) {
     if ("url" in server && relayRoute(server.url) !== null) continue;
+    if (!("url" in server) && relayProxyAgent(server) !== null) continue;
     result[name] = server;
+  }
+  if (role && relaySpec && isRelayMcpServer(relayCapabilityKey(role), relaySpec)) {
+    result[relayCapabilityKey(role)] = relaySpec;
   }
   return result;
 }

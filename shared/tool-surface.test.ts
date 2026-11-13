@@ -5,7 +5,7 @@ import { toolSurfaceKind } from "./tool-surface";
 describe("research browser classification", () => {
   it("places relay browser tools on the browser surface", () => {
     expect(toolSurfaceKind("browser_open")).toBe("browser");
-    expect(toolSurfaceKind("mcp__relay-scout__browser_open")).toBe("browser");
+    expect(toolSurfaceKind("mcp__browser__browser_open")).toBe("browser");
     expect(toolSurfaceKind("browser_extract")).toBe("browser");
   });
 
