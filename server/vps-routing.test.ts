@@ -367,12 +367,6 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
         );
       }, "the echoed turn");
 
-      const echo = snapshot.messages.find((m: any) => m.kind === "text" && m.text?.startsWith("echo: ")).text;
-      // the VPS clause, including the disposable-filesystem warning
-      expect(echo).toContain("self-hosted remote Linux computer");
-      expect(echo).toContain("This is a VPS, not Boat");
-      expect(echo).toContain("using it does not require a Boat API key");
-      expect(echo).toContain("wiped whenever its container is recreated");
 
       // the official Cua MCP server was mounted through the VPS bridge
       // SAFETY: the fake ACP CLI wrote this dump itself from session/new's
@@ -437,8 +431,6 @@ createServer(socket => socket.end()).listen(port, '127.0.0.1');
       }, "the routine on the existing VPS");
       const routineTools = JSON.parse(readFileSync(`${acpDump}.mcp.json`, "utf8"));
       expect(routineTools.find((tool: { name: string }) => tool.name === "computer")?.args).toContain("production-vps");
-      const routineMessages = (await api("GET", `/api/threads/${completed.threadId}/messages?limit=100`)).body.messages;
-      expect(routineMessages.some((message: any) => message.text?.includes("This is a VPS, not Boat"))).toBe(true);
 
       // The turn claim is gone, but its durable container remains on the old
       // host. Keep that resource visible until the user removes it.

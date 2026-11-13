@@ -66,6 +66,80 @@ function fieldMatches(field: FormField, target: string): boolean {
   return haystack.includes(needle) || (haystack.length > 0 && needle.includes(haystack));
 }
 
+export interface PageRef {
+  ref: string;
+  role: string;
+  label: string;
+  type?: string;
+}
+
+/** Parse Bladebro `see model` lines: `e1 textbox "Email address" [email] *`. */
+export function parsePageRefs(raw: string | null): PageRef[] | null {
+  if (!raw) return null;
+  const refs: PageRef[] = [];
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(e\d+)\s+(\w+)\s+"([^"]*)"(?:\s+\[([^\]]+)\])?/.exec(line);
+    if (!match) continue;
+    refs.push({
+      ref: match[1]!,
+      role: match[2]!,
+      label: match[3]!,
+      ...(match[4] ? { type: match[4] } : {}),
+    });
+  }
+  return refs.length ? refs : null;
+}
+
+function refIsCredential(ref: PageRef): boolean {
+  return ref.type === "password" || ref.role === "password" ||
+    CREDENTIAL_PATTERN.test(ref.type ?? "") || CREDENTIAL_PATTERN.test(ref.label);
+}
+
+function refMatches(ref: PageRef, target: string): boolean {
+  const needle = target.trim().toLowerCase();
+  if (!needle) return false;
+  const haystack = `${ref.ref} ${ref.label} ${ref.type ?? ""}`.toLowerCase();
+  return haystack.includes(needle) || (haystack.length > 0 && needle.includes(haystack));
+}
+
+function resolveRef(refs: PageRef[], target: string): PageRef | null {
+  const exact = refs.find((ref) => ref.ref === target.trim());
+  if (exact) return exact;
+  const matches = refs.filter((ref) => refMatches(ref, target));
+  if (matches.length === 1) return matches[0]!;
+  if (matches.length > 1) throw new Error(`more than one field matches ${JSON.stringify(target)}; use a ref from browser_open`);
+  return null;
+}
+
+/** Resolve a fill/type to the page's refs, verify every target is not a
+ * credential field, and return the input Bladebro expects (ref-addressed). */
+export function resolveActTargets(input: BrowserActInput, pageModel: string | null): BrowserActInput {
+  if (input.action !== "type" && input.action !== "fill") return input;
+  const refs = parsePageRefs(pageModel);
+  if (!refs) {
+    throw new Error("the page model is unavailable; call browser_open or browser_read before filling a field");
+  }
+  if (input.action === "fill") {
+    const entries = Object.entries(input.fields ?? {});
+    if (!entries.length) throw new Error("browser_act fill needs a fields object");
+    const resolved: Record<string, string> = {};
+    for (const [key, value] of entries) {
+      const ref = resolveRef(refs, key);
+      if (!ref) throw new Error(`field ${JSON.stringify(key)} was not found on the current page; use a ref from browser_open`);
+      if (refIsCredential(ref)) throw new Error(`${ref.ref} is a password/OTP/card field; use browser_request_human`);
+      resolved[ref.ref] = value;
+    }
+    return { ...input, fields: resolved };
+  }
+  const target = input.target ?? input.selector;
+  if (!target) throw new Error("browser_act type needs a target or selector");
+  const ref = resolveRef(refs, target);
+  if (!ref) throw new Error(`field ${JSON.stringify(target)} was not found on the current page; use a ref from browser_open`);
+  if (refIsCredential(ref)) throw new Error(`${ref.ref} is a password/OTP/card field; use browser_request_human`);
+  const { selector: _selector, ...rest } = input;
+  return { ...rest, target: ref.ref };
+}
+
 /** Throws when the action would enter credentials. Callers run this before
  * the act; the form snapshot is best-effort by nature. */
 export function assertCredentialSafe(input: BrowserActInput, formsText: string | null): void {

@@ -25,8 +25,6 @@ export const botDefaultsProfileSchema = profilePatchSchema.extend({
   color: z.enum(["green", "blue", "red", "orange", "purple", "cyan", "pink", "yellow", "teal", "coral"]).optional(),
   mascotExpression: z.string().max(60).nullable().optional(),
   modelSelection: botDefaultModelSchema.optional(),
-  computer: z.enum(["cloud", "vm", "local", "off"]).nullable().optional(),
-  cloudBackend: z.enum(["box", "vps"]).optional(),
   autoStartVps: z.boolean().optional(),
   cwd: z.string().max(4096).nullable().optional(),
   approvalMode: z.enum(["ask", "auto", "full", "custom"]).optional(),
@@ -84,7 +82,18 @@ export const botSkillTemplateSchema = z.object({
   enabled: z.boolean(),
 }).strict();
 
-export const newBotDefaultsSchema = z.object({
+/** Old defaults may still carry a computer destination. Drop it on read so a
+ * stored section keeps loading after the picker is gone. */
+function withoutComputerDefaults(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const record = value as Record<string, unknown>;
+  const profile = record.profile;
+  if (!profile || typeof profile !== "object" || Array.isArray(profile)) return value;
+  const { computer: _computer, cloudBackend: _cloudBackend, ...rest } = profile as Record<string, unknown>;
+  return { ...record, profile: rest };
+}
+
+export const newBotDefaultsSchema = z.preprocess(withoutComputerDefaults, z.object({
   profile: botDefaultsProfileSchema.default({}),
   memory: z.record(z.string().regex(/^(?:MEMORY\.md|memory\/[a-zA-Z0-9_-]+\.md)$/),
     z.string().refine(value => Buffer.byteLength(value, "utf8") <= 262_144, "Memory file exceeds 256 KiB"))
@@ -92,7 +101,7 @@ export const newBotDefaultsSchema = z.object({
   skills: z.array(botSkillTemplateSchema).max(100).default([]),
   routines: z.array(botRoutineTemplateSchema).max(100).default([]),
 }).strict().refine(value => Buffer.byteLength(JSON.stringify(value), "utf8") <= 900_000,
-  "Bot defaults must fit within 900 KB");
+  "Bot defaults must fit within 900 KB"));
 
 export type NewBotDefaults = z.infer<typeof newBotDefaultsSchema>;
 export type BotDefaultsProfile = NewBotDefaults["profile"];

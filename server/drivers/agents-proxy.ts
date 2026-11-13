@@ -20,7 +20,6 @@
 //                                          their own section
 //   create_room / manage_room            → Chiefs manage own-section rooms,
 //                                          never move bots or sections
-//   request_credential(id, reason?)       → show a secure, allowlisted key card
 //   list_routines()                       → inspect this bot's scheduled work
 //   propose_routine(...)                  → apply or request confirmation for a new routine
 //   propose_routine_action(...)           → apply or request confirmation for a routine change

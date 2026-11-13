@@ -176,7 +176,7 @@ export function BotSettingsDialog({ bot }: { bot: Bot }) {
       case "routines":
         return <RoutinesSection bot={bot} routines={derived.botRoutines} runs={state.routineRuns} />;
       case "access":
-        return <AccessSection bot={bot} derived={derived} />;
+        return <AccessSection bot={bot} />;
       case "model":
         return !state.config?.sharedWorkspace ? <ModelSection bot={bot} /> : null;
       case "permissions":

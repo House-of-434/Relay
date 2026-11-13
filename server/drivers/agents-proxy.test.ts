@@ -60,7 +60,6 @@ let computerStatus = 200;
 let lastCreateBody: any = null;
 let lastCreateRoomBody: unknown = null;
 let lastManageRoomBody: unknown = null;
-let lastCredentialBody: any = null;
 let lastRoutineQuery = "";
 let routinesResponse: unknown = {
   now: "2026-08-28T10:30:00.000Z",
@@ -327,16 +326,6 @@ beforeAll(async () => {
       });
       return;
     }
-    if (req.method === "POST" && req.url === "/api/internal/request-credential") {
-      let data = "";
-      req.on("data", (c) => (data += c));
-      req.on("end", () => {
-        lastCredentialBody = JSON.parse(data);
-        res.writeHead(200, { "content-type": "application/json" });
-        res.end(JSON.stringify({ messageId: "msg-key", label: "OpenCode API key" }));
-      });
-      return;
-    }
     if (req.method === "GET" && req.url?.startsWith("/api/internal/routines?")) {
       lastRoutineQuery = req.url;
       res.writeHead(200, { "content-type": "application/json" });
@@ -492,9 +481,6 @@ describe("agents-proxy MCP surface", () => {
       expect(description).toContain("Never claim success from the permission mode alone");
       expect(description).toContain("does not elevate another bot's execution permissions");
     }
-    const credential = list.result.tools.find((entry: { name: string }) => entry.name === "request_credential");
-    expect(credential.description).toContain("after the user saves or declines");
-    expect(credential.description).not.toContain("apply the change immediately");
     for (const name of ["create_room", "manage_room"]) {
       const description = list.result.tools.find((entry: { name: string }) => entry.name === name).description;
       expect(description).toContain("Follow the tool result under the effective access level");
@@ -593,16 +579,6 @@ describe("agents-proxy MCP surface", () => {
     } finally { agentsResponse = original; }
   });
 
-  it("preserves a large refusal's error status even when its text is capped", async () => {
-    computerStatus = 409;
-    computerResponse = { error: `Unavailable: ${"x".repeat(30_000)}` };
-    const result = await callTool("select_computer", {});
-    expect(result.result.isError).toBe(true);
-    expect(result.result.content[0].text.length).toBeLessThan(17_000);
-    expect(result.result.content[0].text).toContain("Unavailable:");
-    expect(computerRequests).toHaveLength(1);
-  });
-
   it("answers the MCP handshake and lists the agents tools", async () => {
     const init = await rpc("initialize", { protocolVersion: "2024-11-05" });
     expect(init.result.serverInfo.name).toContain("agents");
@@ -617,11 +593,12 @@ describe("agents-proxy MCP surface", () => {
       "delegate_bot",
       "check_delegation",
       "wait_delegation",
-      "select_computer",
       "list_threads",
       "close_thread",
       "start_thread",
       "vm_exec",
+      "list_files",
+      "fetch_file",
       "attach_file",
       "post_to_room",
       "create_bot",
@@ -630,7 +607,6 @@ describe("agents-proxy MCP surface", () => {
       "propose_bot_deletion",
       "create_room",
       "manage_room",
-      "request_credential",
       "memory_update",
       "retry_thread",
       "memory_log",
@@ -649,60 +625,12 @@ describe("agents-proxy MCP surface", () => {
     const ask = list.result.tools.find((tool: { name: string }) => tool.name === "ask_bot");
     const delegate = list.result.tools.find((tool: { name: string }) => tool.name === "delegate_bot");
     const wait = list.result.tools.find((tool: { name: string }) => tool.name === "wait_delegation");
-    const credential = list.result.tools.find((tool: { name: string }) => tool.name === "request_credential");
     expect(ask.description).toContain("Brief synchronous consultation");
     expect(ask.description).toContain("slow replies become asynchronous delegations");
     expect(ask.description).toContain("Do not use for assigning work");
     expect(delegate.description).toContain("DEFAULT FOR ASSIGNING WORK");
     expect(delegate.description).toContain("delivered automatically");
     expect(wait.description).toContain("Never call it in the same turn as delegate_bot");
-    expect(credential.description).toContain("freshly QR-paired mobile app show a secure entry card");
-    expect(credential.description).toContain("Never claim a secure field opened unless this request succeeds");
-  });
-
-  it("select_computer inspects actual choices with a GET when no target is given", async () => {
-    const response = await callTool("select_computer", {});
-    expect(response.result.isError).toBeFalsy();
-    expect(JSON.parse(response.result.content[0].text)).toEqual(computerResponse);
-    expect(computerRequests).toEqual([{ method: "GET", url: "/api/internal/computer/select", body: null }]);
-    expect(lastAuth).toBe(`Bearer ${TOKEN}`);
-    const list = await rpc("tools/list");
-    const tool = list.result.tools.find((entry: { name: string }) => entry.name === "select_computer");
-    expect(tool.inputSchema).toMatchObject({ type: "object", additionalProperties: false,
-      properties: { surface: { type: "string", enum: ["auto", "cloud", "vm", "local"] } } });
-    expect(tool.inputSchema.required ?? []).not.toContain("surface");
-    expect(tool.description).toContain("end this turn immediately");
-    expect(tool.description).toContain("with a configured provider it can start or provision one when needed");
-    expect(tool.description).toContain("Do not provision for ordinary chat or just to inspect availability");
-    expect(tool.annotations?.readOnlyHint).not.toBe(true);
-  });
-
-  it.each(["auto", "cloud", "vm", "local"])("select_computer posts the requested %s target without inventing success", async (surface) => {
-    computerResponse = { state: "pending", surface: surface === "auto" ? "vm" : surface, instruction: "End this turn; the original request will resume." };
-    const response = await callTool("select_computer", { surface });
-    expect(response.result.isError).toBeFalsy();
-    expect(JSON.parse(response.result.content[0].text)).toEqual(computerResponse);
-    expect(computerRequests).toEqual([{ method: "POST", url: "/api/internal/computer/select", body: { surface } }]);
-    expect(lastAuth).toBe(`Bearer ${TOKEN}`);
-  });
-
-  it.each(["other", "off", " VM ", 42, null, {}, ["vm"]].map((surface) => ({ surface })))("select_computer rejects invalid target $surface before contacting the server", async ({ surface }) => {
-    const response = await callTool("select_computer", { surface });
-    expect(response.result.isError).toBe(true);
-    expect(response.result.content[0].text).toContain("Choose auto, cloud, vm or local");
-    expect(computerRequests).toEqual([]);
-  });
-
-  it.each([
-    { status: 409, args: { surface: "cloud" }, error: "No existing cloud computer. Create one in the Computer panel first." },
-    { status: 503, args: {}, error: "Computer discovery is temporarily unavailable." },
-  ])("select_computer relays a $status server refusal as a tool error", async ({ status, args, error }) => {
-    computerStatus = status;
-    computerResponse = { error };
-    const response = await callTool("select_computer", args);
-    expect(response.result.isError).toBe(true);
-    expect(response.result.content[0].text).toContain(error);
-    expect(computerRequests).toHaveLength(1);
   });
 
   it("advertises read annotations only for the reviewed built-in reads", async () => {
@@ -710,7 +638,7 @@ describe("agents-proxy MCP surface", () => {
     const readNames = [
       "tool_result_read",
       "list_shared_computers",
-      "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads",
+      "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads", "list_files",
       "list_team_setup",
       "session_search", "session_read", "list_routines", "skills_list",
     ];
@@ -1089,7 +1017,7 @@ describe("agents-proxy MCP surface", () => {
     const list = await rpc("tools/list");
     const start = list.result.tools.find((tool: { name: string }) => tool.name === "start_thread");
     expect(start.inputSchema.required).toEqual(["title", "message"]);
-    expect(Object.keys(start.inputSchema.properties)).toEqual(["title", "message", "bot_id", "folder"]);
+    expect(Object.keys(start.inputSchema.properties)).toEqual(["title", "message", "bot_id", "folder", "file_ids"]);
     expect(start.description).toContain("Leave bot_id out to open it on yourself");
     expect(start.description).toContain("Do not use it for a question you need answered right now");
     expect(start.description).toContain("do not retry it");
@@ -1212,31 +1140,6 @@ describe("agents-proxy MCP surface", () => {
       expect(result.result.isError).toBe(true);
     }
     expect((await callTool("move_bot", { bot_id: "bot-1", section: "Foreign" })).error.message).toContain("Unknown tool");
-  });
-
-  it("requests an allowlisted credential without putting a secret in the request", async () => {
-    const res = await callTool("request_credential", {
-      credential_id: "opencodeGoApiKey",
-      reason: "The selected model needs it.",
-    });
-    expect(res.result.content[0].text).toContain("secure OpenCode API key request");
-    expect(res.result.content[0].text).toContain("freshly QR-paired mobile app show its secure entry card");
-    expect(res.result.content[0].text).toContain("older mobile pairings explain how to pair again");
-    expect(res.result.content[0].text).toContain("End this turn");
-    expect(lastCredentialBody).toEqual({
-      fromBotId: "bot-asker",
-      fromThreadId: "thread-asker-routine",
-      credentialId: "opencodeGoApiKey",
-      reason: "The selected model needs it.",
-    });
-    expect(JSON.stringify(lastCredentialBody)).not.toContain("secret");
-  });
-
-  it("rejects credential ids outside the fixed allowlist locally", async () => {
-    lastCredentialBody = null;
-    const res = await callTool("request_credential", { credential_id: "arbitrary.config.path" });
-    expect(res.result.isError).toBe(true);
-    expect(lastCredentialBody).toBeNull();
   });
 
   it("hands back the task id and rejects sequential same-turn status calls", async () => {
@@ -1626,38 +1529,43 @@ describe("agents-proxy MCP surface", () => {
     expect(res.result.isError).toBeFalsy();
   });
 
-  it.each(["box", "cloud"])("maps %s execution to the explicit Boat runner without changing stored wire values", async (run_on) => {
-    const res = await callTool("propose_routine", {
-      name: "Boat check", instructions: "Check explicitly on Boat.",
-      schedule: { type: "daily", time: "09:00" }, run_on,
+  it("accepts maus as the only run_on destination and rejects legacy values", async () => {
+    const ok = await callTool("propose_routine", {
+      name: "Current bot", instructions: "Check the queue.",
+      schedule: { type: "daily", time: "09:00" }, run_on: "maus",
     });
-    expect(res.result.isError).toBeFalsy();
-    expect(lastRoutineRequestBody.routine.runOn).toBe("cloud");
-    const update = await callTool("propose_routine_action", {
-      action: "update", routine_id: "routine-morning", changes: { run_on, runOn: "cloud" },
-    });
-    expect(update.result.isError).toBeFalsy();
-    expect(lastRoutineRequestBody.changes.runOn).toBe("cloud");
+    expect(ok.result.isError).toBeFalsy();
+    expect(lastRoutineRequestBody.routine.runOn).toBe("maus");
+    for (const run_on of ["box", "cloud"]) {
+      lastRoutineRequestBody = null;
+      const bad = await callTool("propose_routine", {
+        name: "Legacy runner", instructions: "Check explicitly on Boat.",
+        schedule: { type: "daily", time: "09:00" }, run_on,
+      });
+      expect(bad.result.isError).toBe(true);
+      expect(bad.result.content[0].text).toContain('only supports "maus"');
+      expect(lastRoutineRequestBody).toBeNull();
+    }
   });
 
-  it("advertises VPS-compatible default execution separately from the Boat runner", async () => {
+  it("advertises maus as the only run_on destination", async () => {
     const list = await rpc("tools/list");
     const routine = list.result.tools.find((entry: { name: string }) => entry.name === "propose_routine");
-    expect(routine.inputSchema.properties.run_on.enum).toEqual(["maus", "box"]);
-    expect(routine.inputSchema.properties.run_on.description).toContain("INCLUDING a self-hosted VPS");
+    expect(routine.inputSchema.properties.run_on.enum).toEqual(["maus"]);
+    expect(routine.inputSchema.properties.run_on.description).toContain("selected model and configured computer");
   });
 
   it("preserves execution settings copied from list_routines", async () => {
     const res = await callTool("propose_routine", {
-      name: "Cloud check",
+      name: "Queue check",
       instructions: "Check the queue.",
       schedule: { type: "interval", everyMinutes: 15, anchorAt: "2026-09-01T09:00:00+05:30" },
-      runOn: "cloud",
+      runOn: "maus",
       timeoutMinutes: 20,
     });
     expect(res.result.isError).toBeFalsy();
     expect(lastRoutineRequestBody.routine).toMatchObject({
-      runOn: "cloud",
+      runOn: "maus",
       timeoutMinutes: 20,
       schedule: { type: "interval", everyMinutes: 15, anchorAt: "2026-09-01T09:00:00+05:30" },
     });

@@ -2,8 +2,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { StoreProvider, type Bot, type ConfigStatus } from "@/state/store";
-import type { useBotSettingsDerived } from "./useBotSettingsDerived";
+import { StoreProvider, type Bot } from "@/state/store";
 
 const fixture = vi.hoisted(() => ({ dispatch: vi.fn(), config: null as unknown }));
 vi.mock("@/state/store", async (importOriginal) => {
@@ -42,38 +41,9 @@ function makeBot(overrides: Partial<Bot> = {}): Bot {
   };
 }
 
-function makeDerived(overrides: Partial<ReturnType<typeof useBotSettingsDerived>> = {}): ReturnType<typeof useBotSettingsDerived> {
-  return {
-    patch: vi.fn(),
-    engine: undefined,
-    canCoordinate: false,
-    canUseConnectedApps: true,
-    canUseVps: false,
-    connectedAppsConfigured: true,
-    connectedAppsEnabled: true,
-    canUseBrowser: false,
-    desktopBrowser: false,
-    browserBlockedOnWindows: false,
-    browserFeature: true,
-    browserAllowed: true,
-    browserEnabled: false,
-    browserSelectable: false,
-    browserDisabledReason: "The built-in browser needs the Relay desktop app",
-    sectionName: "General",
-    currentChief: undefined,
-    botRoutines: [],
-    activeBotRoutines: 0,
-    localSelectable: false,
-    localDisabledReason: null,
-    activeState: "idle",
-    mascotMotion: null,
-    ...overrides,
-  } as ReturnType<typeof useBotSettingsDerived>;
-}
-
-function render(bot: Bot, derived = makeDerived()) {
+function render(bot: Bot) {
   return renderToStaticMarkup(
-    createElement(StoreProvider, null, createElement(AccessSection, { bot, derived })),
+    createElement(StoreProvider, null, createElement(AccessSection, { bot })),
   );
 }
 
@@ -93,17 +63,10 @@ describe("AccessSection always-allowed list", () => {
   });
 });
 
-describe("AccessSection Works on", () => {
-  const places = (markup: string) => [...markup.matchAll(/>(Auto|Cloud|Local VM|This computer|Off)<\/button>/g)].map((match) => match[1]);
-
-  it("offers this computer and a Local VM on a desktop or self-hosted server", () => {
-    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Off"]);
-    fixture.config = { cloudHome: false } as Partial<ConfigStatus>;
-    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Off"]);
-  });
-
-  it("never offers them on an OMB Cloud home", () => {
-    fixture.config = { cloudHome: true } as Partial<ConfigStatus>;
-    expect(places(render(makeBot()))).toEqual(["Auto", "Cloud", "Off"]);
+describe("AccessSection computer picker", () => {
+  it("no longer shows the Works on picker", () => {
+    const markup = render(makeBot());
+    expect(markup).not.toContain("Works on");
+    expect(markup).not.toMatch(/>(Auto|Cloud|Local VM|This computer|Off)<\/button>/);
   });
 });

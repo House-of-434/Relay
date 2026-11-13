@@ -293,7 +293,7 @@ describe("peer allow-list", () => {
       // those rules land against — otherwise a persona ending "…ask the user
       // to paste the key into chat" sits flush against the rule forbidding
       // exactly that.
-      expect(systemPrompt).toContain("[/TEAM ROSTER] If a supported API key is missing");
+      expect(systemPrompt).toContain("[/TEAM ROSTER] Your own earlier conversations");
 
       const providerToken = String(dump.mcpConfig?.mcpServers?.agents?.env?.RELAY_COMMS_TOKEN ?? "");
       expect(providerToken).toMatch(/^[a-f0-9]{48}$/);

@@ -258,7 +258,6 @@ describe("surface pin provenance against the real server", () => {
     resetTurn();
     await apiOk("POST", `/api/bots/${bot.id}/messages`, { text: "Work where you should.", threadId: task.threadId });
     const sent = await dump();
-    expect(sent.systemPrompt).toContain("Local VM");
     expect(mountedComputer(sent).args.some((arg: string) => arg.includes("container-mcp"))).toBe(true);
     expect(sent.systemPrompt).not.toContain("You can act on the user's computer");
     writeFileSync(finishFile, "finish");
@@ -331,7 +330,6 @@ describe("surface pin provenance against the real server", () => {
         resetTurn();
         await apiOk("POST", `/api/bots/${bot.id}/messages`, { text: "Stay where I pinned you.", threadId: task.threadId });
         const sent = await dump();
-        expect(sent.systemPrompt).toContain("You can act on the user's computer");
         expect(mountedComputer(sent).env.RELAY_CUA_COMMAND).toBe("/fixture/cua-driver");
         expect(mountedComputer(sent).args.some((arg: string) => arg.includes("container-mcp"))).toBe(false);
         writeFileSync(finishFile, "finish");

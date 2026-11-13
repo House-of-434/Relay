@@ -251,7 +251,7 @@ function DraftSection({ active, draft, defaultsMode }: { active: Section; draft:
   if (active === "Skills") return <SkillsSection bot={bot} />;
   if (active === "Memory") return <DraftMemory draft={draft} />;
   if (active === "Routines") return <DraftRoutines draft={draft} />;
-  if (active === "Access") return <AccessSection bot={bot} derived={derived} />;
+  if (active === "Access") return <AccessSection bot={bot} />;
   if (active === "Model") return <ModelSection bot={bot} />;
   if (active === "Permissions") return <PermissionsSection bot={bot} derived={derived} />;
   return null;

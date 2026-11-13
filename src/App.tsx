@@ -13,7 +13,6 @@ import { BotSettingsDialog } from "@/components/BotSettingsDialog";
 import { RemoteAgentSettingsPanel } from "@/components/RemoteAgentSettingsPanel";
 import { NewBotDialog } from "@/components/NewBotDialog";
 import { PluginsPanel, type ConnectionAccount, type ConnectionService, type GithubConnection, type NotionConnection } from "@/components/PluginsPanel";
-import { ComputerPanel } from "@/components/ComputerPanel";
 import { DocPane } from "@/components/DocPane";
 import { FilesPanel } from "@/components/FilesPanel";
 import { InspectorPanel } from "@/components/InspectorPanel";
@@ -337,11 +336,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
     }
   }, [localVmWorkspaceBotId, state.activeView, state.selectedId]);
 
-  const openLocalVmWorkspace = (botId: string) => {
-    dispatch({ type: "toggleComputer", open: false });
-    setLocalVmWorkspaceBotId(botId);
-  };
-
   const openComputerFromWorkspace = (botId: string) => {
     setLocalVmWorkspaceBotId(null);
     dispatch({ type: "select", id: botId });
@@ -474,13 +468,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
         remoteClient
           ? <RemoteAgentSettingsPanel bot={bot} />
           : <BotSettingsDialog key={`settings:${bot.id}`} bot={bot} />
-      )}
-      {!remoteClient && state.computerOpen && bot && (
-        <ComputerPanel
-          key={`computer:${bot.id}`}
-          bot={bot}
-          onOpenVmWorkspace={openLocalVmWorkspace}
-        />
       )}
       {!remoteClient && state.inspectorOpen && bot && <InspectorPanel key={bot.threadId} bot={bot} />}
       {!remoteClient && state.filesOpen && bot && <FilesPanel key={`files:${bot.threadId}`} bot={bot} />}

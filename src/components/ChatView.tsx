@@ -50,7 +50,6 @@ import { Composer } from "./Composer";
 import { ReplyQuote } from "./ReplyQuote";
 import { ReplyIcon } from "./ReplyIcon";
 import { ConnectorCard } from "./ConnectorCard";
-import { SecretRequestCard } from "./SecretRequestCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { MessageAttachments, collectMessageFiles, splitMessageAttachments, type GalleryFile } from "./AttachmentGallery";
 import { CompactionChip, DigestChip } from "./DigestChip";
@@ -639,8 +638,6 @@ const MessagesList = memo(function MessagesList({
         const m = item.message;
         const row = (() => {
           switch (m.kind) {
-            case "secret":
-              return m.secret ? <SecretRequestCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "takeover":
               return m.takeover ? <TakeoverCard botId={bot.id} threadId={bot.threadId} message={m} /> : null;
             case "connector":

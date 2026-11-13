@@ -32,7 +32,7 @@ it("takes cron through the real routine tools and confirmation, preserving its z
     const proposal = async (tool: string, args: unknown, text: string, expectError = false) => {
       const previousTurns = providerEvidence().length;
       writeFileSync(planPath, JSON.stringify({ [bot.id]: {
-        expectSystemIncludes: ["five-field cron expression", "Never replace a calendar rule with daily AI date checking", "including its VPS"],
+        expectSystemIncludes: ["five-field cron expression", "Never replace a calendar rule with daily AI date checking", "current model and configured computer"],
         steps: [{ tool: "list_routines", arguments: {} }, { tool, arguments: args, expectError }],
         reply: expectError ? "That invalid schedule was refused." : "Please review the routine confirmation.",
       } }));
@@ -104,8 +104,7 @@ it("takes cron through the real routine tools and confirmation, preserving its z
       name: "Explicit Boat", instructions: "Run on the Boat-hosted agent.", schedule, run_on: "box",
     }, "Try the separate Boat runner without a Boat account.", true);
     const boatResponse = providerEvidence().at(-1).evidence.find((entry: any) => entry.step?.tool === "propose_routine").response;
-    expect(boatResponse.result.content[0].text).toContain('run_on="maus"');
-    expect(boatResponse.result.content[0].text).toContain("self-hosted VPS");
+    expect(boatResponse.result.content[0].text).toContain('only supports "maus"');
     const before = await current();
     for (const invalid of [
       { type: "cron", expression: "0 9 1 * *" },

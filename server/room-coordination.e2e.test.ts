@@ -403,7 +403,7 @@ it("consults multiple existing members and returns once, with no discussion prer
 
   const tools = f.provider()[0].evidence[0].result.tools.map((t: any) => t.name);
   expect(tools).toContain("coordinate_bots");
-  expect(tools).toContain("request_credential");
+  expect(tools).toContain("propose_routine");
   for (const old of ["discuss_room", "assign_room_member", "delegate_bot", "ask_bot", "start_thread"]) expect(tools).not.toContain(old);
 }), 45_000);
 

@@ -102,20 +102,20 @@ const FULL = { direct: "direct+skills+shared", room: "room+own-thread+skills+sha
  * by more than 2%, and may not undercut it by more than 2% either: a smaller
  * catalog is the goal, so lock the win in by lowering the number. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "direct": 50342,
-  "direct+shared": 52087,
-  "direct+skills": 52268,
-  "direct+skills+shared": 54013,
-  "room": 46569,
-  "room+shared": 48314,
-  "room+skills": 48495,
-  "room+skills+shared": 50240,
-  "room+own-thread": 48125,
-  "room+own-thread+shared": 49870,
-  "room+own-thread+skills": 50051,
-  "room+own-thread+skills+shared": 51796,
-  "direct+skills+shared+cloud-home": 53087,
-  "room+own-thread+skills+shared+cloud-home": 50870,
+  "direct": 47935,
+  "direct+shared": 49680,
+  "direct+skills": 49861,
+  "direct+skills+shared": 51606,
+  "room": 44162,
+  "room+shared": 45907,
+  "room+skills": 46088,
+  "room+skills+shared": 47833,
+  "room+own-thread": 45718,
+  "room+own-thread+shared": 47463,
+  "room+own-thread+skills": 47644,
+  "room+own-thread+skills+shared": 49389,
+  "direct+skills+shared+cloud-home": 50654,
+  "room+own-thread+skills+shared+cloud-home": 48437,
   "external": 3287,
   "external+everything": 3287,
 };
@@ -213,27 +213,20 @@ describe("agents proxy tools/list golden", () => {
     for (const [name, profile] of Object.entries(PROFILES)) {
       const full = new Map(toolsOf(wires[FULL[profile.family]]!).map((tool) => [tool.name, JSON.stringify(tool)]));
       for (const tool of toolsOf(wires[name]!)) {
-        // A Cloud home's own select_computer is pinned by the next test.
-        if (profile.env.RELAY_CLOUD_HOME === "1" && tool.name === "select_computer") continue;
         expect(JSON.stringify(tool), `${name}: ${tool.name}`).toBe(full.get(tool.name));
       }
     }
   });
 
-  it("shows a Cloud home's bots no Local VM and no this computer, and every other server both", () => {
-    type SelectTool = Tool & { inputSchema: { properties: { surface: { enum: string[]; description: string } } } };
-    const select = (wire: string) => toolsOf(wire).find((tool) => tool.name === "select_computer") as SelectTool;
+  it("gives a Cloud home's bots no Local VM and every other server both", () => {
     const cloudHome = Object.keys(PROFILES).filter((name) => name.endsWith("+cloud-home"));
     expect(cloudHome).toHaveLength(2);
     for (const name of cloudHome) {
       const desktop = wires[name.slice(0, -"+cloud-home".length)]!;
       const names = toolsOf(wires[name]!).map((tool) => tool.name);
       expect(names).toEqual(toolsOf(desktop).map((tool) => tool.name).filter((tool) => tool !== "vm_exec"));
-      expect(select(desktop).inputSchema.properties.surface.enum).toEqual(["auto", "cloud", "vm", "local"]);
+      expect(names).not.toContain("select_computer");
       expect(toolsOf(desktop).map((tool) => tool.name)).toContain("vm_exec");
-      const surface = select(wires[name]!).inputSchema.properties.surface;
-      expect(surface.enum).toEqual(["auto", "cloud"]);
-      expect(surface.description).not.toMatch(/\b(?:vm|local) =/);
     }
   });
 

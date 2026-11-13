@@ -28,7 +28,6 @@ describe("Relay disabled computer routes", () => {
       "/api/internal/phone/claim",
       "/api/bots/bot-1/computer/control",
       "/api/bots/bot-1/local-computer/run",
-      "/api/bots/bot-1/secret-cards/card-1/provide",
       "/api/calls/start",
       "/api/calendar-calls/fixture/room",
       "/api/phone/claim",

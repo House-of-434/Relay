@@ -255,7 +255,7 @@ describe("sharing my New bot defaults as a preset", () => {
     profile: {
       name: "Sky", title: "Support", description: "Answers customers.", soul: "Be kind.\n", color: "blue", mascotExpression: "happy",
       // Everything below grants reach or is personal: none of it may travel.
-      modelSelection: { instanceId: "claude", model: "opus" }, computer: "local", cwd: "/Users/me/secret", approvalMode: "full",
+      modelSelection: { instanceId: "claude", model: "opus" }, cwd: "/Users/me/secret", approvalMode: "full",
       alwaysAllow: ["Bash(*)"], chiefOfStaff: true, managedSections: ["Ops"], peers: ["x"], composio: true,
       section: "Support", approvePeerComms: true, parkDirectMessages: true, avatarCrop: "rounded",
     },
@@ -279,7 +279,7 @@ describe("sharing my New bot defaults as a preset", () => {
     });
     expect(JSON.stringify(built.value)).not.toMatch(/opus|secret|full|Bash|crm|work|Ops|Daily/);
     expect(app.presets.presetFromDefaults(defaults(), { includeNotes: false }).value!.preset).not.toHaveProperty("seed");
-    const empty = app.presets.presetFromDefaults({ profile: { approvalMode: "auto", computer: "local" }, memory: {}, skills: [], routines: [] }, { includeNotes: true });
+    const empty = app.presets.presetFromDefaults({ profile: { approvalMode: "auto" }, memory: {}, skills: [], routines: [] }, { includeNotes: true });
     expect(empty).toEqual({ value: null, skipped: [{ part: "presets[new-bot-defaults]", reason: "preset_empty" }] });
   });
 

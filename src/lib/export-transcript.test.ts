@@ -185,13 +185,14 @@ describe("export-transcript", () => {
     expect(markdown).not.toContain("/private/attachments");
   });
 
-  it("exports secret cards without their private card fields", () => {
+  it("exports legacy secret-card messages as their readable text only", () => {
     const markdown = formatTranscriptMarkdown({
       title: "Assistant", exportedAt: fixedDate,
       messages: [
-        { id: "secret", role: "bot", kind: "secret", secret: { requestKey: "PRIVATE_REQUEST_KEY" } as Message["secret"], at: 2 },
+        { id: "secret", role: "bot", kind: "secret", text: "Securely provide the xAI API key from Relay on your phone or computer.", at: 2 },
       ],
     });
+    expect(markdown).toContain("Securely provide the xAI API key");
     expect(markdown).not.toContain("PRIVATE_");
   });
 
