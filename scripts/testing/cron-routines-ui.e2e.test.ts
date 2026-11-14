@@ -43,7 +43,7 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
     return field.getBoundingClientRect().height > 0;
   })()`);
 
-  await click("Tools"); await click("Automations");
+  await click("Automations");
   await click("Create an automation"); await click("Create a scheduled task");
   await fill('input[placeholder="Add title"]', "Monthly close");
   await fill('textarea[placeholder="What should the bot do?"]', "Summarize this fixture only.");

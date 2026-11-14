@@ -622,6 +622,8 @@ describe("agents-proxy MCP surface", () => {
       "close_thread",
       "start_thread",
       "vm_exec",
+      "list_files",
+      "fetch_file",
       "attach_file",
       "post_to_room",
       "create_bot",
@@ -711,6 +713,7 @@ describe("agents-proxy MCP surface", () => {
       "tool_result_read",
       "list_shared_computers",
       "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads",
+      "list_files",
       "list_team_setup",
       "session_search", "session_read", "list_routines", "skills_list",
     ];
@@ -1089,7 +1092,7 @@ describe("agents-proxy MCP surface", () => {
     const list = await rpc("tools/list");
     const start = list.result.tools.find((tool: { name: string }) => tool.name === "start_thread");
     expect(start.inputSchema.required).toEqual(["title", "message"]);
-    expect(Object.keys(start.inputSchema.properties)).toEqual(["title", "message", "bot_id", "folder"]);
+    expect(Object.keys(start.inputSchema.properties)).toEqual(["title", "message", "bot_id", "folder", "file_ids"]);
     expect(start.description).toContain("Leave bot_id out to open it on yourself");
     expect(start.description).toContain("Do not use it for a question you need answered right now");
     expect(start.description).toContain("do not retry it");

@@ -45,12 +45,12 @@ describe("Google sign-in identity in the sidebar", () => {
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const go = async (scenario: string) => {
       await evaluate(`(() => { localStorage.setItem("relay.sidebarDensity", "comfortable"); location.href = ${JSON.stringify(`${preview!.previewUrl}?scenario=${scenario}`)}; return true; })()`);
-      await expect.poll(snapshot, { timeout: 20_000 }).toContain("Ada Lovelace");
+      await expect.poll(snapshot, { timeout: 20_000 }).toContain('button "Ada"');
     };
     // The identity row: the login's photo is loaded, not a broken image, and the
     // name is the login's name rather than the generic "You".
     const rowPhoto = () => evaluate(`(() => {
-      const row = Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada Lovelace'));
+      const row = Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada'));
       const photo = row?.querySelector('img');
       return photo ? { src: photo.src.slice(0, 30), width: photo.naturalWidth, height: photo.naturalHeight } : null;
     })()`);
@@ -70,7 +70,7 @@ describe("Google sign-in identity in the sidebar", () => {
     // (The old separate app-settings tile is gone; settings live in the
     // profile menu now.)
     await evaluate(`(() => { localStorage.setItem("relay.sidebarDensity", "icons"); location.reload(); return true; })()`);
-    await expect.poll(snapshot, { timeout: 20_000 }).toContain('button "Ada Lovelace"');
+    await expect.poll(snapshot, { timeout: 20_000 }).toContain('button "Ada"');
     expect(await snapshot()).not.toContain('button "You"');
     expect(await rowPhoto()).toMatchObject({ width: 128, height: 128 });
     await ui("screenshot", "--out", evidence("icons-density"));
@@ -78,7 +78,7 @@ describe("Google sign-in identity in the sidebar", () => {
     // A photo the browser cannot load must not leave a broken image or an
     // error loop: the row falls back to the same initials as before.
     await go("broken-photo");
-    await expect.poll(() => evaluate("!!Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada Lovelace'))"), { timeout: 20_000 }).toBe(true);
+    await expect.poll(() => evaluate("!!Array.from(document.querySelectorAll('button')).find((node) => (node.getAttribute('aria-label') || '').includes('Ada'))"), { timeout: 20_000 }).toBe(true);
     // The broken photo fails asynchronously; poll until every aside image
     // has resolved (the row falls back to initials, never a broken image).
     await expect.poll(() => evaluate("Array.from(document.querySelectorAll('aside img')).every((img) => img.complete && img.naturalWidth > 0)"), { timeout: 20_000 }).toBe(true);
