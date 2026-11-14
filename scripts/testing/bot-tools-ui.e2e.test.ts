@@ -76,6 +76,21 @@ describe("bot setup in the real renderer", () => {
       })()`);
     };
     const dialogCount = () => evaluate("document.querySelectorAll('[role=dialog]').length");
+    const openNewBot = async () => {
+      await click("New or share");
+      await click("New Bot");
+      await expect.poll(() => evaluate("Boolean(document.querySelector('[role=dialog]'))")).toBe(true);
+    };
+    // The New Bot dialog has no keyboard shortcut in the browser build. With
+    // Settings already open, the sidebar trigger is under the modal backdrop,
+    // so dispatch the same DOM clicks a person cannot reach through it and
+    // still assert the reducer replaces the old modal.
+    const openNewBotAboveSettings = async () => {
+      await evaluate(`document.querySelector('button[aria-label="New or share"]').click(); true`);
+      await expect.poll(() => evaluate("Boolean([...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'New Bot'))")).toBe(true);
+      await evaluate(`[...document.querySelectorAll('button')].find(b => b.textContent.trim() === 'New Bot').click(); true`);
+      await expect.poll(() => evaluate("Boolean(document.querySelector('[role=dialog]'))")).toBe(true);
+    };
     const original = await bots();
     const coder = BOT_ROLES.find((role) => role.id === "coder")!;
 
@@ -95,14 +110,14 @@ describe("bot setup in the real renderer", () => {
       };
       return true;
     })()`);
-    await press("Control+n");
+    await openNewBot();
     await chooseRole(coder.id);
     expect(await evaluate("window.botCreateRequests")).toBe(0);
     await click("Create bot");
     await expect.poll(() => evaluate("window.botCreateRequests"), { timeout: 10_000 }).toBe(1);
     await press("Escape");
     expect(await dialogCount()).toBe(0);
-    await press("Control+n");
+    await openNewBot();
     expect(await evaluate("document.querySelector('[role=dialog]')?.getAttribute('aria-busy')")).toBe("true");
     expect(await evaluate("[...document.querySelectorAll('[role=dialog] fieldset button, [role=dialog] input, [role=dialog] select, [role=dialog] textarea')].every(b => b.matches(':disabled'))")).toBe(true);
     await evaluate("[...document.querySelectorAll('[role=dialog] button')].find(b => b.textContent.includes('Create bot')).click()");
@@ -110,7 +125,7 @@ describe("bot setup in the real renderer", () => {
     // Close remains usable; a slow server must not trap the user in a modal.
     await click("Close");
     expect(await dialogCount()).toBe(0);
-    await press("Control+n");
+    await openNewBot();
     await evaluate("window.releaseBotCreation(); true");
     await expect.poll(async () => (await bots()).find((bot) => bot.name === coder.name)?.soul, { timeout: 10_000 }).toBe(coder.soul);
     const created = (await bots()).filter((bot) => !original.some((old) => old.id === bot.id));
@@ -153,7 +168,7 @@ describe("bot setup in the real renderer", () => {
 
     // Opening New Bot above settings must replace the old modal, not leave
     // two focus traps competing. Escape closes only the one remaining layer.
-    await press("Control+n");
+    await openNewBotAboveSettings();
     expect(await dialogCount()).toBe(1);
     await press("Shift+Tab");
     expect(await evaluate("document.querySelector('[role=dialog]')?.contains(document.activeElement)")).toBe(true);
@@ -180,7 +195,7 @@ describe("bot setup in the real renderer", () => {
     // The coder role needs no connected apps, so its profile PATCH is what
     // the fixture rejects below (ops would stop at an apps confirm first).
     const retryRole = BOT_ROLES.find((role) => role.id === "coder")!;
-    await press("Control+n");
+    await openNewBot();
     await chooseRole(retryRole.id);
     await click("Create bot");
     await expect.poll(snapshot, { timeout: 10_000 }).toContain("Fixture preset rejected");

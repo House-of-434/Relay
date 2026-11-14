@@ -157,7 +157,15 @@ describe("control-relay ui drives the real renderer", () => {
     })()`);
     await click("You");
     await click("Settings");
-    await click("Connections");
+    // The sidebar's Connections shortcut shares its accessible name with the
+    // Settings section, so target the section inside the open dialog.
+    const clickSettingsSection = (name: string) => evaluate(`(() => {
+      const button = [...document.querySelectorAll('[role=dialog] button')].find((node) => node.textContent.trim() === ${JSON.stringify(name)});
+      if (!button) throw new Error("no settings section named " + ${JSON.stringify(name)});
+      button.click();
+      return true;
+    })()`);
+    await clickSettingsSection("Connections");
     await type("fixture-saved-key");
     await save();
     // The Connections panel re-renders after navigation and keystrokes, so a
@@ -165,7 +173,7 @@ describe("control-relay ui drives the real renderer", () => {
     // for the settled state with a budget that outlasts a re-render.
     await expect.poll(() => evaluate(`${input}?.value ?? null`), { timeout: 10_000 }).toBe("");
     await click("Appearance");
-    await click("Connections");
+    await clickSettingsSection("Connections");
     await expect.poll(() => evaluate(`${testButton}?.disabled ?? null`), { timeout: 10_000 }).toBe(false);
     await click("Test");
     await expect.poll(() => evaluate("window.keyTests")).toEqual([{ provider: "openaiCompat" }]);

@@ -38,7 +38,7 @@ if (!enabled) console.info("skipping reply focus UI e2e: set RELAY_UI_E2E=1 to r
     await evaluate("(() => { document.querySelector('button[aria-label=\"Reply to message\"]').focus(); return true; })()");
     expect(await focused()).toBe("Reply to message");
     await ui("press", "--keys", "Enter");
-    await expect.poll(() => evaluate("/Replying to Pepper/.test(document.body.innerText)"), { timeout: 5_000 }).toBe(true);
+    await expect.poll(() => evaluate("Boolean(document.querySelector('button[aria-label=\"Cancel reply\"]'))"), { timeout: 5_000 }).toBe(true);
     await expect.poll(focused, { timeout: 5_000 }).toBe("Message Pepper");
     // Typing goes straight into the reply.
     await ui("press", "--keys", "h");
@@ -48,7 +48,7 @@ if (!enabled) console.info("skipping reply focus UI e2e: set RELAY_UI_E2E=1 to r
     // Cancelling the reply does not pull focus anywhere new.
     await evaluate("(() => { document.activeElement.blur(); return true; })()");
     await evaluate("(() => { document.querySelector('button[aria-label=\"Cancel reply\"]').click(); return true; })()");
-    await expect.poll(() => evaluate("/Replying to Pepper/.test(document.body.innerText)"), { timeout: 5_000 }).toBe(false);
+    await expect.poll(() => evaluate("Boolean(document.querySelector('button[aria-label=\"Cancel reply\"]'))"), { timeout: 5_000 }).toBe(false);
     expect(await focused()).toBe("BODY");
   } finally {
     await waitForExit(child, { signal: "SIGINT", graceMs: 30_000 });

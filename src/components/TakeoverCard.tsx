@@ -265,7 +265,7 @@ export function TakeoverCard({
                 title={t("takeover.handBack")}
                 aria-label={t("takeover.handBack")}
               >
-                <span className="max-w-0 overflow-hidden whitespace-nowrap text-[11px] font-medium opacity-0 transition-all duration-200 group-hover:max-w-24 group-hover:opacity-100 group-focus-visible:max-w-24 group-focus-visible:opacity-100">
+                <span className="max-w-0 overflow-hidden whitespace-nowrap text-[11px] font-medium opacity-0 transition-all duration-200 group-hover:max-w-24 group-hover:opacity-100 group-focus-visible:max-w-24 group-focus-visible:opacity-100 touch:max-w-24 touch:opacity-100">
                   {t("takeover.handBackShort")}
                 </span>
                 <Check size={15} className="shrink-0" />
