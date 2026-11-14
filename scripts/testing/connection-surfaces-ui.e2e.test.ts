@@ -98,12 +98,18 @@ describe("Connections marketplace and the Servers settings card", () => {
     const evaluate = async (js: string) => (await ui("eval", "--js", js)).result;
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const clickText = (label: string) => evaluate(`(() => { const b = Array.from(document.querySelectorAll('button')).find((n) => n.textContent.trim() === ${JSON.stringify(label)}); if (!b) throw new Error("no button " + ${JSON.stringify(label)}); b.click(); return true; })()`);
+    // The sidebar's Connections shortcut opens the panel; it is the only
+    // button with that accessible name while no settings dialog is open.
     const openPanel = async () => {
-      await evaluate(`(() => { const b = Array.from(document.querySelectorAll('button')).find((n) => n.textContent.trim().startsWith('Tools')); b.click(); return true; })()`);
-      await clickText("Connections");
+      await evaluate(`(() => { const b = document.querySelector('button[aria-label="Connections"]'); if (!b) throw new Error("no Connections button"); b.click(); return true; })()`);
     };
     const closePanel = async () => evaluate(`(() => { document.querySelector('[data-tour="apps-close"]').click(); return true; })()`);
-    const tab = (label: string) => evaluate(`(() => { Array.from(document.querySelectorAll('[role=tab]')).find((n) => n.textContent.includes(${JSON.stringify(label)})).click(); return true; })()`);
+    const openService = (label: string) => evaluate(`(() => {
+      const b = Array.from(document.querySelectorAll('[data-tour="apps-panel"] button')).find((n) => (n.getAttribute('aria-label') || '').startsWith(${JSON.stringify(`${label}:`)}));
+      if (!b) throw new Error("no service row " + ${JSON.stringify(label)});
+      b.click();
+      return true;
+    })()`);
     const panel = () => evaluate(`document.querySelector('[data-tour="apps-panel"]')?.innerText ?? null`);
     // Visible text, not the accessible name: the row actions carry aria-labels
     // such as "Connect Gmail", while the offered action reads "Connect".
@@ -111,16 +117,21 @@ describe("Connections marketplace and the Servers settings card", () => {
 
     await expect.poll(snapshot, { timeout: 20_000 }).toContain("New or share");
 
-    // Nothing connected: both Google services are offered with the permission
-    // boundary each grant actually carries, and the Connected tab is empty of
-    // any count.
+    // Nothing connected: both Google services are offered, and each detail
+    // page states the permission boundary its grant actually carries.
     await openPanel();
-    await expect.poll(panel, { timeout: 10_000 }).toContain("Relay can read and search your mail");
-    expect(await panel()).toContain("Relay can read your primary calendar and manage its events");
+    await expect.poll(panel, { timeout: 10_000 }).toContain("Gmail");
+    expect(await panel()).toContain("Google Calendar");
     // Each row offers its one action: Connect, or the honest reason it is not
     // available yet on a machine with no Google client configured.
     expect((await rows()).filter((label) => /^(Connect|Coming soon)$/.test(label)).length).toBe(2);
     expect(await evaluate(`Array.from(document.querySelectorAll('[data-tour="apps-panel"] svg path')).filter((p) => /#EA4335|#4285F4/.test(p.getAttribute('fill') || '')).length`)).toBe(2);
+    await openService("Gmail");
+    await expect.poll(panel, { timeout: 10_000 }).toContain("Search, read, and summarize mail");
+    await clickText("Back");
+    await openService("Google Calendar");
+    await expect.poll(panel, { timeout: 10_000 }).toContain("create, reschedule, or cancel events when you ask");
+    await clickText("Back");
     await ui("screenshot", "--out", evidence("connections-available"));
     await closePanel();
 
@@ -128,12 +139,12 @@ describe("Connections marketplace and the Servers settings card", () => {
     // Disconnect belongs to the service rather than to a single account.
     await evaluate(GOOGLE_FIXTURE);
     await openPanel();
-    await tab("Connected");
     await expect.poll(panel, { timeout: 10_000 }).toContain("Disconnect");
     expect(await panel()).not.toContain("ca_ada_mail");
     expect(await panel()).not.toContain("ada@houseof434.com");
     expect(await panel()).not.toContain("Add account");
-    expect(await evaluate(`Array.from(document.querySelectorAll('[role=tab]')).map((n) => n.textContent.trim())`)).toEqual(["Available", "Connected"]);
+    expect(await evaluate(`Array.from(document.querySelectorAll('[data-tour="apps-panel"] button[aria-label^="Disconnect "]')).map((n) => n.getAttribute('aria-label'))`))
+      .toEqual(["Disconnect Gmail from Relay", "Disconnect Google Calendar from Relay"]);
     await ui("screenshot", "--out", evidence("connections-connected"));
 
     await evaluate(`(() => { document.querySelector('[data-tour="apps-panel"] button[aria-label="Disconnect Gmail from Relay"]').click(); return true; })()`);
