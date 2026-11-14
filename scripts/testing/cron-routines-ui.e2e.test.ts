@@ -44,6 +44,20 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   })()`);
 
   await click("Automations");
+  // The Automations page is calendar-only now; the flat list lives behind the
+  // bot's Routines settings.
+  const openRoutineList = async () => {
+    await click("Back");
+    const state = await ui("snapshot", "--interactive");
+    const row = Object.entries(state.refs as Record<string, { role: string; name: string }>)
+      .find(([, entry]) => entry.role === "button" && entry.name.startsWith("Pepper"));
+    expect(row).toBeDefined();
+    await ui("hover", "--ref", `@${row![0]}`);
+    await click("Actions for Pepper");
+    await click("Edit Profile");
+    await click("Routines");
+    await click("Open schedules →");
+  };
   await click("Create an automation"); await click("Create a scheduled task");
   await fill('input[placeholder="Add title"]', "Monthly close");
   await fill('textarea[placeholder="What should the bot do?"]', "Summarize this fixture only.");
@@ -79,7 +93,8 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   await expect.poll(routines).toHaveLength(1);
   const monthly = (await routines())[0];
   expect(monthly).toMatchObject({ name: "Monthly close", overlap: "queue", prompt: "Summarize this fixture only.", schedule: { type: "cron", expression: "0 9 L * *", timeZone: "UTC" } });
-  await click("List");
+  await openRoutineList();
+  await expect.poll(() => evaluate('Boolean(document.querySelector(\'article[aria-label="Monthly close"]\'))')).toBe(true);
   await evaluate("document.querySelector('article[aria-label=\"Monthly close\"] button').click()");
   await click("Edit");
   expect(await evaluate("document.querySelector('select[aria-label=Repeat]').value")).toBe("monthly");
@@ -98,7 +113,6 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   const response = await fetch(`${fixture.url}/api/routines`, { method: "POST", headers: { "content-type": "application/json", origin: fixture.url }, body: JSON.stringify({ name: "Business-hours report", prompt: "Use only the fixture.", botId: monthly.botId, enabled: false, runOn: "maus", schedule: customSchedule }) });
   expect(response.status).toBe(201);
   const custom = (await response.json()).routine;
-  await click("List");
   await expect.poll(() => evaluate("document.body.textContent")).toContain("Business-hours report");
   await evaluate("[...document.querySelectorAll('article button')].find(button => button.textContent.includes('Business-hours report')).click()");
   expect(await evaluate('document.querySelector(\'[aria-label="Paused schedule preview"]\')?.textContent')).toContain("Paused — schedule preview");
