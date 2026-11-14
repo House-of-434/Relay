@@ -638,7 +638,8 @@ describe("agents-proxy MCP surface", () => {
     const readNames = [
       "tool_result_read",
       "list_shared_computers",
-      "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads", "list_files",
+      "list_bots", "list_rooms", "check_delegation", "wait_delegation", "list_threads",
+      "list_files",
       "list_team_setup",
       "session_search", "session_read", "list_routines", "skills_list",
     ];

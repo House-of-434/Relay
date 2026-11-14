@@ -27,8 +27,8 @@ describe("connector card translation", () => {
         connector: { slug: "gmail", label: "Gmail", description: "Read mail", status: "required", resumeKey: "resume1" },
       },
     }));
-    expect(html).toContain(locales.ja!["connectors.card.connectSecurely"]);
-    expect(html).toContain(locales.ja!["connectors.card.requested"]);
-    expect(html).not.toContain("Connect securely");
+    expect(html).toContain(locales.ja!["connectors.action.connect"]);
+    expect(html).toContain(locales.ja!["connectors.card.notNow"]);
+    expect(html).not.toContain("Not now");
   });
 });
