@@ -24,7 +24,7 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   const response = await fetch(`${fixture!.url}/api/routines`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Feedback fixture", prompt: "Reply with the fixture response.", botId: fixture!.botId, enabled: false, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 } }) });
   expect(response.ok).toBe(true);
   const { routine } = await response.json();
-  await click("Tools"); await click("Automations"); await click("List");
+  await click("Automations"); await click("List");
   await expect.poll(() => evaluate('!!document.querySelector(\'article[aria-label="Feedback fixture"] button\')')).toBe(true);
   await evaluate('document.querySelector(\'article[aria-label="Feedback fixture"] button\').click()');
   // Delay only this fixture's run POST; two queued clicks must still send once.
