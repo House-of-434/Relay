@@ -31,7 +31,8 @@ if (!enabled) console.log("skipping draft visibility UI: set RELAY_UI_E2E=1 to r
     const snapshot = async () => (await ui("snapshot")).snapshot as string;
     const bots = async () => (await fetch(`${info.url}/api/bots?messages=0`).then(response => response.json())).bots as Array<{ id: string; visibility?: string }>;
     const before = await bots();
-    await ui("press", "--keys", "Control+n");
+    await ui("click", "--name", "New or share");
+    await ui("click", "--name", "New Bot");
     await expect.poll(snapshot).toContain("Who can see it");
     // The dialog appears before its defaults request completes. Never click
     // the disabled Create button while the fixture is still loading its draft.
