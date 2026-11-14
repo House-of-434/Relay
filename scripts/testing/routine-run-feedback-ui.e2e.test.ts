@@ -24,7 +24,22 @@ afterAll(() => waitForExit(child, { signal: "SIGINT", graceMs: 30_000 }));
   const response = await fetch(`${fixture!.url}/api/routines`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Feedback fixture", prompt: "Reply with the fixture response.", botId: fixture!.botId, enabled: false, schedule: { type: "interval", everyMinutes: 60, anchorAt: Date.now() + 3_600_000 } }) });
   expect(response.ok).toBe(true);
   const { routine } = await response.json();
-  await click("Automations"); await click("List");
+  // The Automations page is calendar-only now; the flat list lives behind the
+  // bot's Routines settings.
+  const openRoutineList = async () => {
+    await click("Automations");
+    await click("Back");
+    const state = await ui("snapshot", "--interactive");
+    const row = Object.entries(state.refs as Record<string, { role: string; name: string }>)
+      .find(([, entry]) => entry.role === "button" && entry.name.startsWith("Pepper"));
+    expect(row).toBeDefined();
+    await ui("hover", "--ref", `@${row![0]}`);
+    await click("Actions for Pepper");
+    await click("Edit Profile");
+    await click("Routines");
+    await click("Open schedules →");
+  };
+  await openRoutineList();
   await expect.poll(() => evaluate('!!document.querySelector(\'article[aria-label="Feedback fixture"] button\')')).toBe(true);
   await evaluate('document.querySelector(\'article[aria-label="Feedback fixture"] button\').click()');
   // Delay only this fixture's run POST; two queued clicks must still send once.
