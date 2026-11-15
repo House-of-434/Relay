@@ -311,7 +311,7 @@ function RoomContextMenu({
       data-room-menu
       data-sidebar
       style={{ top, left }}
-      className={cn("fixed z-40 w-[228px] overflow-hidden rounded-2xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+      className={cn("tactile-menu fixed z-40 w-[228px] overflow-hidden p-1.5", motion.className)} {...motion.exitProps}
     >
       {!remoteClient && (renaming ? (
         <div className="flex items-center gap-1 px-2 py-1">
@@ -359,7 +359,7 @@ function RoomContextMenu({
             setDraft(group.name);
             setRenaming(true);
           }}
-          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
+          className="tactile-menu-item w-full text-left"
         >
           <Pencil size={15} className="text-ink-secondary" />
           {isBotChat ? t("sidebar.room.renameChat") : t("sidebar.room.renameChannel")}
@@ -371,7 +371,7 @@ function RoomContextMenu({
             onClose();
             onMoveToSection(group.id);
           }}
-          className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
+          className="tactile-menu-item w-full text-left"
         >
           <FolderPlus size={15} className="text-ink-secondary" />
           {t("sidebar.section.moveToContext")}
@@ -382,7 +382,7 @@ function RoomContextMenu({
           dispatch({ type: "deleteGroup", groupId: group.id });
           onClose();
         }}
-        className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-danger hover:bg-menu-hover"
+        className="tactile-menu-item w-full text-left text-danger"
       >
         <Trash2 size={15} />
         {isBotChat ? t("sidebar.room.deleteChat") : t("sidebar.room.deleteChannel")}
@@ -534,7 +534,7 @@ function SectionPicker({
     <div
       data-section-picker
       style={{ top, left }}
-      className={cn("fixed z-40 w-[236px] overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-2 shadow-sm shadow-black/30", motion.className)} {...motion.exitProps}
+      className={cn("tactile-menu fixed z-40 w-[236px] overflow-hidden p-1.5", motion.className)} {...motion.exitProps}
     >
       <div className="px-3.5 pb-1 text-[10px] font-medium uppercase tracking-[0.08em] text-ink-secondary">
         {t("sidebar.section.moveToContext")}
@@ -546,8 +546,8 @@ function SectionPicker({
               key={section}
               onClick={() => assign(section)}
               className={cn(
-                "flex w-full items-center justify-between gap-2 rounded-lg px-2.5 py-1.5 text-left text-[13px]",
-                section === sectionCurrent ? "bg-raised text-ink" : "text-ink hover:bg-menu-hover rounded-lg",
+                "tactile-menu-item w-full justify-between gap-2 text-left",
+                section === sectionCurrent ? "bg-raised text-ink" : "text-ink",
               )}
             >
               <span className="truncate">{section}</span>
@@ -589,7 +589,7 @@ function SectionPicker({
           <div className="mx-2 my-1 border-t border-hairline/40" />
           <button
             onClick={() => assign("")}
-            className="flex w-full items-center gap-3 rounded-lg px-3.5 py-2 text-left text-[13px] text-danger hover:bg-menu-hover"
+            className="tactile-menu-item w-full gap-3 text-left text-danger"
           >
             <FolderMinus size={15} />
             {t("sidebar.section.removeFromContext")}
@@ -675,9 +675,9 @@ export function BotContextMenu({
       }}
       title={opts?.hint}
       className={cn(
-        "flex w-full items-center gap-2.5 px-2.5 py-1.5 text-left text-[13px]",
+        "tactile-menu-item w-full gap-2.5 text-left",
         opts?.danger ? "text-danger" : "text-ink",
-        opts?.disabled ? "cursor-default opacity-40" : "rounded-lg hover:bg-menu-hover",
+        opts?.disabled ? "cursor-default opacity-40" : "",
       )}
     >
       {icon}
@@ -695,7 +695,7 @@ export function BotContextMenu({
       aria-label={t("sidebar.bot.actions", { name: bot.name })}
       onKeyDown={navigateSidebarMenu}
       style={{ top: shown.y, left: shown.x }}
-      className={cn("fixed z-40 max-h-[calc(100dvh-16px)] w-[156px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain rounded-2xl border border-menu-border bg-menu px-1.5 py-1.5 shadow-xs shadow-black/10", motion.className)} {...motion.exitProps}
+      className={cn("tactile-menu fixed z-40 max-h-[calc(100dvh-16px)] w-[156px] max-w-[calc(100vw-16px)] overflow-y-auto overscroll-contain p-1.5", motion.className)} {...motion.exitProps}
     >
       {remoteClient ? [
         item(<FolderPlus size={15} className="text-ink-secondary" />, t("sidebar.bot.moveToSection"), () => {
@@ -996,7 +996,7 @@ export function TeamMenuItems({ onAddBots, onRename, onShare, onDelete }: {
   onShare: () => void;
   onDelete: () => void;
 }) {
-  const item = "flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left text-[13px] hover:bg-raised";
+  const item = "tactile-menu-item w-full gap-2 text-left";
   return (
     <>
       <button type="button" role="menuitem" autoFocus className={item} onClick={onAddBots}><Users size={14} />{t("team.addBots")}</button>
@@ -1410,7 +1410,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             title={selectedThreadName ? t("task.newIn", { name: selectedThreadName }) : t("thread.new")}
             className="flex size-8 items-center justify-center rounded-md text-ink-secondary hover:text-ink"
           >
-            <Plus size={20} strokeWidth={2} />
+            <Plus size={16} strokeWidth={2} />
           </button>
           <button
             type="button"
@@ -1436,7 +1436,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
             <>
               <div className={cn("fixed inset-0 z-30", plusMotion.closing && "pointer-events-none")} onMouseDown={() => setPlusOpen(false)} />
               <div className={cn(
-                "absolute right-0 top-full z-40 mt-1 w-52 overflow-hidden rounded-xl border border-hairline/50 bg-menu px-1.5 py-1.5 shadow-sm shadow-black/30",
+                "tactile-menu absolute right-0 top-full z-40 mt-1.5 w-52 overflow-hidden px-1 py-1",
                 plusMotion.className,
               )} {...plusMotion.exitProps}>
                 <button
@@ -1444,7 +1444,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     dispatch({ type: "toggleNewBot", open: true });
                   }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
+                  className="tactile-menu-item w-full text-left"
                 >
                   <BotIcon size={15} className="text-ink-secondary" />
                   <span className="flex-1">{t("sidebar.newBot")}</span>
@@ -1454,14 +1454,14 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     setNewRoom(true);
                   }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
+                  className="tactile-menu-item w-full text-left"
                 >
                   <Users size={15} className="text-ink-secondary" />
                   {t("sidebar.newChannel.title")}
                 </button>
                 {!remoteClient && <button
                   onClick={() => { setPlusOpen(false); setNewTeam(true); }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
+                  className="tactile-menu-item w-full text-left"
                 >
                   <FolderPlus size={15} className="text-ink-secondary" /> {t("team.create")}
                 </button>}
@@ -1472,7 +1472,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
                     setPlusOpen(false);
                     setTeamLibraryOpen(true);
                   }}
-                  className="flex w-full items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-left text-[13px] text-ink hover:bg-menu-hover"
+                  className="tactile-menu-item w-full text-left"
                 >
                   <Library size={15} className="text-ink-secondary" />
                   {t("sidebar.teamLibrary")}
@@ -1665,7 +1665,7 @@ export function Sidebar({ open, onClose, desktopOpen = true, onToggleDesktop }: 
       {renameTeam && <TeamDialog section={renameTeam} rename onRenamed={renamedTeam} onClose={() => setRenameTeam(null)} />}
       {teamMotion.shown && teamMotion.value && createPortal(<div className={cn("fixed inset-0 z-40", teamMotion.closing && "pointer-events-none")} onMouseDown={closeTeamMenu}>
         <div role="menu" aria-label={teamMotion.value.name} style={{ left: teamMotion.value.x, top: teamMotion.value.y }}
-          className={cn("absolute w-[220px] rounded-xl border border-hairline/50 bg-menu p-1.5 text-ink shadow-sm", teamMotion.className)} {...teamMotion.exitProps}
+          className={cn("tactile-menu absolute w-[220px] p-1.5 text-ink", teamMotion.className)} {...teamMotion.exitProps}
           onMouseDown={event => event.stopPropagation()} onKeyDown={event => {
             if (event.key === "Escape" || event.key === "Tab") { event.preventDefault(); event.stopPropagation(); closeTeamMenu(); return; }
             navigateSidebarMenu(event);

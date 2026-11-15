@@ -74,7 +74,7 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
 
   return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/55 p-6"
+      className="tactile-backdrop fixed inset-0 z-50 flex items-center justify-center p-6 max-md:items-end max-md:p-0 max-md:pb-0"
       onMouseDown={(event) => event.target === event.currentTarget && onCancel()}
     >
       <ConfirmDialogCard ref={dialogRef} cancelRef={cancelRef} {...props} />
@@ -111,32 +111,32 @@ export function ConfirmDialogCard({
       aria-labelledby="confirm-dialog-title"
       aria-describedby="confirm-dialog-body"
       className={cn(
-        "w-full max-w-[420px] rounded-2xl border border-hairline/50 bg-panel p-4 shadow-2xl",
-
+        "tactile-dialog w-full max-w-[420px] p-0 max-md:w-full",
       )}
     >
-      <div className="flex items-start gap-3">
+      <div className="tactile-grab-handle mt-3" aria-hidden="true" />
+      <div className="tactile-dialog-header flex items-start gap-3">
         {icon && (
         <span className={cn("mt-0.5 shrink-0", danger ? "text-danger" : "text-warning")}>
           {icon}
         </span>
         )}
         <div className="min-w-0">
-          <h2 id="confirm-dialog-title" className="text-[15px] font-semibold text-ink">
+          <h2 id="confirm-dialog-title" className={cn("text-[16px] leading-6 font-medium text-ink", danger && "text-danger")}>
             {title}
           </h2>
-          <p id="confirm-dialog-body" className="mt-1.5 text-[13px] leading-relaxed text-ink-secondary">
+          <p id="confirm-dialog-body" className="mt-1 text-[13px] leading-5 text-ink-secondary">
             {body}
           </p>
         </div>
       </div>
-      <div className="mt-4 flex justify-end gap-2">
+      <div className="flex justify-end gap-2 px-5 pb-5 max-md:flex-col-reverse max-md:gap-2">
         <button
           ref={cancelRef}
           type="button"
           onClick={onCancel}
           disabled={pending}
-          className="rounded-lg px-3 py-1.5 text-[13px] text-ink-secondary hover:bg-raised hover:text-ink"
+          className="ui-button max-md:w-full"
         >
           Cancel
         </button>
@@ -145,8 +145,8 @@ export function ConfirmDialogCard({
           onClick={onConfirm}
           disabled={pending}
           className={cn(
-            "rounded-lg px-3 py-1.5 text-[13px] font-medium",
-            danger ? "bg-danger/15 text-danger hover:bg-danger/25" : "bg-accent text-white hover:brightness-110",
+            "ui-button max-md:w-full",
+            danger ? "bg-danger text-white hover:brightness-110" : "ui-button-primary",
           )}
         >
           {confirmLabel}

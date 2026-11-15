@@ -6,15 +6,11 @@ import { FolderOpen, Plus } from "lucide-react";
 import { useStore, type Bot } from "@/state/store";
 import { useBotEditor } from "./BotEditorContext";
 import { cn } from "@/lib/cn";
-import { placeOffered } from "@/lib/place";
 import { shortPath } from "@/lib/short-path";
 import { useDesktopCapabilities } from "../DesktopCapabilities";
-import { CloudBackendPicker } from "../CloudBackendPicker";
-import { LocalComputerAutoWarning } from "../LocalComputerAutoWarning";
-import { Switch } from "../SettingsPrimitives";
 import { ProposalStatus } from "./ProposalStatus";
 import { inputCls } from "./field";
-import type { useBotSettingsDerived } from "./useBotSettingsDerived";
+import type { BotPatch } from "./useBotSettingsDerived";
 
 /** Where a bot's shell tools run. Set per bot; each task pins its own copy
  * on its first turn (the server does the pinning — Claude keeps sessions
@@ -101,23 +97,11 @@ function WorkingFolder({ bot }: { bot: Bot }) {
 
 
 
-export function AccessSection({
-  bot,
-  derived,
-}: {
-  bot: Bot;
-  derived: ReturnType<typeof useBotSettingsDerived>;
-}) {
+export function AccessSection({ bot }: { bot: Bot }) {
   const { draft } = useBotEditor();
   const { state, dispatch } = useStore();
-  const {
-    patch,
-    canUseVps,
-    localSelectable,
-    localDisabledReason,
-  } = derived;
   const relayWorkspace = state.config?.sharedWorkspace === true;
-  const [localAutoWarning, setLocalAutoWarning] = useState<string | null>(null);
+  const patch = (p: BotPatch) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
 
   const webhooks = state.webhooks.filter((webhook) => webhook.botId === bot.id);
   const alwaysAllow = bot.alwaysAllow ?? [];
@@ -125,87 +109,6 @@ export function AccessSection({
   return (
     <div className="flex flex-col gap-4">
       {!relayWorkspace ? <>
-      <div className="rounded-xl bg-card p-4">
-        <div className="text-[15px] font-medium text-ink">Works on</div>
-        <div className="mt-0.5 text-[13px] text-ink-secondary">
-          Where this bot works{bot.computer ? "" : " (currently: auto)"}.
-        </div>
-        <ProposalStatus bot={bot} kind="owner" />
-        <div className="mt-3 flex overflow-hidden rounded-lg border border-hairline/40">
-          {([
-            [null, "Auto"],
-            ["cloud", "Cloud"],
-            ["vm", "Local VM"],
-            ["local", "This computer"],
-            ["off", "Off"],
-          ] as const).filter(([mode]) => mode === null || mode === "off" || placeOffered(mode, state.config)).map(([mode, label], i) => (
-            <button
-              key={mode ?? "auto"}
-              disabled={mode === "local" && !localSelectable}
-              title={
-                mode === "local" && !localSelectable
-                  ? localDisabledReason ?? undefined
-                  : mode === "off"
-                    ? "No computer"
-                    : undefined
-              }
-              onClick={() => {
-                if ((mode === null && bot.computer === undefined) || mode === bot.computer) return;
-                if (mode === "local" && derived.approvalMode === "auto") setLocalAutoWarning(bot.id);
-                else patch({ computer: mode });
-              }}
-              className={cn(
-                "flex-1 py-1.5 text-[13px] capitalize",
-                i > 0 && "border-l border-hairline/40",
-                (mode === "local" && !localSelectable) && "cursor-not-allowed opacity-40",
-                (mode === null ? bot.computer === undefined : bot.computer === mode)
-                  ? "bg-control text-ink"
-                  : "text-ink-secondary hover:bg-control/60 hover:text-ink",
-              )}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {bot.computer === "off" && (
-          <div className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-secondary">
-            <span className="font-medium text-ink">Off means no screen.</span>{" "}
-            This bot gets no computer, so it cannot open a web page, click, or type
-            anywhere. Its connected apps, MCP servers, files and chat all still work.
-          </div>
-        )}
-        {(!bot.computer || bot.computer === "cloud") && (
-          <>
-            {!bot.computer && (
-              <div className="mt-3 rounded-lg bg-inset px-3 py-2.5 text-[11.5px] leading-relaxed text-ink-secondary">
-                <span className="font-medium text-ink">Auto cloud preference.</span>{" "}
-                This chooses what Auto may reuse during a task; viewing settings does not create or wake a computer.
-              </div>
-            )}
-            <CloudBackendPicker
-              value={bot.cloudBackend ?? "box"}
-              vpsSupported={canUseVps}
-              onChange={(backend) => patch({ cloudBackend: backend })}
-            />
-            {!bot.computer && bot.cloudBackend === "vps" && (
-              <div className="mt-3 flex items-center justify-between gap-4 rounded-lg bg-inset px-3 py-2.5">
-                <div className="min-w-0">
-                  <div className="text-[13px] text-ink">Start VPS automatically</div>
-                  <div className="mt-0.5 text-[11.5px] text-ink-secondary">
-                    Allow Auto to create or wake this bot's managed container when needed.
-                  </div>
-                </div>
-                <Switch
-                  checked={Boolean(bot.autoStartVps)}
-                  aria-label="Start VPS automatically"
-                  onClick={() => patch({ autoStartVps: !bot.autoStartVps })}
-                />
-              </div>
-            )}
-          </>
-        )}
-      </div>
-
       <WorkingFolder bot={bot} />
       </> : (
         <div className="rounded-xl bg-card p-4">
@@ -271,16 +174,6 @@ export function AccessSection({
         )}
       </div>}
 
-      <LocalComputerAutoWarning
-        open={localAutoWarning !== null}
-        onCancel={() => setLocalAutoWarning(null)}
-        onConfirm={() => {
-          const target = localAutoWarning;
-          setLocalAutoWarning(null);
-          if (!target) return;
-          dispatch({ type: "updateBot", botId: target, patch: { computer: "local", acknowledgeLocalAuto: true } });
-        }}
-      />
     </div>
   );
 }

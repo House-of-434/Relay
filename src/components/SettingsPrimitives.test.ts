@@ -23,7 +23,7 @@ describe("settings primitives", () => {
       title: "Profile",
       children: createElement(Switch, { checked: true, disabled: true, "aria-label": "Analytics" }),
     }));
-    expect(html).toContain("bg-card");
+    expect(html).toContain("tactile-card");
     expect(html).toContain('type="button" role="switch" aria-checked="true"');
     expect(html).toContain('aria-label="Analytics"');
     expect(html).toContain('disabled=""');

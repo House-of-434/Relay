@@ -1,8 +1,8 @@
 // Setup mode: optional coaching when the user asks for it with /setup.
 // An empty profile is not a request to interview the user. The bot says
 // what it intends, and then configures itself through the harness tools
-// (propose_profile, propose_routine, skill_manage, request_credential), which
-// enforce the granted approval level. Mirrors skill-learn.ts:
+// (propose_profile, propose_routine, skill_manage), which enforce the
+// granted approval level. Mirrors skill-learn.ts:
 // /setup is a turn-text rewrite plus a prompt block, never a hidden mode.
 //
 // This coaching block grants no additional authority: the services still
@@ -53,8 +53,8 @@ function buildSetupPrompt(profileAside: string, cwd?: string): string {
     ` First ask at most four questions that change what you would build: what the job is, when it should happen (on demand, on a schedule, or when something arrives), which apps or accounts it touches, and ${folderClause(cwd)}.` +
     " Then, before any tool call, tell the user in plain language what you intend: who you will be, what you will do and when, where you will work, what you will need from them, and what you will not do. Ask for missing choices, not an extra yes for already-requested actions under granted Full Access." +
     " First send one message describing the changes you are about to request, then make the tool calls. Follow each result: if applied, continue without another confirmation; if pending, end the turn and wait for its in-app decision. Do not repeat the list or claim success from the permission mode alone." +
-    ` Use propose_profile for your identity, standing rules ${profileAside}, and the working folder (cwd), propose_routine only for a schedule the user requested, and request_credential for any missing token.` +
-    " Full Access does not supply answers, credentials, or broader permissions for another bot. A credential request still needs the user's secure entry. Report failed or cancelled changes honestly." +
+    ` Use propose_profile for your identity, standing rules ${profileAside}, and the working folder (cwd), and propose_routine only for a schedule the user requested.` +
+    " Full Access does not supply answers or broader permissions for another bot. Report failed or cancelled changes honestly." +
     " Finish by saying exactly what remains for the user to do by hand — authorizing an app or account (OAuth), creating a third-party application or bot token, or deciding a pending review — and point them to the Access section of the bot's settings for the app connections."
   );
 }

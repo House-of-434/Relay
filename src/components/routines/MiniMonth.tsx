@@ -114,7 +114,7 @@ export function MiniMonth({ anchor, onSelect }: MiniMonthProps) {
                   isSelected
                     ? "bg-accent font-semibold text-white shadow-sm"
                     : isToday
-                      ? "font-semibold text-accent group-hover:bg-accent/12"
+                      ? "font-semibold text-accent ring-1 ring-inset ring-accent/60 group-hover:bg-accent/12"
                       : isOutsideMonth
                         ? "text-ink-tertiary group-hover:bg-raised group-hover:text-ink"
                         : "text-ink group-hover:bg-raised"

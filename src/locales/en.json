@@ -1178,7 +1178,7 @@
   "thread.switcher.openedBy": "Opened by {name}",
   "thread.switcher.pairTitle": "{name}'s Conversation",
   "thread.switcher.pairName": "Conversation",
-  "thread.delete": "Delete thread",
+  "thread.delete": "Delete",
   "thread.deleteBody": "This permanently deletes every transcript and session in this thread. Its files stay in All Files. This cannot be undone.",
   "thread.new": "New thread",
   "task.unread": "Unread",

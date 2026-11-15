@@ -519,10 +519,17 @@ describe("workspace", () => {
       expect(prompt).toContain("Anything that will be stale within a week belongs in the conversation, not in memory.");
       expect(prompt).toContain("When a fact applies only from a date, or stops applying on one, say so in the entry");
       expect(prompt).toContain("gets that day as its until date");
-      // the topic folder is the bot's own, not a placeholder
-      expect(prompt).toContain(`pointers to files in ${JSON.stringify(join(workspaceDir(BOT), "memory"))}`);
       expect(prompt).not.toContain("<topicDir>");
     }
+    // file-tool turns name the bot's own topic folder, not a placeholder
+    expect(memorySystemPrompt(BOT)).toContain(
+      `pointers to files in ${JSON.stringify(join(workspaceDir(BOT), "memory"))}`,
+    );
+    // a memory_update turn only ever names relative memory paths
+    const managed = memorySystemPrompt(BOT, { managedWrites: true });
+    expect(managed).toContain("pointers to files in memory/<topic>.md");
+    expect(managed).toContain("Your private long-term memory file is MEMORY.md.");
+    expect(managed).not.toContain(workspaceDir(BOT));
   });
 
   it("API drivers retain supplied memory without inventing filesystem tools", () => {

@@ -39,7 +39,7 @@ import { CONNECTOR_SLUG_PATTERN, CONNECTOR_TOOL_NAME_PATTERN } from "../shared/w
 // Re-exported under their historical names so server-side importers keep working.
 export type {
   BotActivity, ConnectorCardData, GroupDefaultResponder, OptionCardData,
-  SecretRequestCardData, Surface, TaskClosedBy, TaskOpenedBy, TaskUsage,
+  Surface, TaskClosedBy, TaskOpenedBy, TaskUsage,
 } from "../shared/wire.ts";
 export type { GroupTask as GroupTaskRecord, BotProject as BotProjectRecord } from "../shared/wire.ts";
 export type { InstalledPlaybook, InstalledPackageMetadata, MausColor, MausExpression } from "../shared/wire.ts";
@@ -302,14 +302,6 @@ function redactBotAuthored<T extends Omit<Message, "id" | "at"> & { at?: number 
       label: redactSecretsInText(out.connector.label),
       description: redactSecretsInText(out.connector.description),
       error: out.connector.error ? redactSecretsInText(out.connector.error) : undefined,
-    };
-  }
-  if (out.secret) {
-    out.secret = {
-      ...out.secret,
-      label: redactSecretsInText(out.secret.label),
-      description: redactSecretsInText(out.secret.description),
-      error: out.secret.error ? redactSecretsInText(out.secret.error) : undefined,
     };
   }
   if (out.takeover) {
@@ -2772,6 +2764,23 @@ export class Store {
     return bot;
   }
 
+  /** Replace a released Relay-agent default soul only when the record still
+   * carries it byte-for-byte; never overwrite a person's edit. */
+  migrateRelayAgentSouls(seeds: readonly {
+    role: RelayAgentRole;
+    profile: { soul?: string };
+    previousSoul?: string;
+  }[]): void {
+    for (const seed of seeds) {
+      const next = seed.profile.soul;
+      if (seed.previousSoul === undefined || next === undefined) continue;
+      for (const bot of this.bots) {
+        if (bot.relayAgent !== seed.role || bot.soul !== seed.previousSoul || bot.soul === next) continue;
+        this.setSoul(bot.id, next);
+      }
+    }
+  }
+
   /** Seed the three Relay agents for one account. Idempotent per role per
    * owner: a role already present is left alone, so a retry after a partial
    * failure creates only the missing roles and never duplicates. An omitted
@@ -2779,6 +2788,7 @@ export class Store {
   seedRelayAgentsForOwner(ownerUserId: string | undefined, seeds: readonly {
     role: RelayAgentRole;
     profile: NonNullable<Parameters<Store["createBot"]>[0]>;
+    previousSoul?: string;
   }[]) {
     const owned = (bot: BotRecord) => ownerUserId === undefined || bot.ownerUserId === ownerUserId;
     const present = new Map(this.bots.filter(owned).flatMap((bot) => bot.relayAgent ? [[bot.relayAgent, bot] as const] : []));
@@ -2786,6 +2796,12 @@ export class Store {
     for (const seed of seeds) {
       const existing = present.get(seed.role);
       if (existing) {
+        // A released default may be replaced only when the record still holds
+        // exactly that default; any person edit is left untouched.
+        const nextSoul = seed.profile.soul;
+        if (seed.previousSoul !== undefined && nextSoul !== undefined && existing.soul === seed.previousSoul && nextSoul !== existing.soul) {
+          this.setSoul(existing.id, nextSoul);
+        }
         // Server-owned default: a seeded agent runs at Auto so its sandboxed
         // tools do not stop to ask on every turn; outward actions keep their
         // own confirmations (a calendar card, a draft shown in chat).

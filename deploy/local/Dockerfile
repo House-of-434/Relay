@@ -67,6 +67,10 @@ COPY --from=build --chown=maus:maus /src/services/tool-layer/dist ./services/too
 COPY --from=build --chown=maus:maus /src/services/bff ./services/bff
 COPY --from=build --chown=maus:maus /src/shared ./shared
 COPY --from=build --chown=maus:maus /src/packages ./packages
+# Bundled skills ship beside the app so the repo-changes and other shipped
+# procedures are present at runtime, not only in a development checkout.
+COPY --from=build --chown=maus:maus /src/skills ./skills
+RUN test -d /app/skills
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY services/tool-layer/package.json ./services/tool-layer/package.json
 COPY packages/relay-shared/package.json ./packages/relay-shared/package.json

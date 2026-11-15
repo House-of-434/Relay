@@ -56,7 +56,7 @@ afterEach(() => {
 
 function harness(
   start = Date.parse("2026-08-28T10:00:00Z"),
-  cloudReady?: (botId: string) => Promise<{ ready: boolean; reason?: string }>,
+  _cloudReady?: (botId: string) => Promise<{ ready: boolean; reason?: string }>,
   canPersist?: (
     botId: string,
     threadId: string,
@@ -80,7 +80,6 @@ function harness(
     routines,
     now: () => clock.now,
     timeZone: () => "Asia/Kolkata",
-    cloudReady,
     canPersist,
     autoApply,
   });
@@ -144,7 +143,7 @@ describe("RoutineRequestService", () => {
 
     it.each<Partial<RoutineInput>>([
       { enabled: false }, { botId: "bot-b" }, { target: "room-goal", groupId: "room-a" },
-      { runOn: "cloud" }, { continuity: true }, { timeoutMinutes: 10 }, { durationMinutes: 60 }, { overlap: "queue" },
+      { continuity: true }, { timeoutMinutes: 10 }, { durationMinutes: 60 }, { overlap: "queue" },
       { schedule: { type: "daily", time: "10:00", weekdays: [1, 3] } },
       { attachments: [{ id: "context", name: "Context", path: "/fixture/context.txt", kind: "file", size: 20 }] },
     ])("does not confuse different execution settings with a duplicate: %j", async (patch) => {
@@ -237,26 +236,6 @@ describe("RoutineRequestService", () => {
     expect(appended.slice(1).every((card) => card.dismissed && card.options.length === 0)).toBe(true);
     expect(store.messagesFor("full-thread").every((message) => message.card?.answered === "allow")).toBe(true);
     expect(autoApply).toHaveBeenLastCalledWith("bot-a", "full-thread");
-  });
-
-  it("rechecks the Full Access grant after cloud readiness and preserves scope validation", async () => {
-    let full = true;
-    const { service, routines, store } = harness(undefined, async () => {
-      full = false;
-      return { ready: true };
-    }, undefined, () => full);
-    const changed = await service.submit({ botId: "bot-a", threadId: "thread-a", proposal: createProposal({ runOn: "cloud" }) });
-    expect(changed.state).toBe("pending");
-    expect(routines.listRoutines()).toHaveLength(0);
-    expect(store.messagesFor("thread-a")[0]?.card?.dismissed).toBeUndefined();
-    full = true;
-    const own = await service.submit({ botId: "bot-a", threadId: "thread-a", proposal: createProposal() });
-    await expect(service.submit({ botId: "bot-b", threadId: "thread-b", proposal: { action: "delete", routineId: own.result!.resultId } }))
-      .rejects.toThrow();
-    expect(routines.listRoutines()).toHaveLength(1);
-    expect(store.messagesFor("thread-b")).toHaveLength(0);
-    await expect(service.submit({ botId: "bot-a", threadId: "thread-a", proposal: createProposal({ instructions: "A different cancelled request." }), canCommit: () => false }))
-      .rejects.toThrow("requesting turn ended");
   });
 
   it("reports a committed Full Access routine even if receipt settlement fails and never runs it twice", async () => {
@@ -880,130 +859,6 @@ describe("RoutineRequestService", () => {
       everyMinutes: 5,
       window: { start: "09:00", end: "09:10" },
     });
-  });
-
-  it("refuses a cloud routine before creating a card when cloud execution is not ready", async () => {
-    const { service, store } = harness(undefined, async () => ({
-      ready: false,
-      reason: "Connect or provision a cloud computer first.",
-    }));
-
-    await expect(service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: createProposal({ runOn: "cloud" }),
-    })).rejects.toThrow(/Connect or provision/);
-    expect(store.messagesFor("thread-a")).toHaveLength(0);
-  });
-
-  it("checks the executing bot for own, teammate and existing cloud routines", async () => {
-    const checked: string[] = [];
-    const { service, routines } = harness(undefined, async botId => {
-      checked.push(botId);
-      return { ready: botId === "bot-a", reason: "Target model unavailable" };
-    });
-    await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: createProposal({ runOn: "cloud" }) });
-    const peerProposal = createProposal({ runOn: "cloud" });
-    if (peerProposal.action !== "create") throw new Error("Expected create");
-    await expect(service.propose({ botId: "bot-a", threadId: "thread-a", proposal: {
-      ...peerProposal, forBot: { botId: "bot-b", name: "Peer" },
-    } })).rejects.toThrow("Target model unavailable");
-    const routine = routines.create({ botId: "bot-a", name: "Owned cloud", prompt: "Work",
-      runOn: "cloud", enabled: false, schedule: { type: "daily", time: "10:00", weekdays: [1] } });
-    await service.propose({ botId: "bot-a", threadId: "thread-a", proposal: { action: "run_now", routineId: routine.id } });
-    expect(checked).toEqual(["bot-a", "bot-b", "bot-a"]);
-  });
-
-  it("checks effective cloud destinations while allowing safe moves away and non-running actions", async () => {
-    let checks = 0;
-    const { service, routines, store } = harness(undefined, async () => {
-      checks += 1;
-      return { ready: false, reason: "Cloud is offline" };
-    });
-    const routine = routines.create({
-      botId: "bot-a",
-      name: "Cloud routine",
-      prompt: "Use the cloud computer",
-      runOn: "cloud",
-      enabled: false,
-      schedule: { type: "daily", time: "10:00", weekdays: [1] },
-    });
-
-    await expect(service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: { action: "update", routineId: routine.id, changes: { name: "Still cloud" } },
-    })).rejects.toThrow(/Cloud is offline/);
-    expect(checks).toBe(1);
-
-    await service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: { action: "update", routineId: routine.id, changes: { runOn: "maus" } },
-    });
-    await service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: { action: "pause", routineId: routine.id },
-    });
-    await service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: { action: "delete", routineId: routine.id },
-    });
-    expect(checks).toBe(1);
-    expect(store.messagesFor("thread-a")).toHaveLength(3);
-  });
-
-  it("does not persist a stale card when a routine changes during cloud readiness", async () => {
-    let mutateDuringCheck = () => {};
-    const { service, routines, store } = harness(undefined, async () => {
-      mutateDuringCheck();
-      return { ready: true };
-    });
-    const routine = routines.create({
-      botId: "bot-a",
-      name: "Cloud routine",
-      prompt: "Original instructions",
-      runOn: "cloud",
-      schedule: { type: "daily", time: "10:00", weekdays: [1] },
-    });
-    mutateDuringCheck = () => {
-      routines.update(routine.id, { prompt: "Changed while checking Cloud" });
-    };
-
-    await expect(service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: { action: "run_now", routineId: routine.id },
-    })).rejects.toThrow(/changed after this confirmation card/);
-    expect(store.messagesFor("thread-a")).toHaveLength(0);
-  });
-
-  it("revalidates conversation ownership after an asynchronous cloud check", async () => {
-    let finishCloudCheck!: (value: { ready: boolean }) => void;
-    const cloudCheck = new Promise<{ ready: boolean }>((resolve) => {
-      finishCloudCheck = resolve;
-    });
-    let ownsConversation = true;
-    const { service, store } = harness(
-      undefined,
-      () => cloudCheck,
-      () => ownsConversation
-        ? { ok: true }
-        : { ok: false, status: 403, error: "source conversation does not belong to sender" },
-    );
-
-    const proposal = service.propose({
-      botId: "bot-a",
-      threadId: "thread-a",
-      proposal: createProposal({ runOn: "cloud" }),
-    });
-    ownsConversation = false;
-    finishCloudCheck({ ready: true });
-
-    await expect(proposal).rejects.toMatchObject({ status: 403 });
-    expect(store.messagesFor("thread-a")).toHaveLength(0);
   });
 
   it("denies without changing the scheduler and claims duplicate answers", async () => {

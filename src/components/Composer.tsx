@@ -25,7 +25,6 @@ import {
 import { BotAvatar } from "./Avatar";
 import { MentionTextarea } from "./MentionTextarea";
 import { ComposerAttachments, pathForFile } from "./ComposerAttachments";
-import { PlaceChip } from "./PlaceChip";
 import {
   appendPastedText,
   handoffAttachmentImagePreview,
@@ -115,7 +114,6 @@ export function Composer({
   const locked = setupLocked || Boolean(bot?.awaitingThreadSnapshot);
   const { state, dispatch } = useStore();
   const { threads, currentBotId } = useThreadRefs();
-  const remoteClient = window.ogb?.remoteClient?.active === true;
   // Unified target: a 1:1 bot thread or a room. In a room the @ picker
   // offers members plus @everyone; explicit mentions override the room's
   // configured default responder.
@@ -131,8 +129,6 @@ export function Composer({
     state.instances.find((i) => i.instanceId === steerInstanceId)?.capabilities?.queueing === true;
   // a pending approval blocks the prompt until it is answered
   const threadId = group?.threadId ?? bot?.threadId ?? "";
-  // The conversation's own place, when pinned; the chip reads it next to the bot default.
-  const composerTask = profile?.tasks?.find((task) => task.threadId === threadId);
   // the VISIBLE branch only — an approval left on a branch you edited away
   // from must not keep blocking the composer
   const approvals = pendingApprovals(group ? group.messages : bot ? visibleMessages(bot) : []);
@@ -484,8 +480,6 @@ export function Composer({
   }, [busy, pendingCount, steering]);
   const fileInput = useRef<HTMLInputElement>(null);
   const [attachmentNotice, setAttachmentNotice] = useState<string | null>(null);
-  // Approval mode belongs to one bot; a room has several, each with its own.
-  const modeBot = group ? undefined : bot;
   const uploadImage = useCallback(async (file: File): Promise<Attachment | null> => {
     const optimistic = optimisticImageAttachment(file);
     if (!optimistic) return null;
@@ -926,15 +920,6 @@ export function Composer({
                   {effectiveChannelMode === "goal" ? "/goal" : t("composer.goal.chip")}
                 </button>
               )}
-              {modeBot && !remoteClient && (
-                <PlaceChip
-                  bot={modeBot}
-                  task={composerTask}
-                  live={Boolean(modeBot.busy)}
-                  disabled={Boolean(modeBot.busy)}
-                  onPin={(surface) => dispatch({ type: "updateTask", botId: modeBot.id, threadId: modeBot.threadId, patch: { surface } })}
-                />
-              )}
             </div>
           )}
           <MentionTextarea
@@ -1057,7 +1042,7 @@ export function Composer({
           <button
             onClick={interruptTurn}
             aria-label={t("chat.stopTurn")}
-            className="flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
+            className="tactile-round-button flex size-8 shrink-0 items-center justify-center rounded-full text-ink-secondary hover:bg-raised hover:text-ink"
             title={t("chat.stop")}
           >
             <Square size={14} className="fill-current" />
@@ -1082,7 +1067,7 @@ export function Composer({
                     : t("chat.send")
             }
             className={cn(
-              "flex size-8 shrink-0 items-center justify-center rounded-full text-white",
+              "tactile-round-button flex size-8 shrink-0 items-center justify-center rounded-full text-white",
               busy && !canSteer
                   ? "bg-raised text-ink-secondary hover:bg-raised-hover"
                   : "bg-accent hover:brightness-110",
