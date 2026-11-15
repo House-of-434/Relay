@@ -4,9 +4,7 @@
 // stay pure prop-takers. This hook is the one place in the bot settings
 // dialog that still reaches into useStore.
 import { useDesktopCapabilities } from "../DesktopCapabilities";
-import { instanceSupportsLocalComputer, localComputerDisabledReason, localComputerSelectable } from "@/lib/local-computer";
 import { stateForBot } from "@/lib/mascot";
-import { placeOffered } from "@/lib/place";
 import { useStore, type Bot } from "@/state/store";
 import { approvalModeFor } from "../../../shared/approval-mode";
 import { connectorGrantsState, type ConnectorGrantsState } from "@/lib/connector-grants";
@@ -19,8 +17,6 @@ export type BotPatch = Partial<
     | "description"
     | "soul"
     | "notifications"
-    | "cloudBackend"
-    | "autoStartVps"
     | "color"
     | "mascotExpression"
     | "mascotBody"
@@ -39,7 +35,6 @@ export type BotPatch = Partial<
     | "modelSelection"
   >
 > & {
-  computer?: Bot["computer"] | null;
   /** null drops the explicit record and returns the bot to the legacy
    * all-tools boolean. */
   connectorTools?: Bot["connectorTools"] | null;
@@ -51,10 +46,6 @@ export type BotPatch = Partial<
 export function useBotSettingsDerived(bot: Bot) {
   const { state, dispatch } = useStore();
   const { capabilities } = useDesktopCapabilities();
-  const providerSupportsLocal = instanceSupportsLocalComputer(state.instances, bot);
-  // An OMB Cloud home never offers this computer (shared/cloud-home.ts).
-  const localSelectable = placeOffered("local", state.config) && localComputerSelectable({ capabilities, providerSupportsLocal });
-  const localDisabledReason = localComputerDisabledReason({ capabilities, providerSupportsLocal });
   const patch = (p: BotPatch) => dispatch({ type: "updateBot", botId: bot.id, patch: p });
   const activeState = stateForBot(bot);
   const mascotMotion = state.mascotMotion?.botId === bot.id ? state.mascotMotion : null;
@@ -67,7 +58,6 @@ export function useBotSettingsDerived(bot: Bot) {
   const trustedModesAvailable = Boolean(window.ogb?.approvals && capabilities.host.packaged);
   const canCoordinate = engine?.capabilities?.agentsMcp === true;
   const canUseConnectedApps = engine?.capabilities?.composioMcp === true;
-  const canUseVps = engine?.capabilities?.computerMcp === true && engine.driverKind !== "boxAgent";
   const connectedAppsConfigured = state.config?.composio?.configured === true;
   const connectedAppsEnabled = bot.composio !== false;
   const connectorGrantState: ConnectorGrantsState = connectorGrantsState(bot);
@@ -87,7 +77,6 @@ export function useBotSettingsDerived(bot: Bot) {
     trustedModesAvailable,
     canCoordinate,
     canUseConnectedApps,
-    canUseVps,
     connectedAppsConfigured,
     connectedAppsEnabled,
     connectorGrantState,
@@ -95,8 +84,6 @@ export function useBotSettingsDerived(bot: Bot) {
     currentChief,
     botRoutines,
     activeBotRoutines,
-    localSelectable,
-    localDisabledReason,
     activeState,
     mascotMotion,
   };

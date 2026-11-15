@@ -10,7 +10,6 @@ import {
   RefreshCw,
   Webhook,
 } from "lucide-react";
-import { WorkingDots } from "@/components/WorkingIndicator";
 import { MessageActions, messageActionClass } from "@/components/MessageActions";
 import { useCaptionChrome } from "@/components/DesktopCapabilities";
 import { contextChip, contextDetail, contextShare, lastTurnDetail, usageDetail } from "@/lib/usage";
@@ -56,7 +55,7 @@ import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { ModelPicker } from "./ModelPicker";
 
-import { effectivePlace, toolPlace, type EffectivePlace } from "@/lib/place";
+import { toolPlace } from "@/lib/place";
 import { cn } from "@/lib/cn";
 import { activeLocale, t } from "@/lib/i18n";
 import { useFocusMessage } from "@/lib/focus-message";
@@ -455,7 +454,7 @@ function PeerLabel({ peer }: { peer: PeerLine }) {
 }
 
 /** A tool run: spinner while live, check/cross once settled. */
-function ActivityChip({ message, place = "auto" }: { message: Message; place?: EffectivePlace }) {
+function ActivityChip({ message }: { message: Message }) {
   const { state, dispatch } = useStore();
   const tool = message.tool;
   if (!tool) return null;
@@ -478,7 +477,7 @@ function ActivityChip({ message, place = "auto" }: { message: Message; place?: E
       </div>
     );
   }
-  return <ToolActivity tool={tool} place={toolPlace(tool.name, place)} />;
+  return <ToolActivity tool={tool} place={toolPlace(tool.name)} />;
 }
 
 /** The settled transcript, memoized as one unit: during streaming every
@@ -543,7 +542,6 @@ const MessagesList = memo(function MessagesList({
     return map;
   }, [items]);
   // Where this conversation works, for the place icon on screen and page tools.
-  const place = effectivePlace(bot, bot.tasks?.find((task) => task.threadId === bot.threadId));
   const newestMessageId = messages.at(-1)?.id;
   // Settlement can append bookkeeping after the failure. Retry still belongs
   // to that final conversational row, including after a Claude update.
@@ -628,7 +626,7 @@ const MessagesList = memo(function MessagesList({
               <ActivityRun messages={item.messages} forceOpen={item.messages.some((step) => step.id === focusedId)}>
                 {item.messages.map((step) => (
                   <div key={step.id} className="contents" data-mid={step.id}>
-                    <ActivityChip message={step} place={place} />
+                    <ActivityChip message={step} />
                   </div>
                 ))}
               </ActivityRun>
@@ -705,7 +703,7 @@ const MessagesList = memo(function MessagesList({
                 );
               }
               if (!showToolCalls && !m.comm && !m.threadRef) return null;
-              return <ActivityChip message={m} place={place} />;
+              return <ActivityChip message={m} />;
             }
             case "digest":
               // the summary of the turn's tool chips: shown under the same setting
@@ -767,7 +765,6 @@ export function ChatView({ bot: profile }: {
   const stream = useStreaming();
   const streaming = stream.streaming[bot.threadId];
   const reasoning = stream.reasoning[bot.threadId];
-  const provisioning = state.provisioning[bot.id];
   const { replyTo, selectReply, clearReply, consumeReply, restoreReply } = useReplyDraft(
     bot.threadId,
     `bot:${bot.id}:${bot.threadId}`,
@@ -1247,14 +1244,7 @@ export function ChatView({ bot: profile }: {
               </button>
             </div>
           )}
-          {provisioning && (
-            <div className="flex justify-start">
-              <div className="flex items-center gap-2 rounded-full border border-hairline/40 bg-panel px-3 py-1.5 text-[13px] text-ink-secondary">
-                <WorkingDots size={3.5} />
-                {t("chat.provisioning")}
-              </div>
-            </div>
-          )}
+
           <StreamingBubble threadId={bot.threadId} text={streaming} reasoning={reasoning} />
           <TurnPresence
             avatar={

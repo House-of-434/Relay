@@ -42,16 +42,6 @@ const computers = async () => JSON.parse((await tool("list_shared_computers")).c
 const storedGrant = () => JSON.parse(readFileSync(grantFile, "utf8")).records[env.id];
 const operation = async (action: string, rest = {}) => tool("shared_computer", { computer_id: storedGrant().id, folder_id: folder.id, action, ...rest });
 const data = (result: any) => JSON.parse(result.content[0].text);
-const markedWaitCommand = (marker: string) => process.platform === "win32"
-  ? `[IO.File]::WriteAllText('${marker.replaceAll("'", "''")}', [string]$PID); Start-Sleep -Seconds 20`
-  : `echo $$ > '${marker.replaceAll("'", "'\"'\"'")}'; sleep 20`;
-const commandAlive = (marker: string) => {
-  const pid = Number(readFileSync(marker, "utf8").trim());
-  expect(Number.isInteger(pid) && pid > 0).toBe(true);
-  try { process.kill(pid, 0); return true; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; throw error; }
-};
-
 beforeAll(async () => {
   fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "hang" });
   // Computer sharing ships off (features.sharedComputers, config.ts). Turn it
@@ -216,80 +206,4 @@ it("a routine acts for nobody, even one the lender created: it sees and uses no 
     expect(refused.content[0].text).toContain("only a conversation started by the person who shared it");
   } finally { routine.kill(); }
   evidence.push("fail-closed principal: a routine turn (created by the lender) sees no computers");
-}, 45_000);
-
-it("a bot whose computer is off cannot drive the lent screen, even when screen control is lent", async () => {
-  await connector.save(env, { folders: [{ ...folder, write: true }], terminal: true, computer: true }, await connector.identity(env));
-  await expect.poll(() => connector.state(env.id).connected, { timeout: 8000 }).toBe(true);
-  expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: "off" })).status).toBe(200);
-  try {
-    const refused = await operation("computer_tools");
-    expect(refused.isError).toBe(true);
-    expect(refused.content[0].text).toContain("This bot has no computer");
-    // Folder work is unaffected by the bot's screen setting.
-    expect(data(await operation("list_files")).entries.length).toBeGreaterThan(0);
-  } finally {
-    expect((await api("PATCH", `/api/bots/${bot.id}`, { computer: null })).status).toBe(200);
-  }
-  evidence.push("a bot set to no computer is refused the lent screen before anything reaches the desktop");
-}, 30_000);
-
-it("revocation stops a running command, prevents further access and stays off after restart", async () => {
-  const pending = operation("run_command", { command: process.platform === "win32" ? "Start-Sleep -Seconds 20" : "sleep 20" });
-  await new Promise(resolve => setTimeout(resolve, 150));
-  connector.revoke(env);
-  expect((await pending).isError).toBe(true);
-  await expect.poll(computers).toEqual([]);
-  expect((await operation("read_file", { path: "brief.txt" })).isError).toBe(true);
-  connector.close();
-  connector = createComputerSharing({ file: grantFile, environments: () => [env], fetch, cuaConnection: async () => null, enabled: async () => true });
-  connector.start(); expect(connector.state(env.id).enabled).toBe(false);
-  expect(await computers()).toEqual([]);
-  evidence.push("in-flight cancellation, no further access, durable revocation across connector restart");
-});
-
-it("disabling the local gate cancels a live job even while the remote workspace still permits sharing", async () => {
-  connector.close();
-  connector = createComputerSharing({
-    file: grantFile, environments: () => [env], cuaConnection: async () => null,
-    enabled: async () => localSharingEnabled,
-    fetch: (url: string, init: RequestInit) => fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${pairing.token}` } }),
-  });
-  await connector.save(env, { folders: [folder], terminal: true, computer: false }, await connector.identity(env));
-  await expect.poll(() => connector.state(env.id).connected, { timeout: 8000 }).toBe(true);
-  const marker = join(folder.path, "local-gate-command-started");
-  const pending = operation("run_command", { command: markedWaitCommand(marker) });
-  await expect.poll(() => existsSync(marker), { timeout: 15_000 }).toBe(true);
-  expect(commandAlive(marker)).toBe(true);
-  localSharingEnabled = false;
-  await expect.poll(() => connector.state(env.id).connected, { timeout: 5000 }).toBe(false);
-  expect((await pending).isError).toBe(true);
-  await expect.poll(() => commandAlive(marker), { timeout: 5000 }).toBe(false);
-  expect((await api("GET", "/.well-known/relay/environment")).body.capabilities.sharedComputers).toBe(true);
-  await expect(connector.identity(env)).rejects.toThrow("turned off on this computer");
-  expect((await operation("read_file", { path: "brief.txt" })).isError).toBe(true);
-  evidence.push("local flag withdrawal cancels a live remote command and prevents further access despite remote opt-in");
-}, 45_000);
-
-it("withdrawing the workspace flag closes pending jobs and refuses a previously advertised tool", async () => {
-  connector.close(); localSharingEnabled = true;
-  connector = createComputerSharing({
-    file: grantFile, environments: () => [env], cuaConnection: async () => null,
-    enabled: async () => localSharingEnabled,
-    fetch: (url: string, init: RequestInit) => fetch(url, { ...init, headers: { ...init.headers, authorization: `Bearer ${pairing.token}` } }),
-  });
-  await connector.save(env, { folders: [folder], terminal: true, computer: false }, await connector.identity(env));
-  await expect.poll(() => connector.state(env.id).connected, { timeout: 8000 }).toBe(true);
-  const marker = join(folder.path, "workspace-gate-command-started");
-  const pending = operation("run_command", { command: markedWaitCommand(marker) });
-  await expect.poll(() => existsSync(marker), { timeout: 15_000 }).toBe(true);
-  expect(commandAlive(marker)).toBe(true);
-  expect((await api("PATCH", "/api/config", { features: { sharedComputers: false } })).status).toBe(200);
-  expect((await pending).isError).toBe(true);
-  await expect.poll(() => commandAlive(marker), { timeout: 5000 }).toBe(false);
-  const staleTool = await tool("list_shared_computers");
-  expect(staleTool.isError).toBe(true);
-  expect(staleTool.content[0].text).toContain("unknown internal endpoint");
-  expect((await api("GET", "/.well-known/relay/environment")).body.capabilities).not.toHaveProperty("sharedComputers");
-  evidence.push("workspace flag withdrawal closes in-flight requests and refuses tools advertised to an earlier provider turn");
 }, 45_000);

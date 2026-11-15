@@ -122,7 +122,7 @@ export function createTeamBackup(store: Store, routines: Routine[], name: string
     groups,
     routines: validRoutines.map((routine) => ({
       name: routine.name, prompt: routine.prompt, target: routine.target, botId: routine.botId,
-      groupId: routine.groupId, runOn: routine.runOn, schedule: routine.schedule,
+      groupId: routine.groupId, schedule: routine.schedule,
       durationMinutes: routine.durationMinutes, timeoutMinutes: routine.timeoutMinutes,
     })),
   });
@@ -184,7 +184,7 @@ export function importTeamBackup(store: Store, routines: RoutineManager, input: 
       }, { seedMessages: false, ownerUserId: options.ownerUserId });
       bots.push(bot);
       botIds.set(source.key, bot.id);
-      store.patchBot(bot.id, { composio: false, computer: "off", approvalMode: "ask", autoApprove: false,
+      store.patchBot(bot.id, { composio: false, approvalMode: "ask", autoApprove: false,
         connectorTools: {}, hidden: source.hidden, chiefOfStaff: source.chiefOfStaff, playbooks: source.playbooks });
       if (source.memory) restoreMemory(bot.id, source.memory);
     }

@@ -383,9 +383,6 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
   if (parentEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE) {
     childEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE = parentEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE;
   }
-  if (parentEnv.RELAY_DISABLE_COMPUTER !== undefined) {
-    childEnv.RELAY_DISABLE_COMPUTER = parentEnv.RELAY_DISABLE_COMPUTER;
-  }
   if (parentEnv.RELAY_TOOL_URL) childEnv.RELAY_TOOL_URL = parentEnv.RELAY_TOOL_URL;
   // The fixture signs owner assertions with a fixed test secret, the way a
   // deployment signs with RELAY_TOOL_ACTOR_SECRET.

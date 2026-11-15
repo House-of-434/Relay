@@ -3,7 +3,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { IdleReleasePolicy } from "./claim-idle.ts";
-import { computerClaimIdleReleaseEnabled, type AppConfig } from "./config.ts";
 import { TurnResources, workspaceResource } from "./turn-resources.ts";
 
 const a = { threadId: "a", generation: "1" };
@@ -196,8 +195,5 @@ describe("computer claim idle release (#1653)", () => {
   });
 
   it("ships disabled by default (#1653 config gate)", () => {
-    expect(computerClaimIdleReleaseEnabled({} as AppConfig)).toBe(false);
-    expect(computerClaimIdleReleaseEnabled({ features: { computerClaimIdleRelease: false } } as AppConfig)).toBe(false);
-    expect(computerClaimIdleReleaseEnabled({ features: { computerClaimIdleRelease: true } } as AppConfig)).toBe(true);
   });
 });

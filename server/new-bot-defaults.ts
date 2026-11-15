@@ -25,7 +25,6 @@ export const botDefaultsProfileSchema = profilePatchSchema.extend({
   color: z.enum(["green", "blue", "red", "orange", "purple", "cyan", "pink", "yellow", "teal", "coral"]).optional(),
   mascotExpression: z.string().max(60).nullable().optional(),
   modelSelection: botDefaultModelSchema.optional(),
-  autoStartVps: z.boolean().optional(),
   cwd: z.string().max(4096).nullable().optional(),
   approvalMode: z.enum(["ask", "auto", "full", "custom"]).optional(),
   alwaysAllow: strings(200, 500).optional(),
@@ -63,7 +62,6 @@ const scheduleSchema = z.discriminatedUnion("type", [
 export const botRoutineTemplateSchema = z.object({
   name: z.string().trim().min(1).max(80), prompt: z.string().trim().min(1).max(20_000),
   schedule: scheduleSchema, enabled: z.boolean().optional(),
-  runOn: z.enum(["maus", "cloud"]).optional(),
   durationMinutes: z.number().int().min(5).max(240).optional(),
   timeoutMinutes: z.number().min(1).max(1440).nullable().optional(),
   overlap: z.enum(["skip", "queue"]).optional(),

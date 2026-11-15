@@ -1,5 +1,5 @@
 // Config + data dirs. One file, ~/.relay/config.json, env fallbacks:
-//   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"}, "box": {"token":"…"},
+//   { "xai": {"key":"xai-…"}, "composio": {"apiKey":"ak_…"},
 //     "instances": { "<instanceId>": {"driver":"grok", …} } }
 import { readFileSync, mkdirSync, existsSync, renameSync } from "node:fs";
 import { homedir } from "node:os";
@@ -13,10 +13,8 @@ import { EFFORT_LEVELS, type EffortLevel } from "../shared/wire.ts";
 import { isModelVariant, type InstanceConfigMap, type ModelSelection } from "./contracts.ts";
 import { PROVIDER_ICON_PRESETS, providerIconError } from "../shared/provider-icon.ts";
 import { parseJson, schemaIssue, type JsonObject, type JsonValue } from "./schema.ts";
-import { CLOUD_SEAT_IDLE_STOP_MS } from "./cloud-overflow.ts";
 
 const optionalText = z.string().optional();
-const SSH_ALIAS = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$/;
 
 export const DEFAULT_ROOM_TURN_TIMEOUT_MINUTES = 5;
 export const MIN_ROOM_TURN_TIMEOUT_MINUTES = 1;
@@ -31,34 +29,6 @@ export const MAX_CONCURRENT_BOT_THREADS = 10;
  * ceiling just rejects absurd hand edits. */
 export const MIN_THREAD_EVENT_LOG_BYTES = 256 * 1024;
 export const MAX_THREAD_EVENT_LOG_BYTES = 4 * 1024 * 1024 * 1024;
-export const DEFAULT_LOCAL_VM_MODE = "shared" as const;
-export const DEFAULT_LOCAL_VM_MAX_INSTANCES = 2;
-export const MIN_LOCAL_VM_MAX_INSTANCES = 1;
-export const MAX_LOCAL_VM_MAX_INSTANCES = 8;
-
-export function isValidSshAlias(value: unknown): value is string {
-  return typeof value === "string" && SSH_ALIAS.test(value);
-}
-
-/** Keep the persisted VPS shape deliberately smaller than an SSH connection. */
-export function normalizeVpsConfig(raw: unknown): { sshAlias?: string } {
-  if (raw === undefined || raw === null) return {};
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
-    throw new Error("vps must be an object containing an SSH config alias");
-  }
-  const alias = (raw as Record<string, unknown>).sshAlias;
-  if (alias === undefined || alias === "") return {};
-  if (!isValidSshAlias(alias)) {
-    throw new Error("vps.sshAlias must be a simple SSH config alias (letters, numbers, dot, dash, or underscore)");
-  }
-  return { sshAlias: alias };
-}
-
-const vpsConfigSchema = z.object({
-  sshAlias: z.string().refine((value) => value === "" || isValidSshAlias(value), {
-    message: "must be a simple SSH config alias",
-  }).optional(),
-});
 const roomConfigSchema = z.object({
   turnTimeoutMinutes: z
     .number()
@@ -79,22 +49,6 @@ const roomConfigSchema = z.object({
       (rooms.handoffHardCapMinutes ?? DEFAULT_ROOM_HANDOFF_HARD_CAP_MINUTES),
   { message: "rooms handoff bounds must satisfy handoffMinRunwayMinutes <= handoffLifetimeMinutes <= handoffHardCapMinutes" },
 );
-/** Isolation for bot desktops. Migration note (issue #1654): switching
- * modes changes lease keys and vm-home directories, so desktops cold-start
- * under the new mode — a pool seat lives in vm-homes/pool-N — while the old
- * mode's workspaces stay on disk until removed. maxInstances caps per-bot
- * desktops in per-bot mode, or the pool's seat count in pool mode; it is
- * not a total across modes. Default stays "shared". */
-const localVmConfigSchema = z.object({
-  mode: z.enum(["shared", "per-bot", "pool"]).optional(),
-  maxInstances: z
-    .number()
-    .int()
-    .min(MIN_LOCAL_VM_MAX_INSTANCES)
-    .max(MAX_LOCAL_VM_MAX_INSTANCES)
-    .optional(),
-});
-
 
 // Deliberately non-strict: an unknown flag (such as `skillRecorder`, the
 // pre-rename name a stale client may still PATCH) is dropped as a no-op
@@ -126,17 +80,6 @@ const featureConfigSchema = z.object({
    * conversations that share words with the message ride into the turn.
    * Read-only; on unless explicitly switched off — see autoRecallEnabled. */
   autoRecall: z.boolean().optional(),
-  /** Idle release for computer claims (#1653): a desktop seat that stays
-   * screen-quiet for 90 seconds is released to waiting turns while its
-   * holder's turn still lives; the previous holder re-claims directly
-   * for 10 minutes and yields to an occupied seat. Off until baked; see
-   * computerClaimIdleReleaseEnabled for how to enable it by hand. */
-  computerClaimIdleRelease: z.boolean().optional(),
-  /** Consented cloud overflow for local computer waits (#1655): a wait
-   * may offer a per-second-billed cloud seat, but only through an explicit
-   * consent card or a configured allowlist — never a silent Auto default.
-   * Off until baked; see cloudOverflowEnabled for how to enable it by hand. */
-  cloudOverflow: z.boolean().optional(),
 });
 /** First-run progress. Kept in the workspace config rather than a browser so
  * it survives cleared site data and is shared by every paired client. Hint
@@ -260,10 +203,6 @@ const appConfigSchema = z.object({
   /** Project key used for Sessions, catalog and agent tools. userId/sessionId
    * are non-secret local identifiers used to reuse one Composio Session. */
   composio: z.object({ apiKey: optionalText, userId: optionalText, sessionId: optionalText }).optional(),
-  /** Historical config section name "box" (the persisted config.json key); the
-   * provider is Boat now and the key is kept for compatibility. */
-  box: z.object({ token: optionalText }).optional(),
-  vps: vpsConfigSchema.optional(),
   /** Optional OpenCode key; persisted write-only and passed only to its child. */
   opencodeGo: z.object({ apiKey: optionalText }).optional(),
   /** The decision model (server/decider): a fast classifier that picks
@@ -323,16 +262,6 @@ const appConfigSchema = z.object({
   /** The authorization decision log (server/decision-log.ts): days of month
    * files kept, at least; RELAY_DECISION_RETENTION_DAYS wins when set. */
   decisions: z.object({ retentionDays: z.number().int().min(1).max(3650).optional() }).strict().optional(),
-  /** #1655 cloud-overflow settings. perSecondCostUsd is the operator's own
-   * verified rate: with no price configured the feature stays inert rather
-   * than show an invented one. allowlistedThreads carries standing consent
-   * for exact thread ids. */
-  cloudOverflow: z.object({
-    perSecondCostUsd: z.number().positive().max(10).optional(),
-    idleStopMs: z.number().int().positive().max(24 * 60 * 60_000).optional(),
-    allowlistedThreads: z.array(z.string().min(1)).max(1000).optional(),
-  }).strict().optional(),
-  localVm: localVmConfigSchema.optional(),
   features: featureConfigSchema.optional(),
   onboarding: onboardingConfigSchema.optional(),
   instances: instanceConfigMapSchema.optional(),
@@ -373,10 +302,6 @@ export interface AppConfig {
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   openaiCompat?: { key?: string; url?: string; model?: string; provider?: string };
   composio?: { apiKey?: string; userId?: string; sessionId?: string };
-  /** Persisted under the historical config key "box" (ascii.dev renamed Box to Boat). */
-  box?: { token?: string };
-  /** A named host from the user's SSH config. Authentication stays with SSH. */
-  vps?: { sshAlias?: string };
   opencodeGo?: { apiKey?: string };
   /** The decision model; see the schema above and server/decider. */
   decider?: { enabled?: boolean; provider?: "jev" | "off"; key?: string; baseUrl?: string; jobs?: { roomRouting?: boolean } };
@@ -386,15 +311,8 @@ export interface AppConfig {
   threads?: { maxConcurrentPerBot: number; eventLogMaxBytes?: number; eventLogRetentionDays?: number };
   context?: { rebuildBytes?: number; compactAt?: number; autoCompact?: boolean };
   memory?: { captureQuietMs?: number; tidyHour?: number };
-  /** Shared preserves the historical singleton. Per-bot gives every bot a
-   * separate container, durable workspace, viewer and lease. Pool runs N
-   * seats shared by all conversations, with per-thread affinity (#1654). */
-  localVm?: { mode?: "shared" | "per-bot" | "pool"; maxInstances?: number };
   /** Opt-in product experiments. Every flag defaults to disabled. */
-  features?: { skillAuthoring?: boolean; showToolCalls?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean; llmThreadTitles?: boolean; autoRecall?: boolean; computerClaimIdleRelease?: boolean; cloudOverflow?: boolean; routinesInConversation?: boolean };
-  /** #1655: consented cloud overflow for local computer waits. The cost is
-   * the operator's own per-second rate; unset keeps the feature inert. */
-  cloudOverflow?: { perSecondCostUsd?: number; idleStopMs?: number; allowlistedThreads?: string[] };
+  features?: { skillAuthoring?: boolean; showToolCalls?: boolean; sharedComputers?: boolean; claudeUserMcp?: boolean; llmThreadTitles?: boolean; autoRecall?: boolean; routinesInConversation?: boolean };
   /** First-run progress; see onboardingConfigSchema. */
   onboarding?: { completedAt?: string; version?: number; reelSeen?: boolean; hintsSeen?: string[]; firstTurnAt?: string };
   instances?: InstanceConfigMap;
@@ -413,10 +331,6 @@ export function parseConfigPatch(value: JsonValue): ConfigPatch {
     throw Object.assign(new Error(schemaIssue(parsed.error, "Invalid configuration")), { status: 400 });
   }
   return parsed.data;
-}
-
-export function vpsSshAlias(cfg: AppConfig): string | null {
-  return isValidSshAlias(cfg.vps?.sshAlias) ? cfg.vps.sshAlias : null;
 }
 
 export function roomTurnTimeoutMinutes(cfg: AppConfig): number {
@@ -459,14 +373,6 @@ export function threadEventLogMaxBytes(cfg: AppConfig): number | null {
  * forever. */
 export function threadEventLogRetentionDays(cfg: AppConfig): number | null {
   return cfg.threads?.eventLogRetentionDays ?? null;
-}
-
-export function localVmMode(cfg: AppConfig): "shared" | "per-bot" | "pool" {
-  return cfg.localVm?.mode ?? DEFAULT_LOCAL_VM_MODE;
-}
-
-export function localVmMaxInstances(cfg: AppConfig): number {
-  return cfg.localVm?.maxInstances ?? DEFAULT_LOCAL_VM_MAX_INSTANCES;
 }
 
 /** On by default; only an explicit `false` (the Settings toggle, or a legacy
@@ -523,48 +429,6 @@ export function llmThreadTitlesEnabled(cfg: AppConfig): boolean {
   return cfg.features?.llmThreadTitles === true;
 }
 
-/** Idle release for computer claims (#1653): a whole-turn desktop hold
- * ends after a screen-quiet window (default 90 seconds, screen-poller
- * frames excluded) instead of at turn settle, and the previous holder
- * re-claims directly inside a reclaim window (default 10 minutes) while
- * yielding to a seat another turn already holds. Off unless an explicit
- * `true` — bake it as a maintainer-only flag first, exactly like
- * sharedComputers: enable by hand in ~/.relay/config.json
- * (`{"features": {"computerClaimIdleRelease": true}}`) and restart. */
-export function computerClaimIdleReleaseEnabled(cfg: AppConfig): boolean {
-  return cfg.features?.computerClaimIdleRelease === true;
-}
-
-/** Consented cloud overflow for local computer waits (#1655): while a turn
- * waits for a local desktop, it may offer overflow to a per-second-billed
- * cloud seat — never silently: the card names the cost, and only an
- * explicit per-conversation consent or a configured allowlist thread may
- * start the machine, which then hard-stops after an idle window. Off
- * unless an explicit `true`, like computerClaimIdleRelease: enable by
- * hand in ~/.relay/config.json
- * (`{"features": {"cloudOverflow": true}, "cloudOverflow": {"perSecondCostUsd": 0.0004}}`)
- * and restart. */
-export function cloudOverflowEnabled(cfg: AppConfig): boolean {
-  return cfg.features?.cloudOverflow === true;
-}
-
-/** The per-second rate shown on the card, or null when the operator has
- * not set one: the offer fails closed rather than guess a price. */
-export function cloudOverflowPerSecondCostUsd(cfg: AppConfig): number | null {
-  const cost = cfg.cloudOverflow?.perSecondCostUsd;
-  return typeof cost === "number" && Number.isFinite(cost) && cost > 0 ? cost : null;
-}
-
-/** How long a cloud seat may stay screen-quiet before it is stopped. */
-export function cloudOverflowIdleStopMs(cfg: AppConfig): number {
-  return cfg.cloudOverflow?.idleStopMs ?? CLOUD_SEAT_IDLE_STOP_MS;
-}
-
-/** Threads with standing consent, by exact thread id. */
-export function cloudOverflowAllowlistedThreads(cfg: AppConfig): Set<string> {
-  return new Set(cfg.cloudOverflow?.allowlistedThreads ?? []);
-}
-
 /** Config sections no provider driver reads. A write that touches only
  * these must not rebuild the fleet: rebuilding disposes every engine child
  * and reloads it, seconds of work that would also interrupt in-flight
@@ -576,15 +440,12 @@ export const FLEET_NEUTRAL_KEYS: ReadonlySet<string> = new Set([
   // no engine reads it: the harness asks it before a turn starts
   "decider",
   "imageGen",
-  "vps",
   "rooms",
   "threads",
   "automaticRecovery",
   "context",
   "memory",
-  "localVm",
   "features",
-  "cloudOverflow",
   "onboarding",
 ]);
 
@@ -693,9 +554,6 @@ export function loadConfig(): AppConfig {
   if (process.env.OPENAI_COMPAT_PROVIDER !== undefined) cfg.openaiCompat.provider = process.env.OPENAI_COMPAT_PROVIDER;
   cfg.composio = { ...cfg.composio };
   if (process.env.COMPOSIO_API_KEY !== undefined) cfg.composio.apiKey = process.env.COMPOSIO_API_KEY;
-  // BOX_TOKEN keeps its historical name; the provider is Boat.
-  cfg.box = { ...cfg.box };
-  if (process.env.BOX_TOKEN !== undefined) cfg.box.token = process.env.BOX_TOKEN;
   cfg.opencodeGo = { ...cfg.opencodeGo };
   if (process.env.OPENCODE_API_KEY !== undefined) cfg.opencodeGo.apiKey = process.env.OPENCODE_API_KEY;
   cfg.decider = { ...cfg.decider };
@@ -742,7 +600,6 @@ export function syncCredentialEnv(patch: Partial<Omit<AppConfig, "threads" | "ne
     [patch.anthropic?.key, "RELAY_ANTHROPIC_API_KEY"],
     [patch.openaiCompat?.key, "OPENAI_COMPAT_API_KEY"],
     [patch.composio?.apiKey, "COMPOSIO_API_KEY"],
-    [patch.box?.token, "BOX_TOKEN"],
     [patch.opencodeGo?.apiKey, "OPENCODE_API_KEY"],
     [patch.decider?.key, "RELAY_JEV_API_KEY"],
     [patch.imageGen?.key, "RELAY_OPENAI_IMAGE_KEY"],
@@ -782,17 +639,15 @@ export const WORKSPACE_CREDENTIAL_ENV = [
   "RELAY_HOSTED_MODELS",
   "OPENAI_COMPAT_API_KEY",
   "OPENAI_COMPAT_URL",
-  "BOX_TOKEN",
   "OPENCODE_API_KEY",
   "RELAY_JEV_API_KEY",
   "RELAY_OPENAI_IMAGE_KEY",
   "RELAY_CUSTOM_IMAGE_KEY",
   "COMPOSIO_API_KEY",
   "RELAY_COMPOSIO_BROKER_TOKEN",
-  // Cloud Pro's included Boat, voice and decision relay tokens
-  // (included-services.ts), used only in-process by the Boat, voice and
-  // decider modules.
-  "RELAY_CLOUD_BOAT_TOKEN",
+  // Cloud Pro's included voice and decision relay tokens
+  // (included-services.ts), used only in-process by the voice and decider
+  // modules.
   "RELAY_CLOUD_VOICE_TOKEN",
   "RELAY_CLOUD_DECIDER_TOKEN",
   // Harness-private filesystem hints are not credentials themselves, but
@@ -880,7 +735,7 @@ export function saveConfig(
   }
   const checkedPatch = appConfigSchema.partial().extend({ threads: threadsPatchSchema.optional(), newBots: newBotsPatchSchema.optional() }).parse(patch);
   const before = configSaveListeners.size ? structuredClone(disk) : disk;
-  for (const key of ["xai", "anthropic", "mistral", "openaiCompat", "composio", "box", "opencodeGo", "decider", "imageGen", "profile", "rooms", "threads", "context", "memory", "localVm", "features", "cloudOverflow", "budgets", "billing", "decisions", "onboarding", "newBots"] as const) {
+  for (const key of ["xai", "anthropic", "mistral", "openaiCompat", "composio", "opencodeGo", "decider", "imageGen", "profile", "rooms", "threads", "context", "memory", "features", "budgets", "billing", "decisions", "onboarding", "newBots"] as const) {
     const section = checkedPatch[key];
     if (!section) continue;
     const current = jsonObjectSchema.safeParse(disk[key]);
@@ -898,7 +753,6 @@ export function saveConfig(
     }
     disk[key] = merged;
   }
-  if (checkedPatch.vps !== undefined) disk.vps = normalizeVpsConfig(checkedPatch.vps);
   // scalar, not a section: the merge loop above only walks objects
   if (checkedPatch.language !== undefined) disk.language = checkedPatch.language;
   if (checkedPatch.customDomain !== undefined) disk.customDomain = checkedPatch.customDomain;
@@ -987,7 +841,7 @@ export function saveConfig(
  * PERSISTABLE: instanceConfigs() injects credential env into consuming
  * drivers' entries for the live fleet, so only their originally configured
  * environment is retained — otherwise saving an override would
- * copy xai/box/opencodeGo secrets into the instances section of
+ * copy xai/opencodeGo secrets into the instances section of
  * config.json. */
 export function withInstanceCli(
   cfg: AppConfig,
@@ -1038,8 +892,7 @@ interface InstanceCliUpdate {
 
 /** The credential env instanceConfigs() injects for one driver at runtime.
  * Each secret goes only to the driver that actually reads it: the API-key
- * Grok driver reads XAI_API_KEY, the Computer driver reads BOX_TOKEN, and
- * OpenCode reads OPENCODE_API_KEY. Every other engine brings its own
+ * Grok driver reads XAI_API_KEY, and OpenCode reads OPENCODE_API_KEY. Every other engine brings its own
  * login, so handing it a key it never uses would only put that key in the
  * environment of an unrelated child process. */
 function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string> {
@@ -1055,10 +908,6 @@ function injectedEnvironment(cfg: AppConfig, driver: string): Map<string, string
     environment.set("OPENAI_COMPAT_API_KEY", cfg.openaiCompat.key);
   if (driver === "openai-compat" && cfg.openaiCompat?.url)
     environment.set("OPENAI_COMPAT_URL", cfg.openaiCompat.url);
-  // driverKind "boxAgent" and env BOX_TOKEN keep their historical names.
-  // Only the person's own token: without one the driver itself falls back
-  // to Cloud Pro's included token, which never enters an environment map.
-  if (driver === "boxAgent" && cfg.box?.token) environment.set("BOX_TOKEN", cfg.box.token);
   if (driver === "opencodeGo" && cfg.opencodeGo?.apiKey) environment.set("OPENCODE_API_KEY", cfg.opencodeGo.apiKey);
   return environment;
 }
@@ -1093,7 +942,6 @@ export function instanceConfigs(cfg: AppConfig): InstanceConfigMap {
     chatgpt: { driver: "codex", displayName: "ChatGPT plan", config: { authMode: "chatgpt-plan" } },
     antigravity: { driver: "antigravityAgent" },
     opencodeGo: { driver: "opencodeGo" },
-    computer: { driver: "boxAgent" },
     openaiCompat: { driver: "openai-compat" },
     mistral: { driver: "mistral" },
     qwen: { driver: "qwenAgent" },

@@ -434,21 +434,6 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   const { botId: BOT_ID, threadId: THREAD_ID, depth: DEPTH, externalRuntime: EXTERNAL_RUNTIME, coordinating: COORDINATING, turn } = context;
   const { delegationTaskIdsThisTurn } = turn;
   const { api, apiResponse } = context.client;
-  if (name === "vm_exec") {
-    const { ok, body } = await apiResponse("/api/internal/vm-exec", {
-      method: "POST",
-      body: JSON.stringify({ command: args.command, ...(typeof args.timeout_seconds === "number" ? { timeout_seconds: args.timeout_seconds } : {}) }),
-    });
-    if (!ok) return { text: String(body.error ?? "Could not run that command."), isError: true };
-    const exitCode = Number(body.exitCode ?? 0);
-    const stdout = String(body.stdout ?? "");
-    const stderr = String(body.stderr ?? "");
-    const lines = [body.timedOut ? "The command was stopped: it ran past its time limit." : `exit code ${exitCode}`];
-    if (stdout) lines.push("--- stdout ---", stdout.replace(/\s+$/, ""));
-    if (stderr) lines.push("--- stderr ---", stderr.replace(/\s+$/, ""));
-    if (!stdout && !stderr && !body.timedOut) lines.push("(no output)");
-    return { text: lines.join("\n"), ...(exitCode !== 0 || body.timedOut ? { isError: true } : {}) };
-  }
   if (name === "list_files") {
     const threadId = typeof args.thread_id === "string" ? args.thread_id.trim() : "";
     const query = new URLSearchParams({ fromBotId: BOT_ID, fromThreadId: THREAD_ID });

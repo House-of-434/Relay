@@ -304,29 +304,6 @@
       }
     },
     {
-      "name": "vm_exec",
-      "description": "Run a shell command inside your own Local VM (as the desktop user, starting in /home/cua/workspace) and get its exit code, stdout and stderr back as text. Use this for all command-line work in the VM: pip install --user, running a script, generating or converting a file, checking that a file exists. Do not type commands into a terminal window and read screenshots: that is slow and unreliable. GUI programs you start appear on the VM desktop. For a long job raise timeout_seconds (default 60, at most 300). Only available while you have a Local VM desktop.",
-      "inputSchema": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "command": {
-            "type": "string",
-            "description": "The shell command to run, for example: python3 make_report.py && ls -l report.pdf"
-          },
-          "timeout_seconds": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 300,
-            "description": "How long it may run before it is stopped. Default 60."
-          }
-        },
-        "required": [
-          "command"
-        ]
-      }
-    },
-    {
       "name": "list_files",
       "description": "List the files in this conversation's Relay folder. Returns each file's id, name, size and modified time. Use a file id with attach_file to share a file in chat, or with fetch_file when you need to read or run it. This is a read: it starts nothing and changes nothing. Files in a custom working folder or a Local VM are not listed here.",
       "inputSchema": {

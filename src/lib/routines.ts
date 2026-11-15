@@ -6,7 +6,6 @@ export type {
   RoutineIntervalWindow,
   RoutineSchedule,
   RoutineScheduleInput,
-  RoutineRunOn,
   RoutineTarget,
   RoutineGoalStatus,
   RoutineContextAttachment,

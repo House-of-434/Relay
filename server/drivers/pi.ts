@@ -126,17 +126,6 @@ export function piThinkingLevel(effort: EffortLevel): (typeof EFFORT_LEVELS)[num
 export function buildMcpServers(turn: SendTurnInput): Record<string, unknown> | null {
   const servers: Record<string, unknown> = {};
   if (turn.integrations?.composio) servers.composio = { ...turn.integrations.composio };
-  if (turn.integrations?.localComputer) {
-    const local = turn.integrations.localComputer;
-    servers.computer = {
-      command: local.command,
-      args: local.args,
-      env: local.env,
-      // Host control carries scope so the extension gates every call behind
-      // a permission card; isolated computers deliberately omit it.
-      ...(local.scope ? { scope: local.scope } : {}),
-    };
-  }
   if (turn.integrations?.agents) servers.agents = { ...turn.integrations.agents };
   if (turn.integrations?.phone) servers.phone = { ...turn.integrations.phone };
   if (turn.integrations?.dweb) {
@@ -531,16 +520,6 @@ export const PiDriver: ProviderDriver<PiConfig> = {
     const sendTurn = async (turn: SendTurnInput) => {
       const { threadId } = turn;
       if (active.has(threadId)) throw new Error("a turn is already running on this thread");
-      // Per-bot Ask/Auto is authoritative for harness turns. Preserve the
-      // legacy instance flag only for direct adapter callers that omit it.
-      const fullAuto = turn.approvalMode === undefined ? config.fullAuto : false;
-      // Host control always routes through the permission card; full-auto must
-      // never get unapproved hands on the user's machine (same guard as the
-      // Claude and ACP drivers).
-      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
-      if (controlsHost && fullAuto) {
-        throw new Error("local computer control requires the interactive approval broker");
-      }
       const turnId = newId();
       const pending = new Map<string, (decision: { behavior: "allow" | "deny" | "answer"; message?: string }) => void>();
       // Ask fail-safe timers, tracked so settle() can cancel them outright:
@@ -1174,14 +1153,8 @@ export const PiDriver: ProviderDriver<PiConfig> = {
           // Integrations arrive as stdio MCP servers mounted by the
           // pi-mcp-extension (pi core has no MCP client of its own).
           agentsMcp: true,
-          computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
-          // Host control (the user's real Mac) rides the pi-native permission
-          // card (`ctx.ui.confirm` → extension_ui_request) gated in the
-          // extension, so it is offered exactly when the other engines offer
-          // it: enabled unless the bot is in full-auto.
-          localComputerMcp: true,
           // Images ride pi's native RPC prompt as base64 content blocks, so a
           // vision model can inspect them without a separate file-read tool.
           images: true,

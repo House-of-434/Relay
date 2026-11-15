@@ -9,8 +9,10 @@ describe("research browser classification", () => {
     expect(toolSurfaceKind("browser_extract")).toBe("browser");
   });
 
-  it("keeps read-only observation calls off any surface", () => {
+  it("keeps read-only observation and unrelated calls off any surface", () => {
     expect(toolSurfaceKind("web_search")).toBe(null);
     expect(toolSurfaceKind("relay_read")).toBe(null);
+    expect(toolSurfaceKind("Bash")).toBe(null);
+    expect(toolSurfaceKind("click")).toBe(null);
   });
 });

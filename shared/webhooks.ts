@@ -2,15 +2,12 @@
  * REST snapshot and the `webhook` / `webhook.attempt` live frames. Moved
  * verbatim from the client's mirrors (src/lib/webhooks.ts); the client file
  * re-exports these under the same names. */
-import type { RoutineRunOn } from "./routines.ts";
-
 export interface WebhookTrigger {
   id: string;
   endpointId: string;
   name: string;
   prompt: string;
   botId: string;
-  runOn: RoutineRunOn;
   enabled: boolean;
   createdAt: number;
   updatedAt: number;
@@ -30,7 +27,6 @@ export interface WebhookTriggerInput {
   name: string;
   prompt: string;
   botId: string;
-  runOn?: RoutineRunOn;
   enabled?: boolean;
   verificationPending?: boolean;
   eventTypes?: string[];

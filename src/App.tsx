@@ -26,7 +26,6 @@ import { NoEngines } from "@/components/NoEngines";
 import { CloudEngineSignIn } from "@/components/CloudEngineSignIn";
 import { engineReady } from "@/components/EngineLibrary";
 import { CommandPalette } from "@/components/CommandPalette";
-import { LocalVmWorkspace } from "@/components/LocalVmWorkspace";
 import { setLocale } from "@/lib/i18n";
 import { effectiveLanguage, useLanguageChoice } from "@/lib/language-preference";
 import type { SessionState } from "@/lib/session";
@@ -291,8 +290,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
     setLocale(language || globalThis.navigator?.language);
     setLocaleEpoch((epoch) => epoch + 1);
   }, [language]);
-  const [paletteOpen, setPaletteOpen] = useState(false);
-  const [localVmWorkspaceBotId, setLocalVmWorkspaceBotId] = useState<string | null>(null);
   // the Browser tab, expanded into the main column (the small preview in
   // the panel hands off to this and back)
   const menuButtonRef = useRef<HTMLButtonElement>(null);
@@ -327,37 +324,12 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
     setDrawerOpen(false);
   }, [state.selectedId, bot?.threadId, group?.threadId, state.activeView, state.pluginsOpen, state.settingsOpen]);
 
-  useEffect(() => {
-    if (
-      localVmWorkspaceBotId &&
-      (state.activeView !== "chat" || state.selectedId !== localVmWorkspaceBotId)
-    ) {
-      setLocalVmWorkspaceBotId(null);
-    }
-  }, [localVmWorkspaceBotId, state.activeView, state.selectedId]);
-
-  const openComputerFromWorkspace = (botId: string) => {
-    setLocalVmWorkspaceBotId(null);
-    dispatch({ type: "select", id: botId });
-    dispatch({ type: "toggleComputer", open: true });
-  };
-
   const closeCalendar = useCallback(() => {
     dispatch({ type: "select", id: state.selectedId });
   }, [dispatch, state.selectedId]);
   const openCalendarRoom = useCallback((id: string) => {
     dispatch({ type: "select", id });
   }, [dispatch]);
-
-  const nativeViewOverlayOpen =
-    drawerOpen ||
-    paletteOpen ||
-    state.settingsOpen ||
-    state.computerOpen ||
-    state.inspectorOpen ||
-    state.docPane !== null ||
-    state.appSettingsOpen ||
-    state.pluginsOpen;
 
   // The macOS app menu's Preferences… item lives in the desktop shell, so the
   // shell signals the request over the bridge (Cmd+, accelerates the item).
@@ -371,30 +343,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       : section === "cloud-settings" && window.ogb?.cloudAccount && !remoteClient
         ? { type: "toggleAppSettings", open: true, section: "cloudAccount" }
         : { type: "toggleAppSettings", open: true, ...(section === "organization" && window.ogb?.organization && !remoteClient ? { section } : {}) }));
-  }, [dispatch]);
-
-  // The viewer outlives ComputerPanel and can target any bot, so release control
-  // here (always mounted) when a bot's viewer closes. release() is idempotent.
-  useEffect(() => {
-    return window.ogb?.desktopViewer?.onState((viewer) => {
-      if (viewer.open || !viewer.contextId) return;
-      const botId = viewer.contextId;
-      void fetch(`/api/bots/${botId}/computer/control`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ action: "release" }),
-      })
-        .then((res) => (res.ok ? res.json() : null))
-        .then((snap) => {
-          if (snap) dispatch({ type: "computerControl", botId, held: snap.held === true, helpReason: snap.helpReason ?? null });
-        })
-        .catch(() => {});
-      void fetch(`/api/bots/${botId}/computer/viewer-close`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: "{}",
-      }).catch(() => {});
-    });
   }, [dispatch]);
 
   return (
@@ -430,13 +378,6 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       />}
       {state.activeView === "routines" ? (
         <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
-      ) : !remoteClient && localVmWorkspaceBotId ? (
-        <LocalVmWorkspace
-          primaryBotId={localVmWorkspaceBotId}
-          overlayOpen={nativeViewOverlayOpen}
-          onClose={() => setLocalVmWorkspaceBotId(null)}
-          onOpenComputer={openComputerFromWorkspace}
-        />
       ) : cloudSignIn ? (
         <CloudEngineSignIn />
       ) : noEngines ? (
@@ -482,7 +423,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
       {state.newBotOpen && <NewBotDialog />}
       {/* mounted after the modals: same z-50 tier, so DOM order keeps the
           palette on top when one of them is open underneath */}
-      <CommandPalette onOpenChange={setPaletteOpen} />
+      <CommandPalette />
       </div>
       {/* Renderer-drawn caption buttons for the overlay-less frameless
           Windows window. Deliberately the LAST child of the shell: Blink

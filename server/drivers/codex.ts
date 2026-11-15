@@ -749,11 +749,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
         if (turn.integrations?.agents) {
           mountMcpServer(appServerArgs, env, "agents", turn.integrations.agents);
         }
-        if (turn.integrations?.localComputer) {
-          // The host daemon and isolated Local VM both arrive as a direct Cua
-          // Driver stdio MCP server. Codex sees the same computer tool surface.
-          mountMcpServer(appServerArgs, env, "computer", turn.integrations.localComputer);
-        }
         // A custom server named like one in the user's own config.toml would
         // be merged with it by the `-c` override — a stdio command over a
         // remote url is "invalid configuration" and kills the turn before the
@@ -954,10 +949,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       };
 
       // server→client approval request → canonical request.opened
-      // Host-scope tagging mirrors claude.ts: when this turn mounts the real
-      // Mac (not a VM), every card carries approvalScope so the harness's
-      // local-computer-block backstop applies to remembered always-allows.
-      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
       const handleServerRequest = (msg: any) => {
         const method = msg.method as string;
         const params = msg.params ?? {};
@@ -1110,7 +1101,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
             )) : undefined,
           choices,
           ...(protocolQuestions ? { questions: protocolQuestions.map((pair) => pair.question) } : {}),
-          approvalScope: controlsHost ? "local-computer" : undefined,
           requiresExplicitApproval: isAdditionalPermission || (
             (method === "execCommandApproval" || method === "item/commandExecution/requestApproval") &&
             (params.additionalPermissions != null || params.networkApprovalContext != null)
@@ -1771,8 +1761,6 @@ export const CodexDriver: ProviderDriver<CodexConfig> = {
       capabilities: {
         sessionModelSwitch: "unsupported",
         queueing: true,
-        computerMcp: true,
-        localComputerMcp: true,
         composioMcp: true,
         agentsMcp: true,
       customMcp: true,

@@ -40,9 +40,9 @@ it("English copy says Organization and installation, not Organisation or workspa
 const HARDCODED = [
   "electron/environments.cjs", "electron/main.mjs", "electron/computer-sharing.mjs", "electron/shared-computer-access.mjs",
   "electron/company-backups.mjs", "electron/company-backup-schedule.mjs", "electron/managed-desktop.mjs", "electron/organization-entry.mjs",
-  "src/components/DesktopWorkspaceSwitcher.tsx", "src/components/ConnectedWorkspacesSettings.tsx", "src/components/LocalVmWorkspace.tsx",
+  "src/components/DesktopWorkspaceSwitcher.tsx", "src/components/ConnectedWorkspacesSettings.tsx",
   "src/components/bot-settings/AccessSection.tsx",
-  "src/lib/group-call.ts", "server/container-computer.ts",
+  "src/lib/group-call.ts",
 ];
 const RETIRED = [
   // saved servers and the switcher

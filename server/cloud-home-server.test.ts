@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
-import { CLOUD_IGNORED_KEYS, cloudHomePlaceRefusal, cloudPairingSignature } from "./cloud-home.ts";
+import { CLOUD_IGNORED_KEYS, cloudPairingSignature } from "./cloud-home.ts";
 import { cloudHomePrompt } from "./system-prompt.ts";
 import { removeTempDir, waitForExit } from "./testing/cleanup.ts";
 import { prepareOwnerSession } from "./testing/owner.ts";
@@ -140,10 +140,9 @@ it("boots with a gateway's settings, says once that it ignores them, and never l
   for (const includedToken of includedTokens) expect(log).not.toContain(includedToken);
 });
 
-it("offers the included computers and decisions with no key, and never shows or saves their tokens", async () => {
+it("offers the included decision model with no key, and never shows or saves its token", async () => {
   const status = await api("GET", "/api/config");
   expect(status.status).toBe(200);
-  expect(status.body.box).toEqual({ configured: true, included: true });
   // Voice was stripped (no server/tts): no tts status is served.
   expect(status.body.tts).toBeUndefined();
   expect(status.body.decider).toEqual({ provider: "jev", configured: true, included: true, enabled: true, jobs: { roomRouting: true } });
@@ -379,39 +378,8 @@ it("offers its bots cloud computers only, and tells them they cannot see the per
     expect(agents.env.RELAY_CLOUD_HOME).toBe("1");
     const preview = (await api("GET", `/api/bots/${botId}/system-prompt`)).body.sections as Array<{ id: string; text: string }>;
     expect(preview.find((section) => section.id === "cloud-home")?.text).toBe(cloudHomePrompt(true));
-    const select = (surface?: string) => fetch(`${base}/api/internal/computer/select`, {
-      method: surface === undefined ? "GET" : "POST",
-      headers: { authorization: `Bearer ${agents.env.RELAY_COMMS_TOKEN}`, ...(surface === undefined ? {} : { "content-type": "application/json" }) },
-      ...(surface === undefined ? {} : { body: JSON.stringify({ surface }) }),
-    });
-    const listed = await (await select()).json() as { canSelect: boolean; options: Array<{ surface: string }> };
-    expect(listed.canSelect).toBe(true);
-    expect(listed.options.map((option) => option.surface)).toEqual(["cloud"]);
-    expect(JSON.stringify(listed)).not.toMatch(/this computer|Local VM|container runtime/i);
-    for (const surface of ["local", "vm"] as const) {
-      const refused = await select(surface);
-      expect(refused.status).toBe(409);
-      expect(((await refused.json()) as { error: string }).error).toBe(cloudHomePlaceRefusal(surface));
-    }
   } finally {
     rmSync(join(home, "hang"), { force: true });
     await api("POST", `/api/bots/${botId}/interrupt`, { body: {} });
-  }
-});
-
-it("refuses a bot still set to this computer or a Local VM, saying what is true on a Cloud home", async () => {
-  for (const computer of ["local", "vm"] as const) {
-    const created = await api("POST", "/api/bots", { body: {
-      name: `Earlier ${computer} fixture`, modelSelection: { instanceId: "claude", model: "claude-sonnet-5" }, requireAvailableModel: true,
-    } });
-    expect(created.status, JSON.stringify(created.body)).toBe(201);
-    const botId = created.body.bot.id;
-    expect((await api("PATCH", `/api/bots/${botId}`, { body: { computer } })).status).toBe(200);
-    expect((await api("POST", `/api/bots/${botId}/messages`, { body: { text: "list the files on my desktop" } })).status).toBe(202);
-    const failure = async () => {
-      const { bots } = (await api("GET", "/api/bots?messages=10")).body as { bots: Array<{ id: string; messages: Array<{ kind: string; tool?: { name: string; ok: boolean } }> }> };
-      return bots.find((bot) => bot.id === botId)?.messages.find((message) => message.kind === "activity" && message.tool?.ok === false)?.tool?.name;
-    };
-    await expect.poll(failure, { timeout: 15_000 }).toBe(`error: ${cloudHomePlaceRefusal(computer)}`);
   }
 });

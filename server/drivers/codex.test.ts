@@ -157,7 +157,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     delete process.env.FAKE_CODEX_INTERRUPT_SILENT;
     delete process.env.FAKE_CODEX_INTERRUPT_GRACE_MS;
     delete process.env.OPENAI_API_KEY;
-    delete process.env.BOX_TOKEN;
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) delete process.env[name];
     recorder?.stop();
     await instance?.dispose();
@@ -194,7 +193,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     process.env.OPENAI_API_KEY = "sk-should-not-leak";
     // workspace credentials the harness may hold (env-injected at boot by
     // the desktop shell) must never ride into the CLI child
-    process.env.BOX_TOKEN = "box-should-not-leak";
     Object.assign(process.env, CONTROL_PLANE_FIXTURE);
 
     const { turnId } = await instance.adapter.sendTurn({
@@ -249,7 +247,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(processIsAlive(seen.pid)).toBe(false);
     expect(seen.env.OPENAI_API_KEY).toBeUndefined();
-    expect(seen.env.BOX_TOKEN).toBeUndefined();
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) expect(seen.env[name]).toBeUndefined();
     const methods = seen.calls.map((c: { method: string }) => c.method);
     expect(methods).toEqual(["initialize", "initialized", "config/read", "thread/start", "turn/start"]);
@@ -869,34 +866,6 @@ describe("CodexDriver turns (fake app-server)", () => {
     expect(seen.argv.join(" ")).not.toContain("peer-comms-secret");
     expect(seen.env.RELAY_COMMS_TOKEN).toBe("peer-comms-secret");
     expect(instance.adapter.capabilities.agentsMcp).toBe(true);
-  });
-
-
-  it("mounts the Local VM computer MCP server without placing credentials in argv", async () => {
-    await create();
-    const dump = join(scratch, "local-computer.json");
-    process.env.FAKE_CODEX_DUMP = dump;
-    expect(instance.adapter.capabilities.computerMcp).toBe(true);
-
-    await instance.adapter.sendTurn({
-      threadId: "t-local-computer",
-      text: "open the browser",
-      integrations: {
-        localComputer: {
-          command: process.execPath,
-          args: ["/tmp/container-mcp.js", "podman", "relay-computer", "/run/cua.sock"],
-          env: { ELECTRON_RUN_AS_NODE: "1", RELAY_VM_TOKEN: "vm-secret" },
-        },
-      },
-    });
-    await recorder.until((event) => event.type === "turn.completed");
-
-    const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.argv.join(" ")).toContain("mcp_servers.computer.command");
-    expect(seen.argv.join(" ")).toContain("/tmp/container-mcp.js");
-    expect(seen.argv.join(" ")).toContain("RELAY_VM_TOKEN");
-    expect(seen.argv.join(" ")).not.toContain("vm-secret");
-    expect(seen.env.RELAY_VM_TOKEN).toBe("vm-secret");
   });
 
 
@@ -1763,37 +1732,6 @@ describe("CodexDriver turns (fake app-server)", () => {
       permissions: {},
       scope: "turn",
     });
-  });
-
-  it("stamps approvalScope on cards only when the turn controls this Mac", async () => {
-    await create({ mode: "approval" });
-
-    // host-mounted: every card carries the scope that keeps the harness's
-    // local-computer-block backstop in force for remembered always-allows
-    await instance.adapter.sendTurn({
-      threadId: "t-host-scope",
-      text: "clean up",
-      integrations: {
-        localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "darwin", scope: "local-computer" },
-      },
-    });
-    const host = await recorder.until((e) => e.type === "request.opened");
-    expect(host).toMatchObject({ approvalScope: "local-computer" });
-    await instance.adapter.respondToRequest("t-host-scope", host.requestId!, { behavior: "allow" });
-    await recorder.until((e) => e.type === "turn.completed");
-
-    // a Local VM mount is not the host: no scope stamped
-    await instance.adapter.sendTurn({
-      threadId: "t-vm-scope",
-      text: "clean up",
-      integrations: {
-        localComputer: { command: process.execPath, args: ["/tmp/container-mcp.js"], env: {} },
-      },
-    });
-    const vm = await recorder.until((e) => e.type === "request.opened" && e.threadId === "t-vm-scope");
-    expect((vm as { approvalScope?: string }).approvalScope).toBeUndefined();
-    await instance.adapter.respondToRequest("t-vm-scope", vm.requestId!, { behavior: "allow" });
-    await recorder.until((e) => e.type === "turn.completed" && e.threadId === "t-vm-scope");
   });
 
   it("auto-approves commands in fullAuto without opening a request", async () => {

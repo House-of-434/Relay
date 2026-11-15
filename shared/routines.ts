@@ -40,8 +40,6 @@ export type RoutineScheduleInput =
     endsAt?: number | null;
   };
 
-export type RoutineRunOn = "maus" | "cloud";
-
 export type RoutineTarget = "bot" | "room-goal";
 export type RoutineGoalStatus =
   | "completed"
@@ -91,7 +89,6 @@ export interface Routine {
   target: RoutineTarget;
   botId: string;
   groupId?: string;
-  runOn: RoutineRunOn;
   enabled: boolean;
   schedule: RoutineSchedule;
   durationMinutes: number;
@@ -121,7 +118,6 @@ export interface RoutineRun {
   goalStatus?: RoutineGoalStatus;
   botId: string;
   groupId?: string;
-  runOn: RoutineRunOn;
   scheduledFor: number;
   status: RoutineRunStatus;
   manual: boolean;
@@ -151,7 +147,6 @@ export interface RoutineInput {
   target?: RoutineTarget;
   botId: string;
   groupId?: string | null;
-  runOn?: RoutineRunOn;
   enabled?: boolean;
   schedule: RoutineScheduleInput;
   durationMinutes?: number;

@@ -174,8 +174,7 @@ describe("cloudHomePrompt", () => {
     for (const tools of [true, false]) {
       const text = cloudHomePrompt(tools);
       expect(text).toMatch(/^ You run on the user's Relay Cloud, a server in the cloud, not on their own computer\./);
-      expect(text).toContain("Offer what works here: the built-in browser and cloud computers.");
-      expect(text).toContain("Never ask them to set up this computer or a Local VM; neither exists here.");
+      expect(text).toContain("Offer what works here: the built-in browser.");
       expect(text).not.toMatch(/Computer panel|container runtime|configure/i);
     }
   });

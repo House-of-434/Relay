@@ -238,65 +238,7 @@ describe("a room turn belongs to the room", () => {
     }
   }, 40_000);
 
-  it("sends a takeover raised mid-room to the room, not to the bot's DM", async () => {
-    const bot = await createBot("Handsy", "stuck");
-    let roomId: string | undefined;
-    let requestId: string | undefined;
-    try {
-      const room = (await api("POST", "/api/groups", {
-        name: "War Room",
-        memberIds: [bot.id],
-        setup: { bulletin: "", defaultResponder: { kind: "everyone" } },
-      })).body.group;
-      roomId = room.id;
-      expect((await api("POST", `/api/groups/${room.id}/messages`, { text: "take the wheel" })).status).toBe(202);
-      // the room must actually own the bot before it asks for hands
-      await expect.poll(async () => (await groupState(room.id))?.busyBotId, { timeout: 20_000 }).toBe(bot.id);
-
-      const stream = await openSse(`${base}/api/events`);
-      try {
-        const asked = await api(
-          "POST",
-          `/api/internal/computer-control?botId=${bot.id}`,
-          { reason: "the login page wants a code" },
-          await capability(bot.id, room.threadId, "computer"),
-        );
-        expect(asked.status).toBe(200);
-        requestId = asked.body.requestId;
-
-        const frame = await stream.until(
-          (candidate) => candidate.kind === "notify" && candidate.notification?.kind === "takeover",
-          15_000,
-        );
-        expect(frame.notification).toMatchObject({
-          botId: bot.id,
-          threadId: room.threadId,
-          groupId: room.id,
-          title: "Handsy in War Room needs your hands",
-          body: "the login page wants a code",
-        });
-        // the DM is exactly where the person must NOT be sent: the screen
-        // that needs hands is attached to the room's turn
-        expect(frame.notification.threadId).not.toBe(bot.threadId);
-      } finally {
-        stream.close();
-      }
-    } finally {
-      if (requestId) {
-        await api(
-          "DELETE",
-          `/api/internal/computer-control?botId=${bot.id}`,
-          { requestId },
-          await capability(bot.id, roomId ? (await groupState(roomId)).threadId : bot.threadId, "computer"),
-        ).catch(() => undefined);
-      }
-      await cleanup([roomId], [bot.id]);
-    }
-  }, 45_000);
-});
-
-describe("bot-to-bot coordination is recorded, not announced", () => {
-  it("runs an ask_bot round trip with no badge and no banner anywhere", async () => {
+    it("runs an ask_bot round trip with no badge and no banner anywhere", async () => {
     const asker = await createBot("Pen", "quick");
     const peer = await createBot("Ink", "quick");
     let channelId: string | undefined;

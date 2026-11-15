@@ -106,12 +106,12 @@ const BUDGET_BASELINE: Record<string, number> = {
   "direct+shared": 49680,
   "direct+skills": 49861,
   "direct+skills+shared": 51606,
-  "room": 44162,
-  "room+shared": 45907,
-  "room+skills": 46088,
+  "room": 43210,
+  "room+shared": 44955,
+  "room+skills": 45136,
   "room+skills+shared": 47833,
-  "room+own-thread": 45718,
-  "room+own-thread+shared": 47463,
+  "room+own-thread": 44766,
+  "room+own-thread+shared": 46511,
   "room+own-thread+skills": 47644,
   "room+own-thread+skills+shared": 49389,
   "direct+skills+shared+cloud-home": 50654,
@@ -215,18 +215,6 @@ describe("agents proxy tools/list golden", () => {
       for (const tool of toolsOf(wires[name]!)) {
         expect(JSON.stringify(tool), `${name}: ${tool.name}`).toBe(full.get(tool.name));
       }
-    }
-  });
-
-  it("gives a Cloud home's bots no Local VM and every other server both", () => {
-    const cloudHome = Object.keys(PROFILES).filter((name) => name.endsWith("+cloud-home"));
-    expect(cloudHome).toHaveLength(2);
-    for (const name of cloudHome) {
-      const desktop = wires[name.slice(0, -"+cloud-home".length)]!;
-      const names = toolsOf(wires[name]!).map((tool) => tool.name);
-      expect(names).toEqual(toolsOf(desktop).map((tool) => tool.name).filter((tool) => tool !== "vm_exec"));
-      expect(names).not.toContain("select_computer");
-      expect(toolsOf(desktop).map((tool) => tool.name)).toContain("vm_exec");
     }
   });
 

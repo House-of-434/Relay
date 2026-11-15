@@ -5,7 +5,7 @@ import { parseStoredConfig } from "./config.ts";
 // Allowlisting ordinary settings also keeps future/unknown auth fields out.
 const PORTABLE_CONFIG_KEYS = [
   "profile", "language", "budgets", "billing", "rooms", "threads",
-  "localVm", "features",
+  "features",
 ] as const;
 
 export function portableWorkspaceConfig(value: unknown): Record<string, unknown> {

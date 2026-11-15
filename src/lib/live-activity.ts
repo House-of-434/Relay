@@ -13,7 +13,6 @@ const FALLBACK_LABELS: Array<[RegExp, LocaleKey]> = [
   [/\b(?:web_fetch|fetch_url|read_page)\b/i, "chat.activity.readPage"],
   [/\b(?:grep|glob|find|search)\b/i, "chat.activity.searching"],
   [/\b(?:screenshot|screen_capture)\b/i, "chat.activity.screen"],
-  [/\b(?:click|type|keypress|press|scroll|computer)\b/i, "chat.activity.computer"],
   [/\b(?:open_url|navigate)\b/i, "chat.activity.openPage"],
   [/\b(?:list_bots|list_agents)\b/i, "chat.activity.whosAround"],
   [/\blist_rooms\b/i, "chat.activity.rooms"],

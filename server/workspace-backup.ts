@@ -31,8 +31,7 @@ const ID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}
 const EXCLUDED = new Set([
   ".backups", "tools", "cache", ".cache", "tmp", ".tmp", "dist-native", "tunnel-runtime",
   ".relay-server-child", "environment-id", "sessions.json", "tunnel-account.json",
-  "team-computers.json",
-  "relay-server.lease", "box-create-requests.lock", "messages.db-wal", "messages.db-shm",
+  "relay-server.lease", "messages.db-wal", "messages.db-shm",
   // This machine's decision-model log (server/decider/log.ts): local
   // measurement of what the classifier picked, not workspace data.
   "decider-log",
@@ -74,7 +73,7 @@ export interface WorkspaceRestoreResult {
 export type LastWorkspaceRestore = WorkspaceRestoreResult & { restored: true; id: string };
 
 function excluded(name: string): boolean {
-  return EXCLUDED.has(name) || excludedWorkspaceAuthPath(name) || name.startsWith("relay-server.lease.") || name.startsWith("box-create-requests.lock.") || /^perm-[A-Za-z0-9_-]+\.sock$/.test(name);
+  return EXCLUDED.has(name) || excludedWorkspaceAuthPath(name) || name.startsWith("relay-server.lease.") || /^perm-[A-Za-z0-9_-]+\.sock$/.test(name);
 }
 function forbiddenArchivePath(path: string): boolean {
   const folded = path.toLowerCase();

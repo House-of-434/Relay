@@ -146,33 +146,6 @@ describe("thread control placement", () => {
       fixture.showToolCalls = false;
     }
   });
-  it("offers the matching macOS Settings and relaunch actions only for a named CUA permission failure", () => {
-    fixture.platform = "darwin";
-    fixture.localMessage = "Screen Recording required";
-    window.ogb = { platform: "darwin", permOpenSettings: vi.fn(), relaunch: vi.fn() } as unknown as NonNullable<Window["ogb"]>;
-    const screen = renderToStaticMarkup(createElement(ErrorRow, {
-      message: "CUA Driver is not ready for this computer — embedded host failed: Screen Recording required. Relaunch Relay after granting any missing macOS permission.",
-    }));
-    expect(screen).toContain("Open Screen Recording Settings");
-    expect(screen).toContain("Relaunch Relay");
-    expect(screen).not.toContain("Open Accessibility Settings");
-    fixture.localMessage = "Accessibility required";
-    const accessibility = renderToStaticMarkup(createElement(ErrorRow, {
-      message: "CUA Driver is not ready for this computer — Accessibility required",
-    }));
-    expect(accessibility).toContain("Open Accessibility Settings");
-    expect(accessibility).not.toContain("Open Screen Recording Settings");
-    expect(renderToStaticMarkup(createElement(ErrorRow, {
-      message: "CUA Driver is not ready for this computer — Screen Recording required",
-    }))).not.toContain("Open Screen Recording Settings");
-    expect(renderToStaticMarkup(createElement(ErrorRow, { message: "Network timeout" }))).not.toContain("Open Screen Recording Settings");
-    fixture.localReasonCode = "remote-server";
-    expect(renderToStaticMarkup(createElement(ErrorRow, { message: "CUA Driver is not ready for this computer — Screen Recording required" }))).not.toContain("Open Screen Recording Settings");
-    fixture.localReasonCode = "cua-driver-unavailable";
-    fixture.platform = "other";
-    fixture.localMessage = "";
-    delete window.ogb;
-  });
   it.each([
     "شغّل الاختبارات\nThen run typecheck\nوبعدها ارفع الفرع",
     "שלום עולם\nThen run typecheck\nתודה רבה",

@@ -174,32 +174,6 @@ describe("ACP decodeConfig", () => {
     expect(GrokAgentDriver.decodeConfig({ fullAuto: true }).fullAuto).toBe(true);
   });
 
-  it("advertises per-bot local CUA but rejects legacy full-auto turns without a mode", async () => {
-    const fullAuto = await GrokAgentDriver.create({
-      instanceId: "grok-full-auto",
-      displayName: "Grok Full Auto",
-      environment: {},
-      enabled: true,
-      config: { cli: FAKE_CLI, fullAuto: true },
-    });
-    expect(fullAuto.adapter.capabilities.localComputerMcp).toBe(true);
-    await expect(
-      fullAuto.adapter.sendTurn({
-        threadId: "t-full-auto-local",
-        text: "click",
-        integrations: {
-          localComputer: {
-            command: "/cua-driver",
-            args: ["mcp"],
-            env: {},
-            platform: "linux",
-            scope: "local-computer",
-          },
-        },
-      }),
-    ).rejects.toThrow(/interactive provider approvals/);
-    await fullAuto.dispose();
-  });
 });
 
 describe("ACP turns (fake CLI)", () => {
@@ -243,7 +217,6 @@ describe("ACP turns (fake CLI)", () => {
     delete process.env.OPENCODE_API_KEY;
     delete process.env.CURSOR_API_KEY;
     delete process.env.CURSOR_AUTH_TOKEN;
-    delete process.env.BOX_TOKEN;
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) delete process.env[name];
     delete process.env.FAKE_ACP_MODELS;
     delete process.env.FAKE_ACP_MODEL_STICKS;
@@ -539,7 +512,6 @@ describe("ACP turns (fake CLI)", () => {
     process.env.CURSOR_AUTH_TOKEN = "cursor-token-should-not-leak";
     // workspace credentials with no CLI consumer at all — held by the
     // harness (env-injected at boot by the desktop shell), used in-process
-    process.env.BOX_TOKEN = "box-should-not-leak";
     Object.assign(process.env, CONTROL_PLANE_FIXTURE);
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "go" });
@@ -553,7 +525,6 @@ describe("ACP turns (fake CLI)", () => {
     expect(seen.env.OPENCODE_API_KEY).toBeUndefined();
     expect(seen.env.CURSOR_API_KEY).toBeUndefined();
     expect(seen.env.CURSOR_AUTH_TOKEN).toBeUndefined();
-    expect(seen.env.BOX_TOKEN).toBeUndefined();
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) expect(seen.env[name]).toBeUndefined();
   });
 
@@ -663,35 +634,6 @@ describe("ACP turns (fake CLI)", () => {
     expect(recorder.events.some((e) => e.type === "session.started")).toBe(true);
   });
 
-  it("mounts local CUA only on an approval-capable ACP instance", async () => {
-    await create();
-    const dump = join(scratch, "local-dump.json");
-    process.env.FAKE_ACP_DUMP = dump;
-    await instance.adapter.sendTurn({
-      threadId: "t-local",
-      text: "inspect",
-      integrations: {
-        localComputer: {
-          command: "/opt/cua driver/cua-driver",
-          args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-          env: { CUA_DRIVER_EMBEDDED: "1" },
-          platform: "linux",
-          generation: "generation-1",
-          scope: "local-computer",
-        },
-      },
-    });
-    await recorder.until((event) => event.type === "turn.completed");
-    const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.mcpServers).toContainEqual({
-      name: "computer",
-      command: "/opt/cua driver/cua-driver",
-      args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-      env: [{ name: "CUA_DRIVER_EMBEDDED", value: "1" }],
-    });
-    expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
-  });
-
   it("mounts user-configured custom MCP servers after the built-ins", async () => {
     await create();
     const dump = join(scratch, "custom-dump.json");
@@ -760,21 +702,11 @@ describe("ACP turns (fake CLI)", () => {
       threadId: "t-perm",
       text: "go",
       cwd: scratch,
-      integrations: {
-        localComputer: {
-          command: "/cua-driver",
-          args: ["mcp"],
-          env: {},
-          platform: "linux",
-          scope: "local-computer",
-        },
-      },
     });
     const opened = await recorder.until((e) => e.type === "request.opened");
     expect(opened).toMatchObject({
       requestType: "permission",
       tool: "shell",
-      approvalScope: "local-computer",
       command: { command: "echo hi", cwd: realpathSync(scratch) },
     });
 
@@ -783,7 +715,6 @@ describe("ACP turns (fake CLI)", () => {
     expect(resolved).toMatchObject({
       behavior: "allow",
       source: "user",
-      approvalScope: "local-computer",
     });
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true });

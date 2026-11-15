@@ -126,29 +126,6 @@ describe("bot patch queue", () => {
     ]);
   });
 
-  it("flush waits for the PATCH and returns the server-authoritative computer selection", async () => {
-    const request = deferredBot();
-    const send = vi.fn(async () => request.promise);
-    const queue = createBotPatchQueue({
-      send,
-      reconcile: async () => bot(),
-      onAuthoritative: vi.fn(),
-      onError: vi.fn(),
-    });
-
-    queue.enqueue("bot-1", { computer: "cloud", cloudBackend: "vps" }, bot());
-    const flushed = queue.flush("bot-1");
-    let settled = false;
-    void flushed.then(() => { settled = true; });
-    await Promise.resolve();
-
-    expect(send).toHaveBeenCalledOnce();
-    expect(settled).toBe(false);
-
-    request.resolve(bot({ computer: "cloud", cloudBackend: "vps" }));
-    await expect(flushed).resolves.toMatchObject({ computer: "cloud", cloudBackend: "vps" });
-  });
-
   it("coalesces upload then remove so an older avatar can never resurrect", async () => {
     const sent: BotUpdatePatch[] = [];
     const authoritative = vi.fn();
@@ -157,7 +134,6 @@ describe("bot patch queue", () => {
         sent.push(patch);
         return bot({
           ...patch,
-          computer: patch.computer ?? undefined,
           connectorTools: patch.connectorTools ?? undefined,
         });
       },
@@ -308,32 +284,6 @@ describe("bot patch queue", () => {
     expect(queue.overlayFor("bot-1")).toEqual({});
   });
 
-  it("carries acknowledgeLocalAuto to the wire but never into a state overlay", async () => {
-    // The consent flag is the server's proof the local-auto warning dialog was
-    // shown (server/index.ts gate). Coalesced with other edits it must still
-    // reach the HTTP body — and must never fold back into renderer bot state.
-    const sent: BotUpdatePatch[] = [];
-    const overlays: BotUpdatePatch[] = [];
-    const queue = createBotPatchQueue({
-      send: async (_botId, patch) => {
-        sent.push(patch);
-        return bot();
-      },
-      reconcile: async () => bot(),
-      onAuthoritative: (_bot, overlay) => overlays.push(overlay),
-      onError: vi.fn(),
-    });
-
-    queue.enqueue("bot-1", { computer: "local", acknowledgeLocalAuto: true }, bot());
-    queue.enqueue("bot-1", { title: "Ops" }, bot());
-    expect(queue.overlayFor("bot-1")).toEqual({ computer: "local", title: "Ops" });
-    await vi.advanceTimersByTimeAsync(400);
-    await queue.flush("bot-1");
-
-    expect(sent).toEqual([{ computer: "local", acknowledgeLocalAuto: true, title: "Ops" }]);
-    for (const overlay of overlays) expect(overlay).not.toHaveProperty("acknowledgeLocalAuto");
-  });
-
   it("keeps the Full access confirmation out of optimistic bot state", async () => {
     const sent: BotUpdatePatch[] = [];
     const overlays: BotUpdatePatch[] = [];
@@ -362,28 +312,6 @@ describe("bot patch queue", () => {
       { title: "Ops" },
     ]);
     for (const overlay of overlays) expect(overlay).not.toHaveProperty("confirmFullAccess");
-  });
-
-  it("sends null to select Auto but normalizes it to an absent state field", async () => {
-    const sent: BotUpdatePatch[] = [];
-    const overlays: BotUpdatePatch[] = [];
-    const queue = createBotPatchQueue({
-      send: async (_botId, patch) => {
-        sent.push(patch);
-        return bot();
-      },
-      reconcile: async () => bot(),
-      onAuthoritative: (_bot, overlay) => overlays.push(overlay),
-      onError: vi.fn(),
-    });
-
-    queue.enqueue("bot-1", { computer: null }, bot({ computer: "cloud" }));
-    expect(queue.overlayFor("bot-1")).toEqual({ computer: undefined });
-    await vi.advanceTimersByTimeAsync(400);
-    await queue.flush("bot-1");
-
-    expect(sent).toEqual([{ computer: null }]);
-    expect(overlays).toEqual([{ computer: undefined }]);
   });
 
   it("sends null to drop a grants record but keeps bot state on the legacy boolean", async () => {

@@ -226,36 +226,6 @@ describe("ClaudeDriver.decodeConfig", () => {
     expect(permissionSocketPath("t-perm-dup-1")).not.toBe(permissionSocketPath("t-perm-dup-2"));
   });
 
-  it("advertises per-bot local CUA but rejects legacy bypass turns without a mode", async () => {
-    const bypass = await ClaudeDriver.create({
-      instanceId: "claude-bypass",
-      displayName: "Claude Bypass",
-      environment: {},
-      enabled: true,
-      config: { cli: FAKE_CLI, permissionMode: "bypassPermissions" },
-    });
-    expect(bypass.adapter.capabilities.localComputerMcp).toBe(true);
-    await expect(
-      bypass.adapter.sendTurn({
-        threadId: "t-bypass-local",
-        text: "click",
-        integrations: {
-          localComputer: {
-            command: "/cua-driver",
-            args: ["mcp"],
-            env: {},
-            platform: "linux",
-            scope: "local-computer",
-          },
-        },
-      }),
-    ).rejects.toThrow(/interactive approval broker/);
-    // Settings may sign this account in and out on a hosted server.
-    expect(bypass.startAuthentication).toBeTypeOf("function");
-    expect(bypass.signOut).toBeTypeOf("function");
-    await bypass.dispose();
-  });
-
   it("gives each collision test a distinct broker pipe path", () => {
     const paths = COLLISION_THREAD_IDS.map((threadId) => permissionSocketPath(threadId));
     expect(new Set(paths).size).toBe(COLLISION_THREAD_IDS.length);
@@ -437,7 +407,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     delete process.env.ANTHROPIC_API_KEY;
     delete process.env.XAI_API_KEY;
     delete process.env.COMPOSIO_API_KEY;
-    delete process.env.BOX_TOKEN;
     delete process.env.OPENCODE_API_KEY;
     for (const name of Object.keys(CONTROL_PLANE_FIXTURE)) delete process.env[name];
     delete process.env.RELAY_CLAUDE_SESSION_IDLE_MS;
@@ -615,7 +584,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // workspace credentials the harness may hold (env-injected at boot by
     // the desktop shell) must never ride into the CLI child
     process.env.XAI_API_KEY = "xai-should-not-leak";
-    process.env.BOX_TOKEN = "box-should-not-leak";
 
     await instance.adapter.sendTurn({ threadId: "t-hygiene", text: "the secret prompt", system: "You are Testy." });
     await recorder.until((e) => e.type === "turn.completed");
@@ -632,7 +600,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(seen.env.CLAUDECODE).toBeUndefined();
     expect(seen.env.CLAUDE_CODE_ENTRYPOINT).toBeUndefined();
     expect(seen.env.XAI_API_KEY).toBeUndefined();
-    expect(seen.env.BOX_TOKEN).toBeUndefined();
   });
 
   it("per-bot Ask restores the broker on a legacy bypass instance", async () => {
@@ -1132,25 +1099,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     const seen = JSON.parse(readFileSync(dump, "utf8"));
     expect(seen.argv).not.toContain("--system-prompt-snapshot");
     expect(seen.prompt.message.content).toContain("Add the new header row.");
-  });
-
-  it("replaces the previous computer prompt when a normal conversation changes its place", async () => {
-    const dump = join(scratch, "surface-snapshot.json");
-    await create(undefined, { FAKE_CLAUDE_DUMP: dump, FAKE_CLAUDE_VERSION: "2.1.267" });
-    await instance.adapter.sendTurn({
-      threadId: "t-surface-resume", text: "Open the test page.",
-      resumeCursor: "previous-host-computer-session",
-      system: "Everything you do on screen happens on the cloud computer.",
-      refreshSystemPrompt: true,
-      integrations: { localComputer: { command: "/cua-driver", args: ["mcp"], env: {}, platform: "linux" } },
-    });
-    await recorder.until((event) => event.type === "turn.completed");
-    const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.argv[seen.argv.indexOf("--system-prompt-snapshot") + 1]).toBe("off");
-    expect(seen.argv[seen.argv.indexOf("--resume") + 1]).toBe("previous-host-computer-session");
-    expect(seen.systemPrompt).toContain("Everything you do on screen happens on the cloud computer.");
-    expect(seen.mcpConfig.mcpServers.computer).toBeTruthy();
-    expect(seen.mcpConfig.mcpServers.browser).toBeUndefined();
   });
 
   it.each([["2.1.232", false], ["2.1.267", true]] as const)(
@@ -1717,37 +1665,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(configPath).toMatch(/relay-mcp-/);
     expect(existsSync(configPath)).toBe(false);
     expect(existsSync(dirname(configPath))).toBe(false);
-  });
-
-  it("mounts local CUA without pre-allowing its computer namespace", async () => {
-    await create();
-    const dump = join(scratch, "local-dump.json");
-    process.env.FAKE_CLAUDE_DUMP = dump;
-    await instance.adapter.sendTurn({
-      threadId: "t-local",
-      text: "inspect the desktop",
-      integrations: {
-        localComputer: {
-          command: "/opt/cua driver/cua-driver",
-          args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-          env: { CUA_DRIVER_EMBEDDED: "1" },
-          platform: "linux",
-          generation: "generation-1",
-          scope: "local-computer",
-        },
-      },
-    });
-    await recorder.until((event) => event.type === "turn.completed");
-
-    const seen = JSON.parse(readFileSync(dump, "utf8"));
-    expect(seen.mcpConfig.mcpServers.computer).toEqual({
-      command: "/opt/cua driver/cua-driver",
-      args: ["mcp", "--embedded", "--socket", "/run/user/1000/driver.sock"],
-      env: { CUA_DRIVER_EMBEDDED: "1" },
-    });
-    const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
-    expect(allowed).not.toContain("mcp__computer");
-    expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
   });
 
   it("resumes with --resume when a cursor exists and reports that session id", async () => {
@@ -2401,15 +2318,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       threadId: "t-perm-abc",
       text: "go",
       approvalMode: "ask",
-      integrations: {
-        localComputer: {
-          command: "/cua-driver",
-          args: ["mcp"],
-          env: {},
-          platform: "linux",
-          scope: "local-computer",
-        },
-      },
     });
     await recorder.until((e) => e.type === "session.started");
 
@@ -2437,9 +2345,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
       summary: "rm -rf scratch",
       requestId: "ask-1",
     });
-    // a plain CLI tool never carries the desktop-control approval scope,
-    // so the UI can offer a remembered grant for it
-    expect(opened).toHaveProperty("approvalScope", undefined);
 
     // the outcome names exactly what was granted: this action, once — and
     // "Always allow this session" rides to the proxy as `always`, which hands
@@ -2449,31 +2354,6 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     expect(await answered).toMatchObject({ behavior: "allow", always: true });
     const resolved = await recorder.until((e) => e.type === "request.resolved");
     expect(resolved).toMatchObject({ behavior: "allow", source: "user" });
-    expect(resolved).toHaveProperty("approvalScope", undefined);
-
-    // a real desktop-control tool keeps the local-computer scope, which
-    // suppresses remembered grants — desktop actions must be approved
-    // one at a time
-    const answered2 = new Promise<{ behavior: string }>((resolve) => {
-      let buf = "";
-      conn.on("data", (c) => {
-        buf += c;
-        const nl = buf.indexOf("\n");
-        if (nl !== -1) resolve(JSON.parse(buf.slice(0, nl)));
-      });
-    });
-    conn.write(
-      JSON.stringify({ t: "ask", id: "ask-2", tool: "mcp__computer__screenshot", input: {} }) + "\n",
-    );
-    const opened2 = await recorder.until((e) => e.requestId === "ask-2" && e.type === "request.opened");
-    expect(opened2).toHaveProperty("approvalScope", "local-computer");
-    expect(opened2).toHaveProperty("allowSession", undefined);
-    await expect(instance.adapter.respondToRequest("t-perm-abc", "ask-2", { behavior: "allow" })).resolves.toBe("allowed-once");
-    const plain = await answered2;
-    expect(plain).toMatchObject({ behavior: "allow" });
-    expect(plain).not.toHaveProperty("always");
-    const resolved2 = await recorder.until((e) => e.requestId === "ask-2" && e.type === "request.resolved");
-    expect(resolved2).toHaveProperty("approvalScope", "local-computer");
 
     conn.end();
     await instance.adapter.interruptTurn("t-perm-abc");
@@ -2788,7 +2668,7 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     await create(undefined, { CLAUDE_CONFIG_DIR: instanceConfigDir });
     const dump = join(scratch, "generate-text-env.json");
     process.env.FAKE_CLAUDE_DUMP = dump;
-    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "BOX_TOKEN", "OPENCODE_API_KEY"] as const;
+    const names = ["XAI_API_KEY", "COMPOSIO_API_KEY", "OPENCODE_API_KEY"] as const;
     for (const name of names) process.env[name] = `${name}-must-not-leak`;
 
     await expect(instance.generateText?.("summarize safely")).resolves.toBe("fake generated text");

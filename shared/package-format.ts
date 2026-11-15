@@ -254,7 +254,6 @@ const packageDocumentV1Schema = z.object({
       name: requiredText(80),
       agent: key,
       prompt: requiredText(20_000),
-      runOn: z.enum(["maus", "cloud"]),
       schedule: packageRoutineScheduleSchema,
       durationMinutes: z.number().int().min(5).max(240),
       timeoutMinutes: z.number().int().min(5).max(240).optional(),
@@ -382,7 +381,6 @@ const routineSchema = z.object({
   /** Present = a room goal (runs on this computer, no continuity). */
   room: key.optional(),
   prompt: requiredText(20_000),
-  runOn: z.enum(["maus", "cloud"]),
   schedule: packageRoutineScheduleSchema,
   durationMinutes: z.number().int().min(5).max(240),
   timeoutMinutes: z.number().int().min(1).max(1_440).optional(),
@@ -694,7 +692,6 @@ function checkV2References(pkg: PackageDefinition): void {
     if (!agents.has(routine.agent)) throw invalid(`Routine ${routine.key} references unknown agent: ${routine.agent}`);
     if (routine.room === undefined) continue;
     if (!rooms.has(routine.room)) throw invalid(`Routine ${routine.key} references unknown group chat: ${routine.room}`);
-    if (routine.runOn !== "maus") throw invalid(`Routine ${routine.key} is a group chat goal, which only runs on this computer`);
     if (routine.continuity) throw invalid(`Routine ${routine.key} is a group chat goal, which cannot carry continuity`);
     // The goal scheduler refuses a lead who is not in the room.
     if (!roomMembers.get(routine.room)!.has(routine.agent)) {

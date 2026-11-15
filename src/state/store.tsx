@@ -13,7 +13,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import type { BotVisibility, CloudBackend, ConnectorToolGrant, EffortLevel, InstalledPackageMetadata, ServerFrame, GroupThreadUsage, SteerQueueReason, WireDocRef } from "../../shared/wire";
+import type { BotVisibility, ConnectorToolGrant, EffortLevel, InstalledPackageMetadata, ServerFrame, GroupThreadUsage, SteerQueueReason, WireDocRef } from "../../shared/wire";
 import type { TurnDigest } from "../../shared/digest";
 import type { ModelVariantOption, RuntimeEvent } from "../../shared/runtime-events";
 import type { MausColor, MausMotion } from "@/lib/mascot";
@@ -290,10 +290,6 @@ export interface Task {
   turnStartedAt?: number;
   unread?: boolean;
   pinnedMessageId?: string;
-  /** where this conversation works, when pinned: by the person from the
-   * composer, or by its first Auto turn to the place it reached. Wins over
-   * the bot's Works on (except Off); absent = follows the bot. */
-  surface?: "cloud" | "vm" | "local";
   /** set when a bot (not the person) started this thread — its own or a
    * teammate's; the sidebar shows a quiet "opened by <name>" under the title */
   openedBy?: ThreadOpener;
@@ -384,13 +380,6 @@ export interface Bot {
    * fed to the Thinking timer so elapsed time survives thread switches. */
   turnStartedAt?: number | null;
   modelSelection: ModelSelection;
-  /** Where this bot works: a computer, or nowhere; unset = auto (cloud boat
-   * if one exists, else local). */
-  computer?: "cloud" | "vm" | "local" | "off";
-  /** Which cloud computer backs `computer: "cloud"`; absent means Boat. */
-  cloudBackend?: CloudBackend;
-  /** Allow Auto to prepare/start the managed VPS container. Off by default. */
-  autoStartVps?: boolean;
   /** where new tasks run their shell tools; absent = the private bot workspace */
   cwd?: string;
   /** auto mode: the bot approves its own tool permissions */
@@ -471,25 +460,21 @@ export function currentTaskBot(bot: Bot, threadId = bot.threadId): Bot {
 
 export type TaskUpdatePatch = Partial<Pick<Task, "modelSelection" | "approvalMode" | "autoApprove" | "pinnedMessageId">> & {
   confirmFullAccess?: boolean;
-  acknowledgeLocalAuto?: boolean;
   updateBotDefault?: boolean;
   resetApprovalToAsk?: boolean;
   projectId?: string | null;
   archivedAt?: number | null;
   snoozedUntil?: number | null;
-  /** null = follow the bot's Works on again */
-  surface?: Task["surface"] | null;
   /** false clears the pin */
   pinned?: boolean;
 };
 
 function taskPatchFields(patch: TaskUpdatePatch): Partial<Task> {
-  const { confirmFullAccess: _fullConsent, acknowledgeLocalAuto: _localAck, updateBotDefault: _modelDefault, resetApprovalToAsk, projectId, archivedAt, snoozedUntil, surface, pinned, ...fields } = patch;
+  const { confirmFullAccess: _fullConsent, updateBotDefault: _modelDefault, resetApprovalToAsk, projectId, archivedAt, snoozedUntil, pinned, ...fields } = patch;
   return { ...fields, ...(resetApprovalToAsk ? { approvalMode: "ask", autoApprove: false, alwaysAllow: [] } : {}),
     ...(projectId === undefined ? {} : { projectId: projectId ?? undefined }),
     ...(archivedAt === undefined ? {} : { archivedAt: archivedAt ?? undefined }),
     ...(snoozedUntil === undefined ? {} : { snoozedUntil: snoozedUntil ?? undefined }),
-    ...(surface === undefined ? {} : { surface: surface ?? undefined }),
     ...(pinned === undefined ? {} : { pinned: pinned ? true : undefined }) };
 }
 
@@ -583,15 +568,11 @@ export interface ConfigStatus {
   budgets?: { monthlyUsd?: number; warnAtPercent?: number };
   billing?: { currency?: string; prices?: Record<string, { inputPerMillion: number; outputPerMillion: number; cachedInputPerMillion?: number }> };
   composio: { configured: boolean; mode?: "managed" | "self-hosted" | "unavailable" };
-  /** `included`: cloud computers come with Cloud Pro, no key is saved. */
-  box: { configured: boolean; included?: boolean };
-  vps: { configured: boolean; sshAlias: string };
   rooms: { turnTimeoutMinutes: number };
   /** Workspace defaults for new bots; absent effort = no level is sent. */
   newBots?: { effort?: EffortLevel };
   threads?: { maxConcurrentPerBot: number; eventLogMaxBytes?: number; eventLogRetentionDays?: number };
   automaticRecovery?: { enabled: boolean; backup?: ModelSelection };
-  localVm: { mode: "shared" | "per-bot" | "pool"; maxInstances: number };
   opencodeGo?: { configured: boolean };
   /** The decision model: switches and whether a key is on file. The key
    * itself never comes back. `enabled` is the switch as it takes effect
@@ -632,8 +613,6 @@ export interface ConfigStatus {
   cloudHome?: boolean;
   /** Relay shared workspace: bots/models are centrally configured by the team. */
   sharedWorkspace?: boolean;
-  /** Process-owned server switch for computer, browser, phone and voice APIs. */
-  computerDisabled?: boolean;
 }
 
 export interface ManagedPolicySummary {
@@ -642,7 +621,6 @@ export interface ManagedPolicySummary {
   companyModelsOnly: boolean;
   allowedEngines: "all" | string[];
   mcp: { allowCustom: boolean; allowlist: string[] };
-  computers: { thisComputer: boolean; localVm: boolean; box: boolean; vps: boolean };
   remoteAccess: boolean;
 }
 
@@ -652,7 +630,7 @@ export interface ManagedPolicySummary {
 // Settings shows (a saved key's Test button used to vanish that way).
 export type ConfigStatusFrame = Pick<
   ConfigStatus,
-  "xai" | "mistral" | "anthropic" | "openaiCompat" | "fleet" | "composio" | "box" | "vps" | "rooms" | "threads" | "automaticRecovery" | "localVm" | "opencodeGo" | "decider" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "sharedWorkspace" | "computerDisabled"
+  "xai" | "mistral" | "anthropic" | "openaiCompat" | "fleet" | "composio" | "rooms" | "threads" | "automaticRecovery" | "opencodeGo" | "decider" | "imageGen" | "profile" | "language" | "features" | "onboarding" | "edition" | "budgets" | "billing" | "managedPolicy" | "cloudHome" | "sharedWorkspace"
 >;
 
 export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
@@ -663,12 +641,9 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     openaiCompat: frame.openaiCompat,
     fleet: frame.fleet,
     composio: frame.composio,
-    box: frame.box,
-    vps: frame.vps,
     rooms: frame.rooms,
     threads: frame.threads,
     automaticRecovery: frame.automaticRecovery,
-    localVm: frame.localVm,
     opencodeGo: frame.opencodeGo,
     decider: frame.decider,
     imageGen: frame.imageGen,
@@ -682,7 +657,6 @@ export function configStatusFromFrame(frame: ConfigStatusFrame): ConfigStatus {
     managedPolicy: frame.managedPolicy,
     ...(frame.cloudHome ? { cloudHome: true } : {}),
     ...(frame.sharedWorkspace ? { sharedWorkspace: true } : {}),
-    ...(frame.computerDisabled ? { computerDisabled: true } : {}),
   };
 }
 
@@ -834,7 +808,6 @@ export interface AppState {
   newBotOpen: boolean;
   /** Creation continues even when the role picker is dismissed. */
   botCreationPending: boolean;
-  computerOpen: boolean;
   /** the per-thread event inspector (runtime stream + native protocol tee) */
   inspectorOpen: boolean;
   /** the per-thread Files library (and its All Files view). */
@@ -853,15 +826,9 @@ export interface AppState {
   /** the guided tour on the live interface that follows the welcome flow */
   tourOpen: boolean;
   botSettingsSection: BotSettingsSection;
-  /** bots whose cloud computer is being provisioned */
-  provisioning: Record<string, boolean>;
   /** Bot removals waiting for the server to verify that no persistent
    * computer would be orphaned. The bot stays visible until that succeeds. */
   deletingBots: Record<string, true>;
-  /** who is driving each bot's computer: held = the person has the wheel
-   * (the bot's hands are refused server-side); helpReason = the bot's open
-   * plea for the person to take over */
-  computerControl: Record<string, { held: boolean; helpReason: string | null }>;
   /** a search hit to scroll to once its thread is on screen; nonce lets the
    * same message be focused twice in a row */
   focusMessage: { threadId: string; messageId: string; nonce: number; consumed: boolean } | null;
@@ -978,7 +945,6 @@ export type Action =
       bots: Bot[];
       groups: Group[];
       sections?: string[];
-      computerControl: Record<string, { held: boolean; helpReason: string | null }>;
       botQueuedMessages?: AppState["pendingQueued"];
     }
   | { type: "botQueues"; queues: AppState["pendingQueued"] }
@@ -1098,8 +1064,6 @@ export type Action =
   /** `restoreLeafId` puts back the branch an optimistic edit replaced; a
    * plain send falls back to the removed row's parent. */
   | { type: "optimisticMessageRemoved"; threadId: string; sendId: string; restoreLeafId?: string | null }
-  | { type: "provisioning"; botId: string; on: boolean }
-  | { type: "computerControl"; botId: string; held: boolean; helpReason: string | null }
   | { type: "modelVariantRuntime"; event: RuntimeEvent }
   | { type: "setModel"; botId: string; selection: ModelSelection; threadId?: string; updateBotDefault?: boolean; resetApprovalToAsk?: boolean }
   | { type: "interrupt"; botId: string; threadId?: string; onError?: () => void }
@@ -1110,7 +1074,6 @@ export type Action =
   | { type: "toggleSettings"; open?: boolean; section?: BotSettingsSection; botId?: string }
   | { type: "togglePlugins"; open?: boolean }
   | { type: "toggleNewBot"; open?: boolean }
-  | { type: "toggleComputer"; open?: boolean }
   | { type: "toggleInspector"; open?: boolean }
   | { type: "toggleFiles"; open?: boolean }
   | { type: "openDocPane"; ref: WireDocRef }
@@ -1354,7 +1317,6 @@ export function reducer(state: AppState, action: Action): AppState {
           return previous ? { ...group, tasks: mergeTaskStamps(previous.tasks, group.tasks) } : group;
         }),
         sections: action.sections ?? [],
-        computerControl: action.computerControl,
         selectedId,
         backgroundThreadEvents: {},
         loadingOlder: {},
@@ -1412,7 +1374,6 @@ export function reducer(state: AppState, action: Action): AppState {
         activeView: "routines",
         routinesFocus: { section: action.section, view: action.view, botId: action.botId, routineId: action.routineId, runStatus: action.runStatus, nonce: state.routinesFocus.nonce + 1 },
         settingsOpen: false,
-        computerOpen: false,
         inspectorOpen: false,
         docPane: null,
         appSettingsOpen: false,
@@ -1622,7 +1583,7 @@ export function reducer(state: AppState, action: Action): AppState {
         // The slim deletion broadcast can arrive before the full snapshot.
         // Finish that switch once, replaying any events received in between.
         // Later duplicate HTTP snapshots must not overwrite newer messages.
-        return reducer(switching, { type: "taskSwitched", bot: { ...before, ...action.bot, computer: action.bot.computer, section: action.bot.section, messages: action.bot.messages } });
+        return reducer(switching, { type: "taskSwitched", bot: { ...before, ...action.bot, section: action.bot.section, messages: action.bot.messages } });
       }
       const patched = updateBot(switching, action.bot.id, (b) => ({
         ...b,
@@ -1632,7 +1593,6 @@ export function reducer(state: AppState, action: Action): AppState {
         awaitingThreadSnapshot: switchedThread || b.awaitingThreadSnapshot,
         // Resetting Works on to Auto removes the field from the complete
         // server frame; merging alone would keep the old target highlighted.
-        computer: action.bot.computer,
         // A complete frame omits section after another client moves the bot
         // into General. Retaining the old label strands an empty team in UI.
         section: action.bot.section,
@@ -1781,19 +1741,6 @@ export function reducer(state: AppState, action: Action): AppState {
         messages: b.messages.map((m) => (m.id === action.message.id ? action.message : m)),
       }));
     }
-    case "provisioning":
-      return {
-        ...(action.on ? withMascotMotion(state, action.botId, "launch") : state),
-        provisioning: { ...state.provisioning, [action.botId]: action.on },
-      };
-    case "computerControl":
-      return {
-        ...state,
-        computerControl: {
-          ...state.computerControl,
-          [action.botId]: { held: action.held, helpReason: action.helpReason },
-        },
-      };
     case "modelVariantRuntime": {
       const event = action.event;
       if (!event.turnId) return state;
@@ -1851,8 +1798,8 @@ export function reducer(state: AppState, action: Action): AppState {
         selectedId,
         settingsOpen: open,
         botSettingsSection: action.section ?? (selectedId !== state.selectedId ? "identity" : state.botSettingsSection),
-        // Preserve the computer and inspector surfaces; their own controls
-        // can open bot settings. App settings are mutually exclusive.
+        // Preserve the inspector surface; its own control can open bot
+        // settings. App settings are mutually exclusive.
         appSettingsOpen: open ? false : state.appSettingsOpen,
       };
     }
@@ -1890,25 +1837,12 @@ export function reducer(state: AppState, action: Action): AppState {
     case "focusMessageConsumed":
       if (!state.focusMessage || state.focusMessage.nonce !== action.nonce) return state;
       return { ...state, focusMessage: { ...state.focusMessage, consumed: true } };
-    case "toggleComputer": {
-      const open = action.open ?? !state.computerOpen;
-      return {
-        ...state,
-        computerOpen: open,
-        settingsOpen: open ? false : state.settingsOpen,
-        inspectorOpen: open ? false : state.inspectorOpen,
-        filesOpen: open ? false : state.filesOpen,
-        docPane: open ? null : state.docPane,
-        appSettingsOpen: open ? false : state.appSettingsOpen,
-      };
-    }
     case "toggleInspector": {
       const open = action.open ?? !state.inspectorOpen;
       return {
         ...state,
         inspectorOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
-        computerOpen: open ? false : state.computerOpen,
         filesOpen: open ? false : state.filesOpen,
         docPane: open ? null : state.docPane,
         appSettingsOpen: open ? false : state.appSettingsOpen,
@@ -1920,7 +1854,6 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         filesOpen: open,
         settingsOpen: open ? false : state.settingsOpen,
-        computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
         docPane: open ? null : state.docPane,
         appSettingsOpen: open ? false : state.appSettingsOpen,
@@ -1931,7 +1864,6 @@ export function reducer(state: AppState, action: Action): AppState {
         ...state,
         docPane: action.ref,
         settingsOpen: false,
-        computerOpen: false,
         inspectorOpen: false,
         filesOpen: false,
         appSettingsOpen: false,
@@ -1948,7 +1880,6 @@ export function reducer(state: AppState, action: Action): AppState {
         appSettingsSection: action.section ?? state.appSettingsSection,
         appSettingsCloudLink: action.cloudLink && open ? state.appSettingsCloudLink + 1 : 0,
         settingsOpen: open ? false : state.settingsOpen,
-        computerOpen: open ? false : state.computerOpen,
         inspectorOpen: open ? false : state.inspectorOpen,
         filesOpen: open ? false : state.filesOpen,
         docPane: open ? null : state.docPane,
@@ -1989,18 +1920,13 @@ export function reducer(state: AppState, action: Action): AppState {
           }
         : animated;
       const {
-        acknowledgeLocalAuto: _localAck,
         confirmFullAccess: _fullConfirmation,
         applyToAllThreads: _allThreads,
-        computer,
         connectorTools,
         ...rest
       } = action.patch;
       const botPatch: Partial<Bot> = { ...rest };
-      if (computer === null) botPatch.computer = undefined;
-      else if (computer !== undefined) botPatch.computer = computer;
-      // A dropped grants record returns the bot to the absent legacy field,
-      // exactly like a cleared computer destination.
+      // A dropped grants record returns the bot to the absent legacy field.
       if (connectorTools === null) botPatch.connectorTools = undefined;
       else if (connectorTools !== undefined) botPatch.connectorTools = connectorTools;
       return updateBot(next, action.botId, (b) => ({ ...b, ...botPatch }));
@@ -2188,7 +2114,6 @@ export function reducer(state: AppState, action: Action): AppState {
       let switched = updateBot(bumpTranscriptGeneration(state, action.bot.threadId), action.bot.id, (bot) => ({
         ...bot,
         ...action.bot,
-        computer: action.bot.computer,
         messages: action.bot.messages ?? [],
         // The snapshot decides whether this thread has scrollback. Merging
         // would carry the previous thread's answer onto a new one.
@@ -2265,7 +2190,6 @@ export const initialState: AppState = {
   pluginsOpen: false,
   newBotOpen: false,
   botCreationPending: false,
-  computerOpen: false,
   inspectorOpen: false,
   filesOpen: false,
   docPane: null,
@@ -2275,9 +2199,7 @@ export const initialState: AppState = {
   welcomeOpen: false,
   tourOpen: false,
   botSettingsSection: "identity",
-  provisioning: {},
   deletingBots: {},
-  computerControl: {},
   focusMessage: null,
   connected: false,
   error: null,
@@ -2356,7 +2278,7 @@ type TrustedApprovalBridge = {
   setMode(
     botId: string,
     mode: ApprovalMode,
-    options?: { acknowledgeLocalAuto?: boolean; threadId?: string; threadOnly?: boolean; allThreads?: boolean },
+    options?: { threadId?: string; threadOnly?: boolean; allThreads?: boolean },
   ): Promise<BotAnnouncement>;
 };
 
@@ -2367,15 +2289,15 @@ export async function persistTaskApproval(
   bridge: TrustedApprovalBridge | undefined,
   request: (path: string, init?: RequestInit) => Promise<{ bot: BotAnnouncement }> = api,
 ): Promise<BotAnnouncement> {
-  const { approvalMode, autoApprove, confirmFullAccess, acknowledgeLocalAuto, ...ordinary } = patch;
+  const { approvalMode, autoApprove, confirmFullAccess, ...ordinary } = patch;
   const mode = approvalMode ?? (autoApprove === undefined ? undefined : autoApprove ? "auto" : "ask");
   if (mode === "full" && confirmFullAccess !== true) throw new Error("Confirm Full access for this thread first");
   if ((mode === "full" || mode === "custom") && !bridge) throw new Error("This approval change requires the packaged desktop app");
   if (mode && bridge) {
     if (Object.keys(ordinary).length) await request(`/api/bots/${botId}/tasks/${threadId}`, { method: "PATCH", body: JSON.stringify(ordinary) });
-    return bridge.setMode(botId, mode, { threadId, threadOnly: true, acknowledgeLocalAuto: acknowledgeLocalAuto === true });
+    return bridge.setMode(botId, mode, { threadId, threadOnly: true });
   }
-  const result = await request(`/api/bots/${botId}/tasks/${threadId}`, { method: "PATCH", body: JSON.stringify({ ...ordinary, approvalMode, autoApprove, acknowledgeLocalAuto }) });
+  const result = await request(`/api/bots/${botId}/tasks/${threadId}`, { method: "PATCH", body: JSON.stringify({ ...ordinary, approvalMode, autoApprove }) });
   return result.bot;
 }
 
@@ -2426,10 +2348,7 @@ export async function persistBotUpdate(
     throw new Error("This approval-level change requires the packaged desktop app");
   }
 
-  const trustedOptions = {
-    acknowledgeLocalAuto: ordinaryPatch.acknowledgeLocalAuto === true,
-    ...(applyToAllThreads ? { allThreads: true } : {}),
-  };
+  const trustedOptions = applyToAllThreads ? { allThreads: true } : {};
 
   const rejectCancelledTrustedGrant = async () => {
     if (!signal.aborted) return;
@@ -2440,7 +2359,7 @@ export async function persistBotUpdate(
     // downgrade even if a turn happened to start in the response gap.
     if (approvalMode === "full" || approvalMode === "custom") {
       try {
-        await trustedApprovals.setMode(botId, "ask", { acknowledgeLocalAuto: false, ...(applyToAllThreads ? { allThreads: true } : {}) });
+        await trustedApprovals.setMode(botId, "ask", applyToAllThreads ? { allThreads: true } : {});
       } catch (error) {
         throw new Error(
           `The cancelled ${approvalMode === "full" ? "Full access" : "Custom approval"} grant could not be revoked: ${
@@ -3192,9 +3111,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
             soul: source.soul,
             notifications: source.notifications,
             modelSelection: source.modelSelection,
-            computer: source.computer,
-            cloudBackend: source.cloudBackend,
-            autoStartVps: source.autoStartVps,
             avatarUrl: source.avatarUrl,
             avatarCrop: source.avatarCrop,
             avatarZoom: source.avatarZoom,
@@ -3558,14 +3474,13 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     };
     const loadAll = async (): Promise<boolean> => {
       const chat = () =>
-        api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`).then(({ bots, groups, sections, computerControl, botQueuedMessages }) => {
+        api(`/api/bots?messages=${MESSAGE_PAGE_SIZE}`).then(({ bots, groups, sections, botQueuedMessages }) => {
           if (!alive) return;
           rawDispatch({
             type: "hydrate",
             bots,
             groups: groups ?? [],
             sections: sections ?? [],
-            computerControl: computerControl ?? {},
             botQueuedMessages,
           });
         });
@@ -3739,17 +3654,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
           }
           break;
         }
-        case "computer":
-          rawDispatch({ type: "provisioning", botId: frame.botId, on: frame.state === "provisioning" });
-          break;
-        case "computer-control":
-          rawDispatch({
-            type: "computerControl",
-            botId: frame.botId,
-            held: frame.held === true,
-            helpReason: typeof frame.helpReason === "string" ? frame.helpReason : null,
-          });
-          break;
         case "bot.deleted":
           botPatchQueue.cancel(frame.botId);
           rawDispatch({ type: "deleteBot", botId: frame.botId });

@@ -1,42 +1,15 @@
 // Which place a tool call touched, read from its name alone. Shared by the
-// server (computer-activity accounting) and the renderer (place icons on
-// tool chips), so both sides read the same tool the same way. Names arrive
-// namespaced (`mcp__computer__click`, `computer__click`), prefixed
-// (`computer_click`) or bare (`click`).
+// renderer (place icons on tool chips) and any server reader. Names arrive
+// namespaced (`mcp__browser__browser_click`, `browser__snapshot`), prefixed
+// (`browser_open`) or bare (`agent_browser_open`). The only place left is the
+// Tool Layer browser; computer destinations were removed with Works on.
 
-/** Tools whose completion can change what a screen shows. A bot on a
- * computer is illustrated only after one of these; the built-in browser's
- * read-only calls (snapshot, read, get_text, waits) stay out by the same rule. */
-export const SCREEN_TOUCHING_TOOLS: ReadonlySet<string> = new Set([
-  // cloud boat / remote computer
-  "screenshot", "click", "type_text", "press_key", "scroll", "computer_batch", "open_url", "browser_click", "browser_fill",
-  // built-in browser: the Electron surface's names, kept because a bot on an
-  // older remote harness can still call them
-  "browser_navigate", "browser_type", "browser_press", "browser_scroll", "browser_hover", "browser_drag",
-  "browser_select_option", "browser_back", "browser_forward", "browser_screenshot",
-  // built-in browser: agent-browser's names
-  "agent_browser_open", "agent_browser_click", "agent_browser_fill", "agent_browser_type", "agent_browser_press",
-  "agent_browser_select", "agent_browser_check", "agent_browser_screenshot",
-  // Cua Driver (local Mac, Local VM, VPS)
-  "double_click", "right_click", "drag", "hotkey", "move_cursor", "launch_app", "bring_to_front", "zoom",
-  // Relay research browser (Tool Layer): navigations and extractions change
-  // the page; reads only observe it, like snapshot/read/get_text above.
-  "browser_open", "browser_extract",
-]);
-
-// Keep legacy MCP namespaces accepted; desktop server__tool names follow
-// MCP_NAME in mcp-registry.ts (lowercase letters, digits, underscores, hyphens).
-export const TOOL_NAMESPACE = /^(?:mcp__.+?|[a-z][a-z0-9_-]{0,31})__/;
-
-/** Whether a tool belongs to a screen place at all — the built-in browser, a
- * computer, or neither (shell, files, teammates, memory). Never guesses
- * "computer" for an unrelated tool. */
-export function toolSurfaceKind(toolName: string): "browser" | "computer" | null {
+/** The browser tools the Tool Layer exposes. */
+export function toolSurfaceKind(toolName: string): "browser" | null {
   const name = toolName.toLowerCase();
-  if (name.startsWith("mcp__browser__") || name.startsWith("browser__")) return "browser";
-  if (name.startsWith("mcp__computer__") || name.startsWith("computer__") || name.startsWith("computer_")) return "computer";
-  const bare = name.replace(TOOL_NAMESPACE, "");
-  if (bare === "browser_click" || bare === "browser_fill") return "computer";
-  if (bare.startsWith("agent_browser_") || bare.startsWith("browser_")) return "browser";
-  return SCREEN_TOUCHING_TOOLS.has(bare) ? "computer" : null;
+  const bare = name.includes("__") ? name.slice(name.lastIndexOf("__") + 2) : name;
+  return name.includes("__browser__") || name.startsWith("browser__") ||
+    bare.startsWith("browser_") || bare.startsWith("agent_browser_")
+    ? "browser"
+    : null;
 }

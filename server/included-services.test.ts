@@ -1,48 +1,17 @@
-// Which credential a Boat or Jev request uses, and where it may
-// go. The relays know only the Admin's accounts: an own key must never reach
-// them, and the included token must never reach the providers.
+// Which credential a Jev request uses, and where it may go. The relay knows
+// only the Admin's account: an own key must never reach it, and the included
+// token must never reach the provider.
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { jevEndpoint } from "./decider/jev.ts";
-import { boatCredential, deciderCredential } from "./included-services.ts";
+import { deciderCredential } from "./included-services.ts";
 
-const RELAY_BOAT = "https://cloud.example.test/api/cloud/services/boat/api/box/v1";
 // A Jev base URL: the relay's one route is <this>/v1/systemone.
 const RELAY_DECIDER = "https://cloud.example.test/api/cloud/services/decider";
 const cloud = {
-  RELAY_CLOUD_BOAT_URL: RELAY_BOAT,
-  RELAY_CLOUD_BOAT_TOKEN: "box_relay_included",
   RELAY_CLOUD_DECIDER_URL: RELAY_DECIDER,
   RELAY_CLOUD_DECIDER_TOKEN: "relay_decide_included",
 };
-
-describe("Boat credential", () => {
-  it("falls back to the included token, sent only to the relay, when there is no own key", () => {
-    expect(boatCredential(undefined, cloud)).toEqual({ token: "box_relay_included", api: RELAY_BOAT, included: true });
-    expect(boatCredential("", cloud)).toEqual({ token: "box_relay_included", api: RELAY_BOAT, included: true });
-  });
-
-  it("uses the person's own key, sent only to Boat, whenever there is one", () => {
-    expect(boatCredential("box_own", cloud)).toEqual({ token: "box_own", api: "https://ascii.dev/api/box/v1", included: false });
-    // RELAY_BOX_API keeps pointing own keys at a stub for dev and tests.
-    expect(boatCredential("box_own", { ...cloud, RELAY_BOX_API: "http://127.0.0.1:9/api/box/v1" }))
-      .toEqual({ token: "box_own", api: "http://127.0.0.1:9/api/box/v1", included: false });
-  });
-
-  it("sends the included token only to the relay even when it comes back as a plain token", () => {
-    // A leased computer descriptor carries the token in use back to boat.ts.
-    expect(boatCredential("box_relay_included", { ...cloud, RELAY_BOX_API: "http://127.0.0.1:9/api/box/v1" }))
-      .toEqual({ token: "box_relay_included", api: RELAY_BOAT, included: true });
-  });
-
-  it("is included only when both the relay URL and the token are set", () => {
-    expect(boatCredential(undefined, {})).toBeNull();
-    expect(boatCredential(undefined, { RELAY_CLOUD_BOAT_TOKEN: "box_relay_included" })).toBeNull();
-    expect(boatCredential(undefined, { RELAY_CLOUD_BOAT_URL: RELAY_BOAT })).toBeNull();
-    expect(boatCredential(undefined, { RELAY_CLOUD_BOAT_URL: `${RELAY_BOAT}/`, RELAY_CLOUD_BOAT_TOKEN: " box_relay_included " }))
-      .toEqual({ token: "box_relay_included", api: RELAY_BOAT, included: true });
-  });
-});
 
 describe("Jev credential", () => {
   // `api` is a Jev base URL: the backend adds /v1/systemone.
@@ -92,7 +61,6 @@ describe("Jev credential", () => {
   it("never takes another service's relay token", () => {
     const { RELAY_CLOUD_DECIDER_URL: _url, RELAY_CLOUD_DECIDER_TOKEN: _token, ...others } = cloud;
     expect(deciderCredential(undefined, undefined, others)).toBeNull();
-    expect(boatCredential(undefined, { RELAY_CLOUD_DECIDER_URL: RELAY_DECIDER, RELAY_CLOUD_DECIDER_TOKEN: "relay_decide_included" })).toBeNull();
   });
 });
 
@@ -108,15 +76,11 @@ describe("holdIncludedServices", () => {
     vi.resetModules();
     const services = await import("./included-services.ts");
     services.holdIncludedServices();
-    expect(process.env.RELAY_CLOUD_BOAT_TOKEN).toBeUndefined();
     expect(process.env.RELAY_CLOUD_DECIDER_TOKEN).toBeUndefined();
     // The URLs are not secrets and stay.
-    expect(process.env.RELAY_CLOUD_BOAT_URL).toBe(RELAY_BOAT);
     expect(process.env.RELAY_CLOUD_DECIDER_URL).toBe(RELAY_DECIDER);
-    expect(services.boatCredential(undefined)).toEqual({ token: "box_relay_included", api: RELAY_BOAT, included: true });
     expect(services.deciderCredential(undefined, undefined)).toEqual({ token: "relay_decide_included", api: RELAY_DECIDER, included: true });
     // The person's own key still wins, and still goes only to the provider.
-    expect(services.boatCredential("box_own")).toMatchObject({ token: "box_own", included: false });
     expect(services.deciderCredential("tsk_own", undefined)).toEqual({ token: "tsk_own", api: "https://api.typesafe.ai", included: false });
   });
 });

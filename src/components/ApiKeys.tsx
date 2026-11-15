@@ -9,7 +9,7 @@ import { useMenuMotion } from "./MenuMotion";
 import { t } from "@/lib/i18n";
 import type { LocaleKey } from "@/locales";
 
-export type ConfigSection = "composio" | "box" | "opencodeGo" | "anthropic" | "openaiCompat" | "xai" | "mistral";
+export type ConfigSection = "composio" | "opencodeGo" | "anthropic" | "openaiCompat" | "xai" | "mistral";
 /** Sections whose key can be tried against the provider from the server. */
 export type TestableProvider = "anthropic" | "openaiCompat" | "xai" | "mistral";
 
@@ -27,11 +27,6 @@ const SECTIONS: Record<
     body: (v) => ({ composio: { apiKey: v } }),
     flag: (c) => c.composio.configured,
   },
-  box: {
-    body: (v) => ({ box: { token: v } }),
-    flag: (c) => c.box.configured && c.box.included !== true,
-    included: (c) => c.box.included === true,
-  },
   opencodeGo: { body: (v) => ({ opencodeGo: { apiKey: v } }), flag: (c) => c.opencodeGo?.configured ?? false },
   anthropic: { body: (v) => ({ anthropic: { key: v } }), flag: (c) => c.anthropic?.configured ?? false },
   openaiCompat: { body: (v) => ({ openaiCompat: { key: v } }), flag: (c) => c.openaiCompat?.configured ?? false },
@@ -41,9 +36,8 @@ const SECTIONS: Record<
 
 // Provider keys have no desktop-shell slot yet and go through the server's
 // own 0600 config, the same place they live on a hosted server.
-const ELECTRON_CREDENTIAL: Partial<Record<ConfigSection, "composioApiKey" | "boxToken" | "opencodeGoApiKey">> = {
+const ELECTRON_CREDENTIAL: Partial<Record<ConfigSection, "composioApiKey" | "opencodeGoApiKey">> = {
   composio: "composioApiKey",
-  box: "boxToken",
   opencodeGo: "opencodeGoApiKey",
 };
 
@@ -68,15 +62,6 @@ const CREDENTIALS: Record<
     href: "https://dashboard.composio.dev",
     linkLabelKey: "keys.composio.link",
     optional: true,
-  },
-  box: {
-    labelKey: "keys.boat.label",
-    placeholderKey: "keys.boat.placeholder",
-    descriptionKey: "keys.boat.desc",
-    href: "https://docs.boat.dev/api-keys",
-    linkLabelKey: "keys.boat.link",
-    optional: true,
-    warningKey: "keys.boat.warning",
   },
   opencodeGo: {
     labelKey: "keys.opencode.label",
@@ -338,85 +323,6 @@ export function ApiKeyRow({
       </div>
       {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
       {verdict && <div role="status" className="mt-1 text-[12px] text-ink-secondary">{verdict}</div>}
-    </div>
-  );
-}
-
-/** Non-secret Docker-over-SSH target. Keys and passwords stay with SSH. */
-export function VpsConnection() {
-  const { state, dispatch } = useStore();
-  const [alias, setAlias] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const configured = Boolean(state.config?.vps?.configured);
-
-  useEffect(() => {
-    setAlias(state.config?.vps?.sshAlias ?? "");
-  }, [state.config?.vps?.sshAlias]);
-
-  const save = () => {
-    if (saving || (!alias.trim() && !configured)) return;
-    setSaving(true);
-    setError(null);
-    api("/api/config", {
-      method: "PUT",
-      body: JSON.stringify({ vps: { sshAlias: alias.trim() } }),
-    })
-      .then((status: ConfigStatus) => {
-        dispatch({ type: "configStatus", config: status });
-        setAlias(status.vps?.sshAlias ?? "");
-      })
-      .catch((e) => setError(e.message))
-      .finally(() => setSaving(false));
-  };
-
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center gap-2 text-[13px] text-ink-secondary">
-        <span className={cn("size-1.5 rounded-full", configured ? "bg-success" : "bg-raised-hover")} />
-        <span>{t("keys.vps.label")}</span>
-        <span className="rounded bg-control px-1.5 py-0.5 text-[10px] font-medium uppercase tracking-wide text-ink-secondary">
-          {t("keys.optional")}
-        </span>
-        {configured && <span className="text-[11px] text-success">{t("keys.connected")}</span>}
-      </div>
-      <div className="mb-1.5 text-[12px] leading-relaxed text-ink-secondary">
-        {t("keys.vps.descBefore")}
-        <a
-          href="https://github.com/milind-soni/Relay/blob/main/docs/byo-vps.md"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-accent hover:underline"
-        >
-          {t("keys.vps.descLink")}
-        </a>
-        {t("keys.vps.descAfter")}
-      </div>
-      <div className="flex gap-2">
-        <input
-          type="text"
-          value={alias}
-          onChange={(e) => setAlias(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && save()}
-          placeholder="my-vps"
-          aria-label={t("keys.vps.aria")}
-          autoComplete="off"
-          className="w-full rounded-lg border border-hairline/40 bg-inset px-3 py-2 text-[13px] text-ink placeholder:text-ink-secondary focus:outline-none"
-        />
-        <button
-          onClick={save}
-          disabled={saving || (!alias.trim() && !configured)}
-          className={cn(
-            "flex w-[72px] shrink-0 items-center justify-center gap-1.5 rounded-lg py-2 text-[13px]",
-            !alias.trim() && configured ? "bg-control text-danger hover:bg-raised-hover" : "bg-control text-ink hover:bg-raised-hover",
-            "disabled:cursor-not-allowed disabled:opacity-50",
-          )}
-          title={!alias.trim() && configured ? t("keys.vps.removeAlias") : t("common.save")}
-        >
-          {saving ? <Loader2 size={13} className="animate-spin" /> : !alias.trim() && configured ? t("keys.clear") : <><Check size={13} />{t("common.save")}</>}
-        </button>
-      </div>
-      {error && <div className="mt-1 text-[12px] text-danger">{error}</div>}
     </div>
   );
 }

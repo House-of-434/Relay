@@ -3,12 +3,12 @@
 import { CalendarClock, FileText, Plus } from "lucide-react";
 import { useState } from "react";
 import { useStore, type Bot } from "@/state/store";
-import type { Routine, RoutineRun, RoutineRunOn } from "@/lib/routines";
+import type { Routine, RoutineRun } from "@/lib/routines";
 import { t } from "@/lib/i18n";
 import { RoutineEditor } from "../RoutinesPage";
 import { RoutineList } from "../routines/RoutineList";
 
-export function RoutinesSection({ bot, routines, runs, defaultRunOn }: { bot: Bot; routines: Routine[]; runs: RoutineRun[]; defaultRunOn?: RoutineRunOn }) {
+export function RoutinesSection({ bot, routines, runs }: { bot: Bot; routines: Routine[]; runs: RoutineRun[] }) {
   const { state, dispatch } = useStore();
   const [editing, setEditing] = useState<Routine | "new" | null>(null);
   return <div className="flex flex-col gap-4">
@@ -21,6 +21,6 @@ export function RoutinesSection({ bot, routines, runs, defaultRunOn }: { bot: Bo
     </div>
     <RoutineList routines={routines} runs={runs} loading={state.routinesLoadState === "loading" && routines.length === 0} error={state.routinesLoadState === "error"} onOpen={setEditing} onLogs={(routine) => dispatch({ type: "showRoutines", section: "logs", botId: bot.id, routineId: routine.id })} />
     <button type="button" onClick={() => dispatch({ type: "showRoutines", section: "schedule", view: "list", botId: bot.id })} className="self-start text-[12px] text-accent hover:underline">{t("computer.routines.openTitle")} →</button>
-    {editing && <RoutineEditor key={bot.id} routine={editing === "new" ? undefined : editing} bots={[bot]} lockedBotId={bot.id} defaultRunOn={defaultRunOn} onClose={() => setEditing(null)} />}
+    {editing && <RoutineEditor key={bot.id} routine={editing === "new" ? undefined : editing} bots={[bot]} lockedBotId={bot.id} onClose={() => setEditing(null)} />}
   </div>;
 }

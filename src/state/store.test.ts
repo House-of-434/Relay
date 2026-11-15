@@ -63,7 +63,7 @@ describe("composer thread approval persistence", () => {
     const bridge = { setMode: vi.fn().mockResolvedValue(bot) };
     const request = vi.fn();
     expect(await persistTaskApproval("bot", "thread", { approvalMode: mode, confirmFullAccess: true }, bridge, request)).toBe(bot);
-    expect(bridge.setMode).toHaveBeenCalledExactlyOnceWith("bot", mode, { threadId: "thread", threadOnly: true, acknowledgeLocalAuto: false });
+    expect(bridge.setMode).toHaveBeenCalledExactlyOnceWith("bot", mode, { threadId: "thread", threadOnly: true });
     expect(request).not.toHaveBeenCalled();
   });
   it("never falls back to HTTP for Full or Custom, or grants Full without confirmation", async () => {
@@ -414,7 +414,7 @@ describe("trusted approval-mode persistence", () => {
 
     expect(order).toEqual(["http", "private"]);
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ title: "Ops" });
-    expect(setMode).toHaveBeenCalledWith("bot-1", "full", { acknowledgeLocalAuto: false });
+    expect(setMode).toHaveBeenCalledWith("bot-1", "full", {});
   });
 
   it("passes all-threads scope only through the private grant", async () => {
@@ -423,7 +423,7 @@ describe("trusted approval-mode persistence", () => {
     await persistBotUpdate("bot-1", { approvalMode: "full", confirmFullAccess: true, applyToAllThreads: true, title: "Chief" },
       new AbortController().signal, request, { setMode });
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({ title: "Chief" });
-    expect(setMode).toHaveBeenCalledWith("bot-1", "full", { acknowledgeLocalAuto: false, allThreads: true });
+    expect(setMode).toHaveBeenCalledWith("bot-1", "full", { allThreads: true });
   });
 
   it("never sends a Full confirmation over HTTP after a rapid switch back to Ask", async () => {
@@ -463,7 +463,7 @@ describe("trusted approval-mode persistence", () => {
     )).resolves.toMatchObject({ approvalMode: "ask" });
 
     expect(request).not.toHaveBeenCalled();
-    expect(setMode).toHaveBeenCalledWith("bot-1", "ask", { acknowledgeLocalAuto: false });
+    expect(setMode).toHaveBeenCalledWith("bot-1", "ask", {});
   });
 
   it("revokes a trusted mode that completes after its save was cancelled", async () => {
@@ -557,34 +557,7 @@ describe("trusted approval-mode persistence", () => {
     expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
       modelSelection: { instanceId: "gemini", model: "gemini-3.1-pro" },
     });
-    expect(setMode).toHaveBeenCalledWith("bot-1", "ask", { acknowledgeLocalAuto: false });
-  });
-
-  it("keeps local-computer consent on an ordinary PATCH coalesced with a private mode", async () => {
-    const request = vi.fn(async (_path: string, _init?: RequestInit) => ({
-      bot: { ...announcement("auto"), computer: "local" as const },
-    }));
-    const setMode = vi.fn(async () => announcement("full"));
-
-    await persistBotUpdate(
-      "bot-1",
-      {
-        computer: "local",
-        acknowledgeLocalAuto: true,
-        approvalMode: "full",
-        confirmFullAccess: true,
-      },
-      new AbortController().signal,
-      request,
-      { setMode },
-      announcement("auto"),
-    );
-
-    expect(JSON.parse(String(request.mock.calls[0]?.[1]?.body))).toEqual({
-      computer: "local",
-      acknowledgeLocalAuto: true,
-    });
-    expect(setMode).toHaveBeenCalledWith("bot-1", "full", { acknowledgeLocalAuto: true });
+    expect(setMode).toHaveBeenCalledWith("bot-1", "ask", {});
   });
 });
 
@@ -607,7 +580,7 @@ describe("server-authoritative bot deletion", () => {
 
     await expect(requestConfirmedBotDeletion(
       bot.id,
-      async () => { throw new Error(`${status} computer cleanup required`); },
+      async () => { throw new Error(`${status} delete failed`); },
       (botId) => {
         cancel(botId);
         state = reducer(state, { type: "deleteBot", botId });
@@ -886,23 +859,17 @@ describe("config status frames", () => {
       configStatusFromFrame({
         xai: { configured: true },
         composio: { configured: true, mode: "managed" },
-        box: { configured: false },
-        vps: { configured: true, sshAlias: "homelab" },
         rooms: { turnTimeoutMinutes: 20 },
         threads: { maxConcurrentPerBot: 10 },
-        localVm: { mode: "per-bot", maxInstances: 3 },
         opencodeGo: { configured: true },
         profile: { name: "Ian", email: "ian@example.test" },
         features: { skillAuthoring: true },
       }),
-    ).toEqual({
+    ).toMatchObject({
       xai: { configured: true },
       composio: { configured: true, mode: "managed" },
-      box: { configured: false },
-      vps: { configured: true, sshAlias: "homelab" },
       rooms: { turnTimeoutMinutes: 20 },
       threads: { maxConcurrentPerBot: 10 },
-      localVm: { mode: "per-bot", maxInstances: 3 },
       opencodeGo: { configured: true },
       profile: { name: "Ian", email: "ian@example.test" },
       features: { skillAuthoring: true },
@@ -964,10 +931,7 @@ describe("task rename", () => {
 describe("config status", () => {
   const config = configStatusFromFrame({
     composio: { configured: false },
-    box: { configured: false },
-    vps: { configured: false, sshAlias: "" },
     rooms: { turnTimeoutMinutes: 5 },
-    localVm: { mode: "shared", maxInstances: 2 },
     features: { skillAuthoring: true },
   });
 
@@ -1277,7 +1241,6 @@ describe("routine receipt retention", () => {
     routineName: "Check inbox",
     target: "bot",
     botId: "echo",
-    runOn: "maus",
     scheduledFor,
     status,
     manual: false,
@@ -1357,24 +1320,6 @@ describe("canonical message races", () => {
     expect(next).toBe(state);
     expect(next.bots[0]?.activeLeafId).toBe(reply.id);
     expect(next.bots[0]?.messages).toEqual([sent, reply]);
-  });
-});
-
-describe("computer destination announcements", () => {
-  it.each(["botPatched", "taskSwitched", "botPatchedSwitch"] as const)("clears the old target on Auto via %s", (kind) => {
-    const bot: Bot = {
-      id: "computer-bot", threadId: "computer-thread", name: "Ziggy", title: "", description: "",
-      notifications: true, color: "green", unread: false,
-      modelSelection: { instanceId: "codex", model: "default" }, computer: "cloud",
-      messages: [{ id: "message", role: "user", kind: "text", at: 1, text: "Keep this conversation" }],
-    };
-    const { computer: _oldComputer, ...announcement } = bot;
-    const next = reducer({ ...initialState, bots: [bot] }, {
-      type: kind === "taskSwitched" ? "taskSwitched" : "botPatched",
-      bot: { ...announcement, threadId: kind === "botPatchedSwitch" ? "replacement-thread" : bot.threadId },
-    });
-    expect(next.bots[0]?.computer).toBeUndefined();
-    expect(next.bots[0]?.messages).toEqual(bot.messages);
   });
 });
 
@@ -1492,17 +1437,6 @@ describe("section Chiefs", () => {
     expect(next.bots.find((candidate) => candidate.id === workChief.id)?.chiefOfStaff).toBe(false);
     expect(next.bots.find((candidate) => candidate.id === workCandidate.id)?.chiefOfStaff).toBe(true);
     expect(next.bots.find((candidate) => candidate.id === personalChief.id)?.chiefOfStaff).toBe(true);
-  });
-
-  it("optimistically clears an explicit computer when Auto is selected", () => {
-    const current = { ...bot("cloud-bot", "Work"), computer: "cloud" as const, messages: [] };
-    const next = reducer({ ...initialState, bots: [current] }, {
-      type: "updateBot",
-      botId: current.id,
-      patch: { computer: null },
-    });
-
-    expect(next.bots[0]?.computer).toBeUndefined();
   });
 });
 
@@ -1669,7 +1603,6 @@ describe("pending queued chip", () => {
       type: "hydrate",
       bots: [{ ...bot, messages: [canonical] }],
       groups: [],
-      computerControl: {},
     });
 
     expect(hydrated.pendingQueued).toEqual({});
@@ -1689,7 +1622,7 @@ describe("pending queued chip", () => {
       defaultResponder: { kind: "everyone" }, bulletin: "", unread: false, messages: [] };
     const state = { ...initialState, groups: [group], pendingQueued: { "team-thread": [{ queueId: "team-q", text: "team work" }] } };
     const queues = { sibling: [{ queueId: "sibling-q", text: "waiting after refresh", reason: "capacity" as const }] };
-    const hydrated = reducer(state, { type: "hydrate", bots: [{ ...bot, messages: [] }], groups: [group], computerControl: {}, botQueuedMessages: queues });
+    const hydrated = reducer(state, { type: "hydrate", bots: [{ ...bot, messages: [] }], groups: [group], botQueuedMessages: queues });
     expect(hydrated.pendingQueued).toEqual({ ...queues, "team-thread": state.pendingQueued["team-thread"] });
     const cancelled = reducer(hydrated, { type: "botQueues", queues: {} });
     expect(cancelled.pendingQueued).toEqual(state.pendingQueued);
@@ -1944,11 +1877,10 @@ describe("bot settings section", () => {
     expect(next.botSettingsSection).toBe("identity");
   });
 
-  it("toggleSettings leaves the computer panel and inspector open, closes app settings", () => {
-    const withPanels = { ...initialState, computerOpen: true, inspectorOpen: true, appSettingsOpen: true };
+  it("toggleSettings leaves the inspector open and closes app settings", () => {
+    const withPanels = { ...initialState, inspectorOpen: true, appSettingsOpen: true };
     const next = reducer(withPanels, { type: "toggleSettings", open: true });
     expect(next.settingsOpen).toBe(true);
-    expect(next.computerOpen).toBe(true);
     expect(next.inspectorOpen).toBe(true);
     expect(next.appSettingsOpen).toBe(false);
   });
@@ -2097,10 +2029,7 @@ describe("bot settings section", () => {
 describe("live config frames", () => {
   const baseFrame: ConfigStatusFrame = {
     composio: { configured: false },
-    box: { configured: false },
-    vps: { configured: false, sshAlias: "" },
     rooms: { turnTimeoutMinutes: 10 },
-    localVm: { mode: "shared", maxInstances: 1 },
   };
 
   it("keeps automatic recovery and its backup through live config refreshes", () => {
@@ -2246,7 +2175,7 @@ describe("conversation model variant discoveries", () => {
   it("clears runtime capabilities on reload while preserving the saved variant", () => {
     let state = run(start(), { ...base(), type: "turn.started" });
     state = run(state, discovery());
-    state = reducer(state, { type: "hydrate", bots: [owner], groups: [], computerControl: {} });
+    state = reducer(state, { type: "hydrate", bots: [owner], groups: [] });
     expect(state.modelVariantSessions).toEqual({});
     expect(state.bots[0].tasks![0].modelSelection?.variant).toBe("minimal");
   });
