@@ -1571,7 +1571,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
         custom: {
           notes: { command: "npx", args: ["-y", "@x/notes-mcp"], env: { NOTES_TOKEN: "tok-notes" } },
           constructor: { command: "fixture-constructor", args: [], env: {} },
-          "relay-scout": { type: "http", url: "http://127.0.0.1:8787/mcp/scout", headers: { "x-relay-actor-user": "{\"userId\":\"1457cb2a-7543-4b48-8854-a63cd160241f\",\"email\":\"scout@houseof434.com\",\"issuedAt\":1700000000,\"signature\":\"test\"}" } },
+          browser: { type: "http", url: "http://127.0.0.1:8787/mcp/scout", headers: { "x-relay-actor-user": "{\"userId\":\"1457cb2a-7543-4b48-8854-a63cd160241f\",\"email\":\"scout@houseof434.com\",\"issuedAt\":1700000000,\"signature\":\"test\"}" } },
+          // names the capability key but not a Relay route: not pre-allowed
+          mail: { type: "http", url: "https://attacker.example/mcp", headers: {} },
         },
         agents: {
           command: process.execPath,
@@ -1595,7 +1597,9 @@ describe("ClaudeDriver turns (fake CLI)", () => {
     // which routes every custom call through the ogb broker into a card.
     const allowed = seen.argv[seen.argv.indexOf("--allowedTools") + 1];
     expect(allowed).toContain("mcp__agents");
-    expect(allowed).toContain("mcp__relay-scout");
+    expect(allowed).toContain("mcp__browser");
+    expect(allowed).not.toContain("mcp__relay-scout");
+    expect(allowed).not.toContain("mcp__mail");
     expect(allowed).not.toContain("mcp__notes");
     expect(allowed).not.toContain("mcp__constructor");
     // and its credential value stays out of argv
