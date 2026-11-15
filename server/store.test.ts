@@ -1290,6 +1290,31 @@ describe("Store", () => {
       .toEqual(["curator", "mercury", "scout"]);
   });
 
+  it("replaces a released Relay-agent default only when the soul is byte-identical", () => {
+    const store = new Store(selection);
+    const scout = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS).find((bot) => bot.relayAgent === "scout")!;
+    const seed = RELAY_AGENT_SEEDS.find((candidate) => candidate.role === "scout")!;
+    expect(seed.previousSoul).toBeDefined();
+    expect(scout.soul).toBe(seed.profile.soul);
+
+    store.setSoul(scout.id, seed.previousSoul!);
+    store.migrateRelayAgentSouls(RELAY_AGENT_SEEDS);
+    expect(store.bot(scout.id)?.soul).toBe(seed.profile.soul);
+
+    store.setSoul(scout.id, "My own Scout instructions.");
+    store.migrateRelayAgentSouls(RELAY_AGENT_SEEDS);
+    expect(store.bot(scout.id)?.soul).toBe("My own Scout instructions.");
+  });
+
+  it("migrates an old default when the roster seeds on first sight", () => {
+    const store = new Store(selection);
+    const scout = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS).find((bot) => bot.relayAgent === "scout")!;
+    const seed = RELAY_AGENT_SEEDS.find((candidate) => candidate.role === "scout")!;
+    store.setSoul(scout.id, seed.previousSoul!);
+    store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS);
+    expect(store.bot(scout.id)?.soul).toBe(seed.profile.soul);
+  });
+
   it("seeds per owner, idempotently, and a retry creates only the missing role", () => {
     const store = new Store(selection);
     const first = store.seedRelayAgentsForOwner("owner-a", RELAY_AGENT_SEEDS);
@@ -2113,19 +2138,6 @@ describe("Store redacts bot-authored secrets on write", () => {
     expect(runCard.routineRun?.routineName).not.toContain(key);
     expect(runCard.routineRun?.summary).not.toContain(key);
     expect(runCard.routineRun?.error).not.toContain(key);
-    const secretCard = store.appendMessage(bot.threadId, {
-      role: "bot",
-      kind: "secret",
-      secret: {
-        target: "xaiApiKey",
-        label: "xAI API key",
-        description: `The agent accidentally included ${key}`,
-        placeholder: "xai-…",
-        helpUrl: "https://console.x.ai/",
-        requestKey: "credential-request",
-      },
-    });
-    expect(secretCard.secret?.description).not.toContain(key);
     // the user's own words are theirs
     const mine = store.appendMessage(bot.threadId, { role: "user", kind: "text", text: `use ${key} for the api` });
     expect(mine.text).toContain(key);

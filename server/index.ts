@@ -34,14 +34,6 @@ import {
 } from "../shared/approval-mode.ts";
 import { createApprovalModeSupport } from "./harness-capabilities.ts";
 import { escapeAttribute } from "../src/lib/composer-attachments.ts";
-import {
-  CREDENTIAL_TARGETS,
-  credentialResumeOutcome,
-  credentialIsConfigured,
-  isPendingCredentialRequest,
-  isCredentialTargetId,
-  type CredentialTargetId,
-} from "../shared/credential-request.ts";
 import { takeoverPending } from "../shared/takeover-card.ts";
 import { TakeoverLifecycle } from "./takeover-lifecycle.ts";
 
@@ -412,11 +404,9 @@ import {
   buildSystemPrompt,
   userProfileSystemPrompt,
   cloudHomePrompt,
-  computerPrompt,
   connectorsSystemPrompt,
   mailboxSystemPrompt,
   CLARIFICATION_PROMPT,
-  CREDENTIAL_PROMPT,
   mentionPrompt,
   THREADS_PROMPT,
   LEARN_PROMPT,
@@ -427,7 +417,6 @@ import {
   OPENUI_PROMPT,
   UI_SELECTION_PROMPT,
   RELAY_IDENTITY_PROMPT,
-  resolveComputerPromptKind,
 } from "./system-prompt.ts";
 import { readCuaConnection, readCuaUnavailableReason, gatedLocalComputer } from "./local-computer.ts";
 import {
@@ -442,7 +431,7 @@ import { LocalVmSeatPool, type LocalVmSeatHolder } from "./local-vm-seat-pool.ts
 import { RepeatDetector, callKey } from "./repeat-detector.ts";
 import { redactSecretsInText } from "./redact.ts";
 import * as vps from "./vps-computer.ts";
-import { resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunOn, type RoutineRunTrigger } from "./routines.ts";
+import { resolveRoutineOwner, RoutineManager, type RoutineRun, type RoutineRunTrigger } from "./routines.ts";
 import { CalendarCallManager, type CalendarCall } from "./calendar-calls.ts";
 import { RoutineRequestService } from "./routine-requests.ts";
 import { createOptionsCard } from "./options-card.ts";
@@ -485,7 +474,7 @@ import { startAutoVmClaim, type AutoVmClaimTable } from "./auto-vm-claims.ts";
 import { computerFreeAfterText, computerStillBusyText, computerStoppedWaitingText, computerWaitingText, type ComputerHolder } from "./computer-wait.ts";
 import { CloudOverflowConsent, CloudSeatLease, cloudOverflowAction, cloudOverflowConsentText, cloudOverflowOfferText, cloudSeatStartedText, cloudSeatStoppedText, type CloudOverflowSituation } from "./cloud-overflow.ts";
 import { modelContextWindow } from "./model-context-window.ts";
-import { parseSurface, resolveSurface, surfaceLabel, surfaceOfComputerKind, surfacePrompt, type Surface } from "./surface.ts";
+import { parseSurface, resolveSurface, surfaceLabel, surfaceOfComputerKind, type Surface } from "./surface.ts";
 import {
   PendingTurnCancellations,
   ProviderTurnGenerationRegistry,
@@ -593,15 +582,7 @@ import {
 } from "./bot-visibility.ts";
 import { describeBrand, loadBrand } from "./brand.ts";
 import { deliverSseFrame } from "./sse-fanout.ts";
-import {
-  PHONE_SECRET_PROTOCOL_VERSION,
-  PhoneSecretBridge,
-  PhoneSecretError,
-  PhoneSecretSubmissionRegistry,
-  assertPhoneSecretRequestMatches,
-  phoneSecretOperationId,
-  type PhoneSecretContext,
-} from "./phone-secret.ts";
+import { PhoneSecretSubmissionRegistry } from "./phone-secret.ts";
 // Keep these two last: a route module may import any server module, and
 // loading the table after everything above leaves module start-up order as is.
 import { json, onJsonBody, parsedBodyOf, readBody } from "./harness/http.ts";
@@ -1814,13 +1795,11 @@ function applyDesktopMutationTokenMessage(raw: unknown): boolean {
   }
   return true;
 }
-const phoneSecrets = new PhoneSecretBridge(postDesktopPrivateMessage);
 utilityParentPort?.on("message", (event) => {
   const message = event?.data;
   try {
     if (applyDesktopMutationTokenMessage(message)) return;
     if (handleDesktopTrustedApprovalMessage(message)) return;
-    if (phoneSecrets.receive(message)) return;
     composio.applyManagedBrokerMessage(message);
   } catch (error) {
     console.error(`[desktop-sync] rejected private parent message: ${error instanceof Error ? error.message : String(error)}`);
@@ -1950,6 +1929,11 @@ const INTERNAL_CAPABILITY_ORPHAN_MS = 30 * 24 * 60 * 60_000;
 const internalCapabilities = new Map<string, InternalCapability>();
 const activeInternalGenerationByThread = new Map<string, string>();
 const internalGenerationByProviderTurn = new ProviderTurnGenerationRegistry();
+/** Provider turn id -> internal generation, kept for the turn-end browser
+ * close. The registry consumes its owner on completion; this map lets the
+ * close request carry the exact turn identity. */
+const browserTurnGenerations = new Map<string, string>();
+const BROWSER_TURN_GENERATIONS_MAX = 5_000;
 const computerSelectionTurns = new Map<string, {
   generation: string;
   botId: string;
@@ -2067,12 +2051,20 @@ function revokeAllInternalCapabilities(): void {
   // generation by id) is what judges it (server/lending-memory.ts).
   activeInternalGenerationByThread.clear();
   internalGenerationByProviderTurn.clear();
+  browserTurnGenerations.clear();
   inheritedMailAttachmentsByGeneration.clear();
 }
 
 function bindInternalCapabilityToProviderTurn(threadId: string, generation: string, turnId?: string): void {
   if (turnId && !internalGenerationByProviderTurn.bind(threadId, generation, turnId)) {
     revokeInternalCapabilityGeneration(threadId, generation);
+    return;
+  }
+  if (turnId) {
+    browserTurnGenerations.set(turnId, generation);
+    while (browserTurnGenerations.size > BROWSER_TURN_GENERATIONS_MAX) {
+      browserTurnGenerations.delete(browserTurnGenerations.keys().next().value!);
+    }
   }
 }
 
@@ -2133,16 +2125,6 @@ const createSidebarSectionSchema = z.object({
   botIds: z.array(z.string().regex(/^[\w-]+$/)).max(MAX_WORKSPACE_BOTS).default([]),
 }).strict();
 const createGroupTaskRequestSchema = z.object({ title: z.string().optional() });
-const phoneSecretEnvelopeSchema = z.object({
-  version: z.literal(PHONE_SECRET_PROTOCOL_VERSION),
-  threadId: z.string().regex(/^[\w-]{1,128}$/),
-  keyId: z.string().regex(/^[A-Za-z0-9_-]{22}$/),
-  deviceId: z.string().regex(/^[\w-]{1,128}$/),
-  target: z.string().regex(/^[A-Za-z][A-Za-z0-9]{0,63}$/),
-  requestKey: z.string().regex(/^[\w-]{1,128}$/),
-  encapsulatedKey: z.string().regex(/^[A-Za-z0-9_-]{87}$/),
-  ciphertext: z.string().regex(/^[A-Za-z0-9_-]{23,5483}$/),
-}).strict();
 // Resolved from the server root — see server/proxy-paths.ts. This descending
 // path happened to survive bundling, but it goes through the same anchor so
 // there is exactly one way proxies are located.
@@ -3322,6 +3304,7 @@ bootSelection = await defaultSelection();
 // Bots seeded before any engine was runnable carry an empty selection; adopt
 // the now-resolved workspace default so the shipped roster can run.
 store.healEmptyModelSelections();
+store.migrateRelayAgentSouls(RELAY_AGENT_SEEDS);
 hostedModels?.reconcile(store);
 
 /** A bot as a client may see it: no provider session bookkeeping.
@@ -3386,14 +3369,6 @@ function previewSystemPrompt(bot: BotRecord) {
   const instance = turnInstance(bot);
   const caps = instance?.adapter.capabilities;
   const teamComputer = inheritedTeamComputer(bot);
-  const previewComputer = RELAY_COMPUTER_DISABLED ? "off" : teamComputer ? "cloud" : bot.computer;
-  const computerPromptKind = RELAY_COMPUTER_DISABLED ? null : resolveComputerPromptKind({
-    kind: previewComputer === "vm" ? "vm" : previewComputer === "cloud"
-      ? bot.cloudBackend === "vps" ? "vps" : "box" : previewComputer === "local" ? "local" : null,
-    driverKind: instance?.driverKind,
-    cloudComputerMcp: caps?.cloudComputerMcp,
-    vmPrivate: localVmMode(cfg) === "per-bot",
-  });
   const peers = reachablePeers(store.bots, bot);
   const coordination = bot.chiefOfStaff
     ? chiefOfStaffSystemPrompt(bot.id, store.bots, true, relayStatusSystemPrompt())
@@ -3401,14 +3376,9 @@ function previewSystemPrompt(bot: BotRecord) {
       ? peerRosterSystemPrompt(peers)
       : "";
   // Same gate a real turn applies: the block only goes to a bot whose
-  // engine actually mounts agent tools, since it names propose_profile,
-  // propose_routine and request_credential.
+  // engine actually mounts agent tools, since it names propose_profile
+  // and propose_routine.
   const agentsMounted = caps?.agentsMcp === true;
-  // The preview asks the same question a dispatch asks, through the same
-  // policy, so "what the model sees" cannot drift from what a turn sends.
-  const previewPlan = resolveSurface({
-    destination: previewComputer,
-  });
   const privateWorkspace = instance && supportsWorkspaceFiles(instance.driverKind);
   const built = buildSystemPrompt(persona, bot.soul ?? "", [
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
@@ -3423,18 +3393,11 @@ function previewSystemPrompt(bot: BotRecord) {
     // After the setup block, which stays first after the soul: an incomplete
     // task comes back as a question, never as an invented value or silent gap.
     { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
-    { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(RELAY_COMPUTER_DISABLED ? undefined : teamComputer ?? undefined) },
-    // Auto cannot know its place until dispatch, so the preview stays silent
-    // there and only carries the note; explicit settings preview the paragraph.
-    { id: "plan", label: "Surface", text: previewPlan.computer === undefined ? "" : surfacePrompt({
-      computer: previewPlan.computer && previewPlan.computer !== "off" && computerPromptKind ? previewPlan.computer : null,
-    }, { note: previewPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "Relay Cloud", text: CLOUD_HOME ? cloudHomePrompt(agentsMounted && lendingEnabled()) : "" },
     { id: "connectors", label: "Connected apps", text: !RELAY_SHARED_WORKSPACE && caps?.composioMcp && bot.composio !== false && composio.configured(cfg) ? connectorsSystemPrompt(bot.connectorTools) : "" },
     { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "coordination", label: "Team", text: agentsMounted && coordination ? ` ${coordination}` : "" },
-    { id: "credential", label: "Credentials", text: agentsMounted ? CREDENTIAL_PROMPT : "" },
     { id: "routine", label: "Routines", text: agentsMounted ? ROUTINE_PROMPT : "" },
     { id: "profile", label: "Profile changes", text: agentsMounted ? PROFILE_PROMPT : "" },
     { id: "openui", label: "Generative UI", text: agentsMounted ? OPENUI_PROMPT : "" },
@@ -5409,9 +5372,7 @@ const watchdog = new TurnWatchdog({
     repeats.settle(turn.threadId);
     const bot = botForThread(turn.botId, turn.threadId);
     const routineRun = activeRoutineRunForThread(turn.threadId);
-    const instance = bot
-      ? runningTurnInstance(bot, turn.threadId, routineRun?.runOn)
-      : routineRun?.runOn === "cloud" ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") : null;
+    const instance = bot ? runningTurnInstance(bot, turn.threadId) : null;
     void instance?.adapter.interruptTurn(turn.threadId).catch(() => {});
     const minutes = Math.round(TURN_STALL_MS / 60_000);
     if (routineRun?.target === "bot") {
@@ -5999,7 +5960,7 @@ function inheritedTeamComputer(bot: Pick<BotRecord, "section" | "computer" | "cl
 }
 
 function teamComputerPrompt(computer: TeamComputerRecord | undefined): string {
-  return computer ? `Your team shares the Boat computer ${JSON.stringify(computer.name)}. Its desktop files and desktop browser logins are shared with other Auto bots in your team; only one turn may drive it at a time. The separate built-in Browser is not this desktop and does not automatically share its logins.` : "";
+  return computer ? `Your team shares the cloud computer ${JSON.stringify(computer.name)}. Its desktop files and desktop browser logins are shared with other Auto bots in your team; only one turn may drive it at a time. The separate built-in Browser is not this desktop and does not automatically share its logins.` : "";
 }
 
 function botComputerControlKey(bot: BotRecord): string {
@@ -6318,19 +6279,19 @@ function providerOperationConflict(provider: RemoteComputerProvider): string | n
   return null;
 }
 
-function turnSurfacePlan(bot: BotRecord, runOn?: RoutineRunOn, threadId?: string) {
+function turnSurfacePlan(bot: BotRecord, threadId?: string) {
   if (RELAY_COMPUTER_DISABLED) return resolveSurface({ destination: "off", pinnedSurface: null });
-  const forcedBoat = runOn === "cloud" || Boolean(inheritedTeamComputer(bot));
+  const forcedBoat = Boolean(inheritedTeamComputer(bot));
   return resolveSurface({
     destination: forcedBoat ? "cloud" : bot.computer,
     pinnedSurface: forcedBoat || !threadId ? null : store.taskByThread(bot.id, threadId)?.surface,
   });
 }
 
-function turnProvider(bot: BotRecord, runOn?: RoutineRunOn, threadId?: string): RemoteComputerProvider | null {
+function turnProvider(bot: BotRecord, threadId?: string): RemoteComputerProvider | null {
   if (RELAY_COMPUTER_DISABLED) return null;
-  if (runOn === "cloud" || inheritedTeamComputer(bot)) return "box";
-  const wants = turnSurfacePlan(bot, runOn, threadId).computer;
+  if (inheritedTeamComputer(bot)) return "box";
+  const wants = turnSurfacePlan(bot, threadId).computer;
   if (wants !== undefined && wants !== "cloud") return null;
   if (registry.get(bot.modelSelection.instanceId)?.adapter.capabilities.remoteAgent === true) return "box";
   return bot.cloudBackend === "vps" ? "vps" : wants === "cloud" ? "box" : null;
@@ -6338,11 +6299,11 @@ function turnProvider(bot: BotRecord, runOn?: RoutineRunOn, threadId?: string): 
 
 /** A driver with a Boat bridge keeps the selected model. Other engines use
  * Boat's native runner. Start and interrupt must resolve the same owner. */
-function turnInstance(bot: BotRecord, runOn?: RoutineRunOn, threadId?: string): ReturnType<typeof registry.get> {
+function turnInstance(bot: BotRecord, threadId?: string): ReturnType<typeof registry.get> {
   const selected = registry.get(bot.modelSelection.instanceId);
   if (RELAY_COMPUTER_DISABLED && selected?.adapter.capabilities.cloudComputerMcp === true) return null;
   if (selected?.adapter.capabilities.cloudComputerMcp) return selected;
-  const onBoat = turnProvider(bot, runOn, threadId) === "box";
+  const onBoat = turnProvider(bot, threadId) === "box";
   return onBoat
     ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null
     : registry.get(bot.modelSelection.instanceId);
@@ -6359,7 +6320,7 @@ function computerPreviewBot(botId: string, url: URL): BotRecord | null {
 }
 
 async function computerPreviewSurface(bot: BotRecord, threadId?: string) {
-  const plan = turnSurfacePlan(bot, undefined, threadId);
+  const plan = turnSurfacePlan(bot, threadId);
   if (plan.computer !== undefined) return plan.computer;
   const instance = registry.get(bot.modelSelection.instanceId);
   if (instance?.adapter.capabilities.remoteAgent === true) return "cloud";
@@ -6468,16 +6429,15 @@ function continueComputerSelection(threadId: string, generation: string | undefi
 /** The engine that dispatched each live turn. A bot's settings may change
  * mid-turn; an interrupt or steer must reach the engine actually running. */
 const runningTurnEngines = new Map<string, NonNullable<ReturnType<typeof registry.get>>>();
-function runningTurnInstance(bot: NonNullable<ReturnType<typeof store.bot>>, threadId: string, runOn?: RoutineRunOn): ReturnType<typeof registry.get> {
-  return runningTurnEngines.get(threadId) ?? turnInstance(bot, runOn, threadId);
+function runningTurnInstance(bot: NonNullable<ReturnType<typeof store.bot>>, threadId: string): ReturnType<typeof registry.get> {
+  return runningTurnEngines.get(threadId) ?? turnInstance(bot, threadId);
 }
 
 function providerTransitionForTurn(
   bot: NonNullable<ReturnType<typeof store.bot>>,
-  runOn?: RoutineRunOn,
   threadId?: string,
 ): string | null {
-  const provider = turnProvider(bot, runOn, threadId);
+  const provider = turnProvider(bot, threadId);
   return provider && computerProviderConfigTransitions.has(provider)
     ? providerTransitionMessage(provider)
     : null;
@@ -7782,7 +7742,7 @@ function markTaskContextExternallyUpdated(bot: BotRecord, threadId: string): voi
   const owner = task.lastInstanceId;
   const record = owner ? task.handedMessages?.[owner] : undefined;
   if (owner && record?.session !== undefined && record.session === task.resumeCursors[owner] &&
-    turnInstance(botForThread(bot.id, threadId) ?? bot, undefined, threadId)?.instanceId === owner &&
+    turnInstance(botForThread(bot.id, threadId) ?? bot, threadId)?.instanceId === owner &&
     registry.get(owner)?.adapter.capabilities.strictResume) {
     store.patchTask(bot.id, threadId, { unread: true });
     return;
@@ -8463,9 +8423,6 @@ async function startTurn(
     excludeMessageIds?: string[];
     /** Routines run in detached tasks; pin the destination for the whole turn. */
     threadId?: string;
-    /** Cloud routines use the bot's Boat VM. Capable API drivers bridge its
-     * tools; other engines delegate the turn to the native Boat runner. */
-    runOn?: RoutineRunOn;
     /** Lets the system prompt put externally supplied payloads behind an
      * explicit untrusted-data boundary without changing ordinary chat. */
     automationSource?: RoutineRunTrigger;
@@ -8524,7 +8481,6 @@ async function startTurn(
     const onDispatchError = opts?.onDispatchError;
     opts = {
       ...opts,
-      runOn: continuingRoutine.runOn,
       automationSource: continuingRoutine.triggerSource ?? (continuingRoutine.manual ? "manual" : "schedule"),
       onDispatchError: (message) => {
         routines?.failThread(threadId, message);
@@ -8541,7 +8497,7 @@ async function startTurn(
   if (bot.approvalGrant) {
     throw Object.assign(new Error("this bot's approval level is still being confirmed — try again"), { status: 409 });
   }
-  const transitionError = providerTransitionForTurn(bot, opts?.runOn, threadId);
+  const transitionError = providerTransitionForTurn(bot, threadId);
   if (transitionError) throw Object.assign(new Error(transitionError), { status: 409 });
   if (providerFleetReloading) throw Object.assign(new Error("provider settings are being updated — try again shortly"), { status: 409 });
   // A workspace at its monthly spend limit starts no turn of any kind: a
@@ -8581,12 +8537,12 @@ async function startTurn(
   const task = store.taskByThread(bot.id, threadId);
   if (!task) throw Object.assign(new Error("no such task"), { status: 404 });
   if (hostedModels && !hostedModels.allows(bot.modelSelection)) throw Object.assign(new Error(hostedModels.error()), { status: 409 });
-  const plan = turnSurfacePlan(bot, opts?.runOn, threadId);
-  const instance = turnInstance(bot, opts?.runOn, threadId);
+  const plan = turnSurfacePlan(bot, threadId);
+  const instance = turnInstance(bot, threadId);
   if (!instance) {
     throw Object.assign(
       new Error(
-        turnProvider(bot, opts?.runOn, threadId) === "box"
+        turnProvider(bot, threadId) === "box"
           ? "the Cloud VM runner is unavailable — configure Boat in App Settings"
           : `provider instance "${bot.modelSelection.instanceId}" is unavailable — pick another model in settings`,
       ),
@@ -8638,7 +8594,7 @@ async function startTurn(
     throw Object.assign(new Error("this provider account is being updated — try again shortly"), { status: 409 });
   }
   const switchedEngine = instance.instanceId !== bot.modelSelection.instanceId;
-  const useInstanceDefaults = switchedEngine || (opts?.runOn === "cloud" && !instance.adapter.capabilities.cloudComputerMcp);
+  const useInstanceDefaults = switchedEngine;
   const model = useInstanceDefaults ? instance.models.default : bot.modelSelection.model;
   // A native cloud runner borrows its instance defaults; a Boat bridge keeps
   // the bot's selected model, effort and variant.
@@ -8759,15 +8715,6 @@ async function startTurn(
 
   void (async () => {
     try {
-      // Readiness can wait on the network. Admit the task first so its busy
-      // state, Stop action and watchdog own that wait just like VM setup.
-      if (opts?.runOn === "cloud") {
-        const readiness = await cloudRoutineReadiness(botId, threadId);
-        if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) {
-          throw new DirectTurnSetupCancelled("turn stopped during cloud readiness");
-        }
-        if (!readiness.ready) throw new Error(readiness.reason ?? "The cloud computer is not ready");
-      }
       await compactConversation({ bot, threadId, generation: dispatchClaimId, instance, model,
         excludedIds: new Set([userMessage.id, ...(opts?.excludeMessageIds ?? [])]), manual: opts?.compactOnly === true });
       if (!directTurnClaimIsCurrent(bot.id, dispatchClaimId, threadId)) throw new DirectTurnSetupCancelled("turn stopped during context setup");
@@ -8969,7 +8916,7 @@ async function startTurn(
       }
       const privateWorkspace = worksInWorkspace ? ensureTaskWorkspace(bot.id, threadId) : undefined;
       const skillInstructions = renderSkillInstructions(selectedSkills, {
-        includeRoot: worksInWorkspace && opts?.runOn !== "cloud",
+        includeRoot: worksInWorkspace,
       });
       const packagePlaybooks = installedPlaybookInstructions(providerText, bot.playbooks);
       // An explicit working folder wins for new tasks; otherwise they use
@@ -8979,12 +8926,11 @@ async function startTurn(
       // A cloud run happens on the boat, where a host folder means nothing:
       // pin the task to the default so the header chip never shows the
       // bot's folder for a task that runs elsewhere.
-      if (opts?.runOn === "cloud") store.pinTaskCwd(bot.id, threadId, undefined, { none: true });
       // On a Cloud home a conversation a guest opened works only in its own
       // folder, never the bot's project folder the owner's conversations
       // share (what it leaves there reaches none of them).
       const pinnedCwd =
-        privateWorkspace && opts?.runOn !== "cloud"
+        privateWorkspace
           ? store.pinTaskCwd(bot.id, threadId, privateWorkspace, { privateOnly: cloudGuestOpened(threadId) })
           : null;
       const cwd = pinnedCwd ?? undefined;
@@ -9003,7 +8949,7 @@ async function startTurn(
       // Cloud routines always use Boat/BoatAgent. The per-bot backend applies
       // only to ordinary turns that mount a computer into the local agent.
       const teamComputer = RELAY_COMPUTER_DISABLED ? null : inheritedTeamComputer(bot);
-      const cloudBackend = teamComputer || opts?.runOn === "cloud" || bot.cloudBackend !== "vps" ? "box" : "vps";
+      const cloudBackend = teamComputer || bot.cloudBackend !== "vps" ? "box" : "vps";
       const mountsComputerMcp = instance.adapter.capabilities.computerMcp === true;
       const mountsLocalComputer = instance.adapter.capabilities.localComputerMcp === true;
       // Where this turn's hands may land. The bot's "Works on" choice is
@@ -9040,7 +8986,7 @@ async function startTurn(
       const autoPinAllowed = () => {
         const liveBot = store.bot(bot.id);
         const liveTask = store.taskByThread(bot.id, threadId);
-        return liveBot?.computer === undefined && !teamComputer && opts?.runOn !== "cloud" && !plan.pinned &&
+        return liveBot?.computer === undefined && !teamComputer && !plan.pinned &&
           Boolean(liveTask && liveTask.surfaceSource !== "user");
       };
       const pinAutoSurface = (surface: Surface) => {
@@ -9403,7 +9349,7 @@ async function startTurn(
           // model mostly did not think to make.
           ? peerRosterSystemPrompt(sectionPeers, boundedCoordination)
           : "";
-      const credentialPrompt = integrations.agents ? CREDENTIAL_PROMPT + (boundedCoordination ? "" : THREADS_PROMPT) : "";
+      const threadsPrompt = integrations.agents ? (boundedCoordination ? "" : THREADS_PROMPT) : "";
       const routinePrompt = integrations.agents ? ROUTINE_PROMPT : "";
       const profilePrompt = integrations.agents ? PROFILE_PROMPT : "";
       const recallPrompt = integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "";
@@ -9468,12 +9414,6 @@ async function startTurn(
       if (!markDirectTurnDispatching(bot.id, dispatchClaimId, threadId)) {
         throw new DirectTurnSetupCancelled("turn stopped before dispatch");
       }
-      const computerPromptKind = resolveComputerPromptKind({
-        kind: computerKind,
-        driverKind: instance.driverKind,
-        cloudComputerMcp: instance.adapter.capabilities.cloudComputerMcp,
-        vmPrivate: localVmMode(cfg) === "per-bot",
-      });
       const coordinationNode = opts?.coordination ? roomHandoffs.nodes.get(opts.coordination.id) : undefined;
       if (opts?.coordination && (!coordinationNode || coordinationNode.status !== "running" || roomHandoffProblem(coordinationNode,
         coordinationNode.parentId ? roomHandoffs.nodes.get(coordinationNode.parentId) : undefined))) {
@@ -9486,10 +9426,8 @@ async function startTurn(
         // false when they are not — see agentsMounted above)
         { id: "setup", label: "Setup", text: setupSystemPrompt(setupMode, { skills: skillAuthoring, cwd: liveBot?.cwd ?? bot.cwd }) },
         { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
-        { id: "files", label: "File locations", text: worksInWorkspace && opts?.runOn !== "cloud" ? workspaceLocationsPrompt(bot.id, cwd, liveBot?.cwd ?? bot.cwd) : "" },
-        { id: "computer", label: "Computer", text: computerPrompt(computerPromptKind) },
+        { id: "files", label: "File locations", text: worksInWorkspace ? workspaceLocationsPrompt(bot.id, cwd, liveBot?.cwd ?? bot.cwd) : "" },
         { id: "team-computer", label: "Team computer", text: teamComputerPrompt(RELAY_COMPUTER_DISABLED ? undefined : teamComputer ?? undefined) },
-        { id: "plan", label: "Surface", text: surfacePrompt({ computer: mountedComputer }, { pinned: plan.pinned, note: plan.note, canSelect: computerSelectionTurns.has(threadId), cloudHome: Boolean(CLOUD_HOME) }) },
         { id: "cloud-home", label: "Relay Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
         // gated on the integration, not the key: the hint only goes to a
         // bot whose driver actually mounted the tools
@@ -9498,7 +9436,7 @@ async function startTurn(
         { id: "coordination", label: "Team", text: coordinationPrompt ? ` ${coordinationPrompt}` : "" },
         { id: "assignment", label: "Teammate task", text: coordinationNode ? `\n${coordinationSystemInstructions()}` : "" },
         { id: "outstanding", label: "Outstanding teammate work", text: outstandingAssignmentsPrompt(threadId) },
-        { id: "credential", label: "Credentials", text: credentialPrompt },
+        { id: "threads", label: "Threads", text: threadsPrompt },
         { id: "recall", label: "Recall", text: recallPrompt },
         { id: "routine", label: "Routines", text: routinePrompt },
         { id: "routine-execution", label: "Routine execution", text: opts?.automationSource === "schedule" || opts?.automationSource === "manual" ? ROUTINE_EXECUTION_PROMPT : "" },
@@ -10017,8 +9955,8 @@ routines = new RoutineManager({
       handoffs.forget(threadId);
     }
   },
-  startTurn: async (botId, threadId, prompt, runOn, triggerSource, onDispatchError) => {
-    await startTurn(botId, prompt, { threadId, runOn, automationSource: triggerSource, onDispatchError });
+  startTurn: async (botId, threadId, prompt, _runOn, triggerSource, onDispatchError) => {
+    await startTurn(botId, prompt, { threadId, automationSource: triggerSource, onDispatchError });
   },
   startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, _onDispatchError) => {
     startGroupTurn(groupId, prompt, undefined, undefined, "goal", undefined, {
@@ -10027,7 +9965,7 @@ routines = new RoutineManager({
       goalRunId: runId,
     });
   },
-  interruptTurn: async (botId, threadId, runOn) => {
+  interruptTurn: async (botId, threadId, _runOn) => {
     const bot = botForThread(botId, threadId);
     pendingDelegationWakes.delete(threadId);
     clearDelegationWake(threadId);
@@ -10035,8 +9973,8 @@ routines = new RoutineManager({
     cancelDirectTurnDispatch(botId, threadId);
     revokeInternalCapabilitiesForThread(threadId);
     const instance = bot
-      ? runningTurnInstance(bot, threadId, runOn)
-      : runOn === "cloud" ? registry.instances().find((candidate) => candidate.driverKind === "boxAgent") ?? null : null;
+      ? runningTurnInstance(bot, threadId)
+      : null;
     try {
       await instance?.adapter.interruptTurn(threadId);
     } finally {
@@ -10532,42 +10470,10 @@ if (recoveryOwners.length > 0) {
 // Chat tools can prepare routine changes, but the harness applies them only
 // after the user confirms a durable card. Keeping this beside the scheduler
 // makes the card resolvable after an app restart without involving the model.
-async function cloudRoutineReadiness(botId: string, threadId?: string): Promise<{ ready: boolean; reason?: string }> {
-  const bot = threadId ? store.projectBotForTask(botId, threadId) : store.bot(botId);
-  if (!bot || bot.hidden) return { ready: false, reason: "The routine's target bot no longer exists." };
-  if (!boat.boatConfigured(cfg)) {
-    return {
-      ready: false,
-      reason: 'The Boat cloud computer needs a working Boat API key. For the bot’s configured computer, including a self-hosted VPS, set run_on="maus" instead.',
-    };
-  }
-  const instance = turnInstance(bot, "cloud", threadId);
-  if (!instance) return { ready: false, reason: "The Cloud VM runner is unavailable. Restart Relay and try again." };
-  try {
-    if ((await instance.snapshot()).state !== "available") {
-      return { ready: false, reason: "The target bot's model engine is not ready to use the Boat cloud computer." };
-    }
-    const teamComputer = inheritedTeamComputer(bot);
-    const ownerId = teamComputer ? teamComputerOwner(teamComputer.id) : bot.id;
-    const machine = await boat.findBoat(cfg, ownerId);
-    if (teamComputer && !machine) {
-      return { ready: false, reason: "The team's Boat computer is missing; explicitly create or retry it from the Team map." };
-    }
-    // Explicit Cloud may provision or wake the bot's own Boat at dispatch.
-    // This probe only checks its identity/account, without starting billing.
-    return { ready: true };
-  } catch (error) {
-    return {
-      ready: false,
-      reason: `The target bot's cloud computer could not be checked: ${redactSecretsInText(error instanceof Error ? error.message : String(error))}`,
-    };
-  }
-}
 const routineRequests = new RoutineRequestService({
   store,
   routines,
   autoApply: fullAccessForSource,
-  cloudReady: cloudRoutineReadiness,
   canPersist: proposalPersistence,
   // Ownership follows the confirming conversation's user, resolved live:
   // proposal text never supplies it. Routines created any other way get
@@ -11491,7 +11397,6 @@ async function runGroupMemberTurn(
   let setupStalled = false;
   let unregisterSetupStall = () => {};
   // The speaker's own This computer / Cloud mount, and what it must give back.
-  let roomComputerKind: "local" | "vps" | "box" | null = null;
   let roomVpsBotId: string | null = null;
   const releaseRoomVmLease = () => {
     if (roomVmTarget && localVmThreadTargets.get(threadId) === roomVmTarget) releaseLocalVmThread(threadId);
@@ -11779,7 +11684,6 @@ async function runGroupMemberTurn(
     integrations.localComputer = await mountHostComputer(
       resourceOwner, readyBot.id, instance.adapter.capabilities.localComputerMcp === true);
     if (!roomSetupIsCurrent()) return false;
-    roomComputerKind = "local";
   }
   if (!roomTeamComputer && roomPlan.computer === "cloud") {
     if (turnProvider(readyBot) === "vps") {
@@ -11793,7 +11697,6 @@ async function runGroupMemberTurn(
       if (!roomSetupIsCurrent()) return false;
       if (!("integration" in mounted)) throw new Error(mounted.problem ?? "the VPS computer could not be created or reached");
       integrations.localComputer = mounted.integration;
-      roomComputerKind = "vps";
     } else {
       if (!boat.boatConfigured(cfg)) throw new Error(BOAT_NOT_CONFIGURED);
       const remoteAgent = instance.adapter.capabilities.remoteAgent === true;
@@ -11802,7 +11705,6 @@ async function runGroupMemberTurn(
       if (!roomSetupIsCurrent()) return false;
       if (!attached?.integration) throw new Error("the cloud computer could not be created or reached");
       integrations.computer = attached.integration;
-      roomComputerKind = "box";
     }
   }
 
@@ -11869,7 +11771,7 @@ async function runGroupMemberTurn(
     readyGroup.bulletin.trim() && `Room bulletin (shared instructions for everyone):\n${readyGroup.bulletin.trim()}`,
     `Reply as yourself, briefly and conversationally. To bring a teammate in, mention them like @Name — they'll see the conversation and respond.`,
     outsideRoom.length > 0 && orchestration && !orchestration.roomHandoffId && roomPeerRosterSystemPrompt(outsideRoom),
-    integrations.agents && (CREDENTIAL_PROMPT + (orchestration && !orchestration.roomHandoffId ? THREADS_PROMPT : "")).trim(),
+    integrations.agents && (orchestration && !orchestration.roomHandoffId ? THREADS_PROMPT : "").trim(),
     integrations.agents && (!orchestration || orchestration.roomHandoffId) && "For actual Relay teamwork, discover IDs with list_room_targets and use coordinate_bots for advice or work in this or another room. Do not substitute native coding helpers for these named bots. Consult only when needed to make a decision; no discussion step is mandatory. Give concrete responsibilities, exact accessible paths and acceptance checks. End your turn after assigning; busy teammates queue and results automatically resume you. When they return, finish the requested verification and give the user one final answer. Native helper names are not evidence that an Relay teammate participated. Plain @mentions are only for conversational replies in this room.",
     integrations.agents && ROUTINE_PROMPT.trim(),
     integrations.agents && PROFILE_PROMPT.trim(),
@@ -11934,11 +11836,6 @@ async function runGroupMemberTurn(
   // (#754) the room is told, once per source thread, rather than the
   // crossing being blocked.
   const recentLines = recentWork(recentWorkSources(bot), bot, { userName, currentThreadId: threadId, ...recentWorkFilter() });
-  const roomComputerPromptKind = resolveComputerPromptKind({
-    kind: roomTeamComputer || roomComputerKind === "box" ? "box" : roomVmTarget ? "vm" : roomComputerKind,
-    driverKind: instance.driverKind, cloudComputerMcp: instance.adapter.capabilities.cloudComputerMcp,
-    vmPrivate: localVmMode(cfg) === "per-bot",
-  });
   {
     const crossing = claimRecallCrossings(threadId, recentLines.filter((line) => line.private).map((line) => line.threadId));
     if (crossing.count) {
@@ -11954,9 +11851,7 @@ async function runGroupMemberTurn(
     { id: "user-profile", label: "About the user", text: userProfileSystemPrompt(cfg.profile) },
     { id: "clarification", label: "Handling incomplete tasks", text: CLARIFICATION_PROMPT },
     { id: "files", label: "File locations", text: workspace ? workspaceLocationsPrompt(bot.id, cwd, readyBot.cwd) : "" },
-    { id: "computer", label: "Computer", text: computerPrompt(roomComputerPromptKind) },
     { id: "team-computer", label: "Team computer", text: teamComputerPrompt(roomTeamComputer ?? undefined) },
-    { id: "plan", label: "Surface", text: surfacePrompt({ computer: roomTeamComputer ? "cloud" : roomVmTarget ? "vm" : surfaceOfComputerKind(roomComputerKind) }, { note: roomPlan.note, cloudHome: Boolean(CLOUD_HOME) }) },
     { id: "cloud-home", label: "Relay Cloud", text: CLOUD_HOME ? cloudHomePrompt(Boolean(integrations.agents) && lendingEnabled()) : "" },
     { id: "mailbox", label: "Relay mailbox", text: mailboxSystemPrompt(RELAY_MAILBOX_ADDRESS, RELAY_SCRIBE_ENABLED) },
     { id: "recall", label: "Recall", text: integrations.agents ? SESSION_SEARCH_SYSTEM_PROMPT : "" },
@@ -13731,17 +13626,14 @@ function drainConnectorResumes() {
   }
 }
 
-/** One pending card continuation. Credential and browser-takeover cards share
- * this lifecycle: persist the card, end the turn, resume the same task when
- * the person acts. `card` only selects the resume prompt and the card field. */
+/** One pending browser-takeover continuation: persist the card, end the turn,
+ * resume the same task when the person acts. */
 type CardResumeEntry = {
   botId: string;
   threadId: string;
   messageId: string;
-  card: "secret" | "takeover";
   label: string;
   outcome: "provided" | "dismissed";
-  /** Takeover only: optional task guidance the person typed on hand-back. */
   note?: string;
 };
 const pendingCardResumes = new Map<string, CardResumeEntry>();
@@ -13768,28 +13660,8 @@ function claimPhoneSecretBotDeletion(botId: string): (() => void) | null {
   };
 }
 
-function phoneSecretSubmissionKey(threadId: string, messageId: string, requestKey: string): string {
-  return `${threadId}:${messageId}:${requestKey}`;
-}
-
-function credentialDesktopHandoff(label: string): string {
-  return `Securely provide the ${label} from Relay on your phone or computer. It is never added to chat.`;
-}
-
-function secretMessage(botId: string, threadId: string, messageId: string): Message | null {
-  const owner = connectorThread(botId, threadId);
-  if (!owner) return null;
-  // A credential card is actionable only while it is visible on the chosen
-  // conversation branch. In a channel, the sender attribution is also the
-  // durable owner: any member may share the thread, but only the bot that
-  // requested this credential may bind it into HPKE AAD or resume its turn.
-  const message = store.activePath(threadId).find((candidate) => candidate.id === messageId);
-  if (owner.group && message?.from?.botId !== botId) return null;
-  return message?.kind === "secret" && message.secret ? message : null;
-}
-
 /** A browser-takeover card on the active branch, owned by the requesting bot
- * in a shared channel. Same visibility rule as credential cards. */
+ * in a shared channel. */
 function takeoverMessage(botId: string, threadId: string, messageId: string): Message | null {
   const owner = connectorThread(botId, threadId);
   if (!owner) return null;
@@ -13798,40 +13670,18 @@ function takeoverMessage(botId: string, threadId: string, messageId: string): Me
   return message?.kind === "takeover" && message.takeover ? message : null;
 }
 
-function currentSecretState(botId: string, threadId: string, messageId: string) {
-  const message = secretMessage(botId, threadId, messageId);
-  if (!message?.secret) return null;
-  return {
-    provided: message.secret.provided === true,
-    resumed: message.secret.resumed === true,
-  };
-}
-
-function markCardResumeFailed(card: "secret" | "takeover", threadId: string, messageId: string, error: string) {
+function markCardResumeFailed(threadId: string, messageId: string, error: string) {
   const message = store.messagesFor(threadId).find((candidate) => candidate.id === messageId);
-  const next = error.slice(0, 180);
-  if (card === "secret") {
-    if (!message?.secret) return;
-    store.patchMessage(threadId, message.id, {
-      secret: { ...message.secret, resumed: false, error: next },
-    });
-    return;
-  }
   if (!message?.takeover) return;
   store.patchMessage(threadId, message.id, {
-    takeover: { ...message.takeover, resumed: false, error: next },
+    takeover: { ...message.takeover, resumed: false, error: error.slice(0, 180) },
   });
 }
 
-/** The resume prompt per card kind. A takeover never exposes page content or
- * credentials; it only tells the agent the intervention ended. */
+/** A takeover never exposes page content or credentials; it only tells the
+ * agent the intervention ended. */
 function cardResumePrompt(entry: CardResumeEntry): string {
-  if (entry.card === "takeover") {
-    return `Relay browser update: the person finished the step in the live browser and handed it back.${entry.note ? ` They added: ${entry.note}` : ""} Continue the task that paused for it. Inspect the current page first with browser_read, and use browser_act to click, fill, select, or press. Do not restart the flow from the beginning. Do not ask them for credentials, cookies, or codes.`;
-  }
-  return entry.outcome === "provided"
-    ? `Relay credential update: the user securely provided ${entry.label}. Continue the task that paused for it. You do not receive the secret and must not ask them to paste it into chat.`
-    : `Relay credential update: the user declined to provide ${entry.label}. Continue without it if possible, or briefly explain the limitation. Do not ask them to paste it into chat.`;
+  return `Relay browser update: the person finished the step in the live browser and handed it back.${entry.note ? ` They added: ${entry.note}` : ""} Continue the task that paused for it. Inspect the current page first with browser_read, and use browser_act to click, fill, select, or press. Do not restart the flow from the beginning. Do not ask them for credentials, cookies, or codes.`;
 }
 
 function dispatchCardResume(entry: CardResumeEntry) {
@@ -13861,7 +13711,7 @@ function dispatchCardResume(entry: CardResumeEntry) {
         0,
         new Set(),
         prompt,
-        (message) => markCardResumeFailed(entry.card, entry.threadId, entry.messageId, message),
+        (message) => markCardResumeFailed(entry.threadId, entry.messageId, message),
         () => operation.cancelled,
         () => groupProviderHandshakeStarted(operation),
         () => groupProviderHandshakeSettled(operation),
@@ -13872,7 +13722,6 @@ function dispatchCardResume(entry: CardResumeEntry) {
       groupId,
       tracked.catch((error) => {
         markCardResumeFailed(
-          entry.card,
           entry.threadId,
           entry.messageId,
           error instanceof Error ? error.message : String(error),
@@ -13884,37 +13733,21 @@ function dispatchCardResume(entry: CardResumeEntry) {
   void startTurn(entry.botId, prompt, {
     threadId: entry.threadId,
     cardContinuation: true,
-    onDispatchError: (message) => markCardResumeFailed(entry.card, entry.threadId, entry.messageId, message),
+    onDispatchError: (message) => markCardResumeFailed(entry.threadId, entry.messageId, message),
   }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     if (isTurnAdmissionBlocked(error)) {
       pendingCardResumes.set(`${entry.threadId}:${entry.messageId}`, entry);
     } else {
-      markCardResumeFailed(entry.card, entry.threadId, entry.messageId, message);
+      markCardResumeFailed(entry.threadId, entry.messageId, message);
     }
   });
 }
 
-/** Patch one terminal card state and dispatch its continuation exactly once.
+/** Patch one terminal takeover state and dispatch its continuation exactly once.
  * Returns false when the card is no longer actionable (already resumed or not
  * on the active branch). */
-function resumeCard(card: "secret" | "takeover", botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"], note?: string) {
-  if (card === "secret") {
-    const message = secretMessage(botId, threadId, messageId);
-    if (!message?.secret) return false;
-    if (message.secret.resumed) return true;
-    store.patchMessage(threadId, message.id, {
-      secret: {
-        ...message.secret,
-        provided: outcome === "provided" ? true : message.secret.provided,
-        dismissed: outcome === "dismissed" ? true : message.secret.dismissed,
-        resumed: true,
-        error: undefined,
-      },
-    });
-    dispatchCardResume({ card, botId, threadId, messageId, label: message.secret.label, outcome });
-    return true;
-  }
+function resumeTakeoverCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"], note?: string) {
   const message = takeoverMessage(botId, threadId, messageId);
   if (!message?.takeover) return false;
   if (message.takeover.resumed) return true;
@@ -13926,16 +13759,8 @@ function resumeCard(card: "secret" | "takeover", botId: string, threadId: string
       error: undefined,
     },
   });
-  dispatchCardResume({ card, botId, threadId, messageId, label: message.takeover.title, outcome, ...(note ? { note } : {}) });
+  dispatchCardResume({ botId, threadId, messageId, label: message.takeover.title, outcome, ...(note ? { note } : {}) });
   return true;
-}
-
-function resumeSecretCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"]) {
-  return resumeCard("secret", botId, threadId, messageId, outcome);
-}
-
-function resumeTakeoverCard(botId: string, threadId: string, messageId: string, outcome: CardResumeEntry["outcome"], note?: string) {
-  return resumeCard("takeover", botId, threadId, messageId, outcome, note);
 }
 
 const resumeInFlight = new Set<string>();
@@ -13944,10 +13769,33 @@ function resumeKey(threadId: string, messageId: string): string {
   return `${threadId}:${messageId}`;
 }
 
-function takeoverActor(botId: string, threadId: string): TakeoverActor {
+function takeoverActor(botId: string, threadId: string, turnId?: string): TakeoverActor {
   const bot = store.bot(botId);
   if (!bot?.ownerUserId) throw new ToolLayerTakeoverError(403, "this bot has no owner workspace");
-  return { userId: bot.ownerUserId, botId: bot.id, threadId, agent: bot.relayAgent ?? "scout" };
+  return { userId: bot.ownerUserId, botId: bot.id, threadId, agent: bot.relayAgent ?? "scout", ...(turnId ? { turnId } : {}) };
+}
+
+/** Turn end closes the exact browser session that turn acquired. The signed
+ * turn id makes a delayed request harmless: it can never close a newer turn's
+ * session. The daemon, page and profile survive. */
+function closeBrowserSessionForThread(threadId: string, providerTurnId: string | undefined): void {
+  if (!providerTurnId) return;
+  const generation = browserTurnGenerations.get(providerTurnId);
+  if (!generation) return;
+  browserTurnGenerations.delete(providerTurnId);
+  const bot = store.botByThread(threadId);
+  if (!bot?.relayAgent || !bot.ownerUserId) return;
+  // Only Scout mounts the browser today. Other agents have no session to
+  // close and must not produce a failed control-plane call every turn.
+  if (bot.relayAgent !== "scout" || !RELAY_TOOL_URL) return;
+  try {
+    const actor = takeoverActor(bot.id, threadId, generation);
+    void takeoverControl.closeSession(actor).catch((error) => {
+      console.warn(`[browser] turn-end close failed thread=${threadId}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  } catch {
+    /* no owner workspace: nothing to close */
+  }
 }
 
 /** Only the workspace owner or the person whose turn raised the card may open
@@ -14100,109 +13948,6 @@ function restoreTakeoverExpiry(): void {
 
 restoreTakeoverExpiry();
 
-async function provideSecretFromPhone(
-  context: PhoneSecretContext,
-  authenticatedDeviceId: string,
-): Promise<{ provided: boolean; resumed: boolean }> {
-  const owner = connectorThread(context.botId, context.threadId);
-  const message = secretMessage(context.botId, context.threadId, context.messageId);
-  if (!owner || !message?.secret) throw new PhoneSecretError("No such credential request", 404);
-  if (message.secret.dismissed) throw new PhoneSecretError("This credential request was dismissed", 409);
-  if (message.secret.superseded) throw new PhoneSecretError("This credential request was superseded by a newer one", 409);
-  assertPhoneSecretRequestMatches(context, authenticatedDeviceId, {
-    target: message.secret.target,
-    requestKey: message.secret.requestKey,
-  });
-  const operationId = phoneSecretOperationId(context);
-  if (message.secret.phoneOperationId && message.secret.phoneOperationId !== operationId) {
-    throw new PhoneSecretError(
-      "This credential request was already completed by another submission",
-      409,
-    );
-  }
-  // The encrypted store may have committed immediately before a process
-  // interruption. Recording the winning operation precedes completing the
-  // card, so the exact retry can repair that tiny window without writing the
-  // credential again. A different randomized envelope was rejected above.
-  if (message.secret.phoneOperationId === operationId && !message.secret.provided) {
-    if (!credentialIsConfigured(cfg, message.secret.target)) {
-      throw new PhoneSecretError(`${message.secret.label} is no longer configured`, 409);
-    }
-    if (!resumeSecretCard(context.botId, context.threadId, context.messageId, "provided")) {
-      throw new PhoneSecretError("This credential request is no longer available", 409);
-    }
-    const recovered = currentSecretState(context.botId, context.threadId, context.messageId);
-    if (!recovered) throw new PhoneSecretError("This credential request is no longer available", 409);
-    return recovered;
-  }
-  if (message.secret.provided) {
-    if (message.secret.phoneOperationId !== operationId) {
-      throw new PhoneSecretError(
-        "This credential request was already completed by another submission",
-        409,
-      );
-    }
-    if (!credentialIsConfigured(cfg, message.secret.target)) {
-      throw new PhoneSecretError(`${message.secret.label} is no longer configured`, 409);
-    }
-    // A crash or older build may have committed the credential and marked
-    // the card provided without dispatching its continuation. An exact phone
-    // retry repairs that state instead of silently claiming it resumed.
-    if (!message.secret.resumed && !resumeSecretCard(
-      context.botId,
-      context.threadId,
-      context.messageId,
-      "provided",
-    )) {
-      throw new PhoneSecretError("This credential request is no longer available", 409);
-    }
-    const recovered = currentSecretState(context.botId, context.threadId, context.messageId);
-    if (!recovered) throw new PhoneSecretError("This credential request is no longer available", 409);
-    return recovered;
-  }
-
-  const submissionKey = phoneSecretSubmissionKey(context.threadId, context.messageId, context.requestKey);
-  await phoneSecretSubmissions.run({
-    cardKey: submissionKey,
-    botId: context.botId,
-    threadId: context.threadId,
-    ...(owner.group ? { groupId: owner.group.id } : {}),
-  }, operationId, async () => {
-    await phoneSecrets.provide(context);
-    const current = secretMessage(context.botId, context.threadId, context.messageId);
-    if (!current?.secret || current.secret.requestKey !== context.requestKey) {
-      throw new PhoneSecretError("This credential request is no longer available", 409);
-    }
-    if (current.secret.dismissed) {
-      throw new PhoneSecretError("This credential request was dismissed", 409);
-    }
-    // The request route may have superseded this card while the encrypted
-    // save was in flight. Completing the superseded card would mark it
-    // provided and dispatch its continuation, leaving two cards resolved.
-    if (current.secret.superseded) {
-      throw new PhoneSecretError("This credential request was superseded by a newer one", 409);
-    }
-    // Electron acknowledges only after credentials.bin and the server's
-    // external-secret config update both commit. Keep this assertion at the
-    // boundary so a future parent handler cannot accidentally resume first.
-    if (!credentialIsConfigured(cfg, current.secret.target)) {
-      throw new PhoneSecretError(`${current.secret.label} was not saved yet`, 409);
-    }
-    // Persist the winning randomized envelope id before completing the card.
-    // A later exact retry can recover a lost response, while a newly sealed
-    // value can never be reported as though it were the value already saved.
-    store.patchMessage(context.threadId, current.id, {
-      secret: { ...current.secret, phoneOperationId: operationId },
-    });
-    if (!resumeSecretCard(context.botId, context.threadId, context.messageId, "provided")) {
-      throw new PhoneSecretError("This credential request is no longer available", 409);
-    }
-  });
-  const settled = currentSecretState(context.botId, context.threadId, context.messageId);
-  if (!settled) throw new PhoneSecretError("This credential request is no longer available", 409);
-  return settled;
-}
-
 function drainCardResumes() {
   for (const [key, entry] of pendingCardResumes) {
     if (!canAdmitDirectTurn(entry.botId, entry.threadId)) continue;
@@ -14220,6 +13965,7 @@ bus.subscribe((event: RuntimeEvent) => {
     // Before the drains: a card whose continuation is still waiting for a
     // slot must not release the browser that continuation will use.
     releaseSettledTakeoverForThread(event.threadId);
+    closeBrowserSessionForThread(event.threadId, event.turnId);
     drainConnectorResumes();
     drainCardResumes();
     drainTeamSetupResumes();
@@ -15600,7 +15346,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         let assertion: string;
         try {
           assertion = signedActorContext(
-            { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent },
+            { userId: ownerUserId, botId: internalSender.id, threadId: internalCapability.threadId, agent, turnId: internalCapability.generation },
             process.env.RELAY_TOOL_ACTOR_SECRET,
             undefined,
             {
@@ -17802,48 +17548,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         const updated = updateChannel(room.id, patch);
         return json(res, 200, { ok: true, memberIds: updated.memberIds, memberCount: updated.memberIds.length, message: `Updated room “${updated.name}”.` });
       }
-      if (method === "POST" && path === "/api/internal/request-credential") {
-        const body = await readInternalBody();
-        const from = internalSender;
-        const fromThreadId = internalCapability.threadId;
-        const owner = connectorThread(from.id, fromThreadId);
-        if (!owner) return json(res, 403, { error: "source conversation does not belong to sender" });
-        if (!isCredentialTargetId(body.credentialId)) {
-          return json(res, 400, { error: "unsupported credential id" });
-        }
-        const credentialId: CredentialTargetId = body.credentialId;
-        const target = CREDENTIAL_TARGETS[credentialId];
-        if (credentialIsConfigured(cfg, credentialId)) {
-          return json(res, 200, { alreadyConfigured: true, label: target.label });
-        }
-        // A later request supersedes every still-pending card for this
-        // credential instead of silently reusing it: the reason or task has
-        // moved on, so the old card stops offering entry and the person gets
-        // one fresh card they can act on. The fresh card is appended FIRST:
-        // if persistence then fails, the prior cards stay actionable rather
-        // than every pending request ending terminal with no card to act on.
-        const reason = typeof body.reason === "string" ? body.reason.trim().slice(0, 240) : "";
-        const message = store.appendMessage(fromThreadId, {
-          role: "bot",
-          kind: "secret",
-          text: credentialDesktopHandoff(target.label),
-          ...(owner.group ? { from: { botId: from.id, name: from.name, color: from.color } } : {}),
-          secret: {
-            target: credentialId,
-            label: target.label,
-            description: `${reason ? `${target.description} ${reason}` : target.description} ${from.name} can use it but never read it back.`,
-            placeholder: target.placeholder,
-            helpUrl: target.helpUrl,
-            requestKey: randomUUID(),
-          },
-        });
-        for (const prior of store.activePath(fromThreadId)) {
-          if (prior.id === message.id) continue;
-          if (!prior.secret || !isPendingCredentialRequest(prior, credentialId, from.id, Boolean(owner.group))) continue;
-          store.patchMessage(fromThreadId, prior.id, { secret: { ...prior.secret, superseded: true } });
-        }
-        return json(res, 201, { messageId: message.id, label: target.label });
-      }
       if (method === "POST" && path === "/api/internal/connectors/mcp") {
         const body = await readInternalBody();
         // Reading a streamed MCP body yields to ordinary settings requests.
@@ -19888,9 +19592,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
       body = { ...body, ...settings, name: settings.name };
       if (settings.approvalMode === "full" || settings.approvalMode === "custom") {
         return json(res, 403, { error: "This approval level requires the desktop permission flow. Use the bot creation dialog or explicitly choose Ask/Auto for API creation." });
-      }
-      if (settings.computer === "local" && settings.approvalMode === "auto" && body.acknowledgeLocalAuto !== true) {
-        return json(res, 400, { error: "Auto mode on this computer requires confirming the warning first (acknowledgeLocalAuto)" });
       }
       if (settings.avatarUrl && !storedAvatarExists(settings.avatarUrl)) {
         return json(res, 400, { error: "avatarUrl must reference an existing stored image" });
@@ -23409,36 +23110,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     m = path.match(/^\/api\/connectors\/([\w-]+)$/);
     if (m && method === "DELETE") return json(res, 200, await composio.removeService(cfg, m[1]));
 
-    // Phone credential entry arrives as an HPKE envelope bound to the exact
-    // paired device, bot, task, card and allowlisted target. The companion
-    // authenticates the bearer and supplies the device id; only the embedded
-    // Electron server has the private key needed to open the envelope.
-    m = path.match(/^\/api\/bots\/([\w-]+)\/secret-cards\/([\w-]+)\/provide$/);
-    if (m && method === "POST") {
-      if (req.headers["x-relay-companion"] !== "1") {
-        return json(res, 403, { error: "Secure phone entry must come from a paired phone" });
-      }
-      const rawDeviceId = req.headers["x-relay-companion-device"];
-      const authenticatedDeviceId = Array.isArray(rawDeviceId) ? "" : String(rawDeviceId ?? "");
-      if (!/^[\w-]{1,128}$/.test(authenticatedDeviceId)) {
-        return json(res, 401, { error: "This paired phone could not be verified" });
-      }
-      if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
-        return json(res, 415, { error: "content-type must be application/json" });
-      }
-      const parsed = phoneSecretEnvelopeSchema.safeParse(await readBody(req, 16_384));
-      if (!parsed.success || !isCredentialTargetId(parsed.data?.target)) {
-        return json(res, 400, { error: "The encrypted credential request is invalid" });
-      }
-      const state = await provideSecretFromPhone({
-        ...parsed.data,
-        botId: m[1],
-        messageId: m[2],
-        target: parsed.data.target,
-      }, authenticatedDeviceId);
-      return json(res, 200, state);
-    }
-
     // The pending card's one-shot preview. It is streamed from memory, never
     // stored in the transcript, and served only while the card is visible.
     m = path.match(/^\/api\/bots\/([\w-]+)\/takeover-cards\/([\w-]+)\/screenshot$/);
@@ -23508,58 +23179,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           error: error instanceof Error ? error.message : "the sign-in could not be completed",
         });
       }
-    }
-
-    // Desktop credential cards never send the credential through this route.
-    // Electron saves it through the OS-backed store first; these actions only
-    // verify configured state, update card metadata, and resume the turn.
-    m = path.match(/^\/api\/bots\/([\w-]+)\/secret-cards\/([\w-]+)\/(provided|resume|dismiss)$/);
-    if (m && method === "POST") {
-      const body = await readBody(req);
-      const threadId = String(body.threadId ?? "");
-      const message = secretMessage(m[1], threadId, m[2]);
-      if (!message?.secret) return json(res, 404, { error: "no such credential request" });
-      if (phoneSecretSubmissions.has(
-        phoneSecretSubmissionKey(threadId, message.id, message.secret.requestKey),
-      )) {
-        return json(res, 409, { error: "this credential is currently being saved from a phone" });
-      }
-      if (m[3] === "provided") {
-        if (message.secret.dismissed) return json(res, 409, { error: "this credential request was dismissed" });
-        if (message.secret.superseded) return json(res, 409, { error: "this credential request was superseded by a newer one" });
-        if (!credentialIsConfigured(cfg, message.secret.target)) {
-          return json(res, 409, { error: `${message.secret.label} was not saved yet` });
-        }
-        if (!resumeSecretCard(m[1], threadId, message.id, "provided")) {
-          return json(res, 409, { error: "this credential request is no longer available" });
-        }
-        const state = currentSecretState(m[1], threadId, message.id);
-        if (!state) return json(res, 409, { error: "this credential request is no longer available" });
-        return json(res, 200, state);
-      }
-      if (m[3] === "resume") {
-        if (message.secret.superseded) return json(res, 409, { error: "this credential request was superseded by a newer one" });
-        const outcome = credentialResumeOutcome(message.secret);
-        if (!outcome) {
-          return json(res, 409, { error: "this credential request is not ready to resume" });
-        }
-        if (outcome === "provided" && !credentialIsConfigured(cfg, message.secret.target)) {
-          return json(res, 409, { error: `${message.secret.label} is no longer configured` });
-        }
-        if (!resumeSecretCard(m[1], threadId, message.id, outcome)) {
-          return json(res, 409, { error: "this credential request is no longer available" });
-        }
-        const state = currentSecretState(m[1], threadId, message.id);
-        if (!state) return json(res, 409, { error: "this credential request is no longer available" });
-        return json(res, 200, { resumed: state.resumed });
-      }
-      if (message.secret.superseded) return json(res, 409, { error: "this credential request was superseded by a newer one" });
-      if (!message.secret.provided && !resumeSecretCard(m[1], threadId, message.id, "dismissed")) {
-        return json(res, 409, { error: "this credential request is no longer available" });
-      }
-      const state = currentSecretState(m[1], threadId, message.id);
-      if (!state) return json(res, 409, { error: "this credential request is no longer available" });
-      return json(res, 200, { dismissed: true, resumed: state.resumed });
     }
 
     // Inline connection cards are bound to both the bot and the exact task

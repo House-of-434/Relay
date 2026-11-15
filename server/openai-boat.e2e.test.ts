@@ -150,23 +150,6 @@ it("keeps the selected API model for direct, group and scheduled Boat turns and 
     expect(requests).toHaveLength(beforeCancel);
     const cancelledMessages = await api("GET", `/api/threads/${cancelledThread}/messages?limit=30`);
     expect(cancelledMessages.messages.some((message: any) => message.card?.requestId)).toBe(false);
-    // Readiness is checked again at dispatch, after the routine was created.
-    // An available native Boat runner must not mask the selected engine's missing key.
-    const expectBlockedRun = async (reason: RegExp) => {
-      const before = requests.length;
-      const { run: blocked } = await api("POST", `/api/routines/${routine.id}/run`, {});
-      await expect.poll(async () => {
-        const latest = (await api("GET", "/api/routines")).runs.find((entry: any) => entry.id === blocked.id);
-        return latest?.status === "failed" ? latest.error : "";
-      }, { timeout: 15_000 }).toMatch(reason);
-      expect(requests).toHaveLength(before);
-      expect(nativePrompts).toBe(0);
-    };
-    await api("PATCH", "/api/config", { openaiCompat: { key: "", url: origin + "/v1", model: "other-default" } });
-    await expectBlockedRun(/target bot's model engine is not ready/i);
-    await api("PATCH", "/api/config", { openaiCompat: { key: "synthetic-model-key", url: origin + "/v1", model: "other-default" } });
-    boatOffline = true;
-    await expectBlockedRun(/cloud computer could not be checked/i);
   } finally {
     boatReadsGate?.release();
     await fixture.close(); upstream.closeAllConnections();

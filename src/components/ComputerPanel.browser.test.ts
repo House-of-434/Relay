@@ -44,22 +44,11 @@ describe("Computer panel on a narrow screen", () => {
   });
 });
 
-describe("Computer panel Works on", () => {
-  const places = (markup: string) => [...markup.matchAll(/<span>(Auto|Cloud|Local VM|This computer|Off)<\/span>/g)].map((match) => match[1]);
-  const computerTab = (config: FeatureFlagConfig & { cloudHome?: boolean }) => {
+describe("Computer panel destination picker", () => {
+  it("no longer shows the Works on destination picker", () => {
     fixture.view.current = "computer";
-    try { return render(config); } finally { fixture.view.current = "computer"; }
-  };
-
-  it("lists this computer and a Local VM on a desktop or self-hosted server", () => {
-    const markup = computerTab({});
-    expect(places(markup)).toEqual(["Auto", "Cloud", "Local VM", "This computer", "Off"]);
-    expect(markup).toContain("Choose where this bot can use a computer.</p>");
-  });
-
-  it("lists neither on an OMB Cloud home, and says why", () => {
-    const markup = computerTab({ cloudHome: true });
-    expect(places(markup)).toEqual(["Auto", "Cloud", "Off"]);
-    expect(markup).toContain("Bots on your OMB Cloud work in the cloud; to let them use your Mac, turn on Let my Cloud use this Mac");
+    const markup = render({});
+    expect(markup).not.toContain("Choose where this bot can use a computer.</p>");
+    expect(markup).not.toMatch(/<span>(Auto|Cloud|Local VM|This computer|Off)<\/span>/);
   });
 });

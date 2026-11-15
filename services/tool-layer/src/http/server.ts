@@ -318,10 +318,11 @@ function ensureTakeoverSessions(): TakeoverSessionManager {
         maxLifetimeMs: blade.takeoverMaxLifetimeMs,
       }),
     onEvent: (event) => {
-      // One close path for release, dismiss, expiry, idle and the hard cap.
+      // Release the viewer and its display. The daemon, page and profile are
+      // shared infrastructure: the independent idle sweep stops them, never a
+      // session close.
       sharedViewerTokens?.revokeSession(event.sessionId);
       sharedDisplays?.release(event.userId);
-      void sharedBladePool?.stopWorkspace(event.userId).catch(() => {});
     },
   });
   return sharedTakeoverSessions;
@@ -347,10 +348,10 @@ async function handleBrowserTakeover(
     sendJson(response, 401, { error: "authenticated actor required" });
     return;
   }
-  let actor: { userId: string; botId: string; threadId: string };
+  let actor: { userId: string; botId: string; threadId: string; turnId?: string };
   try {
     const verified = database.authenticateActorAssertion(header);
-    actor = { userId: verified.userId, botId: verified.botId, threadId: verified.threadId };
+    actor = { userId: verified.userId, botId: verified.botId, threadId: verified.threadId, ...(verified.turnId ? { turnId: verified.turnId } : {}) };
   } catch {
     sendJson(response, 401, { error: "invalid actor context" });
     return;
@@ -363,12 +364,34 @@ async function handleBrowserTakeover(
     sendJson(response, 400, { error: "invalid request body" });
     return;
   }
-  const sessionId = body && typeof body === "object" ? (body as { session_id?: unknown }).session_id : undefined;
+  const rawSessionId = body && typeof body === "object" ? (body as { session_id?: unknown }).session_id : undefined;
+  const rawGeneration = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
+
+  if (pathname === "/internal/browser-session/close") {
+    const sessions = ensureTakeoverSessions();
+    const hasSession = rawSessionId !== undefined || rawGeneration !== undefined;
+    const sessionId = typeof rawSessionId === "string" ? rawSessionId : undefined;
+    const generation = typeof rawGeneration === "number" ? rawGeneration : undefined;
+    if (hasSession && (!sessionId || !generation || !Number.isInteger(generation) || generation < 1)) {
+      sendJson(response, 400, { error: "invalid session id or generation" });
+      return;
+    }
+    const close = () => sessionId && generation
+      ? sessions.closeForActor(actor, sessionId, generation)
+      : sessions.closeTurn(actor);
+    const closed = sharedBladePool
+      ? await sharedBladePool.withUserLock(userId, async () => close())
+      : close();
+    sendJson(response, 200, { closed });
+    return;
+  }
+
+  const sessionId = rawSessionId;
   if (typeof sessionId !== "string" || sessionId.length === 0 || sessionId.length > 128) {
     sendJson(response, 400, { error: "invalid session id" });
     return;
   }
-  const generation = body && typeof body === "object" ? (body as { generation?: unknown }).generation : undefined;
+  const generation = rawGeneration;
   if (typeof generation !== "number" || !Number.isInteger(generation) || generation < 1) {
     sendJson(response, 400, { error: "invalid generation" });
     return;
@@ -531,7 +554,7 @@ export async function createRelayToolServer(
         return;
       }
 
-      if (url.pathname === "/internal/browser-takeover/viewer" || url.pathname === "/internal/browser-takeover/release" || url.pathname === "/internal/browser-takeover/handback") {
+      if (url.pathname === "/internal/browser-takeover/viewer" || url.pathname === "/internal/browser-takeover/release" || url.pathname === "/internal/browser-takeover/handback" || url.pathname === "/internal/browser-session/close") {
         await handleBrowserTakeover(request, response, database, url.pathname);
         return;
       }
@@ -706,6 +729,7 @@ setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }
             userId,
             botId: actor.actor.botId,
             threadId: actor.actor.threadId,
+            ...(actor.actor.turnId ? { turnId: actor.actor.turnId } : {}),
             actorAssertion: actor.actorAssertion ?? "",
             bffInternalUrl,
             bffCapability: capability,
@@ -776,7 +800,13 @@ setInterval(() => { fetch("/_viewer/${tokenValue}/heartbeat", { method: "POST" }
   });
   // Idle/hard-cap reclaim for interactive sessions. The timer owns no state;
   // closing the server clears it.
-  const sessionSweep = setInterval(() => ensureTakeoverSessions().sweepExpired(), 60_000);
+  const sessionSweep = setInterval(() => {
+    const sessions = ensureTakeoverSessions();
+    sessions.sweepExpired();
+    // The daemon is the user's, not the session's. Stop it only when no
+    // session, viewer, or operation needs it.
+    void sharedBladePool?.sweepIdleAll((userId) => !sessions.hasSession(userId) && !sessions.isBusy(userId)).catch(() => {});
+  }, 60_000);
   sessionSweep.unref?.();
   httpServer.on("close", () => clearInterval(sessionSweep));
   return httpServer;

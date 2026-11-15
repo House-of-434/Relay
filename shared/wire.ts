@@ -13,7 +13,6 @@ import type { CommandAllowlistCandidate } from "./command-allowlist.ts";
 import type { TurnDigest } from "./digest.ts";
 import type { BotAvatarCrop } from "./bot-avatar.ts";
 import type { MascotBodyId } from "./mascot-bodies.ts";
-import type { CredentialTargetId } from "./credential-request.ts";
 import type { TeamSetupRequest } from "./team-setup.ts";
 import type { RoutineRequestCardData } from "./routine-request.ts";
 import type { ProfileRequestCardData } from "./profile-request.ts";
@@ -386,7 +385,6 @@ export interface WireMessage {
   >;
   card?: OptionCardData;
   connector?: ConnectorCardData;
-  secret?: SecretRequestCardData;
   /** A browser takeover intervention. Safe metadata only: the viewer token,
    * cookies, and profile paths are never persisted here. */
   takeover?: TakeoverCardData;
@@ -547,24 +545,6 @@ export interface TakeoverCardData {
   requestedBy?: string;
   /** A one-shot preview image is available from the card's screenshot route. */
   hasScreenshot?: boolean;
-  resumed?: boolean;
-  error?: string;
-}
-
-export interface SecretRequestCardData {
-  /** Fixed allowlisted credential id; never an arbitrary config path. */
-  target: CredentialTargetId;
-  label: string;
-  description: string;
-  placeholder: string;
-  helpUrl: string;
-  requestKey: string;
-  phoneOperationId?: string;
-  provided?: boolean;
-  dismissed?: boolean;
-  /** A newer request for the same credential replaced this card; it no
-   * longer offers entry and cannot be provided or dismissed. */
-  superseded?: boolean;
   resumed?: boolean;
   error?: string;
 }
