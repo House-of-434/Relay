@@ -310,7 +310,6 @@ export const CLIENT_ALLOW: ReadonlyArray<{ methods: readonly string[]; path: Reg
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/respond$/ },
   { methods: ["POST"], path: /^\/api\/threads\/[\w-]+\/respond$/ },
   { methods: ["PATCH"], path: /^\/api\/bots\/[\w-]+\/cards\/[\w-]+$/ },
-  { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/secret-cards\/[\w-]+\/(?:resume|dismiss)$/ },
   { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/takeover-cards\/[\w-]+\/screenshot$/ },
   { methods: ["POST"], path: /^\/api\/bots\/[\w-]+\/takeover-cards\/[\w-]+\/(?:viewer|done|dismiss)$/ },
   { methods: ["GET"], path: /^\/api\/bots\/[\w-]+\/connector-cards\/[\w-]+\/status$/ },

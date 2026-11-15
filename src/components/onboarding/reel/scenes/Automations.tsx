@@ -9,7 +9,7 @@
 // Drawn to match the real Automations page and the real run receipt card,
 // so a user recognises both when they meet them for real.
 import { useEffect, useState } from "react";
-import { CheckCircle2, Loader2, MousePointer2, Zap } from "lucide-react";
+import { CheckCircle2, Clock3, FileText, Loader2, MousePointer2, Plus, Webhook, Zap, CalendarDays } from "lucide-react";
 import { MausAvatar } from "@/components/Avatar";
 import { cn } from "@/lib/cn";
 import { reducedMotion } from "@/lib/onboarding";
@@ -37,10 +37,10 @@ function Receipt({ name, running, tone }: { name: string; running: boolean; tone
   return (
     <div
       className={cn(
-        "animate-rise flex w-[232px] items-center gap-2.5 rounded-2xl border bg-card px-3 py-2.5 transition-[border-color,box-shadow] duration-500",
+        "animate-rise flex w-[232px] items-center gap-2.5 rounded-xl border bg-card px-3 py-2.5 shadow-[var(--tactile-shadow-card)] transition-[border-color] duration-500",
         running
-          ? "border-hairline/50 shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]"
-          : "border-success/35 shadow-[0_14px_36px_-14px_rgba(56,213,145,0.35)]",
+          ? "border-hairline/50"
+          : "border-success/35",
       )}
     >
       <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-inset">
@@ -106,8 +106,29 @@ export function Automations({ playing, onCue, onEnded, label }: SceneProps) {
       {/* ambient: a quiet vignette so the surfaces have something to sit on */}
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(120%_90%_at_50%_0%,transparent_55%,rgba(0,0,0,0.28)_100%)]" aria-hidden="true" />
 
+      {/* the page's title row, as the Automations page draws it: title, the
+          three tabs (each with a leading icon), and the New action */}
+      <div className="animate-rise absolute inset-x-5 top-3 z-20 flex items-center gap-2">
+        <CalendarDays size={13} className="shrink-0 text-accent" aria-hidden="true" />
+        <span className="shrink-0 text-[11px] font-semibold tracking-tight text-ink">Automations</span>
+        <div className="ml-1 flex items-center rounded-md border border-hairline/40 bg-panel p-0.5">
+          <span className="flex items-center gap-1 rounded bg-raised px-1.5 py-0.5 text-[8.5px] font-medium text-ink shadow-sm">
+            <Clock3 size={9} aria-hidden="true" />Schedule
+          </span>
+          <span className="flex items-center gap-1 px-1.5 py-0.5 text-[8.5px] font-medium text-ink-secondary">
+            <FileText size={9} aria-hidden="true" />Run logs
+          </span>
+          <span className="flex items-center gap-1 px-1.5 py-0.5 text-[8.5px] font-medium text-ink-secondary">
+            <Webhook size={9} aria-hidden="true" />Webhooks
+          </span>
+        </div>
+        <span className="ml-auto flex items-center gap-1 rounded-md bg-accent px-2 py-1 text-[9px] font-semibold">
+          <Plus size={10} aria-hidden="true" />New
+        </span>
+      </div>
+
       {/* the calendar, as the Automations page draws it */}
-      <div className="animate-rise absolute inset-x-5 top-4 overflow-hidden rounded-xl border border-hairline/40 bg-app shadow-[0_18px_44px_-20px_rgba(0,0,0,0.6)]">
+      <div className="animate-rise absolute inset-x-5 top-10 overflow-hidden rounded-xl border border-hairline/40 bg-app shadow-[var(--tactile-shadow-card)]">
         <div className="stagger grid grid-cols-[34px_repeat(5,1fr)] border-b border-hairline/40">
           <div />
           {DAYS.map((day, i) => (
@@ -147,7 +168,7 @@ export function Automations({ playing, onCue, onEnded, label }: SceneProps) {
                     className={cn(
                       "absolute inset-x-1 flex items-center gap-1.5 overflow-hidden rounded-md border-l-2 border-accent bg-accent/15 px-1.5 py-1",
                       "transition-[transform,opacity,box-shadow] duration-500 ease-[cubic-bezier(0.22,1,0.36,1)]",
-                      dropped ? "translate-y-0 scale-100 opacity-100 shadow-[0_2px_6px_-2px_rgba(0,0,0,0.4)]" : "-translate-y-3 scale-[0.98] opacity-0 shadow-[0_18px_28px_-10px_rgba(0,0,0,0.6)]",
+                      dropped ? "translate-y-0 scale-100 opacity-100 shadow-[var(--tactile-shadow-button)]" : "-translate-y-3 scale-[0.98] opacity-0 shadow-[var(--tactile-shadow-card)]",
                       busy && firing && !done && "animate-ripple",
                       hook && !hookDone && "animate-ripple",
                     )}
@@ -194,7 +215,7 @@ export function Automations({ playing, onCue, onEnded, label }: SceneProps) {
       {/* an outside app calls the address; the bolt travels to the bot */}
       {hook && (
         <div className="absolute bottom-4 left-5 z-20 flex items-center gap-3">
-          <div className="animate-rise flex items-center gap-1.5 rounded-lg border border-hairline/50 bg-panel px-2.5 py-1.5 font-mono text-[9.5px] text-ink-secondary shadow-[0_10px_30px_-12px_rgba(0,0,0,0.55)]">
+          <div className="animate-rise flex items-center gap-1.5 rounded-lg border border-hairline/50 bg-panel px-2.5 py-1.5 font-mono text-[9.5px] text-ink-secondary shadow-[var(--tactile-shadow-card)]">
             <span className="font-semibold text-ink">POST</span> …/hooks/wh_7f3a
           </div>
           <Zap

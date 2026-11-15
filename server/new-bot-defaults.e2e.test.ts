@@ -18,7 +18,7 @@ it("applies independent creation templates through the real isolated HTTP routes
       warnings: [], text: "---\nname: fixture-skill\ndescription: Synthetic\n---\nFixture instructions." };
     const defaults = {
       profile: { name: "", title: "Template", description: "Description", soul: "Standing instructions",
-        notifications: false, computer: "off", approvalMode: "ask", mascotExpression: null },
+        notifications: false, approvalMode: "ask", mascotExpression: null },
       memory: { "MEMORY.md": "Synthetic default memory" }, skills: [skill],
       routines: [{ name: "Review", prompt: "Review status", enabled: false,
         schedule: { type: "daily", time: "09:00", weekdays: [1] } }],
@@ -30,7 +30,7 @@ it("applies independent creation templates through the real isolated HTTP routes
     const second = (await api("POST", "/api/bots", { name: "Second" }, 201)).bot;
     expect(first.name.length).toBeGreaterThan(0);
     for (const bot of [first, second]) {
-      expect(bot).toMatchObject({ title: "Template", soul: "Standing instructions", notifications: false, computer: "off" });
+      expect(bot).toMatchObject({ title: "Template", soul: "Standing instructions", notifications: false });
       const memory = await api("GET", `/api/bots/${bot.id}/memory/file?path=MEMORY.md`);
       expect(JSON.stringify(memory)).toContain("Synthetic default memory");
       expect((await api("GET", `/api/bots/${bot.id}/skills`)).skills).toHaveLength(1);
@@ -38,9 +38,8 @@ it("applies independent creation templates through the real isolated HTTP routes
     const routines = (await api("GET", "/api/routines")).routines;
     expect(routines.filter((routine: any) => [first.id, second.id].includes(routine.botId))).toHaveLength(2);
     expect(routines.every((routine: any) => !routine.enabled)).toBe(true);
-    const explicit = (await api("POST", "/api/bots", { title: "", settings: { description: "", computer: null, notifications: true } }, 201)).bot;
+    const explicit = (await api("POST", "/api/bots", { title: "", settings: { description: "", notifications: true } }, 201)).bot;
     expect(explicit).toMatchObject({ title: "", description: "", notifications: true });
-    expect(explicit.computer ?? null).toBe(null);
     const optOut = (await api("POST", "/api/bots", { useDefaults: false, name: "Resolved draft" }, 201)).bot;
     expect(optOut.title).toBe("");
     expect((await api("GET", `/api/bots/${optOut.id}/skills`)).skills).toHaveLength(0);

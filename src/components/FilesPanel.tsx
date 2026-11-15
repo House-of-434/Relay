@@ -126,7 +126,7 @@ export function FilesPanel({ bot }: { bot: Bot }) {
           title={t("files.close")}
           className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
         >
-          <X size={18} />
+          <X size={16} />
         </button>
       </div>
 
@@ -173,10 +173,10 @@ export function FilesPanel({ bot }: { bot: Bot }) {
                 {active ? <ChevronLeft size={14} className="shrink-0 text-ink-secondary" /> : null}
               </button>
               <button type="button" onClick={() => download(file)} aria-label={t("files.download")} title={t("files.download")} className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-ink group-hover/file:opacity-100 focus-visible:opacity-100 touch:opacity-70">
-                <Download size={13} />
+                <Download size={14} />
               </button>
               <button type="button" onClick={() => setPendingDelete(file)} aria-label={t("files.delete")} title={t("files.delete")} className="rounded p-1 text-ink-secondary opacity-0 hover:bg-raised hover:text-danger group-hover/file:opacity-100 focus-visible:opacity-100 touch:opacity-70">
-                <Trash2 size={13} />
+                <Trash2 size={14} />
               </button>
             </div>
           );

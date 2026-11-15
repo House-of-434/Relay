@@ -5,7 +5,7 @@ import { expect, it } from "vitest";
 import { launchVerificationServer, runControlOmb } from "../scripts/control-relay.ts";
 import { removeTempDir } from "./testing/cleanup.ts";
 
-it("confirms alert proposals, expires stale cards, and supersedes credential requests in an isolated conversation", async () => {
+it("confirms alert proposals and expires stale cards in an isolated conversation", async () => {
   const gates = mkdtempSync(join(tmpdir(), "relay-profile-cards-"));
   const gate = join(gates, "finish");
   const fixture = await launchVerificationServer({ FAKE_CLAUDE_MODE: "slow", FAKE_CLAUDE_SLOW_FINISH_GATE: gate });
@@ -56,12 +56,6 @@ it("confirms alert proposals, expires stale cards, and supersedes credential req
       { timeout: 15_000 }).not.toBe(previousPid);
     token = JSON.parse(readFileSync(fixture.fixtureDumpPath, "utf8")).mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
     const toggle = await propose({ notifications: false });
-    const credential = (reason: string) => api("POST", "/api/internal/request-credential", {
-      fromBotId: bot.id, fromThreadId: bot.threadId, credentialId: "openaiImageApiKey", reason,
-    }, 201, token);
-    const prior = await credential("First request");
-    const fresh = await credential("Replacement request");
-    expect(fresh.messageId).not.toBe(prior.messageId);
     writeFileSync(gate, "finish");
     await expect.poll(async () => (await api("GET", "/api/bots?messages=0")).bots.find((candidate: any) => candidate.id === bot.id).busy,
       { timeout: 15_000 }).toBe(false);
@@ -71,13 +65,7 @@ it("confirms alert proposals, expires stale cards, and supersedes credential req
     const transcript = await api("GET", `/api/threads/${bot.threadId}/messages`);
     expect(transcript.messages.find((message: any) => message.card?.requestId === stale[0]!.requestId)?.card)
       .toMatchObject({ expired: true, options: [] });
-    expect(transcript.messages.find((message: any) => message.id === prior.messageId)?.secret)
-      .toMatchObject({ superseded: true });
-    for (const action of ["provided", "resume", "dismiss"]) {
-      const rejected = await api("POST", `/api/bots/${bot.id}/secret-cards/${prior.messageId}/${action}`, { threadId: bot.threadId }, 409);
-      expect(rejected.error).toContain("superseded");
-    }
-    await api("POST", `/api/bots/${bot.id}/secret-cards/${fresh.messageId}/dismiss`, { threadId: bot.threadId });
+    await api("POST", `/api/bots/${bot.id}/secret-cards/anything/dismiss`, { threadId: bot.threadId }, 404);
     expect((await control("wait", "--bot", bot.id, "--task", bot.threadId, "--timeout", "20")).status).toBe("settled");
     await control("messages", "--bot", bot.id, "--task", bot.threadId, "--limit", "30");
   } finally {

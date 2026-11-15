@@ -33,6 +33,13 @@ describe("signed actor assertions", () => {
     expect(verifyActorAssertion(plain, ACTOR_SECRET, NOW)).not.toHaveProperty("mailRouted");
   });
 
+  it("signs the turn id and rejects a forged one", () => {
+    const signed = signedActorContext({ ...ACTOR, turnId: "turn-123" }, ACTOR_SECRET, ISSUED_AT);
+    expect(verifyActorAssertion(signed, ACTOR_SECRET, NOW)).toMatchObject({ turnId: "turn-123" });
+    const parsed = JSON.parse(signed) as Record<string, unknown>;
+    expect(() => verifyActorAssertion(JSON.stringify({ ...parsed, turnId: "turn-999" }), ACTOR_SECRET, NOW)).toThrow(/signature is invalid/);
+  });
+
   it("rejects false, extra, or improperly stripped markers", () => {
     const marked = signedActorContext(ACTOR, ACTOR_SECRET, ISSUED_AT, { mailRouted: true });
     const parsed = JSON.parse(marked) as Record<string, unknown>;

@@ -8,10 +8,16 @@ export type RelayAgent = RelayAgentRole;
 const AGENTS = new Set<RelayAgent>(["scout", "mercury", "curator"]);
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
-const ASSERTION_KEYS = "agent,botId,issuedAt,signature,threadId,userId";
-const ASSERTION_KEYS_WITH_MAIL = "agent,botId,issuedAt,mailRouted,signature,threadId,userId";
-const ASSERTION_KEYS_WITH_AUTO = "agent,botId,emailAutoApprove,issuedAt,signature,threadId,userId";
-const ASSERTION_KEYS_WITH_MAIL_AUTO = "agent,botId,emailAutoApprove,issuedAt,mailRouted,signature,threadId,userId";
+const TURN_ID = /^[\w.:-]{1,128}$/;
+function assertionKeys(options: { mailRouted?: boolean; emailAutoApprove?: boolean; turnId?: string }): string {
+  return [
+    "agent", "botId", "issuedAt",
+    ...(options.mailRouted ? ["mailRouted"] : []),
+    ...(options.emailAutoApprove ? ["emailAutoApprove"] : []),
+    ...(options.turnId ? ["turnId"] : []),
+    "signature", "threadId", "userId",
+  ].sort().join(",");
+}
 /** Assertions older than this are rejected. Must match services/tool-layer. */
 const ASSERTION_MAX_SKEW_SECONDS = 5 * 60;
 
@@ -31,11 +37,13 @@ function signingBytes(
   agent: string,
   mailRouted?: true,
   emailAutoApprove?: true,
+  turnId?: string,
 ): string {
   return JSON.stringify([
     ACTOR_ASSERTION_PURPOSE, userId, issuedAt, botId, threadId, agent,
     ...(mailRouted ? [true] : []),
     ...(emailAutoApprove ? [true] : []),
+    ...(turnId ? [turnId] : []),
   ]);
 }
 
@@ -46,7 +54,7 @@ function signingBytes(
  * `mailRouted` marker means "this turn may not invoke agent-initiated mail";
  * it is never an authorization to send. */
 export function signedActorContext(
-  actor: { userId: string; botId: string; threadId: string; agent: RelayAgent },
+  actor: { userId: string; botId: string; threadId: string; agent: RelayAgent; turnId?: string },
   secret: string | undefined,
   issuedAt = Math.floor(Date.now() / 1000),
   options?: { mailRouted?: true; emailAutoApprove?: true },
@@ -58,16 +66,18 @@ export function signedActorContext(
   if (!UUID.test(botId)) throw new Error("Relay MCP actor bot id must be a UUID");
   if (!UUID.test(threadId)) throw new Error("Relay MCP actor thread id must be a UUID");
   if (!AGENTS.has(actor.agent)) throw new Error("Relay MCP actor agent must be a known role");
+  if (actor.turnId !== undefined && !TURN_ID.test(actor.turnId)) throw new Error("Relay MCP actor turn id is invalid");
   if (!secret || Buffer.byteLength(secret) < 32) {
     throw new Error("RELAY_TOOL_ACTOR_SECRET must contain at least 32 bytes");
   }
   const mailRouted = options?.mailRouted === true;
   const emailAutoApprove = options?.emailAutoApprove === true;
   const signature = createHmac("sha256", secret)
-    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent, mailRouted ? true : undefined, emailAutoApprove ? true : undefined))
+    .update(signingBytes(userId, issuedAt, botId, threadId, actor.agent, mailRouted ? true : undefined, emailAutoApprove ? true : undefined, actor.turnId))
     .digest("base64url");
   return JSON.stringify({
     userId, issuedAt, botId, threadId, agent: actor.agent,
+    ...(actor.turnId ? { turnId: actor.turnId } : {}),
     ...(mailRouted ? { mailRouted: true } : {}),
     ...(emailAutoApprove ? { emailAutoApprove: true } : {}),
     signature,
@@ -101,15 +111,17 @@ export function verifyActorAssertion(
   }
   const assertion = parsed as Record<string, unknown>;
   const keys = Object.keys(assertion).sort().join(",");
-  const mailRouted = keys === ASSERTION_KEYS_WITH_MAIL || keys === ASSERTION_KEYS_WITH_MAIL_AUTO;
-  const emailAutoApprove = keys === ASSERTION_KEYS_WITH_AUTO || keys === ASSERTION_KEYS_WITH_MAIL_AUTO;
-  if ((keys !== ASSERTION_KEYS && keys !== ASSERTION_KEYS_WITH_MAIL && keys !== ASSERTION_KEYS_WITH_AUTO && keys !== ASSERTION_KEYS_WITH_MAIL_AUTO) ||
+  const turnId = typeof assertion.turnId === "string" ? assertion.turnId : undefined;
+  const mailRouted = assertion.mailRouted === true;
+  const emailAutoApprove = assertion.emailAutoApprove === true;
+  if (keys !== assertionKeys({ mailRouted, emailAutoApprove, turnId }) ||
       (mailRouted && assertion.mailRouted !== true) ||
       (emailAutoApprove && assertion.emailAutoApprove !== true) ||
       typeof assertion.userId !== "string" || !UUID.test(assertion.userId) ||
       typeof assertion.botId !== "string" || !UUID.test(assertion.botId) ||
       typeof assertion.threadId !== "string" || !UUID.test(assertion.threadId) ||
       typeof assertion.agent !== "string" || !AGENTS.has(assertion.agent as RelayAgent) ||
+      (turnId !== undefined && !TURN_ID.test(turnId)) ||
       typeof assertion.issuedAt !== "number" || !Number.isSafeInteger(assertion.issuedAt) ||
       typeof assertion.signature !== "string" || !SIGNATURE.test(assertion.signature)) {
     throw new Error("actor assertion is invalid");
@@ -126,6 +138,7 @@ export function verifyActorAssertion(
       assertion.agent,
       mailRouted ? true : undefined,
       emailAutoApprove ? true : undefined,
+      turnId,
     ))
     .digest();
   const received = Buffer.from(assertion.signature, "base64url");
@@ -137,6 +150,7 @@ export function verifyActorAssertion(
     botId: assertion.botId,
     threadId: assertion.threadId,
     agent: assertion.agent as RelayAgent,
+    ...(turnId ? { turnId } : {}),
     ...(mailRouted ? { mailRouted: true as const } : {}),
     ...(emailAutoApprove ? { emailAutoApprove: true as const } : {}),
   };

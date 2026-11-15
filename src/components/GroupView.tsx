@@ -32,7 +32,6 @@ import { GroupUsageChip } from "./GroupUsageChip";
 import { ReplyQuote } from "./ReplyQuote";
 import { ReplyIcon } from "./ReplyIcon";
 import { ConnectorCard } from "./ConnectorCard";
-import { SecretRequestCard } from "./SecretRequestCard";
 import { TakeoverCard } from "./TakeoverCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
 import { GoalRunCard } from "./GoalRunCard";
@@ -201,8 +200,6 @@ export const Transcript = memo(function Transcript({
           // one of those questions, and answers in its own card.
           m.kind === "takeover" && m.takeover && m.from?.botId ? (
             <TakeoverCard botId={m.from.botId} threadId={group.threadId} message={m} />
-          ) : m.kind === "secret" && m.secret && m.from?.botId ? (
-            <SecretRequestCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "connector" && m.connector && m.from?.botId ? (
             <ConnectorCard botId={m.from.botId} threadId={group.threadId} message={m} />
           ) : m.kind === "options" && m.card?.requestId && m.card.questionRequest ? (
@@ -247,7 +244,7 @@ export const Transcript = memo(function Transcript({
             <CompactionChip message={m} />
           ) : m.kind === "digest" ? (
             showToolCalls ? <DigestChip message={m} /> : null
-          ) : m.kind === "text" && (m.text || m.attachments?.length) ? (
+          ) : (m.kind === "text" || m.kind === "secret") && (m.text || m.attachments?.length) ? (
             <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
               <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
                 {user && (

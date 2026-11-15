@@ -219,9 +219,20 @@ test("idle workspaces are reclaimed with a graceful stop", async () => {
   await pool.open(ALICE, "https://example.com");
   now = 5000;
   await pool.open(BOB, "https://example.com");
+  await pool.sweepIdleAll(() => true);
   const stops = spawn.calls.filter((call) => call.args[0] === "stop");
   assert.equal(stops.length, 1);
   assert.equal(stops[0]?.env.BLADE_HOME, join(ROOT, "blade", ALICE));
+});
+
+test("idle reclaim never stops a daemon a session still needs", async () => {
+  let now = 0;
+  const spawn = makeSpawn(() => okJson("t"));
+  const pool = poolWith(spawn, { idleReclaimMs: 1000, now: () => now });
+  await pool.open(ALICE, "https://example.com");
+  now = 5000;
+  await pool.sweepIdleAll(() => false);
+  assert.equal(spawn.calls.filter((call) => call.args[0] === "stop").length, 0);
 });
 
 test("forbidden argv never reaches the binary", () => {

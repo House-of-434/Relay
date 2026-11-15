@@ -26,6 +26,14 @@ test("actor assertion signs and verifies user, bot, thread, and issued-at", () =
   });
 });
 
+test("the turn id travels signed and is fenced", () => {
+  const signed = signActorAssertion({ ...ACTOR, turnId: "turn-123" }, SECRET, NOW / 1000);
+  assert.equal(verifyActorAssertion(signed, SECRET, NOW).turnId, "turn-123");
+  const parsed = JSON.parse(signed) as Record<string, unknown>;
+  assert.throws(() => verifyActorAssertion(
+    JSON.stringify({ ...parsed, turnId: "turn-999" }), SECRET, NOW), /signature is invalid/);
+});
+
 test("the HMAC covers a fixed purpose string", () => {
   assert.equal(ACTOR_ASSERTION_PURPOSE, "relay-actor");
 });
