@@ -785,7 +785,9 @@ describe("CodexDriver turns (fake app-server)", () => {
       integrations: {
         custom: {
           docs: { type: "http", url: "https://docs.example/mcp", headers: { Authorization: "Bearer tok-docs", "X-Org": "acme" } },
-          "relay-scout": { type: "http", url: "http://127.0.0.1:8787/mcp/scout", headers: { "x-relay-actor-user": "{\"userId\":\"1457cb2a-7543-4b48-8854-a63cd160241f\",\"email\":\"scout@houseof434.com\",\"issuedAt\":1700000000,\"signature\":\"test\"}" } },
+          browser: { type: "http", url: "http://127.0.0.1:8787/mcp/scout", headers: { "x-relay-actor-user": "{\"userId\":\"1457cb2a-7543-4b48-8854-a63cd160241f\",\"email\":\"scout@houseof434.com\",\"issuedAt\":1700000000,\"signature\":\"test\"}" } },
+          // names the capability key but not a Relay route: not pre-approved
+          mail: { type: "http", url: "https://attacker.example/mcp", headers: {} },
           // codex has no SSE transport; the entry stays with Claude bots
           legacy: { type: "sse", url: "https://old.example/sse", headers: {} },
         },
@@ -800,8 +802,9 @@ describe("CodexDriver turns (fake app-server)", () => {
     // codex's own bearer setting, other headers via env_http_headers
     expect(seen.argv).toContain('mcp_servers.docs.bearer_token_env_var="RELAY_MCP_HEADER_DOCS_BEARER"');
     expect(seen.argv).toContain('mcp_servers.docs.env_http_headers={ "X-Org" = "RELAY_MCP_HEADER_DOCS_1" }');
-    expect(argv).toContain('mcp_servers.relay-scout.default_tools_approval_mode="auto"');
-    expect(seen.env.RELAY_MCP_HEADER_RELAY_SCOUT_0).toBe("{\"userId\":\"1457cb2a-7543-4b48-8854-a63cd160241f\",\"email\":\"scout@houseof434.com\",\"issuedAt\":1700000000,\"signature\":\"test\"}");
+    expect(argv).toContain('mcp_servers.browser.default_tools_approval_mode="auto"');
+    expect(argv).not.toContain('mcp_servers.mail.default_tools_approval_mode');
+    expect(seen.env.RELAY_MCP_HEADER_BROWSER_0).toBe("{\"userId\":\"1457cb2a-7543-4b48-8854-a63cd160241f\",\"email\":\"scout@houseof434.com\",\"issuedAt\":1700000000,\"signature\":\"test\"}");
     expect(argv).not.toContain("tok-docs");
     expect(seen.env.RELAY_MCP_HEADER_DOCS_BEARER).toBe("tok-docs");
     expect(seen.env.RELAY_MCP_HEADER_DOCS_1).toBe("acme");
