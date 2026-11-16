@@ -48,8 +48,8 @@ function fixture(body = "", toolSchema: Record<string, unknown> = schema) {
   return {
     dir, receipt, controller, server,
     read: () => JSON.parse(readFileSync(receipt, "utf8")) as { pid: number; path: string; relay: Record<string, string>; calls: Array<{ method: string; params?: { name?: string; arguments?: unknown } }> },
-    async mount(computerUse = false, localComputer = false) {
-      const session = await mountChatTools(localComputer ? { localComputer: server } : { custom: { audit: server } }, controller.signal, computerUse);
+    async mount(computerUse = false) {
+      const session = await mountChatTools({ custom: { audit: server } }, controller.signal, computerUse);
       sessions.push(session);
       return session;
     },
@@ -256,7 +256,7 @@ describe("Chat MCP schema validation", () => {
     expect(() => session.validate("audit_write", { value: 42 })).not.toThrow();
   });
 
-  it.each([false, true])("carries large images from custom and built-in servers (built-in: %s)", async local => {
+  it("carries large images from custom servers", async () => {
     const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jBv0AAAAASUVORK5CYII=", "base64");
     const chunk = Buffer.alloc(2 * 1024 * 1024 + 12);
     chunk.writeUInt32BE(chunk.length - 12, 0); chunk.write("tEXt", 4); chunk.write("fixture\0", 8);
@@ -266,8 +266,8 @@ describe("Chat MCP schema validation", () => {
     f.server.env.IMAGE_FILE = join(f.dir, "image.txt");
     writeFileSync(f.server.env.IMAGE_FILE, data);
     writeFileSync(join(f.dir, "fake-mcp.mjs"), readFileSync(join(f.dir, "fake-mcp.mjs"), "utf8").replace('import { writeFileSync }', 'import { writeFileSync, readFileSync }').replace('process.env.IMAGE', 'readFileSync(process.env.IMAGE_FILE,"utf8")'));
-    const session = await f.mount(true, local);
-    const result = await session.execute(local ? "computer_write" : "audit_write", { value: "screenshot" }, f.controller.signal);
+    const session = await f.mount(true);
+    const result = await session.execute("audit_write", { value: "screenshot" }, f.controller.signal);
     expect(result).toEqual({ ok: true, text: "Screenshot captured.", images: [{ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } }] });
   });
 

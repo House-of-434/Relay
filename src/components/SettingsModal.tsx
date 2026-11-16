@@ -3,7 +3,7 @@
 // is the stuff shared by every bot: who you are, your keys, and the
 // machine your bots can borrow.
 import { useEffect, useRef, useState } from "react";
-import { Coins, FlaskConical, KeyRound, Monitor, Palette, ScrollText, Search, TabletSmartphone, Terminal, User, X, Building2, Zap } from "lucide-react";
+import { Coins, FlaskConical, KeyRound, Palette, ScrollText, Search, TabletSmartphone, Terminal, User, X, Building2, Zap } from "lucide-react";
 import { api, useStore, type AppSettingsSection, type ConfigStatus, ApiError } from "@/state/store";
 import { routinesInConversationEnabled, showToolCallsEnabled, skillAuthoringEnabled } from "@/lib/feature-flags";
 import { type LocaleKey } from "@/locales";
@@ -11,11 +11,10 @@ import { t } from "@/lib/i18n";
 import { withTourReset } from "@/lib/guided-tour";
 import { clearTourSeen, tourStorage } from "@/lib/first-run";
 import { completionPatch } from "@/lib/onboarding";
-import { ApiKeyRow, OpenAiCompatUrl, VpsConnection } from "./ApiKeys";
+import { ApiKeyRow, OpenAiCompatUrl } from "./ApiKeys";
 import { DecisionModelSettings } from "./DecisionModelSettings";
 import { useUpdaterState } from "@/lib/updater";
 import { EnginesSettings } from "./EnginesSettings";
-import { LocalComputerSection } from "./LocalComputerSection";
 import { CompanionSection } from "./CompanionSection";
 import { ServerPairingCard } from "./ServerPairingCard";
 import { ActivitySection } from "./ActivitySection";
@@ -59,7 +58,6 @@ export const SECTIONS: Array<{
   { id: "decisionModel", labelKey: "settings.section.decisionModel", icon: Zap, keywords: ["decision", "jev", "typesafe", "routing", "auto", "rooms", "who answers"] },
   { id: "engines", labelKey: "settings.section.engines", icon: Terminal, keywords: ["models", "claude", "grok", "providers", "cli"] },
   { id: "companion", labelKey: "settings.section.companion", icon: TabletSmartphone, keywords: ["companion", "device", "phone", "desktop", "client", "host", "pair", "pairing", "mobile", "https", "secure", "tailscale", "wifi", "remote", "advanced", "domain", "dns", "self-hosted", "server", "caddy"] },
-  { id: "computer", labelKey: "settings.section.computer", icon: Monitor, keywords: ["vm", "virtual", "desktop"] },
   { id: "usage", labelKey: "settings.section.usage", icon: Coins, keywords: ["tokens", "cost", "billing"] },
   { id: "activity", labelKey: "settings.section.activity", icon: ScrollText, keywords: ["activity", "audit", "log", "history", "who changed", "approvals", "decisions", "admin"] },
   { id: "workspaces", labelKey: "settings.section.workspaces", icon: Building2, keywords: ["clients", "tenants", "fleet", "workspaces", "installation", "installations"] },
@@ -650,8 +648,6 @@ export function SettingsModal() {
                   <ApiKeyRow section="xai" testProvider="xai" />
                   <ApiKeyRow section="mistral" testProvider="mistral" />
                   <div className="pt-2 text-[11.5px] font-medium uppercase tracking-wide text-ink-secondary">{t("keys.integrations.title")}</div>
-                  <ApiKeyRow section="box" />
-                  <VpsConnection />
                   <ApiKeyRow section="opencodeGo" />
                   {!state.config?.sharedWorkspace && <details className="rounded-lg border border-hairline/40 bg-inset px-3 py-2">
                     <summary className="cursor-pointer text-[13px] text-ink-secondary">{t("settings.connections.selfHost")}</summary>
@@ -683,8 +679,6 @@ export function SettingsModal() {
                 {!remoteActive && <CompanionSection profileEmail={state.config?.profile?.email} />}
               </>
             )}
-
-            {section === "computer" && <LocalComputerSection />}
 
             {section === "usage" && <UsageSection />}
             {section === "activity" && <ActivitySection />}

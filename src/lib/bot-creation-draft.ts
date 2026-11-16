@@ -8,7 +8,7 @@ export const EMPTY_BOT_DEFAULTS: NewBotDefaults = { profile: {}, memory: {}, ski
 
 const routineTemplate = (routine: Routine): BotRoutineTemplate => ({
   name: routine.name, prompt: routine.prompt, schedule: routine.schedule,
-  enabled: routine.enabled, runOn: routine.runOn, durationMinutes: routine.durationMinutes,
+  enabled: routine.enabled, durationMinutes: routine.durationMinutes,
   timeoutMinutes: routine.timeoutMinutes, overlap: routine.overlap,
   attachments: routine.attachments,
 });
@@ -18,7 +18,7 @@ const routineTemplate = (routine: Routine): BotRoutineTemplate => ({
 export class BotCreationDraft {
   readonly id = `draft-${crypto.randomUUID()}`;
   template: NewBotDefaults;
-  consent: Pick<BotUpdatePatch, "confirmFullAccess" | "acknowledgeLocalAuto"> & { acknowledgePeerScope?: boolean } = {};
+  consent: Pick<BotUpdatePatch, "confirmFullAccess"> & { acknowledgePeerScope?: boolean } = {};
   routines: Routine[];
   /** A preset chosen in New bot: the server adds its skills and notes. */
   preset?: ChosenPreset;
@@ -31,20 +31,19 @@ export class BotCreationDraft {
   }
 
   get bot(): Bot {
-    const { computer, cwd, peers, ...profile } = this.template.profile;
+    const { cwd, peers, ...profile } = this.template.profile;
     return {
       id: this.id, threadId: this.id, name: "", title: "", description: "", soul: "",
       color: "green", notifications: true, unread: false, messages: [],
       modelSelection: { instanceId: "", model: "" }, ...profile,
-      computer: computer ?? undefined, cwd: cwd ?? undefined, peers: peers ?? undefined,
+      cwd: cwd ?? undefined, peers: peers ?? undefined,
     };
   }
 
   patch(value: BotUpdatePatch & Partial<BotDefaultsProfile> & { acknowledgePeerScope?: boolean }) {
-    const { confirmFullAccess, acknowledgeLocalAuto, acknowledgePeerScope, applyToAllThreads: _all,
+    const { confirmFullAccess, acknowledgePeerScope, applyToAllThreads: _all,
       autoApprove, ...profile } = value;
     if (confirmFullAccess !== undefined) this.consent.confirmFullAccess = confirmFullAccess;
-    if (acknowledgeLocalAuto !== undefined) this.consent.acknowledgeLocalAuto = acknowledgeLocalAuto;
     if (acknowledgePeerScope !== undefined) this.consent.acknowledgePeerScope = acknowledgePeerScope;
     if (autoApprove !== undefined && profile.approvalMode === undefined) profile.approvalMode = autoApprove ? "auto" : "ask";
     this.template.profile = { ...this.template.profile, ...profile };
@@ -96,7 +95,7 @@ export class BotCreationDraft {
     } : schedule;
     return {
       id: previous?.id ?? `draft-${crypto.randomUUID()}`, createdAt: previous?.createdAt ?? Date.now(),
-      updatedAt: Date.now(), nextRunAt: null, runOn: "maus", ...previous, ...fields,
+      updatedAt: Date.now(), nextRunAt: null, ...previous, ...fields,
       enabled: input.enabled ?? previous?.enabled ?? true, target: "bot", botId: this.id,
       timeoutMinutes: input.timeoutMinutes ?? undefined,
       durationMinutes: input.durationMinutes ?? previous?.durationMinutes ?? 30,

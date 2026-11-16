@@ -60,7 +60,7 @@ export function cloudHomePrompt(sharedComputerTools: boolean): string {
   return " You run on the user's Relay Cloud, a server in the cloud, not on their own computer." + (sharedComputerTools
     ? " If they ask for something on their own Mac or PC, check list_shared_computers: a Mac they lend to their Cloud is reachable through shared_computer, within the folders and apps it allows. If none is lent and online, say so in one sentence: they can turn on Let my Cloud use this Mac under Settings → Relay Cloud in the desktop app on that Mac."
     : " You cannot see or use their Mac or PC, its screen or its files from here. If they ask for something on it, say so in one sentence.")
-    + " Offer what works here: the built-in browser and cloud computers. Never ask them to set up this computer or a Local VM; neither exists here.";
+    + " Offer what works here: the built-in browser.";
 }
 
 export const CONNECTORS_PROMPT =

@@ -1,25 +1,18 @@
-// Boat cloud computers and the Jev decision model included
-// with Cloud Pro (docs/cloud-pro.md, "Included Boat computers and
-// decisions").
-// The Admin relays each on its own accounts, so its provider keys never reach
-// this machine; each Cloud home gets its own relay tokens:
+// The Jev decision model included with Cloud Pro (docs/cloud-pro.md).
+// The Admin relays it on its own account, so its provider key never reaches
+// this machine; each Cloud home gets its own relay token:
 //
-//   RELAY_CLOUD_BOAT_URL    + RELAY_CLOUD_BOAT_TOKEN     the Boat relay, ending in /api/box/v1
 //   RELAY_CLOUD_DECIDER_URL + RELAY_CLOUD_DECIDER_TOKEN  the Jev relay, a Jev base URL
 //
 // An included token is only a fallback. The person's own key (Settings, or
-// BOX_TOKEN / RELAY_JEV_API_KEY) always wins, and removing it
-// falls back again, so the credential is resolved on every request, never
-// cached. The relay knows only our account, so each credential goes to one
-// place: an own key to the provider (RELAY_BOX_API /
-// decider.baseUrl when set, for dev and tests), an included token to its
-// relay. An included token is never written to config.json, never reported
-// to a client, and never the saved key Settings verifies, rotates or clears.
+// RELAY_JEV_API_KEY) always wins, and removing it falls back again, so the
+// credential is resolved on every request, never cached. An included token is
+// never written to config.json, never reported to a client, and never the
+// saved key Settings verifies, rotates or clears.
 import { JEV_DEFAULT_BASE_URL } from "./decider/jev.ts";
 
-export const BOAT_API_DEFAULT = "https://ascii.dev/api/box/v1";
 /** Also on WORKSPACE_CREDENTIAL_ENV (config.ts). */
-export const INCLUDED_TOKEN_ENV = ["RELAY_CLOUD_BOAT_TOKEN", "RELAY_CLOUD_DECIDER_TOKEN"] as const;
+export const INCLUDED_TOKEN_ENV = ["RELAY_CLOUD_DECIDER_TOKEN"] as const;
 
 export interface ServiceCredential {
   token: string;
@@ -30,7 +23,6 @@ export interface ServiceCredential {
 }
 
 interface Included {
-  boat: ServiceCredential | null;
   decider: ServiceCredential | null;
 }
 
@@ -41,7 +33,6 @@ function includedService(url: string | undefined, token: string | undefined): Se
 }
 
 const includedFrom = (env: NodeJS.ProcessEnv): Included => ({
-  boat: includedService(env.RELAY_CLOUD_BOAT_URL, env.RELAY_CLOUD_BOAT_TOKEN),
   // A Jev base URL as it is: the decider adds /v1/systemone, the relay's one route.
   decider: includedService(env.RELAY_CLOUD_DECIDER_URL, env.RELAY_CLOUD_DECIDER_TOKEN),
 });
@@ -65,13 +56,6 @@ function resolve(own: string | undefined, providerApi: string, included: Service
     return { token: own, api: providerApi, included: false };
   }
   return included;
-}
-
-export const boatProviderApi = (env: NodeJS.ProcessEnv = process.env): string => env.RELAY_BOX_API || BOAT_API_DEFAULT;
-
-/** The Boat credential in use: the person's own token, else the included one. */
-export function boatCredential(own: string | undefined, env: NodeJS.ProcessEnv = process.env): ServiceCredential | null {
-  return resolve(own, boatProviderApi(env), (held ?? includedFrom(env)).boat);
 }
 
 /** The decision model's credential in use: the person's own Jev key (saved,

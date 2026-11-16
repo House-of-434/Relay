@@ -10,8 +10,6 @@
 
 import type { RoutineCronSchedule } from "./routine-schedule.ts";
 
-export type RoutineRequestRunOn = "maus" | "cloud";
-
 export interface RoutineRequestIntervalWindow {
   start: string;
   end: string;
@@ -51,7 +49,6 @@ export interface RoutineRequestDefinition {
   name: string;
   instructions: string;
   schedule: RoutineRequestSchedule;
-  runOn: RoutineRequestRunOn;
   /** Legacy calendar/display length. It does not stop an active run. */
   durationMinutes: number;
   /** Optional safety cap for active work. Missing means no timeout. */

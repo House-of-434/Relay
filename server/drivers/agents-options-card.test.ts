@@ -12,6 +12,7 @@ function profile(overrides: Partial<CatalogProfile> = {}): CatalogProfile {
     skillAuthoring: false,
     sharedComputers: false,
     cloudHome: false,
+    relayGit: false,
     botId: WATCHER_OPTIONS_CARD_BOT_ID,
     ...overrides,
   };
@@ -45,6 +46,11 @@ describe("Watcher options-card tool", () => {
     expect(availableTools(profile()).map((tool) => tool.name)).toContain("create_options_card");
     expect(availableTools(profile({ botId: "another-bot" })).map((tool) => tool.name)).not.toContain("create_options_card");
     expect(availableTools(profile({ externalRuntime: true })).map((tool) => tool.name)).not.toContain("create_options_card");
+  });
+
+  it("advertises relay_git only when the harness enables Scout's workspace", () => {
+    expect(availableTools(profile()).map((tool) => tool.name)).not.toContain("relay_git");
+    expect(availableTools(profile({ relayGit: true })).map((tool) => tool.name)).toContain("relay_git");
   });
 
   it("advertises the bounded two-through-six choice schema", () => {

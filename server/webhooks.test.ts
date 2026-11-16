@@ -52,7 +52,6 @@ function create(manager: WebhookManager) {
     name: "New lead",
     prompt: "Qualify the incoming lead and prepare a response",
     botId: "maus-sales",
-    runOn: "cloud",
   });
 }
 
@@ -82,7 +81,7 @@ describe("WebhookManager", () => {
     const created = create(h.manager);
 
     expect(created.secret).toMatch(/^whsec_/);
-    expect(created.webhook).toMatchObject({ name: "New lead", runOn: "maus", deliveryCount: 0 });
+    expect(created.webhook).toMatchObject({ name: "New lead", deliveryCount: 0 });
     expect(created.webhook).not.toHaveProperty("durationMinutes");
     expect(JSON.stringify(created.webhook)).not.toContain(created.secret);
     expect(JSON.stringify(h.manager.list())).not.toContain("secretHash");
@@ -117,7 +116,6 @@ describe("WebhookManager", () => {
       webhookId: webhook.id,
       webhookName: "New lead",
       botId: "maus-sales",
-      runOn: "maus",
       deliveryId: "evt-123",
     });
     expect(h.queued[0]).not.toHaveProperty("durationMinutes");

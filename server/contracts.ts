@@ -14,7 +14,7 @@ import type { ProviderIcon } from "../shared/provider-icon.ts";
 
 // These contract types live in shared/wire.ts now (part of the wire model);
 // re-exported here so existing server-side importers keep working.
-export type { CloudBackend, EffortLevel, ModelSelection } from "../shared/wire.ts";
+export type { EffortLevel, ModelSelection } from "../shared/wire.ts";
 // Runtime-event wire shapes live in shared/runtime-events.ts now (part of
 // the wire model); re-exported here so existing importers keep working.
 export type {
@@ -171,27 +171,6 @@ export interface SendTurnInput {
      * bridge harness-controlled lets it turn connection requests into trusted
      * chat cards consistently across provider CLIs. */
     composio?: { command: string; args: string[]; env: Record<string, string> };
-    /** Boat's native runner or an explicitly capable driver consumes this
-     * leased descriptor. Other computers use the stdio descriptor below. */
-    computer?: {
-      // kind "box" and field boxId keep their historical names (leased-wire contract).
-      kind?: "box";
-      boxId: string;
-      token: string;
-      control?: { url: string; token: string };
-    };
-    /** Direct stdio connection to a Cua Driver MCP server (host, sandbox, or
-     * VPS). `scope` is set only for the user's host desktop; isolated and
-     * remote computers intentionally omit it so host-only approval rules
-     * cannot change their semantics. */
-    localComputer?: {
-      command: string;
-      args: string[];
-      env: Record<string, string>;
-      platform?: "darwin" | "linux" | "win32";
-      generation?: string;
-      scope?: "local-computer";
-    };
     /** Engine lifecycle hooks (Claude Code hooks today): the harness's
      * loopback URL and a turn-scoped bearer the engine's hook helper presents
      * on POST /api/internal/hook. A driver that declares `capabilities.hooks`
@@ -247,24 +226,6 @@ export interface ProviderAdapter {
      * the harness only offers agents tooling (and prompts about it) to
      * drivers that can actually hand it to the agent. */
     agentsMcp?: boolean;
-    /** True when the driver mounts isolated computer MCP descriptors (the
-     * screenshot/click tools). Same rule as agentsMcp: a bot must never be
-     * told it has a computer whose tools its driver cannot mount — it
-     * burns turns hunting for tools that aren't there. */
-    computerMcp?: boolean;
-    /** Consumes the leased Boat descriptor without switching to Boat's model. */
-    cloudComputerMcp?: boolean;
-    /** True when the whole turn executes on the cloud computer (the Boat native
-     * agent — POST /boxes/{id}/prompt) instead of in the host harness. Such a
-     * driver claims the boat exclusively, cannot use host or Local VM surfaces,
-     * and every tool call acts on that machine's screen (screen pollers start
-     * with screenIsTheWork). Implies a cloud-computer turn even though the
-     * driver mounts no computer descriptor — cloudComputerMcp stays false. */
-    remoteAgent?: boolean;
-    /** True when this driver's turn can run against a cloud computer — natively
-     * (remoteAgent) or by mounting the leased Boat descriptor (cloudComputerMcp).
-     * Gates every cloud attach path (attachBotBoat / attachTeamBoat canMount). */
-    usesCloudComputer?: boolean;
     /** True when the driver mounts turn.integrations.composio (the user's
      * connected apps). Same rule again: a key in the config says the user
      * HAS those connections, not that this driver can reach them. */
@@ -272,7 +233,7 @@ export interface ProviderAdapter {
     /** True when the driver can mount the first-party physical-phone MCP. */
     phoneMcp?: boolean;
     /** True when this engine accepts images in the prompt — gates image
-     * paste in the composer. Same rule as computerMcp: never offer an
+     * paste in the composer. Same rule as agentsMcp: never offer an
      * attachment an engine cannot open (a bot told it has an image it
      * cannot read burns the turn). */
     images?: boolean;
@@ -282,7 +243,7 @@ export interface ProviderAdapter {
     nativeImageInput?: boolean;
     /** Effort levels this driver can pass to its CLI, ascending. Absent =
      * the driver cannot set effort, so the app never offers the control —
-     * same rule as computerMcp: never show a knob the driver cannot turn. */
+     * same rule as agentsMcp: never show a knob the driver cannot turn. */
     effortLevels?: readonly EffortLevel[];
     /** The driver validates and applies model-specific variant IDs per session. */
     modelVariants?: boolean;
@@ -292,9 +253,6 @@ export interface ProviderAdapter {
      * others keep the queue-one-and-wait behaviour. Same rule as the other
      * flags: never show a control the driver cannot honour. */
     queueing?: boolean;
-    /** True only when local MCP calls can reach the human approval channel.
-     * Full-auto/bypass provider instances must leave this false. */
-    localComputerMcp?: boolean;
     /** True when the driver mounts turn.integrations.custom (Relay Tool
       * Layer routes for the bot). Same rule as composioMcp: a route being
       * configured says it exists, not that this engine can reach it. */

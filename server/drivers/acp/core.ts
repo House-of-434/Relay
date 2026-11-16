@@ -124,7 +124,6 @@ interface AcpTurn {
   /** the model-resolved turn (see resolveTurnModel) */
   turn: SendTurnInput;
   turnConfig: AcpConfig;
-  controlsHost: boolean;
   state: { settled: boolean; promptSent: boolean; text: string; producedItem: boolean; startupActivity: boolean; stopped: boolean };
   acknowledge: () => void;
   asks: Map<string, AcpAskFinish>;
@@ -687,18 +686,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             env: acpEnv(composio.env),
           });
         }
-        // The bot's computer, mounted exactly like the Claude driver does:
-        // host and sandbox Cua connections expose Cua Driver's own MCP server.
-        // (A cloud boat is not mounted here at all: a cloud turn runs ON the boat.)
-        if (turn.integrations?.localComputer) {
-          const local = turn.integrations.localComputer;
-          servers.push({
-            name: "computer",
-            command: local.command,
-            args: local.args,
-            env: acpEnv(local.env ?? {}),
-          });
-        }
         // user-configured servers, after the built-ins: a residual name
         // collision keeps the built-in (reserved names are filtered at the
         // config boundary; this is defense in depth).
@@ -978,7 +965,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           }
           const kind = String(toolCall.kind ?? "");
           // an earlier "Always allow this session" on this exact operation
-          const operationKey = isQuestion || current.controlsHost ? null : sessionOperationKey(toolCall);
+          const operationKey = isQuestion ? null : sessionOperationKey(toolCall);
           if (operationKey && sessionAllows.get(threadId)?.has(operationKey)) {
             const allow = optionFor("allow");
             if (allow) {
@@ -1009,7 +996,7 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             if (!current.asks.delete(requestId)) return "unavailable";
             clearTimeout(timer);
             const want = behavior === "allow" ? "allow" : "reject";
-            const forSession = want === "allow" && always === true && !isQuestion && !current.controlsHost;
+            const forSession = want === "allow" && always === true && !isQuestion;
             // A structured card replies in the Q:/A: block format; recover the
             // picked label from it so exact-match keeps working. Flat clients
             // send the bare label, which the single-question fallback inside
@@ -1046,7 +1033,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
               requestId,
               behavior: optionId && isQuestion ? "answer" : optionId && behavior === "allow" ? "allow" : "deny",
               source: optionId ? source : "system",
-              approvalScope: current.controlsHost ? "local-computer" : undefined,
             });
             return !optionId ? "rejected" : isQuestion ? "answered" : behavior === "allow" ? "allowed-once" : "rejected";
           };
@@ -1069,9 +1055,8 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             ) || undefined,
             choices: askQuestions?.[0]?.options.map(option => option.label) ?? (isQuestion ? questionChoices : undefined),
             ...(askQuestions ? { questions: askQuestions } : {}),
-            approvalScope: current.controlsHost ? "local-computer" : undefined,
             // the driver can honor a session-wide allow either way
-            allowSession: !isQuestion && !current.controlsHost ? true : undefined,
+            allowSession: !isQuestion ? true : undefined,
           });
         };
 
@@ -1265,10 +1250,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
         const turnConfig = turn.approvalMode === undefined
           ? config
           : { ...config, fullAuto: turn.approvalMode === "full" && supportsApprovalMode(DRIVER_KIND, "full") };
-        const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
-        if (controlsHost && turnConfig.fullAuto && turn.approvalMode !== "full") {
-          throw new Error("local computer control requires interactive provider approvals");
-        }
         const turnId = newId();
         const cwd = turn.cwd ?? turnConfig.workspace ?? homedir();
         const env = childEnv(turnConfig);
@@ -1414,7 +1395,6 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
           turnId,
           turn: cliTurn,
           turnConfig,
-          controlsHost,
           state,
           acknowledge,
           asks,
@@ -1843,16 +1823,11 @@ export function createAcpDriver(support: AcpSupport): ProviderDriver<AcpConfig> 
             sessionModelSwitch: "unsupported",
             agentsMcp: true,
         customMcp: true,
-            computerMcp: true,
             composioMcp: true,
             images: support.images !== false,
             nativeImageInput: support.images === true,
             effortLevels: support.effortLevels,
             modelVariants: support.modelVariants === true,
-            // Relay supplies a per-bot approvalMode on every harness
-            // turn, which safely overrides a legacy instance fullAuto value.
-            // Direct adapter calls that omit it still fail closed in sendTurn.
-            localComputerMcp: true,
           },
           sendTurn,
           interruptTurn: async (threadId) => active.get(threadId)?.interrupt(),

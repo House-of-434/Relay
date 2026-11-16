@@ -50,13 +50,6 @@ export interface ModelSelection {
   variant?: string;
 }
 
-/** Which cloud computer backs computer: "cloud"; absent means Boat. */
-export type CloudBackend = "box" | "vps";
-
-/** A place a bot can act. cloud covers both cloud backends — from the
- * person's seat they are the same "cloud computer" panel. */
-export type Surface = "cloud" | "vm" | "local";
-
 export type MausColor =
   | "green" | "blue" | "red" | "orange" | "purple" | "cyan" | "pink"
   | "yellow" | "teal" | "coral";
@@ -158,8 +151,6 @@ export interface WireTask {
    * its elapsed readout here, so the count survives thread switches. Stamped
    * by setTaskActivity on an idle→busy transition; runtime-only like busy. */
   turnStartedAt?: number;
-  /** Where this conversation works when pinned; absent = follow the bot. */
-  surface?: Surface;
   /** what this task has spent, banked once per turn */
   usage?: TaskUsage;
   /** the folder this task's turns run in, pinned on its first turn. */
@@ -268,12 +259,6 @@ export interface WireBot {
   unread: boolean;
   /** Default for new tasks; navigating tasks never changes this value. */
   modelSelection: ModelSelection;
-  /** where the bot works ("Works on"). Unset = auto. */
-  computer?: Surface | "off";
-  /** Which cloud computer backs computer: "cloud"; absent means Boat. */
-  cloudBackend?: CloudBackend;
-  /** Auto mode may prepare/start this bot's managed VPS container. */
-  autoStartVps?: boolean;
   /** where NEW tasks run their shell tools; absent = home folder. */
   cwd?: string;
   /** Auto mode: the bot approves its own tool permissions. */
@@ -496,8 +481,6 @@ export interface OptionCardData {
   allowSession?: boolean;
   /** Exact native command offered for an owner/admin to remember. */
   commandAllowlist?: CommandAllowlistCandidate;
-  /** Local actions never share remembered grants with cloud/tool approvals. */
-  approvalScope?: "local-computer";
   /** A durable chat-created routine proposal. */
   routineRequest?: RoutineRequestCardData;
   /** A durable profile-change proposal (propose_profile). */
@@ -670,8 +653,6 @@ export type ServerFrame =
   | { kind: "webhook.attempt"; attempt: WebhookAttempt }
   | { kind: "webhook.deleted"; webhookId: string }
   | { kind: "runtime"; event: RuntimeEvent }
-  | { kind: "computer"; botId: string; state: "provisioning" | "waking" }
-  | { kind: "computer-control"; botId: string; held: boolean; helpReason: string | null }
   | { kind: "bot.deleted"; botId: string }
   /** The config status object spread flat into the frame; its full typing
    * is the deferred client-model extraction (see j1-phase-bc-progress). */

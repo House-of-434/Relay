@@ -29,6 +29,6 @@ describe("connector card translation", () => {
     }));
     expect(html).toContain(locales.ja!["connectors.action.connect"]);
     expect(html).toContain(locales.ja!["connectors.card.notNow"]);
-    expect(html).not.toContain("Not now");
+    expect(html).not.toContain("Connected securely");
   });
 });

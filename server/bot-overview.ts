@@ -52,8 +52,6 @@ export interface OverviewFacts {
     | "title"
     | "description"
     | "soul"
-    | "computer"
-    | "cloudBackend"
     | "cwd"
     | "autoApprove"
     | "approvalMode"
@@ -74,10 +72,7 @@ export interface OverviewFacts {
   runs: Array<{ routineId: string; status: string; finishedAt?: number; startedAt?: number; scheduledFor: number }>;
   webhooks: Array<{ name: string; enabled: boolean }>;
   skills: Array<{ name: string; description: string; enabled: boolean }>;
-  engine: { agentsMcp?: boolean; composioMcp?: boolean; computerMcp?: boolean } | null;
-  /** This server is a Cloud home (cloud-home.ts): it has no "this computer"
-   * of the person's and no Local VM. */
-  cloudHome?: boolean;
+  engine: { agentsMcp?: boolean; composioMcp?: boolean } | null;
   connectedApps: { configured: boolean; authoritative: boolean; services: string[] };
   sectionPeers: number;
   timeZone: string;
@@ -228,28 +223,8 @@ export function grantsSummary(connectorTools: BotRecord["connectorTools"]): BotO
     .sort((a, b) => (a.slug < b.slug ? -1 : 1));
 }
 
-function computerReach(computer: BotRecord["computer"], cloudHome = false): string | null {
-  // A Cloud home never offers either; say so rather than list a preference
-  // that every task there refuses.
-  const unavailable = cloudHome ? ", which isn't available on OMB Cloud" : "";
-  switch (computer) {
-    case "cloud":
-      return "Computer preference: cloud computer.";
-    case "vm":
-      return `Computer preference: Local VM${unavailable}.`;
-    case "local":
-      return `Computer preference: this computer${unavailable}.`;
-    case "off":
-      return null;
-    default:
-      return "Computer preference: Auto; availability is checked when a task starts.";
-  }
-}
-
 function reachesLines(facts: OverviewFacts): string[] {
   const lines: string[] = [];
-  const computer = computerReach(facts.bot.computer, facts.cloudHome);
-  if (computer) lines.push(computer);
   lines.push(facts.bot.cwd ? `Works in ${facts.bot.cwd}.` : "Works in its private workspace.");
   const apps = facts.connectedApps;
   // Only a bot that could actually use apps gets an apps line here. When it
@@ -286,7 +261,6 @@ function wontLines(facts: OverviewFacts): string[] {
   if (!couldUseApps(facts) || (facts.connectedApps.authoritative && facts.connectedApps.services.length === 0)) {
     lines.push("Has no connected apps.");
   }
-  if (facts.bot.computer === "off") lines.push("Can't use a computer.");
   if (!facts.routines.some((routine) => routine.enabled)) lines.push("Won't act on a schedule.");
   if (mode !== "full") lines.push("Profile proposal cards require your approval.");
   return lines;

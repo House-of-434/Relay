@@ -5,7 +5,6 @@ import { z } from "zod";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { DATA_DIR } from "./config.ts";
-import type { RoutineRunOn } from "./routines.ts";
 import { parseJson, schemaIssue, type JsonValue } from "./schema.ts";
 
 export type WebhookTriggerInput = z.input<typeof triggerInputSchema>;
@@ -61,7 +60,6 @@ export interface WebhookManagerOptions {
     webhookName: string;
     prompt: string;
     botId: string;
-    runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
   }) => { id: string };
@@ -90,14 +88,12 @@ export const DEFAULT_MAX_PENDING_RUNS = 3;
 export const MAX_PENDING_RUNS_LIMIT = 50;
 const maxPendingRunsSchema = z.number().int().min(1).max(MAX_PENDING_RUNS_LIMIT);
 
-const runOnSchema = z.enum(["maus", "cloud"]);
 const deliverySchema = z.enum(["run", "post"]);
 const eventTypesSchema = z.array(z.string()).max(20).optional();
 const triggerInputSchema = z.object({
   name: z.string(),
   prompt: z.string(),
   botId: z.string(),
-  runOn: runOnSchema.optional(),
   delivery: deliverySchema.optional(),
   enabled: z.boolean().optional(),
   verificationPending: z.boolean().optional(),
@@ -118,7 +114,6 @@ const storedWebhookSchema = z.object({
   name: z.string(),
   prompt: z.string(),
   botId: z.string().min(1),
-  runOn: runOnSchema,
   delivery: deliverySchema.optional(),
   enabled: z.boolean(),
   createdAt: z.number().finite().nonnegative(),
@@ -194,7 +189,6 @@ function cleanInput(input: WebhookTriggerInput): CleanWebhookInput {
   const name = input.name.trim().slice(0, 80);
   const prompt = input.prompt.trim().slice(0, 20_000);
   const botId = input.botId.trim();
-  const runOn = input.runOn === "cloud" ? "maus" : input.runOn ?? "maus";
   if (!name) fail(400, "Give the webhook a name");
   if (!botId) fail(400, "Choose a MAUS");
   const eventTypes = Array.from(new Set(
@@ -207,7 +201,6 @@ function cleanInput(input: WebhookTriggerInput): CleanWebhookInput {
     name,
     prompt,
     botId,
-    runOn,
     enabled,
     verificationPending: enabled ? false : input.verificationPending === true,
   };
@@ -306,10 +299,7 @@ export class WebhookManager {
     try {
       const parsed = webhookFileSchema.safeParse(parseJson(readFileSync(this.file, "utf8")));
       if (!parsed.success) throw parsed.error;
-      this.webhooks = parsed.data.webhooks.map((webhook) => ({
-        ...webhook,
-        runOn: webhook.runOn === "cloud" ? "maus" : webhook.runOn,
-      }));
+      this.webhooks = parsed.data.webhooks;
       this.deliveries = parsed.data.deliveries.slice(-MAX_DELIVERIES);
       this.attempts = (parsed.data.attempts ?? []).slice(-MAX_ATTEMPTS);
     } catch {
@@ -361,7 +351,6 @@ export class WebhookManager {
       name: patch.name ?? trigger.name,
       prompt: patch.prompt ?? trigger.prompt,
       botId: patch.botId ?? trigger.botId,
-      runOn: patch.runOn ?? trigger.runOn,
 
       delivery: patch.delivery ?? trigger.delivery,
       enabled: patch.enabled ?? trigger.enabled,
@@ -535,7 +524,6 @@ export class WebhookManager {
       webhookName: trigger.name,
       prompt: eventPrompt(trigger, event, now, deliveryId),
       botId: trigger.botId,
-      runOn: trigger.runOn,
       deliveryId,
       receivedAt: now,
     });

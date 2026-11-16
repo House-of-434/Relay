@@ -92,7 +92,6 @@ export const roomReleaseValues = (room: PackageRoom): Record<RoomPart, unknown> 
 /** One normal form for a routine's timing on both sides, so an untouched
  * routine compares equal: absent cap → null, absent overlap → "skip". */
 export function scheduleValue(routine: {
-  runOn: string;
   schedule: unknown;
   durationMinutes: number;
   timeoutMinutes?: number | null;
@@ -100,7 +99,9 @@ export function scheduleValue(routine: {
   continuity?: boolean | null;
 }) {
   return {
-    runOn: routine.runOn,
+    // Frozen part shape: keep the historical value so existing organization
+    // library stamps keep comparing equal.
+    runOn: "maus" as const,
     schedule: routine.schedule,
     durationMinutes: routine.durationMinutes,
     timeoutMinutes: routine.timeoutMinutes ?? null,

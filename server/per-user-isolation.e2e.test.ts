@@ -108,7 +108,7 @@ posixOnly("per-user workspace isolation", () => {
       expect(list.status, JSON.stringify(list.body)).toBe(200);
       expect(botNames(list.body)).toEqual(["Curator", "Mercury", "Scout"]);
       expect(list.body.bots.map((bot: any) => bot.relayAgent).sort()).toEqual(["curator", "mercury", "scout"]);
-      expect(list.body.bots.every((bot: any) => bot.computer === "off" && bot.composio === false)).toBe(true);
+      expect(list.body.bots.every((bot: any) => bot.composio === false)).toBe(true);
       expect(new Set(list.body.bots.map((bot: any) => `${bot.modelSelection.instanceId}:${bot.modelSelection.model}`)).size).toBe(1);
       // The owner key is private wire state, never sent to a client.
       expect(list.body.bots.every((bot: any) => bot.ownerUserId === undefined)).toBe(true);

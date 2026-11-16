@@ -5,7 +5,7 @@ import type { IncomingMessage } from "node:http";
 import { afterEach, expect, it } from "vitest";
 import {
   CLOUD_BROWSER_SIGN_IN_MAX_TTL_S, CLOUD_HOME_MARKER, CLOUD_HOME_RESTART_EXIT_CODE, CLOUD_IGNORED_KEYS, CLOUD_PAIRING_MAX_TTL_S, CLOUD_PAIRING_NONCE_MS, CLOUD_PAIRING_SKEW_S, cloudHomeConfiguration, cloudHomeConfigured,
-  boatNotConfiguredMessage, cloudHomeHost, cloudHomeOffersPlace, cloudHomePlaceRefusal, cloudPairingSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
+  cloudHomeHost, cloudPairingSignature, createCloudPairing, firstCloudTurnPatch, prepareCloudHomeVolume,
   withoutIgnoredCloudKeys,
 } from "./cloud-home.ts";
 import { cloudHomeChildEnvironments, passwdIds, serverExitAction } from "./cloud-home-start.ts";
@@ -93,30 +93,6 @@ it("never echoes a secret or token in its refusal", () => {
     try { cloudHomeConfiguration(env); expect.unreachable(); }
     catch (error) { expect(String(error)).not.toContain(secret); expect(String(error)).not.toContain(token); }
   }
-});
-
-// ── places ──────────────────────────────────────────────────────────────────
-
-it("offers cloud computers, never this computer or a Local VM", () => {
-  expect((["cloud", "vm", "local"] as const).filter(cloudHomeOffersPlace)).toEqual(["cloud"]);
-  expect(cloudHomePlaceRefusal("cloud")).toBeUndefined();
-});
-
-it("refuses the places it never offers with what is true there, not a setup step", () => {
-  const local = cloudHomePlaceRefusal("local")!, vm = cloudHomePlaceRefusal("vm")!;
-  expect(local).toBe("This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto or Cloud, or lend your Mac under Settings → OMB Cloud.");
-  expect(vm).toBe("Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto or Cloud.");
-  for (const text of [local, vm]) {
-    expect(text).not.toMatch(/configure|Computer panel|install|set (?:it|one) up/i);
-    // A failed turn shows the first 160 characters of its error.
-    expect(text.length).toBeLessThanOrEqual(160);
-  }
-});
-
-it("names only a Boat API key when Cloud has no Boat account on a Cloud home", () => {
-  expect(boatNotConfiguredMessage(true)).toBe("Cloud Boat is not configured — add a Boat API key");
-  // Every other server keeps its words.
-  expect(boatNotConfiguredMessage(false)).toBe("Cloud Boat is not configured — add a Boat API key or choose Local VM");
 });
 
 // ── the Admin's signed pairing request ───────────────────────────────────────

@@ -67,17 +67,6 @@ describe("OpenAICompatDriver", () => {
     await inst.dispose();
   });
 
-  it("rejects remote HTTP computer use before starting tools or a completion request", async () => {
-    const request = vi.fn(async (_url: string | URL | Request) => new Response('{"data":[]}', { headers: { "content-type": "application/json" } }));
-    vi.stubGlobal("fetch", request);
-    const inst = await OpenAICompatDriver.create({ instanceId: "cleartext", displayName: "Fixture", enabled: true,
-      config: { url: "http://remote.example.test/v1", apiKeyEnv: "FIXTURE_KEY" }, environment: { FIXTURE_KEY: "synthetic" } });
-    try {
-      await expect(inst.adapter.sendTurn({ threadId: "cleartext", text: "Inspect the screen", model: "fixture",
-        integrations: { localComputer: { command: "must-not-start", args: [], env: {} } } })).rejects.toThrow("require HTTPS");
-      expect(request.mock.calls.some(call => String(call[0]).includes("chat/completions"))).toBe(false);
-    } finally { await inst.dispose(); }
-  });
   it("smoke: offers ask_user and returns the person's reply verbatim", async () => {
     const askBody = 'data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"ask1","type":"function","function":{"name":"ask_user","arguments":'
       + JSON.stringify(JSON.stringify({ questions: [{ question: "Ship the fixture?", options: [{ label: "Yes" }, { label: "No" }] }] }))

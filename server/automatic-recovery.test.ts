@@ -14,6 +14,5 @@ describe("automatic recovery capabilities", () => {
   });
   it("does not silently move work to a remote or file-less engine", () => {
     expect(recoveryCapabilityError(engine, { ...engine, driverKind: "openai-compat" })).toMatch(/same workspace/);
-    expect(recoveryCapabilityError(engine, { ...engine, capabilities: { ...engine.capabilities, remoteAgent: true } })).toMatch(/same workspace/);
   });
 });

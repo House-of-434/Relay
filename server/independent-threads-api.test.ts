@@ -318,6 +318,24 @@ describe("independent bot tasks through the isolated control surface", () => {
     const tokenA = launchedA.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
     const tokenB = launchedB.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
     expect(tokenA).not.toBe(tokenB);
+
+    // Path attachments stay inside each thread's pinned folder. An explicit
+    // fileId handoff remains the one intentional cross-thread path.
+    const wsA = join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, taskA);
+    const wsB = join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, taskB);
+    writeFileSync(join(wsA, "a.pdf"), "%PDF-a");
+    writeFileSync(join(wsB, "b.pdf"), "%PDF-b");
+    expect((await internal(tokenA, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") })).status).toBe(403);
+    expect((await internal(tokenA, "POST", "/api/internal/attach-file", { path: `../${taskB}/b.pdf` })).status).toBeGreaterThanOrEqual(403);
+    const listedA = await internal(tokenA, "GET", `/api/internal/files?fromBotId=${botId}&fromThreadId=${taskA}`);
+    expect(JSON.stringify(listedA.body)).not.toContain("b.pdf");
+    expect((await internal(tokenB, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") })).status).toBe(200);
+    const listedB = await internal(tokenB, "GET", `/api/internal/files?fromBotId=${botId}&fromThreadId=${taskB}`);
+    const bFile = (listedB.body.files as Array<{ name: string; fileId: string }>).find((file) => file.name === "b.pdf");
+    expect(bFile?.fileId).toMatch(/^file_/);
+    const handoff = await internal(tokenA, "POST", "/api/internal/attach-file", { fileId: bFile!.fileId });
+    expect(handoff.status).toBe(200);
+
     const appended = await Promise.all([
       internal(tokenA, "POST", "/api/internal/memory", { botId, threadId: taskA, action: "append", text: "A remembers apples." }),
       internal(tokenB, "POST", "/api/internal/memory", { botId, threadId: taskB, action: "append", text: "B remembers berries." }),
@@ -372,6 +390,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     const final = await botState(botId);
     expect(final.tasks.find((task: any) => task.taskId === taskB).modelSelection.model).toBe(legacyModel);
     expect(final.tasks.find((task: any) => task.taskId === taskA).modelSelection.model).toBe(models[0]);
+
   }, 45_000);
 
   it("cancels a detached routine on its captured provider after an idle sibling changes the default", async () => {
@@ -455,49 +474,6 @@ describe("independent bot tasks through the isolated control surface", () => {
     await control(["send", "--bot", botId, "--task", taskB, "--text", "PROJECT_B_NOW_OWNS_FOLDER"]);
     expect((await dump(models[1])).env.RELAY_FIXTURE_CWD).toBe(realpathSync(cwd));
     await control(["interrupt", "--bot", botId, "--task", taskB]);
-  }, 45_000);
-
-  it.skipIf(process.platform !== "darwin")("claims the shared computer only on first use and keeps a sibling stop from releasing it", async () => {
-    // The fake provider only receives this inert descriptor; no UI driver is
-    // launched and the descriptor lives inside the fixture's disposable home.
-    const descriptorDir = join(session.info.dataDir, "Library", "Application Support", "Relay");
-    mkdirSync(descriptorDir, { recursive: true });
-    writeFileSync(join(descriptorDir, "cua-connection.json"), JSON.stringify({
-      mode: "embedded", socketPath: join(session.info.dataDir, "never-used.sock"),
-      mcpCommand: join(session.info.dataDir, "never-launched-computer"), mcpArgs: ["mcp"], mcpEnv: {},
-    }));
-    const created = await tool("create_bot", { name: "Computer lease fixture", instance_id: "claude", model: models[0] });
-    const botId = created.bot.id;
-    const taskA = created.bot.activeTaskId;
-    expect((await api("PATCH", `/api/bots/${botId}`, { computer: "local" })).status).toBe(200);
-    await control(["send", "--bot", botId, "--task", taskA, "--text", "COMPUTER_A"]);
-    const launchedA = await dump(models[0]);
-    const second = await tool("create_task", { target_type: "bot", target_id: botId, title: "Computer sibling" });
-    const taskB = second.task.taskId;
-    await control(["set-model", "--bot", botId, "--task", taskB, "--instance", "claude", "--model", models[1]]);
-    await control(["send", "--bot", botId, "--task", taskB, "--text", "COMPUTER_B"]);
-    const launchedB = await dump(models[1]);
-    const gate = (launched: any) => {
-      const env = launched.mcpConfig.mcpServers.computer.env;
-      const url = new URL(env.RELAY_CONTROL_URL);
-      expect(url.origin).toBe(session.info.url);
-      return internal(env.RELAY_CONTROL_TOKEN, "GET", `${url.pathname}${url.search}`);
-    };
-    // B acquires first although A started first: mounting the tool did not
-    // lock the shared computer. A receives an actionable hold, not authority.
-    expect((await gate(launchedB)).body.held).toBe(false);
-    expect((await gate(launchedA)).body).toMatchObject({ held: true, blockedReason: expect.stringContaining("Another thread") });
-    await control(["interrupt", "--bot", botId, "--task", taskA]);
-    expect((await gate(launchedA)).status).toBe(401);
-    expect((await gate(launchedB)).body.held).toBe(false);
-    await control(["interrupt", "--bot", botId, "--task", taskB]);
-    expect((await gate(launchedB)).status).toBe(401);
-
-    await control(["send", "--bot", botId, "--task", taskA, "--text", "COMPUTER_A_NEW_GENERATION"]);
-    await expect.poll(async () => (await dump(models[0])).pid !== launchedA.pid).toBe(true);
-    const relaunchedA = await dump(models[0]);
-    expect((await gate(relaunchedA)).body.held).toBe(false);
-    await control(["interrupt", "--bot", botId, "--task", taskA]);
   }, 45_000);
 
   it("runs an unattended task in the bot's own level, still carding what the provider asks, while a sibling runs attended", async () => {

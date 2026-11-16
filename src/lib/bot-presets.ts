@@ -63,7 +63,7 @@ export function presetGroups(presets: readonly BotPreset[]): PresetGroup[] {
 }
 
 /** The draft fields a preset fills: name, title, description, standing
- * instructions and look. Never a model, computer, folder, approval level or
+ * instructions and look. Never a model, folder, approval level or
  * connected apps: the preset has none, and the draft keeps its own. */
 export function presetDraftPatch(preset: BotPreset): Partial<BotDefaultsProfile> {
   const patch: Partial<BotDefaultsProfile> = {

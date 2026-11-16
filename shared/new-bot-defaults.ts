@@ -5,11 +5,10 @@ import type { RoutineInput } from "./routines";
 export type BotDefaultsProfile = Partial<Pick<WireBot,
   "name" | "title" | "description" | "soul" | "notifications" | "avatarUrl" | "avatarCrop" |
   "mascotBody" | "color" | "section" | "modelSelection" |
-  "cloudBackend" | "autoStartVps" | "approvalMode" | "alwaysAllow" | "chiefOfStaff" |
+  "approvalMode" | "alwaysAllow" | "chiefOfStaff" |
   "managedSections" | "approvePeerComms" | "composio"
 >> & {
   mascotExpression?: string | null;
-  computer?: WireBot["computer"] | null;
   cwd?: string | null;
   peers?: string[] | null;
   mcpServers?: string[] | null;

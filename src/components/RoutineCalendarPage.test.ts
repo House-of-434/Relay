@@ -30,7 +30,7 @@ const bot: Bot = {
 };
 const failed: RoutineRun = {
   id: "failed-run", routineId: "broken", routineName: "Broken report", target: "bot", botId: bot.id,
-  runOn: "maus", scheduledFor: 100, createdAt: 100, status: "failed", manual: false, error: "Provider crashed",
+  scheduledFor: 100, createdAt: 100, status: "failed", manual: false, error: "Provider crashed",
 };
 const missed: RoutineRun = { ...failed, id: "missed-run", routineId: "stale", routineName: "Stale digest", status: "missed" };
 const completed: RoutineRun = { ...failed, id: "fine-run", routineId: "fine", routineName: "Fine brief", status: "completed" };

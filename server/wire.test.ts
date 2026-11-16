@@ -34,7 +34,6 @@ const fullTask: TaskRecord = {
   pinnedMessageId: "msg-1",
   activity: "working",
   busy: true,
-  surface: "cloud",
   usage: { input: 1, output: 2, cachedInput: 1, costUsd: null, turns: 1, lastTurn: { input: 1, output: 2, costUsd: null }, context: { tokens: 10, window: 100 } },
   cwd: "/tmp",
   resumeCursors: { claude: "cursor" },
@@ -49,7 +48,7 @@ describe("shared wire model", () => {
     expect(Object.keys(wire).sort()).toEqual([
       "activity", "alwaysAllow", "approvalMode", "archivedAt", "autoApprove",
       "busy", "closedBy", "createdAt", "cwd", "modelSelection", "openedBy",
-      "pinnedMessageId", "projectId", "rewound", "routineRunId", "surface",
+      "pinnedMessageId", "projectId", "rewound", "routineRunId",
       "threadId", "title", "unread", "usage",
     ]);
     expect(wire).not.toHaveProperty("resumeCursors");

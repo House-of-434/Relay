@@ -434,12 +434,13 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   const { botId: BOT_ID, threadId: THREAD_ID, depth: DEPTH, externalRuntime: EXTERNAL_RUNTIME, coordinating: COORDINATING, turn } = context;
   const { delegationTaskIdsThisTurn } = turn;
   const { api, apiResponse } = context.client;
-  if (name === "vm_exec") {
-    const { ok, body } = await apiResponse("/api/internal/vm-exec", {
+  if (name === "relay_git") {
+    const command = typeof args.command === "string" ? args.command : "";
+    const { ok, body } = await apiResponse("/api/internal/relay-git", {
       method: "POST",
-      body: JSON.stringify({ command: args.command, ...(typeof args.timeout_seconds === "number" ? { timeout_seconds: args.timeout_seconds } : {}) }),
+      body: JSON.stringify({ command }),
     });
-    if (!ok) return { text: String(body.error ?? "Could not run that command."), isError: true };
+    if (!ok) return { text: String(body.error ?? "Could not run that repository command."), isError: true };
     const exitCode = Number(body.exitCode ?? 0);
     const stdout = String(body.stdout ?? "");
     const stderr = String(body.stderr ?? "");

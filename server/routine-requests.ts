@@ -22,7 +22,6 @@ import type {
   RoutineRequestChanges,
   RoutineRequestDefinition,
   RoutineRequestOperation,
-  RoutineRequestRunOn,
   RoutineRequestSchedule,
   RoutineRequestScheduleChanges,
 } from "../shared/routine-request.ts";
@@ -80,7 +79,6 @@ const routineToolDefinitionSchema = z.object({
   name: z.string().max(80),
   instructions: z.string().max(20_000),
   schedule: routineToolScheduleSchema,
-  runOn: z.enum(["maus", "cloud"]).optional(),
   durationMinutes: z.number().optional(),
   timeoutMinutes: z.number().nullable().optional(),
   continuity: z.boolean().optional(),
@@ -207,7 +205,10 @@ const storedDefinitionSchema = z.object({
   name: z.string().trim().min(1).max(80),
   instructions: z.string().trim().min(1).max(20_000),
   schedule: storedScheduleSchema,
-  runOn: z.enum(["maus", "cloud"]),
+  /** Legacy Works-on destination on cards proposed before the field was
+   * removed. Kept in the parsed object so an old card's fingerprint and
+   * receipt still match; applying the operation ignores it. */
+  runOn: z.enum(["maus", "cloud"]).optional(),
   durationMinutes: z.number().int().min(5).max(240),
   timeoutMinutes: z.number().int().min(5).max(240).optional(),
   continuity: z.boolean().optional(),
@@ -391,10 +392,6 @@ function text(value: string, field: string, max: number): string {
   return redacted;
 }
 
-function runOn(_value: RoutineRequestRunOn | undefined): RoutineRequestRunOn {
-  return "maus";
-}
-
 function duration(value: number | undefined): number {
   const normalized = value ?? 30;
   if (!Number.isInteger(normalized) || normalized < 5 || normalized > 240) {
@@ -558,7 +555,6 @@ function normalizeDefinition(input: RoutineToolDefinitionInput, now: number): Ro
     name: text(input.name, "name", 80),
     instructions: text(input.instructions, "instructions", 20_000),
     schedule: normalizeSchedule(input.schedule, now),
-    runOn: runOn(input.runOn),
     durationMinutes: duration(input.durationMinutes),
     ...(timeoutMinutes == null ? {} : { timeoutMinutes }),
     ...(input.continuity === true ? { continuity: true } : {}),
@@ -571,7 +567,6 @@ function normalizeChanges(input: RoutineToolChangesInput, now: number): RoutineR
   if (input.name !== undefined) changes.name = text(input.name, "name", 80);
   if (input.instructions !== undefined) changes.instructions = text(input.instructions, "instructions", 20_000);
   if (input.schedule !== undefined) changes.schedule = normalizeScheduleChanges(input.schedule, now);
-  if (input.runOn !== undefined) changes.runOn = runOn(input.runOn);
   if (input.durationMinutes !== undefined) changes.durationMinutes = duration(input.durationMinutes);
   if (input.timeoutMinutes !== undefined) changes.timeoutMinutes = timeout(input.timeoutMinutes);
   if (input.continuity !== undefined) changes.continuity = input.continuity === true;
@@ -802,7 +797,6 @@ function effectiveDefinition(operation: RoutineRequestOperation, manager: Routin
       : existing.schedule.type === "daily"
         ? { ...existing.schedule, weekdays: [...existing.schedule.weekdays] }
         : { ...existing.schedule },
-    runOn: existing.runOn,
     durationMinutes: existing.durationMinutes,
     ...(existing.timeoutMinutes === undefined ? {} : { timeoutMinutes: existing.timeoutMinutes }),
     ...(existing.continuity ? { continuity: true } : {}),
@@ -910,7 +904,6 @@ function inputFromDefinition(definition: RoutineRequestDefinition, botId: string
     name: definition.name,
     prompt: definition.instructions,
     botId,
-    runOn: definition.runOn,
     enabled: true,
     schedule: asSchedule(definition.schedule, now),
     durationMinutes: definition.durationMinutes,
@@ -929,7 +922,6 @@ function updateFromChanges(
   if (changes.name !== undefined) patch.name = changes.name;
   if (changes.instructions !== undefined) patch.prompt = changes.instructions;
   if (changes.schedule !== undefined) patch.schedule = schedulePatch(changes.schedule, now, currentSchedule);
-  if (changes.runOn !== undefined) patch.runOn = changes.runOn;
   if (changes.durationMinutes !== undefined) patch.durationMinutes = changes.durationMinutes;
   if (changes.timeoutMinutes !== undefined) patch.timeoutMinutes = changes.timeoutMinutes;
   if (changes.continuity !== undefined) patch.continuity = changes.continuity;
@@ -1004,7 +996,7 @@ function revalidateOperation(operation: RoutineRequestOperation, manager: Routin
     const schedule = asSchedule(definition.schedule, now);
     const duplicate = manager.listRoutines().find((routine) => {
       if (!routine.enabled || routine.target !== "bot" || routine.botId !== owner
-        || routine.runOn !== definition.runOn || routine.prompt !== definition.instructions
+        || routine.prompt !== definition.instructions
         || routine.durationMinutes !== definition.durationMinutes
         || routine.timeoutMinutes !== definition.timeoutMinutes
         || Boolean(routine.continuity) !== Boolean(definition.continuity)

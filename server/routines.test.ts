@@ -4,8 +4,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { GroupGoalRunStatus } from "../shared/group-goal-run.ts";
-import { ensureDirs } from "./config.ts";
-import { BoatAgentDriver } from "./drivers/boatagent.ts";
 import {
   cleanRoutineOwner,
   nextOccurrence,
@@ -40,11 +38,10 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     runId: string;
     onDispatchError: (message: string) => void;
   }> = [];
-  const runOns: string[] = [];
   const triggerSources: string[] = [];
   const taskActivations: boolean[] = [];
   const goalTasks: Array<{ groupId: string; title: string }> = [];
-  const interruptedTurns: Array<{ botId: string; threadId: string; runOn: string }> = [];
+  const interruptedTurns: Array<{ botId: string; threadId: string }> = [];
   const interruptedGoals: Array<{
     groupId: string;
     threadId: string;
@@ -68,16 +65,15 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
       goalTasks.push({ groupId, title });
       return { threadId: `goal-thread-${++goalTask}` };
     },
-    startTurn: async (botId, threadId, prompt, runOn, triggerSource) => {
+    startTurn: async (botId, threadId, prompt, triggerSource) => {
       started.push({ botId, threadId, prompt });
-      runOns.push(runOn);
       triggerSources.push(triggerSource);
     },
     startGoal: async (groupId, threadId, prompt, coordinatorBotId, runId, onDispatchError) => {
       startedGoals.push({ groupId, threadId, prompt, coordinatorBotId, runId, onDispatchError });
     },
-    interruptTurn: async (botId, threadId, runOn) => {
-      interruptedTurns.push({ botId, threadId, runOn });
+    interruptTurn: async (botId, threadId) => {
+      interruptedTurns.push({ botId, threadId });
     },
     interruptGoal: async (groupId, threadId, outcome) => {
       interruptedGoals.push({ groupId, threadId, ...(outcome ? { outcome } : {}) });
@@ -93,7 +89,6 @@ function harness(start = new Date(2026, 7, 17, 8, 0, 0).getTime()) {
     emitted,
     started,
     startedGoals,
-    runOns,
     triggerSources,
     taskActivations,
     goalTasks,
@@ -646,7 +641,7 @@ describe("persistent routine results destinations", () => {
 
   it("does not route webhook or room-goal executions through bot results tasks", async () => {
     const h = resultsHarness();
-    h.manager.enqueueWebhook({ webhookId: "hook", webhookName: "Hook", prompt: "Incoming", botId: "maus-1", runOn: "maus", deliveryId: "delivery", receivedAt: Date.now() });
+    h.manager.enqueueWebhook({ webhookId: "hook", webhookName: "Hook", prompt: "Incoming", botId: "maus-1", deliveryId: "delivery", receivedAt: Date.now() });
     const goal = h.manager.create({ ...input(), target: "room-goal", groupId: "room" });
     h.manager.runNow(goal.id);
     await h.manager.tick();
@@ -1648,7 +1643,6 @@ describe("RoutineManager", () => {
       webhookName: "Incoming delivery",
       prompt: "Handle the delivery",
       botId: "maus-webhook",
-      runOn: "maus",
       deliveryId: "delivery-exact",
       receivedAt: start,
     });
@@ -1703,7 +1697,6 @@ describe("RoutineManager", () => {
       webhookName: "Capacity check",
       prompt: "Keep active receipts",
       botId: "maus-capacity",
-      runOn: "maus",
       deliveryId: "delivery-capacity",
       receivedAt: 2_001,
     });
@@ -1739,7 +1732,7 @@ describe("RoutineManager", () => {
       finishedAt: startedAt! + 5 * 60_000,
     });
     expect(h.interruptedTurns).toEqual([
-      { botId: "maus-timeout", threadId: "thread-1", runOn: "maus" },
+      { botId: "maus-timeout", threadId: "thread-1" },
     ]);
   });
 
@@ -2097,54 +2090,6 @@ describe("RoutineManager", () => {
     expect(h.manager.listRuns()[0]?.prompt).toBe("Inspect it");
   });
 
-  it("runs stored legacy destinations on the bot's current computer", () => {
-    const h = harness();
-    const attachment = {
-      id: "file-1",
-      kind: "file" as const,
-      name: "private.pdf",
-      path: "/tmp/private.pdf",
-      size: 42,
-    };
-    const legacy = h.manager.create({
-      name: "Cloud review",
-      prompt: "Review this",
-      botId: "maus-cloud",
-      runOn: "cloud",
-      schedule: { type: "daily", time: "09:00", weekdays: [1] },
-      attachments: [attachment],
-    });
-    expect(legacy).toMatchObject({ runOn: "maus", attachments: [attachment] });
-    expect(h.manager.update(legacy.id, { runOn: "cloud" })).toMatchObject({ runOn: "maus" });
-  });
-
-  it("loads a stored legacy box or cloud routine onto the bot's current computer", async () => {
-    const file = tempFile();
-    const now = new Date(2026, 7, 17, 8, 0, 0).getTime();
-    const due = now + 60_000;
-    writeFileSync(file, JSON.stringify({
-      routines: [{
-        id: "legacy-cloud", name: "Legacy cloud", prompt: "Work", target: "bot", botId: "maus-1",
-        runOn: "cloud", enabled: true, schedule: { type: "once", at: due }, durationMinutes: 30,
-        nextRunAt: due, createdAt: now, updatedAt: now,
-      }],
-      runs: [],
-    }));
-    const runOns: string[] = [];
-    const manager = new RoutineManager({
-      file,
-      now: () => due,
-      botState: () => "ready",
-      createTask: () => ({ threadId: "thread-legacy" }),
-      startTurn: async (_botId, _threadId, _prompt, runOn) => {
-        runOns.push(runOn);
-      },
-    });
-    expect(manager.listRoutines()[0]).toMatchObject({ runOn: "maus" });
-    await manager.tick();
-    expect(runOns).toEqual(["maus"]);
-  });
-
   it("keeps room goals local and attachment-free", () => {
     const h = harness();
     const base = {
@@ -2191,28 +2136,6 @@ describe("RoutineManager", () => {
     })).toThrow(/no more than 50 attachments/i);
   });
 
-  it("snapshots and dispatches the selected execution machine", async () => {
-    const h = harness();
-    h.setBot("busy");
-    const routine = h.manager.create({
-      name: "VM review",
-      prompt: "Review the project on the virtual machine",
-      botId: "maus-cloud",
-      runOn: "cloud",
-      schedule: { type: "once", at: new Date(2026, 7, 17, 8, 1).getTime() },
-    });
-    h.setNow(routine.nextRunAt!);
-    await h.manager.tick();
-    h.manager.update(routine.id, { runOn: "maus" });
-
-    h.setBot("ready");
-    await h.manager.tick();
-
-    expect(h.runOns).toEqual(["maus"]);
-    expect(h.manager.listRuns()[0]).toMatchObject({ runOn: "maus" });
-    expect(h.manager.listRoutines()[0]).toMatchObject({ runOn: "maus" });
-  });
-
   it("opens webhook jobs in the assigned bot's live chat", async () => {
     const h = harness();
     const receivedAt = new Date(2026, 7, 17, 8, 2).getTime();
@@ -2221,7 +2144,6 @@ describe("RoutineManager", () => {
       webhookName: "New ticket",
       prompt: "Handle ticket 42",
       botId: "maus-webhook",
-      runOn: "cloud",
       deliveryId: "delivery-42",
       receivedAt,
     });
@@ -2236,7 +2158,6 @@ describe("RoutineManager", () => {
     });
     expect(queued).not.toHaveProperty("durationMinutes");
     expect(h.started).toEqual([{ botId: "maus-webhook", threadId: "thread-1", prompt: "Handle ticket 42" }]);
-    expect(h.runOns).toEqual(["maus"]);
     expect(h.triggerSources).toEqual(["webhook"]);
     expect(h.taskActivations).toEqual([true]);
   });
@@ -2249,7 +2170,6 @@ describe("RoutineManager", () => {
       webhookName: "Busy gate",
       prompt: "Handle after the turn",
       botId: "maus-1",
-      runOn: "maus",
       deliveryId: "delivery-busy",
       receivedAt: new Date(2026, 7, 17, 8, 2).getTime(),
     });
@@ -2917,95 +2837,6 @@ describe("routine continuity", () => {
       schedule: { type: "once", at: new Date(2026, 7, 17, 9, 0, 0).getTime() },
       continuity: true,
     })).toThrow(/continuity/i);
-  });
-});
-
-describe("routine runs × turn-held BoatAgent asks", () => {
-  const start = Date.parse("2026-09-13T08:00:00Z");
-
-  /** The slice of the Boat HTTP fake this integration needs (the full one
-   * lives in server/drivers/boatagent.test.ts). */
-  function installFakeBoat(script: Array<{ events: unknown[]; status?: { promptRun: { status: string; result?: string } } }>, prompts: string[]) {
-    let i = 0;
-    const previous = globalThis.fetch;
-    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
-      const url = String(input);
-      const method = String(init?.method ?? "GET").toUpperCase();
-      if (method === "POST" && /\/boxes\/[^/]+\/prompt$/.test(url)) {
-        prompts.push(String((JSON.parse(String(init?.body ?? "{}")) as { prompt?: string }).prompt ?? ""));
-        return new Response(JSON.stringify({ promptRun: { id: "p1" } }), { headers: { "content-type": "application/json" } });
-      }
-      if (url.includes("/events")) {
-        const step = script[Math.min(i, script.length - 1)]!;
-        i += 1;
-        return new Response(JSON.stringify({ events: step.events }), { headers: { "content-type": "application/json" } });
-      }
-      if (url.includes("/prompts/")) {
-        const step = script[Math.min(Math.max(i - 1, 0), script.length - 1)]!;
-        return new Response(JSON.stringify(step.status ?? { promptRun: { status: "running" } }), { headers: { "content-type": "application/json" } });
-      }
-      return new Response(JSON.stringify({ error: "unexpected" }), { status: 404 });
-    }) as typeof fetch;
-    return () => {
-      globalThis.fetch = previous;
-    };
-  }
-
-  // The exact case both plan reviews flagged: a BoatAgent ask arrives at the
-  // run's settle. Holding the OMB turn open is what keeps the routine run in
-  // waiting until the answer instead of completing out from under the card.
-  it("holds the run in waiting until the person answers, then completes it", async () => {
-    const h = harness(start);
-    const prompts: string[] = [];
-    const askText = "```relay-ask\n" + JSON.stringify({
-      questions: [{ question: "Ship the release?", options: [{ label: "Ship now" }, { label: "Wait" }] }],
-    }) + "\n```";
-    const restoreFetch = installFakeBoat([
-      { events: [{ id: "e1", type: "response", text: askText }], status: { promptRun: { status: "running" } } },
-      { events: [{ id: "e1", type: "response", text: askText }], status: { promptRun: { status: "finished", result: askText } } },
-      { events: [{ id: "c1", type: "response", text: "Shipped." }], status: { promptRun: { status: "finished", result: "Shipped." } } },
-    ], prompts);
-    ensureDirs();
-    const instance = await BoatAgentDriver.create({
-      instanceId: "box-routines",
-      displayName: "Boat Routines",
-      environment: { BOX_TOKEN: "boat-test-token" },
-      enabled: true,
-      config: { pollMs: 0 },
-    });
-    let requestId = "";
-    try {
-      instance.adapter.onEvent((event) => {
-        if (event.type === "request.opened") requestId = event.requestId ?? "";
-        h.manager.handleRuntimeEvent(event);
-      });
-      h.options.startTurn = async (_botId, threadId) => {
-        await instance.adapter.sendTurn({ threadId, text: "sweep", integrations: { computer: { boxId: "boat-1", token: "boat-test-token" } } });
-      };
-      const routine = h.manager.create({
-        name: "Boat sweep",
-        prompt: "Sweep the box",
-        botId: "maus-1",
-        schedule: { type: "interval", everyMinutes: 5, anchorAt: start },
-      });
-      h.setNow(routine.nextRunAt!);
-      await h.manager.tick();
-      const run = () => h.manager.listRuns().find((r) => r.threadId === "thread-1");
-      await expect.poll(() => run()?.status).toBe("waiting");
-      expect(run()?.attention).toBe("Ship the release?");
-      expect(requestId).toBeTruthy();
-      expect(
-        await instance.adapter.respondToRequest("thread-1", requestId, {
-          behavior: "answer",
-          message: "The user answered your questions.\n\nQ: Ship the release?\nA: ship it",
-        }),
-      ).toBe("answered");
-      await expect.poll(() => run()?.status).toBe("completed");
-      expect(prompts[1]).toContain("A: ship it");
-    } finally {
-      await instance.dispose();
-      restoreFetch();
-    }
   });
 });
 

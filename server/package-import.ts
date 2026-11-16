@@ -441,7 +441,6 @@ function runImport(source: ImportSource, options: PackageImportOptions, deps: Pa
         prompt: routine.prompt,
         botId: botIds.get(routine.agent)!,
         ...(routine.room !== undefined ? { target: "room-goal" as const, groupId: groupIds.get(routine.room)! } : {}),
-        runOn: routine.runOn,
         enabled: false,
         schedule: routine.schedule,
         durationMinutes: routine.durationMinutes,

@@ -9,8 +9,6 @@ export type BotUpdatePatch = Partial<
     | "description"
     | "soul"
     | "notifications"
-    | "cloudBackend"
-    | "autoStartVps"
     | "color"
     | "mascotExpression"
     | "mascotBody"
@@ -33,18 +31,10 @@ export type BotUpdatePatch = Partial<
     | "modelSelection"
   >
 > & {
-  /** null is the wire representation for clearing an explicit destination
-   * and returning to Auto. Bot state itself keeps Auto as an absent field. */
-  computer?: Bot["computer"] | null;
   /** null is the wire representation for dropping an explicit grants record
    * and returning to the legacy all-tools boolean. Bot state keeps that as
    * an absent field. */
   connectorTools?: Bot["connectorTools"] | null;
-  /** Rides the PATCH body only: the server's proof that the local-auto
-   * warning dialog was shown (see server/index.ts's consent gate). It must
-   * reach the wire inside the coalesced body and must never fold into bot
-   * state — the queue strips it from every overlay it hands back. */
-  acknowledgeLocalAuto?: boolean;
   /** Renderer-local marker that the elevated-risk Full access dialog was
    * confirmed. StoreProvider consumes it before the private Electron request;
    * it is never sent over HTTP or folded into bot state. */
@@ -56,9 +46,8 @@ export type BotUpdatePatch = Partial<
 /** A wire patch after clear-only values have been normalized for Bot state. */
 export type BotStatePatch = Omit<
   BotUpdatePatch,
-  "computer" | "connectorTools" | "acknowledgeLocalAuto" | "confirmFullAccess" | "applyToAllThreads"
+  "connectorTools" | "confirmFullAccess" | "applyToAllThreads"
 > & {
-  computer?: Bot["computer"];
   connectorTools?: Bot["connectorTools"];
 };
 
@@ -108,20 +97,16 @@ const hasOwn = (value: object, key: PropertyKey): boolean =>
 const isAbortError = (error: unknown): boolean =>
   Boolean(error && typeof error === "object" && (error as { name?: unknown }).name === "AbortError");
 
-/** What may fold back into renderer bot state: everything except the consent
- * flag, which is wire-only. One strip point covers both overlay paths. */
+/** What may fold back into renderer bot state: everything except the
+ * renderer-only consent flags. One strip point covers both overlay paths. */
 const stateOverlay = (patch: BotUpdatePatch): BotStatePatch => {
   const {
-    acknowledgeLocalAuto: _localAck,
     confirmFullAccess: _fullConfirmation,
     applyToAllThreads: _allThreads,
-    computer,
     connectorTools,
     ...fields
   } = patch;
   const normalized: BotStatePatch = { ...fields };
-  if (computer === null) normalized.computer = undefined;
-  else if (computer !== undefined) normalized.computer = computer;
   if (connectorTools === null) normalized.connectorTools = undefined;
   else if (connectorTools !== undefined) normalized.connectorTools = connectorTools;
   return normalized;

@@ -24,7 +24,6 @@ import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import type { IncomingMessage } from "node:http";
 import { join } from "node:path";
-import type { Surface } from "../shared/wire.ts";
 import { writeFileAtomic } from "./atomic.ts";
 import { hostedWorkspaceConfigured } from "./enterprise.ts";
 import { formatPairingCode, type SessionRegistry } from "./sessions.ts";
@@ -109,25 +108,6 @@ export function withoutIgnoredCloudKeys(env: NodeJS.ProcessEnv): NodeJS.ProcessE
   return kept;
 }
 
-// The places a Cloud home offers live in shared/cloud-home.ts, so the app
-// lists exactly what the server accepts.
-export { cloudHomeOffersPlace } from "../shared/cloud-home.ts";
-
-/** Why a Cloud home refuses a place it never offers (no "this computer" of
- * the person's, no Local VM), in the words the person reads; undefined for a
- * place it offers. A turn's error shows 160 characters, so each fits. */
-export function cloudHomePlaceRefusal(place: Surface): string | undefined {
-  if (place === "local") return "This computer isn't a place on your OMB Cloud: its bots run in the cloud. Set Works on to Auto or Cloud, or lend your Mac under Settings → OMB Cloud.";
-  if (place === "vm") return "Bots on your OMB Cloud can't use a Local VM: the cloud machine has no container runtime. Set Works on to Auto or Cloud.";
-  return undefined;
-}
-
-/** What a turn is told when Cloud is chosen but no Boat account is set up (no
- * key of the person's and no included Boat). A Cloud home has no Local VM to
- * suggest instead. */
-export function boatNotConfiguredMessage(cloudHome: boolean): string {
-  return `Cloud Boat is not configured — add a Boat API key${cloudHome ? "" : " or choose Local VM"}`;
-}
 
 /** The Cloud's setup checklist (docs/cloud-pro.md) has a "try something"
  * step that is done once a bot's turn finishes on the machine itself. The

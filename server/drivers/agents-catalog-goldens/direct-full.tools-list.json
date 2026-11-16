@@ -304,21 +304,15 @@
       }
     },
     {
-      "name": "vm_exec",
-      "description": "Run a shell command inside your own Local VM (as the desktop user, starting in /home/cua/workspace) and get its exit code, stdout and stderr back as text. Use this for all command-line work in the VM: pip install --user, running a script, generating or converting a file, checking that a file exists. Do not type commands into a terminal window and read screenshots: that is slow and unreliable. GUI programs you start appear on the VM desktop. For a long job raise timeout_seconds (default 60, at most 300). Only available while you have a Local VM desktop.",
+      "name": "relay_git",
+      "description": "Run one validated relay-git operation inside this conversation's working folder. Use it for the repository workflow in the repo-changes skill, never for arbitrary shell. Supported commands: auth-status; clone House-of-434/house-of-434-site; checkout relay/<branch>; commit \"<message>\"; push relay/<branch>; create-pr --branch relay/<branch> --title \"<title>\" --body \"<body>\". Repository operations are available only to Scout, are limited to the one authorized repository, and refuse main/master/production. The GitHub token stays on the Relay server and is never returned.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "command": {
             "type": "string",
-            "description": "The shell command to run, for example: python3 make_report.py && ls -l report.pdf"
-          },
-          "timeout_seconds": {
-            "type": "integer",
-            "minimum": 1,
-            "maximum": 300,
-            "description": "How long it may run before it is stopped. Default 60."
+            "description": "One relay-git command, for example: relay-git checkout relay/events-poster"
           }
         },
         "required": [
@@ -328,7 +322,7 @@
     },
     {
       "name": "list_files",
-      "description": "List the files in this conversation's Relay folder. Returns each file's id, name, size and modified time. Use a file id with attach_file to share a file in chat, or with fetch_file when you need to read or run it. This is a read: it starts nothing and changes nothing. Files in a custom working folder or a Local VM are not listed here.",
+      "description": "List the files in this conversation's Relay folder. Returns each file's id, name, size and modified time. Use a file id with attach_file to share a file in chat, or with fetch_file when you need to read or run it. This is a read: it starts nothing and changes nothing. Files in a custom working folder are not listed here.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
@@ -365,14 +359,14 @@
     },
     {
       "name": "attach_file",
-      "description": "Attach a finished file to the chat so the user can preview and download it: an image, video, audio clip, PDF, spreadsheet, slide deck or other document. Pass path for a file in this conversation, or fileId for a file another conversation or teammate produced. A path inside your computer's /home/cua/workspace is supported; a path inside a VM cannot be opened from chat. Supported: images (png, jpg, gif, webp), video (mp4, webm, mov), audio (mp3, m4a, aac, wav, ogg, opus, flac), pdf, Word/Excel/PowerPoint and OpenDocument files, and csv, tsv, txt, md, json, rtf. Up to 25 MB (images 10 MB). Finish writing the file first, then call this directly: it reports an error if the file is missing. After attaching, name the file in your reply — never quote its contents; the card already previews them. The result includes a fileId and a ref: to email that file, pass {\"source\":\"attachment\",\"ref\":<ref>} in gmail_send_email attachments.",
+      "description": "Attach a finished file to the chat so the user can preview and download it: an image, video, audio clip, PDF, spreadsheet, slide deck or other document. Pass path for a file in this conversation's working folder, or fileId for a file another conversation or teammate produced. Supported: images (png, jpg, gif, webp), video (mp4, webm, mov), audio (mp3, m4a, aac, wav, ogg, opus, flac), pdf, Word/Excel/PowerPoint and OpenDocument files, and csv, tsv, txt, md, json, rtf. Up to 25 MB (images 10 MB). Finish writing the file first, then call this directly: it reports an error if the file is missing. After attaching, name the file in your reply — never quote its contents; the card already previews them. The result includes a fileId and a ref: to email that file, pass {\"source\":\"attachment\",\"ref\":<ref>} in gmail_send_email attachments.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
           "path": {
             "type": "string",
-            "description": "The file's path, for example /home/cua/workspace/report.pdf."
+            "description": "The file's path in this conversation's working folder, for example report.pdf."
           },
           "fileId": {
             "type": "string",

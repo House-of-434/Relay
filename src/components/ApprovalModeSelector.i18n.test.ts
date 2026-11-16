@@ -31,7 +31,6 @@ describe("held notes name the buttons the selector shows", () => {
       expect(t("approval.held.sandbox"), code).toContain(label("full"));
       expect(t("approval.held.undeliveredFull"), code).toContain(label("full"));
       // the same rule for the action button a held note can name
-      expect(t("approval.held.localComputer"), code).toContain(t("approval.action.alwaysAllow"));
     }
   });
 

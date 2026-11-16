@@ -8,11 +8,8 @@ import {
   DATA_DIR,
   ensureDirs,
   instanceConfigs,
-  isValidSshAlias,
   loadConfig,
   providerReloadKeys,
-  localVmMaxInstances,
-  localVmMode,
   parseConfigPatch,
   parseStoredConfig,
   persistableInstanceConfigs,
@@ -29,7 +26,6 @@ import {
   stripControlPlaneEnv,
   stripWorkspaceCredentialEnv,
   syncCredentialEnv,
-  vpsSshAlias,
   withInstanceCli,
   WORKSPACE_CREDENTIAL_ENV,
   type AppConfig,
@@ -219,17 +215,6 @@ describe("configuration boundaries", () => {
   });
 
 
-  it("accepts only a simple VPS SSH config alias and exposes no credentials", () => {
-    expect(isValidSshAlias("production-vps")).toBe(true);
-    expect(isValidSshAlias("prod; reboot")).toBe(false);
-    expect(() => parseConfigPatch({ vps: { sshAlias: "prod; reboot" } })).toThrow("vps.sshAlias");
-    expect(parseConfigPatch({ vps: { sshAlias: "production-vps" } })).toEqual({
-      vps: { sshAlias: "production-vps" },
-    });
-    expect(vpsSshAlias({ vps: { sshAlias: "production-vps" } })).toBe("production-vps");
-    expect(vpsSshAlias({ vps: { sshAlias: "-bad" } })).toBeNull();
-  });
-
   it("accepts a persisted global room turn timeout and supplies the legacy default", () => {
     expect(parseStoredConfig({ rooms: { turnTimeoutMinutes: 20 } })).toEqual({
       rooms: { turnTimeoutMinutes: 20 },
@@ -246,31 +231,6 @@ describe("configuration boundaries", () => {
       );
     },
   );
-
-  it("preserves shared Local VM behavior by default and accepts bounded per-bot mode", () => {
-    expect(localVmMode({})).toBe("shared");
-    expect(localVmMaxInstances({})).toBe(2);
-    expect(parseConfigPatch({ localVm: { mode: "per-bot", maxInstances: 4 } })).toEqual({
-      localVm: { mode: "per-bot", maxInstances: 4 },
-    });
-    expect(parseConfigPatch({ localVm: { maxInstances: 5 } })).toEqual({
-      localVm: { maxInstances: 5 },
-    });
-    expect(parseConfigPatch({ localVm: { mode: "per-bot", maxInstances: 8 } })).toEqual({
-      localVm: { mode: "per-bot", maxInstances: 8 },
-    });
-    expect(localVmMode({ localVm: { mode: "per-bot" } })).toBe("per-bot");
-    expect(localVmMaxInstances({ localVm: { maxInstances: 3 } })).toBe(3);
-  });
-
-  it("accepts pool mode with the same bounded seat count", () => {
-    expect(parseConfigPatch({ localVm: { mode: "pool", maxInstances: 4 } })).toEqual({
-      localVm: { mode: "pool", maxInstances: 4 },
-    });
-    expect(localVmMode({ localVm: { mode: "pool" } })).toBe("pool");
-    // The default must stay shared: pool ships config-gated (ADR-2).
-    expect(localVmMode({})).toBe("shared");
-  });
 
   it("keeps skill authoring on by default with an explicit opt-out", () => {
     expect(skillAuthoringEnabled({})).toBe(true);
@@ -320,13 +280,6 @@ describe("configuration boundaries", () => {
     expect(showToolCallsEnabled({ features: { showToolCalls: true } })).toBe(true);
   });
 
-  it.each([0, 1.5, 9, "2", null])("rejects an invalid per-bot VM limit: %j", (maxInstances) => {
-    expect(() => parseConfigPatch({ localVm: { maxInstances } })).toThrow("localVm.maxInstances");
-  });
-
-  it.each(["one-per-bot", "windows", 1, null])("rejects an invalid Local VM mode: %j", (mode) => {
-    expect(() => parseConfigPatch({ localVm: { mode } })).toThrow("localVm.mode");
-  });
 });
 
 describe("saving the newer sections", () => {
@@ -543,12 +496,10 @@ describe("Instance CLI override", () => {
     // instances section of config.json.
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
-      box: { token: "SECRET-BOAT" },
       opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         claude: { driver: "claudeAgent" },
         grokApi: { driver: "grok" },
-        computer: { driver: "boxAgent" },
         opencode: { driver: "opencodeGo" },
       },
     };
@@ -565,20 +516,13 @@ describe("Instance CLI override", () => {
 
   it("preserves explicit instance credentials even when workspace injection shadows them", () => {
     const cfg: AppConfig = {
-      box: { token: "fixture-workspace-box" },
       xai: { key: "fixture-shared-xai" },
       instances: {
-        computer: { driver: "boxAgent", environment: { BOX_TOKEN: "fixture-instance-box", MY_FLAG: "1" } },
         sameCredential: { driver: "grok", environment: { XAI_API_KEY: "fixture-shared-xai" } },
-        injectedOnly: { driver: "boxAgent" },
       },
     };
     const instances = persistableInstanceConfigs(cfg);
-    expect(instances.computer.environment).toEqual({ BOX_TOKEN: "fixture-instance-box", MY_FLAG: "1" });
     expect(instances.sameCredential.environment).toEqual({ XAI_API_KEY: "fixture-shared-xai" });
-    expect(instances.injectedOnly.environment).toBeUndefined();
-    instances.computer.environment!.MY_FLAG = "changed";
-    expect(cfg.instances!.computer.environment!.MY_FLAG).toBe("1");
   });
 
   it("saving another engine's CLI does not freeze inherited API endpoint or model settings", () => {
@@ -623,11 +567,9 @@ describe("credential env narrowing", () => {
   it("injects each credential only into the driver that consumes it", () => {
     const cfg: AppConfig = {
       xai: { key: "SECRET-XAI" },
-      box: { token: "SECRET-BOAT" },
       opencodeGo: { apiKey: "SECRET-OCG" },
       instances: {
         grokApi: { driver: "grok" },
-        computer: { driver: "boxAgent" },
         opencode: { driver: "opencodeGo" },
         claude: { driver: "claudeAgent" },
         codex: { driver: "codex" },
@@ -635,31 +577,12 @@ describe("credential env narrowing", () => {
     };
     const instances = instanceConfigs(cfg);
     expect(instances.grokApi.environment).toEqual({ XAI_API_KEY: "SECRET-XAI" });
-    expect(instances.computer.environment).toEqual({ BOX_TOKEN: "SECRET-BOAT" });
     expect(instances.opencode.environment).toEqual({ OPENCODE_API_KEY: "SECRET-OCG" });
     // engines that bring their own login receive NO workspace credential
     expect(instances.claude.environment).toEqual({});
     expect(instances.codex.environment).toEqual({});
   });
 
-  it("hands no credential to any default-fleet CLI engine except the Computer", () => {
-    // the default `grok` instance is the CLI-login grokAgent, not the
-    // API-key driver, so a configured xai key reaches nobody by default
-    const cfg: AppConfig = { xai: { key: "SECRET-XAI" }, box: { token: "SECRET-BOAT" } };
-    const instances = instanceConfigs(cfg);
-    for (const [id, entry] of Object.entries(instances)) {
-      if (id === "computer") expect(entry.environment).toEqual({ BOX_TOKEN: "SECRET-BOAT" });
-      else expect(entry.environment).toEqual({});
-    }
-  });
-
-  it("keeps a per-instance environment while layering the credential on top", () => {
-    const cfg: AppConfig = {
-      box: { token: "SECRET-BOAT" },
-      instances: { computer: { driver: "boxAgent", environment: { MY_FLAG: "1" } } },
-    };
-    expect(instanceConfigs(cfg).computer.environment).toEqual({ MY_FLAG: "1", BOX_TOKEN: "SECRET-BOAT" });
-  });
 });
 
 describe("legacy feature flag migration", () => {
@@ -735,7 +658,6 @@ describe("credential env preference", () => {
     "OPENAI_COMPAT_URL",
     "OPENAI_COMPAT_MODEL",
     "OPENAI_COMPAT_PROVIDER",
-    "BOX_TOKEN",
     "OPENCODE_API_KEY",
     "RELAY_TTS_KEY",
     "RELAY_FISH_AUDIO_API_KEY",
@@ -766,18 +688,15 @@ describe("credential env preference", () => {
       join(DATA_DIR, "config.json"),
       JSON.stringify({
         xai: { key: "file-xai", url: "https://api.example.test/v1" },
-        box: { token: "file-box" },
         opencodeGo: { apiKey: "file-ocg" },
         imageGen: { key: "file-image" },
       }),
     );
     process.env.XAI_API_KEY = "env-xai";
-    process.env.BOX_TOKEN = "env-box";
     process.env.OPENCODE_API_KEY = "env-ocg";
     process.env.RELAY_OPENAI_IMAGE_KEY = "env-image";
     const cfg = loadConfig();
     expect(cfg.xai).toEqual({ key: "env-xai", url: "https://api.example.test/v1" });
-    expect(cfg.box).toEqual({ token: "env-box" });
     expect(cfg.opencodeGo).toEqual({ apiKey: "env-ocg" });
     expect(cfg.imageGen).toEqual({ key: "env-image" });
   });
@@ -799,269 +718,37 @@ describe("credential env preference", () => {
 
   it("never takes Cloud Pro's included tokens for the person's own keys, in config or an engine's environment", () => {
     const included = {
-      RELAY_CLOUD_BOAT_URL: "https://cloud.example.test/api/cloud/services/boat/api/box/v1",
-      RELAY_CLOUD_BOAT_TOKEN: "box_relay_included-relay-token",
       RELAY_CLOUD_DECIDER_URL: "https://cloud.example.test/api/cloud/services/decider",
       RELAY_CLOUD_DECIDER_TOKEN: "relay_decide_included-relay-token",
     };
     for (const [name, value] of Object.entries(included)) vi.stubEnv(name, value);
     try {
       const cfg = loadConfig();
-      expect(cfg.box?.token).toBeUndefined();
       expect(cfg.decider?.key).toBeUndefined();
-      expect(instanceConfigs(cfg).computer?.environment).toEqual({});
-      saveConfig({ box: { token: "" }, decider: { enabled: true, jobs: { roomRouting: true } } });
+      saveConfig({ decider: { enabled: true, jobs: { roomRouting: true } } });
       const disk = readFileSync(join(DATA_DIR, "config.json"), "utf8");
       const runtime = JSON.stringify([loadConfig(), instanceConfigs(loadConfig()), persistableInstanceConfigs(loadConfig())]);
-      for (const token of [included.RELAY_CLOUD_BOAT_TOKEN, included.RELAY_CLOUD_DECIDER_TOKEN]) {
+      for (const token of [included.RELAY_CLOUD_DECIDER_TOKEN]) {
         expect(disk).not.toContain(token);
         expect(runtime).not.toContain(token);
       }
-      // The person's own keys, from the environment here, are theirs as ever.
-      process.env.BOX_TOKEN = "box_own";
-      expect(loadConfig()).toMatchObject({ box: { token: "box_own" } });
-      expect(instanceConfigs(loadConfig()).computer?.environment).toEqual({ BOX_TOKEN: "box_own" });
     } finally {
       vi.unstubAllEnvs();
     }
   });
 
-  it("saves and removes the verified domain without replacing existing settings", () => {
-    saveConfig({ profile: { name: "Workspace owner" }, customDomain: "https://bots.example.com" });
-    expect(loadConfig().customDomain).toBe("https://bots.example.com");
-    saveConfig({ language: "en" });
-    expect(loadConfig().customDomain).toBe("https://bots.example.com");
-    saveConfig({ customDomain: "" });
-    expect(loadConfig()).toMatchObject({ customDomain: "", language: "en", profile: { name: "Workspace owner" } });
-  });
-
-  it("merges onboarding progress like any other section", () => {
-    saveConfig({ onboarding: { completedAt: "2026-09-09T10:00:00.000Z", version: 1 } });
-    saveConfig({ onboarding: { hintsSeen: ["computer"] } });
-    expect(loadConfig().onboarding).toEqual({
-      completedAt: "2026-09-09T10:00:00.000Z",
-      version: 1,
-      hintsSeen: ["computer"],
-    });
-    expect(() => parseConfigPatch({ onboarding: { hintsSeen: ["x".repeat(61)] } })).toThrow();
-    expect(() => parseConfigPatch({ onboarding: { unknown: true } })).toThrow();
-  });
-
-  it("replaces automatic recovery atomically, clears an omitted backup and keeps unrelated settings", () => {
-    const backup = { instanceId: "codex", model: "backup", effort: "high" as const };
-    saveConfig({ automaticRecovery: { enabled: true, backup }, profile: { name: "Recovery fixture" } });
-    expect(loadConfig().automaticRecovery).toEqual({ enabled: true, backup });
-    saveConfig({ automaticRecovery: { enabled: true, backup: { instanceId: "claude", model: "other" } } });
-    expect(loadConfig().automaticRecovery).toEqual({ enabled: true, backup: { instanceId: "claude", model: "other" } });
-    expect(() => saveConfig({ automaticRecovery: { enabled: true } })).toThrow();
-    expect(loadConfig().automaticRecovery?.backup?.model).toBe("other");
-    saveConfig({ automaticRecovery: { enabled: false } });
-    expect(loadConfig().automaticRecovery).toEqual({ enabled: false });
-    expect(loadConfig().profile).toEqual({ name: "Recovery fixture" });
-  });
-
-  it("persists a context change without losing the other context preferences", () => {
-    saveConfig({ context: { rebuildBytes: 32_000, autoCompact: false } });
-    saveConfig({ context: { compactAt: 0.75 } });
-    expect(loadConfig().context).toEqual({ rebuildBytes: 32_000, autoCompact: false, compactAt: 0.75 });
-  });
-
-  it("falls back to the config file when the env var is unset (dev mode)", () => {
-    writeFileSync(
-      join(DATA_DIR, "config.json"),
-      JSON.stringify({ xai: { key: "file-xai" }, imageGen: { key: "file-image" } }),
-    );
-    const cfg = loadConfig();
-    expect(cfg.xai?.key).toBe("file-xai");
-    expect(cfg.imageGen?.key).toBe("file-image");
-  });
-
-  it("persists a default selection without changing the fleet or unrelated settings", () => {
-    const path = join(DATA_DIR, "config.json");
-    const existing = {
-      profile: { name: "Ada" },
-      instances: { customCodex: { driver: "codex", config: { cli: "/opt/custom-codex" } } },
-      openaiCompat: { key: "fixture-key", url: "https://models.example.test/v1" },
-      futureSetting: { keep: true },
-    };
-    writeFileSync(path, JSON.stringify(existing));
-    const selection = { instanceId: "customCodex", model: "fixture-model", effort: "high" as const };
-
-    saveConfig({ defaultModelSelection: selection });
-    expect(loadConfig().defaultModelSelection).toEqual(selection);
-    expect(JSON.parse(readFileSync(path, "utf8"))).toEqual({ ...existing, defaultModelSelection: selection });
-
-    saveConfig({ profile: { email: "ada@example.com" } });
-    expect(loadConfig().defaultModelSelection).toEqual(selection);
-
-    const replacement = { instanceId: "claude", model: "different-model" };
-    saveConfig({ defaultModelSelection: replacement });
-    expect(loadConfig().defaultModelSelection).toEqual(replacement);
-    expect(loadConfig().profile).toEqual({ name: "Ada", email: "ada@example.com" });
-    expect(loadConfig().instances).toEqual(existing.instances);
-  });
-
-  it("rejects oversized default model changes before writing the template", () => {
-    saveConfig({ newBotDefaults: { profile: { modelSelection: { instanceId: "codex", model: "valid" } }, memory: {}, skills: [], routines: [] } });
-    const path = join(DATA_DIR, "config.json");
-    const before = readFileSync(path, "utf8");
-    for (const selection of [{ instanceId: "x".repeat(201), model: "valid" }, { instanceId: "codex", model: "x".repeat(501) }]) {
-      expect(() => saveConfig({ defaultModelSelection: selection })).toThrow();
-      expect(readFileSync(path, "utf8")).toBe(before);
-      expect(loadConfig().newBotDefaults?.profile.modelSelection?.model).toBe("valid");
-    }
-  });
-
-  it("rejects a valid model selection that would overflow the complete defaults template", () => {
-    const defaults = { profile: { modelSelection: { instanceId: "codex", model: "valid" } },
-      memory: { "memory/a.md": "a".repeat(225_000), "memory/b.md": "b".repeat(225_000),
-        "memory/c.md": "c".repeat(225_000), "memory/d.md": "" }, skills: [], routines: [] };
-    defaults.memory["memory/d.md"] = "d".repeat(899_990 - Buffer.byteLength(JSON.stringify(defaults), "utf8"));
-    saveConfig({ newBotDefaults: defaults });
-    const path = join(DATA_DIR, "config.json");
-    const before = readFileSync(path, "utf8");
-    expect(() => saveConfig({ defaultModelSelection: { instanceId: "codex", model: "m".repeat(500) } })).toThrow("900 KB");
-    expect(readFileSync(path, "utf8")).toBe(before);
-    expect(loadConfig().newBotDefaults).toEqual(defaults);
-  });
-
-  it("replaces instance membership and known settings while preserving retained extension fields", () => {
-    const path = join(DATA_DIR, "config.json");
-    writeFileSync(path, JSON.stringify({
-      instances: {
-        retained: {
-          driver: "fixture-future-driver",
-          displayName: "Old label",
-          environment: { FIXTURE_TOKEN: "fixture-stored-token" },
-          config: { cli: "/fixture/old-cli" },
-          futureSetting: { keep: true },
-        },
-        removed: { driver: "fixture-removed-driver", futureSetting: { remove: true } },
-      },
-    }));
-    const instances = persistableInstanceConfigs(loadConfig());
-    delete instances.removed;
-    delete instances.retained.displayName;
-    delete instances.retained.environment;
-    delete instances.retained.config;
-
-    saveConfig({ instances }, { replaceInstances: true });
-    expect(JSON.parse(readFileSync(path, "utf8")).instances).toEqual({
-      retained: { driver: "fixture-future-driver", futureSetting: { keep: true } },
-    });
-
-    saveConfig({ instances: {} }, { replaceInstances: true });
-    expect(JSON.parse(readFileSync(path, "utf8")).instances).toEqual({});
-  });
-
-  it.each(["https://next.example.test/v1", ""])("an explicit workspace URL save (%s) repairs the shared default connection", (url) => {
-    const path = join(DATA_DIR, "config.json");
-    const instances = {
-      openaiCompat: { driver: "openai-compat", config: { url: "https://old.example.test/v1", tools: false, model: "selected", provider: "" } },
-      custom: { driver: "openai-compat", config: { url: "https://custom.example.test/v1", key: "fixture-custom" } },
-      customShared: { driver: "openai-compat", config: { url: "https://shared.example.test/v1" } },
-    };
-    writeFileSync(path, JSON.stringify({ openaiCompat: { url, key: "fixture-shared" }, instances }));
-    // Also repairs a URL already saved by an older version; no guessing at boot.
-    saveConfig({ openaiCompat: { url } });
-    const disk = JSON.parse(readFileSync(path, "utf8"));
-    expect(disk.instances.openaiCompat.config).toEqual({ tools: false, model: "selected", provider: "" });
-    expect(disk.instances.custom).toEqual(instances.custom);
-    expect(disk.instances.customShared).toEqual(instances.customShared);
-    expect(disk.openaiCompat).toEqual({ url, key: "fixture-shared" });
-    expect(instanceConfigs(loadConfig()).openaiCompat.config).toEqual({
-      tools: false, model: "selected", provider: "", ...(url ? { url } : {}),
-    });
-  });
-
-  it.each([
-    { config: { key: "fixture-private" } },
-    { config: { apiKeyEnv: "CUSTOM_API_KEY" } },
-    { environment: { OPENAI_COMPAT_API_KEY: "fixture-private" } },
-  ])("keeps an independently credentialed default connection when the workspace URL changes: %j", (override) => {
-    const entry = { driver: "openai-compat", ...override, config: { url: "https://private.example.test/v1", ...override.config } };
-    const path = join(DATA_DIR, "config.json");
-    writeFileSync(path, JSON.stringify({ instances: { openaiCompat: entry } }));
-    saveConfig({ openaiCompat: { url: "https://workspace.example.test/v1" } });
-    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual(entry);
-  });
-
-  it("preserves explicit instance URLs on unrelated saves and in a combined configuration patch", () => {
-    const path = join(DATA_DIR, "config.json");
-    const entry = { driver: "openai-compat", config: { url: "https://explicit.example.test/v1" } };
-    writeFileSync(path, JSON.stringify({ instances: { openaiCompat: entry } }));
-    saveConfig({ openaiCompat: { key: "fixture-replacement" }, profile: { name: "Fixture" } });
-    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual(entry);
-    saveConfig({ openaiCompat: { url: "https://workspace.example.test/v1" }, instances: { openaiCompat: entry } });
-    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual(entry);
-  });
-
-  it.each(["openai-compat", "future-driver"])("limits URL repair to the default OpenAI-compatible driver (%s)", (driver) => {
-    const path = join(DATA_DIR, "config.json");
-    const entry = { driver, config: { url: "https://old.example.test/v1" }, futureSetting: { keep: true } };
-    writeFileSync(path, JSON.stringify({ instances: { openaiCompat: entry } }));
-    saveConfig({ openaiCompat: { url: "https://next.example.test/v1" } });
-    expect(JSON.parse(readFileSync(path, "utf8")).instances.openaiCompat).toEqual({
-      ...entry, config: driver === "openai-compat" ? {} : entry.config,
-    });
-  });
-
-  it("ignores legacy browser config without resetting anything else", () => {
-    const path = join(DATA_DIR, "config.json");
-    writeFileSync(path, JSON.stringify({
-      xai: { key: "file-xai", url: "https://api.example.test/v1" },
-      profile: { name: "Ada" },
-      features: { browser: true },
-      browserProfiles: [
-        { id: "Client", name: "Client one" },
-        { id: "Client", name: "Client two" },
-      ],
-      browserEngine: { attachCdpUrl: "9333" },
-      futureSetting: { keep: true },
-    }));
-
-    const loaded = loadConfig();
-    expect(loaded).toMatchObject({
-      xai: { key: "file-xai", url: "https://api.example.test/v1" },
-      profile: { name: "Ada" },
-    });
-    expect(loaded).not.toHaveProperty("browserProfiles");
-    expect(loaded).not.toHaveProperty("browserEngine");
-    expect(loaded.features ?? {}).not.toHaveProperty("browser");
-
-    saveConfig({ features: { showToolCalls: true } });
-    const persisted = JSON.parse(readFileSync(path, "utf8"));
-    expect(persisted).toMatchObject({
-      xai: { key: "file-xai", url: "https://api.example.test/v1" },
-      profile: { name: "Ada" },
-      features: { showToolCalls: true },
-      futureSetting: { keep: true },
-    });
-  });
-
-  it("treats a blanked file field as absent when env supplies the secret", () => {
-    // after migration the desktop shell may leave "" behind (a cleared key
-    // that was saved mid-session); the env-injected value must still win
-    writeFileSync(join(DATA_DIR, "config.json"), JSON.stringify({ xai: { key: "" } }));
-    process.env.XAI_API_KEY = "env-xai";
-    expect(loadConfig().xai?.key).toBe("env-xai");
-  });
-
   it("syncCredentialEnv keeps process.env in step with a credential save", () => {
     process.env.XAI_API_KEY = "boot-injected";
-    process.env.BOX_TOKEN = "boot-injected";
     process.env.COMPOSIO_API_KEY = "boot-injected";
     syncCredentialEnv({
       xai: { key: "just-saved" },
       composio: { apiKey: "ak_just_saved" },
-      box: { token: "" },
       profile: { name: "Ada" },
     });
     // a saved value replaces the boot-time one; a cleared value drops it;
     // untouched sections change nothing
     expect(process.env.XAI_API_KEY).toBe("just-saved");
     expect(process.env.COMPOSIO_API_KEY).toBe("ak_just_saved");
-    expect(process.env.BOX_TOKEN).toBeUndefined();
   });
 
   it("syncCredentialEnv keeps model and provider env in step with a save", () => {
@@ -1131,10 +818,8 @@ describe("workspace credential env strip", () => {
   it("covers in-process secrets and private app-state paths", () => {
     // These secrets have no per-driver ACP allowlist entry anywhere — they are
     // consumed in-process (Computer driver), never by a CLI
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("BOX_TOKEN");
     // Cloud Pro's included relay tokens (the server also drops them from its
     // own environment at startup; included-services.ts)
-    expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_CLOUD_BOAT_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_CLOUD_VOICE_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_CLOUD_DECIDER_TOKEN");
     expect(WORKSPACE_CREDENTIAL_ENV).toContain("RELAY_OPENAI_IMAGE_KEY");

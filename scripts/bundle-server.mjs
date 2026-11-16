@@ -53,15 +53,10 @@ const ENTRY_POINTS = [
   // The packaged smoke probe imports this manifest directly. Importing the
   // shared avatar contract widens TypeScript's inferred emit root to the repo,
   // so tsc may place its copy under dist-server/server/. Bundle an explicit
-  // root sibling to keep the packaged runtime contract stable. The Linux
-  // package smoke probe also imports local-computer.js directly.
+  // root sibling to keep the packaged runtime contract stable.
   "proxy-paths.ts",
-  "local-computer.ts",
-  "local-computer-proxy.ts",
   // the hook helper Claude Code runs at PostToolUse/PreCompact/SessionStart/Stop
   "hooks/relay-hook.ts",
-  "container-mcp.ts",
-  "vps-container-mcp.ts",
   "permission-proxy.ts",
   "connector-proxy.ts",
   "relay-tool-proxy.ts",

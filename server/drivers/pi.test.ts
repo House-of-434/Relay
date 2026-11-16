@@ -101,30 +101,6 @@ describe("buildMcpServers", () => {
   });
 
 
-  it("passes a local computer (Cua/VPS) through as a direct stdio server", () => {
-    const servers = buildMcpServers({
-      threadId: "t",
-      text: "hi",
-      integrations: {
-        localComputer: { command: "node", args: ["mcp"], env: { X: "y" } },
-      },
-    });
-    expect(servers?.computer).toEqual({ command: "node", args: ["mcp"], env: { X: "y" } });
-  });
-
-  it("marks a host computer with scope so the extension gates its tools", () => {
-    const servers = buildMcpServers({
-      threadId: "t",
-      text: "hi",
-      integrations: {
-        localComputer: { command: "node", args: ["mcp"], env: {}, scope: "local-computer" },
-      },
-    });
-    expect(servers?.computer).toMatchObject({ scope: "local-computer" });
-  });
-});
-
-describe("PiDriver config + install", () => {
   it("defaults to the `pi` binary", () => {
     expect(PiDriver.decodeConfig({})).toEqual({ cli: "pi", fullAuto: false });
     expect(PiDriver.decodeConfig(undefined)).toEqual({ cli: "pi", fullAuto: false });
@@ -627,9 +603,7 @@ describe("PiDriver turns (fake CLI)", () => {
     const dump = join(dir, "dump.jsonl");
     // Plant a workspace credential on the harness process itself — the leak
     // path is `...process.env`, not just input.environment.
-    const savedBoat = process.env.BOX_TOKEN;
     const savedXai = process.env.XAI_API_KEY;
-    process.env.BOX_TOKEN = "boat-secret-value";
     process.env.XAI_API_KEY = "xai-secret-value";
     try {
       await create(undefined, {
@@ -639,8 +613,6 @@ describe("PiDriver turns (fake CLI)", () => {
       });
       await instance.dispose();
     } finally {
-      if (savedBoat === undefined) delete process.env.BOX_TOKEN;
-      else process.env.BOX_TOKEN = savedBoat;
       if (savedXai === undefined) delete process.env.XAI_API_KEY;
       else process.env.XAI_API_KEY = savedXai;
     }
@@ -656,7 +628,6 @@ describe("PiDriver turns (fake CLI)", () => {
       expect(row.envConfigured).not.toContain("ANTHROPIC_API_KEY");
       expect(row.envConfigured).not.toContain("OPENAI_API_KEY");
       expect(row.envConfigured).not.toContain("XAI_API_KEY");
-      expect(row.envConfigured).not.toContain("BOX_TOKEN");
     }
     expect(JSON.stringify(rows)).not.toContain("anthropic-secret-value");
     expect(JSON.stringify(rows)).not.toContain("openai-secret-value");
@@ -671,7 +642,6 @@ describe("PiDriver turns (fake CLI)", () => {
       text: "hi",
       integrations: {
         composio: { command: "node", args: ["connector-proxy.js"], env: { COMPOSIO_KEY: "ck" } },
-        computer: { kind: "box", boxId: "b1", token: "bt", control: { url: "http://c", token: "ct" } },
       },
     });
     await recorder.until((e) => e.type === "turn.completed" && e.turnId === turnId);
@@ -753,38 +723,6 @@ describe("PiDriver turns (fake CLI)", () => {
     const done = await recorder.until((e) => e.type === "turn.completed");
     expect(done).toMatchObject({ ok: true, stopReason: "end_turn" });
     expect(recorder.events.some((e) => e.type === "request.resolved")).toBe(true);
-  });
-
-  it("per-bot Ask restores host approval on a legacy full-auto instance", async () => {
-    await create("permission", {}, true);
-    expect(instance.adapter.capabilities.localComputerMcp).toBe(true);
-    const localComputer = {
-      command: "/cua-driver",
-      args: ["mcp"],
-      env: {},
-      platform: "linux" as const,
-      scope: "local-computer" as const,
-    };
-
-    await expect(instance.adapter.sendTurn({
-      threadId: "t-pi-legacy-full-auto",
-      text: "go",
-      integrations: { localComputer },
-    })).rejects.toThrow(/interactive approval broker/);
-
-    await instance.adapter.sendTurn({
-      threadId: "t-pi-ask-override",
-      text: "go",
-      approvalMode: "ask",
-      integrations: { localComputer },
-    });
-    const opened = await recorder.until((e) => e.type === "request.opened");
-    await instance.adapter.respondToRequest(
-      "t-pi-ask-override",
-      (opened as { requestId: string }).requestId,
-      { behavior: "allow" },
-    );
-    await recorder.until((e) => e.type === "turn.completed");
   });
 
   it("registers an ask before emitting it so synchronous auto-approval works", async () => {

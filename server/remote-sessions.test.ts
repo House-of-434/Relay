@@ -136,7 +136,6 @@ beforeAll(async () => {
   writeFileSync(join(home, ".relay", "config.json"), JSON.stringify({
     instances: { fixture: { driver: "remote-session-test-shadow" } },
     profile: { name: "Security fixture", email: "private@example.invalid" },
-    vps: { sshAlias: "fixture-private-host" },
   }));
   // Per-user workspaces: a pairing session carries no user id and sees no
   // records. Seed the owner and the owner's own client-scope session (same
@@ -491,7 +490,7 @@ describe("pairing", () => {
     expect(paired.status).toBe(200);
     const h = (extra: Record<string, string> = {}) => remote("10.0.0.40", { authorization: `Bearer ${paired.body.token}`, ...extra });
     expect((await call("/api/bots", { headers: h() })).status).toBe(200);
-    for (const [method, path] of [["POST", "/api/cli-test"], ["GET", "/api/instances"], ["POST", "/api/webhooks"], ["GET", "/api/mcp/servers"], ["POST", "/api/local-computer/run"]] as const) {
+    for (const [method, path] of [["POST", "/api/cli-test"], ["GET", "/api/instances"], ["POST", "/api/webhooks"], ["GET", "/api/mcp/servers"], ["POST", "/api/mcp/servers"]] as const) {
       const r = await call(path, { method, headers: h(), body: method === "POST" ? "{}" : undefined });
       expect(r.status, `${method} ${path}`).toBe(403);
       expect(r.body.error, `${method} ${path}`).toContain("admin scope");
@@ -511,7 +510,6 @@ describe("pairing", () => {
     }
     const config = await call("/api/config", { headers: h() });
     expect(config.status).toBe(200);
-    expect(config.body.vps.sshAlias).toBe("");
     expect(config.body.profile.email).toBe("");
     expect(JSON.stringify(config.body)).not.toContain("partitionId");
   });
@@ -535,12 +533,10 @@ describe("pairing", () => {
     }
     function expectClientConfig(config: any) {
       expect(config.profile).toEqual({ name: "Updated fixture", email: "" });
-      expect(config.vps).toEqual({ configured: true, sshAlias: "" });
       expect(config).not.toHaveProperty("browserProfiles");
     }
     function expectAdminConfig(config: any) {
       expect(config.profile).toEqual({ name: "Updated fixture", email: "updated-private@example.invalid", aboutMe: "" });
-      expect(config.vps).toEqual({ configured: true, sshAlias: "fixture-private-host" });
       expect(config).not.toHaveProperty("browserProfiles");
     }
     try {

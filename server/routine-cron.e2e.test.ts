@@ -7,7 +7,7 @@ import { launchVerificationServer, runControlOmb } from "../scripts/control-rela
 import { nextCronRuns } from "../shared/routine-schedule.ts";
 
 it("takes cron through the real routine tools and confirmation, preserving its zone and rejecting invalid API input", async () => {
-  const fixture = await launchVerificationServer(process.env, undefined, undefined, undefined, { scripted: true });
+  const fixture = await launchVerificationServer(process.env, undefined, undefined, { scripted: true });
   const evidence: unknown[] = [{ fixture: fixture.info }];
   const planPath = join(fixture.info.dataDir, "room-plan.json");
   const providerEvidence = () => existsSync(`${planPath}.evidence.jsonl`)
@@ -32,7 +32,7 @@ it("takes cron through the real routine tools and confirmation, preserving its z
     const proposal = async (tool: string, args: unknown, text: string, expectError = false) => {
       const previousTurns = providerEvidence().length;
       writeFileSync(planPath, JSON.stringify({ [bot.id]: {
-        expectSystemIncludes: ["five-field cron expression", "Never replace a calendar rule with daily AI date checking", "current model and configured computer"],
+        expectSystemIncludes: ["five-field cron expression", "Never replace a calendar rule with daily AI date checking", "current model"],
         steps: [{ tool: "list_routines", arguments: {} }, { tool, arguments: args, expectError }],
         reply: expectError ? "That invalid schedule was refused." : "Please review the routine confirmation.",
       } }));
@@ -63,7 +63,7 @@ it("takes cron through the real routine tools and confirmation, preserving its z
     expect(create.subtitle).toContain("Cron: 0 9 1 * *");
     const { resultId: routineId } = await confirm(create);
     const current = async () => (await api("GET", "/api/routines")).routines.find((routine: any) => routine.id === routineId);
-    expect(await current()).toMatchObject({ schedule, enabled: true, runOn: "maus", overlap: "queue" });
+    expect(await current()).toMatchObject({ schedule, enabled: true, overlap: "queue" });
     expect(create.subtitle).toContain("Queue one scheduled run");
     expect((await current()).nextRunAt).toBe(nextCronRuns(schedule, create.routineRequest.createdAt, 1)[0]);
 

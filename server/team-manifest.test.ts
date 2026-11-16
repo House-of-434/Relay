@@ -195,7 +195,6 @@ describe("team manifests", () => {
             approvePeerComms: false,
             composio: true,
             computer: "local",
-            cloudBackend: "vps",
             cwd: "/",
             hidden: false,
             modelSelection: { instanceId: "ghost" },

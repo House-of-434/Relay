@@ -6,8 +6,6 @@
 //
 // Integrations become MCP servers on the CLI:
 //   - Composio Sessions (connected apps → tools) over streamable HTTP
-//   - the bot's cloud computer (boat.dev) via server/computer-proxy.ts
-//     — screenshot/exec/open_url, the CUA-on-the-boat bridge
 import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { createServer as createNetServer } from "node:net";
@@ -1229,10 +1227,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
         : turn.approvalMode === "full" ? "bypassPermissions"
           : turn.approvalMode === "auto" ? "auto"
             : turn.approvalMode === "edits" ? "acceptEdits" : "default";
-      const controlsHost = turn.integrations?.localComputer?.scope === "local-computer";
-      if (controlsHost && permissionMode === "bypassPermissions" && turn.approvalMode !== "full") {
-        throw new Error("local computer control requires the interactive approval broker");
-      }
       // Materialize before creating a broker or process. A missing/corrupt
       // attachment must fail this call without leaving a live session behind.
       const promptMsg = claudeUserMessage(turn.text, turn.images);
@@ -1327,17 +1321,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
       if (turn.integrations?.composio) {
         mcpServers.composio = { ...turn.integrations.composio };
         allowed.push("mcp__composio");
-      }
-      if (turn.integrations?.localComputer) {
-        const local = turn.integrations.localComputer;
-        mcpServers.computer = {
-          command: local.command,
-          args: local.args,
-          env: local.env,
-        };
-        // The isolated Local VM preserves the established pre-allow behavior.
-        // Host tools always route through Relay's permission broker.
-        if (!controlsHost) allowed.push("mcp__computer");
       }
       // peer-agent comms (list_bots/ask_bot) — the harness builds the whole
       // spawn contract (command/args/env incl. the boot token) in
@@ -1594,13 +1577,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                   ? permissionCommand(ask.input.command, commandCwd) : undefined,
                 requiresExplicitApproval: ask.kind === "permission" && ask.tool === "Bash" && ask.input.dangerouslyDisableSandbox === true || undefined,
                 nativeReview,
-                // the proxy hands Claude its own suggested rules on `always`;
-                // host control stays one action at a time
-                allowSession: ask.kind === "permission" && !(controlsHost && typeof ask.tool === "string" && ask.tool.startsWith("mcp__computer")) ? true : undefined,
-                approvalScope:
-                  typeof ask.tool === "string" && controlsHost && ask.tool.startsWith("mcp__computer")
-                    ? "local-computer"
-                    : undefined,
+                // the proxy hands Claude its own suggested rules on `always`
+                allowSession: ask.kind === "permission" ? true : undefined,
                 questions: questions ?? undefined,
                 // A structured ask still offers flat labels, for the phone
                 // companions and any client that predates the question card.
@@ -1615,8 +1593,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
                 requestId: resolved.id,
                 behavior: resolved.behavior,
                 source: resolved.source,
-                approvalScope:
-                  controlsHost && typeof askTools.get(resolved.id) === "string" && askTools.get(resolved.id)!.startsWith("mcp__computer") ? "local-computer" : undefined,
               });
               askTools.delete(resolved.id);
             },
@@ -2261,7 +2237,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           sessionModelSwitch: "in-session",
           agentsMcp: true,
         customMcp: true,
-          computerMcp: true,
           composioMcp: true,
           phoneMcp: true,
           images: true,
@@ -2279,7 +2254,6 @@ export const ClaudeDriver: ProviderDriver<ClaudeConfig> = {
           },
           // Harness turns reassert a per-bot mode and restore the broker even
           // when an old instance was configured with bypassPermissions.
-          localComputerMcp: true,
           hooks: true,
         },
         sendTurn,

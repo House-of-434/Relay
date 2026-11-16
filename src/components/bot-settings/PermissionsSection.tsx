@@ -5,12 +5,9 @@
 // Ask-before-contacting ~757-776, Approval level ~990-1010, Review routine
 // approvals ~1013-1050).
 //
-// The Auto branch of LocalComputerAutoWarning (choosing Auto while
-// bot.computer === "local") and the FullAccessWarning live here with their
-// triggers; the Works-on-picker branch (turning computer to "local" while
-// already on Auto) stays with AccessSection, next to that picker. The
-// warnings remember which bot they were opened for, so a bot switch while
-// one is up never applies the choice to the newly selected bot.
+// The FullAccessWarning lives here with its trigger. It remembers which bot
+// it was opened for, so a bot switch while one is up never applies the choice
+// to the newly selected bot.
 import { useState } from "react";
 import { Crown } from "lucide-react";
 
@@ -22,7 +19,6 @@ import type { ApprovalMode } from "../../../shared/approval-mode";
 import { ApprovalModeSelector } from "../ApprovalModeSelector";
 import { CommandAllowlistDialog } from "../CommandAllowlistDialog";
 import { FullAccessWarning } from "../FullAccessWarning";
-import { LocalComputerAutoWarning } from "../LocalComputerAutoWarning";
 import { Switch } from "../SettingsPrimitives";
 import { ManagedTeamsSettings } from "./ManagedTeamsSettings";
 import { ProposalStatus } from "./ProposalStatus";
@@ -40,7 +36,6 @@ export function PermissionsSection({
   const { state, dispatch } = useStore();
   const ownerOrAdmin = useOwnerOrAdmin();
   const { draft } = useBotEditor();
-  const [localAutoWarning, setLocalAutoWarning] = useState<string | null>(null);
   const [fullAccessTarget, setFullAccessTarget] = useState<string | null>(null);
   const [allThreads, setAllThreads] = useState(true);
   const [commandAllowlistTarget, setCommandAllowlistTarget] = useState<{ botId: string; botName: string } | null>(null);
@@ -49,10 +44,6 @@ export function PermissionsSection({
     if (mode === "full") {
       setAllThreads(true);
       setFullAccessTarget(bot.id);
-      return;
-    }
-    if (mode === "auto" && bot.computer === "local") {
-      setLocalAutoWarning(bot.id);
       return;
     }
     patch({ approvalMode: mode });
@@ -167,16 +158,6 @@ export function PermissionsSection({
         {...commandAllowlistTarget}
         onClose={() => setCommandAllowlistTarget(null)}
       />}
-      <LocalComputerAutoWarning
-        open={localAutoWarning !== null}
-        onCancel={() => setLocalAutoWarning(null)}
-        onConfirm={() => {
-          const target = localAutoWarning;
-          setLocalAutoWarning(null);
-          if (!target) return;
-          dispatch({ type: "updateBot", botId: target, patch: { approvalMode: "auto", acknowledgeLocalAuto: true } });
-        }}
-      />
       <FullAccessWarning
         open={fullAccessTarget !== null}
         allThreads={allThreads}

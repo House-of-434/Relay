@@ -8,7 +8,6 @@ import { join } from "node:path";
 
 import { writeFileAtomic } from "./atomic.ts";
 import { ensureSections, readSections, changeEmptySection } from "./section-context.ts";
-import type { TeamComputers } from "./team-computers.ts";
 import { removeBotFolder, soulFile, soulHash, writeSoulMirror } from "./bot-folder.ts";
 import type { BotProfilePatch } from "./bot-profile.ts";
 import { peerAllowKey, type PeerAction } from "./peer-approval-key.ts";
@@ -17,7 +16,6 @@ import * as mdb from "./message-db.ts";
 import { runCommand, type Command } from "./commands.ts";
 import { isLegacyWorkspacePath, registerBotOwner, registerBotOwners, unregisterBotOwner, workspaceDir } from "./workspace.ts";
 import { isCanonicalUserId } from "./user-paths.ts";
-import type { Destination } from "./surface.ts";
 import { newId, type ModelSelection } from "./contracts.ts";
 import { pickBotName } from "./names.ts";
 import { redactSecretsInText } from "./redact.ts";
@@ -39,7 +37,7 @@ import { CONNECTOR_SLUG_PATTERN, CONNECTOR_TOOL_NAME_PATTERN } from "../shared/w
 // Re-exported under their historical names so server-side importers keep working.
 export type {
   BotActivity, ConnectorCardData, GroupDefaultResponder, OptionCardData,
-  Surface, TaskClosedBy, TaskOpenedBy, TaskUsage,
+  TaskClosedBy, TaskOpenedBy, TaskUsage,
 } from "../shared/wire.ts";
 export type { GroupTask as GroupTaskRecord, BotProject as BotProjectRecord } from "../shared/wire.ts";
 export type { InstalledPlaybook, InstalledPackageMetadata, MausColor, MausExpression } from "../shared/wire.ts";
@@ -95,11 +93,6 @@ export interface TaskRecord extends WireTask {
   appliedCompactionId?: string;
   contextFloor?: number;
   lastContextModel?: string;
-  /** Who pinned this conversation's surface: "user" when a person chose it
-   * (composer chip or thread setting), "auto" when a turn recorded where
-   * it landed. Absent means legacy/unknown: it may be a person's choice,
-   * so only positively identified auto pins yield to Works on changes. */
-  surfaceSource?: "user" | "auto";
   /** Set on conversations the shared-mailbox monitor opened: whose mail this
    * is, which message opened it, and that message's subject (the reply's
    * subject is derived from it). The settle path emails that person once the
@@ -117,7 +110,7 @@ export interface TaskRecord extends WireTask {
 /** TaskRecord fields no client may see. Everything else must be on WireTask:
  * the exactness assertion below fails to compile when either side drifts,
  * so a new server field forces a decision — wire-visible or private here. */
-export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "surfaceSource" | "mailRouted" | "mailRoutedVia";
+export type TaskWirePrivateKeys = "resumeCursors" | "lastInstanceId" | "handedMessages" | "appliedCompactionId" | "contextFloor" | "lastContextModel" | "mailRouted" | "mailRoutedVia";
 export type TaskWireProjection = Pick<TaskRecord, Exclude<keyof TaskRecord, TaskWirePrivateKeys>>;
 type AssertExact<A, B> = [A] extends [B] ? ([B] extends [A] ? true : never) : never;
 type AssertSameKeys<A, B> = [keyof A] extends [keyof B] ? ([keyof B] extends [keyof A] ? true : never) : never;
@@ -131,15 +124,15 @@ export const taskWireProjectionIsExact: TaskWireProjectionIsExact = true;
 export function toWireTask(task: TaskRecord): WireTask {
   const { resumeCursors: _resumeCursors, lastInstanceId: _lastInstanceId, handedMessages: _handedMessages,
     appliedCompactionId: _appliedCompactionId, contextFloor: _contextFloor, lastContextModel: _lastContextModel,
-    surfaceSource: _surfaceSource, mailRouted: _mailRouted,
-    mailRoutedVia: _mailRoutedVia, ...wire } = task;
+    mailRouted: _mailRouted, mailRoutedVia: _mailRoutedVia,
+    ...wire } = task;
   return wire;
 }
 
 const TASK_PATCH_FIELDS = [
   "title", "projectId", "modelSelection", "approvalMode", "autoApprove", "alwaysAllow",
   "unread", "rewound", "archivedAt", "pinned", "pinnedMessageId", "resumeCursors", "lastInstanceId", "cwd",
-  "routineRunId", "surface", "surfaceSource", "snoozedUntil", "appliedCompactionId", "contextFloor", "lastContextModel",
+  "routineRunId", "snoozedUntil", "appliedCompactionId", "contextFloor", "lastContextModel",
   "mailRouted", "mailRoutedVia",
 ] as const satisfies readonly (keyof TaskRecord)[];
 export type TaskPatch = Partial<Pick<TaskRecord, typeof TASK_PATCH_FIELDS[number]>>;
@@ -661,6 +654,11 @@ export class Store {
         botsMigrated = true;
       }
       for (const task of b.tasks ?? []) {
+        if ("surface" in task || "surfaceSource" in task) {
+          delete (task as { surface?: unknown }).surface;
+          delete (task as { surfaceSource?: unknown }).surfaceSource;
+          botsMigrated = true;
+        }
         if (task.cwd && isLegacyWorkspacePath(task.cwd)) {
           delete task.cwd;
           botsMigrated = true;
@@ -720,23 +718,12 @@ export class Store {
           console.warn(`[bot-folder] could not create SOUL.md for ${b.id}: ${(e as Error).message}`);
         }
       }
-      // The built-in browser is gone: a stored "browser" destination falls
-      // back to Auto, and the per-bot browser switch/profile are dropped.
-      if ((b as { computer?: unknown }).computer === "browser") {
-        delete b.computer;
-        botsMigrated = true;
-      }
+      // The built-in browser is gone: the per-bot browser switch/profile are
+      // dropped. Removed Works-on fields stay inert on disk and never reach
+      // the wire (wireBot strips them).
       if ("browser" in b || "browserProfile" in b) {
         delete (b as { browser?: unknown }).browser;
         delete (b as { browserProfile?: unknown }).browserProfile;
-        botsMigrated = true;
-      }
-      if (b.cloudBackend !== undefined && b.cloudBackend !== "box" && b.cloudBackend !== "vps") {
-        delete b.cloudBackend;
-        botsMigrated = true;
-      }
-      if (b.autoStartVps !== undefined && b.autoStartVps !== true && b.autoStartVps !== false) {
-        delete b.autoStartVps;
         botsMigrated = true;
       }
       if (b.managedSections !== undefined && (!b.chiefOfStaff || !Array.isArray(b.managedSections) ||
@@ -1080,12 +1067,12 @@ export class Store {
   }
 
   /** Rename the same team, preserving its members and existing access grants. */
-  renameSection(name: string, nextName: string, computers?: TeamComputers): string | undefined {
+  renameSection(name: string, nextName: string): string | undefined {
     if (!name || !this.sections.includes(name)) return "No such team";
     nextName = nextName.trim();
     if (!nextName || nextName.length > 60 || [...nextName].some(char => char.charCodeAt(0) < 32 || char.charCodeAt(0) === 127)) return "Team name must be 1 to 60 characters without control characters";
     if (name === nextName) return undefined;
-    if (this.sections.includes(nextName) || computers?.forSection(nextName)) return "A team with that name already exists";
+    if (this.sections.includes(nextName)) return "A team with that name already exists";
     const members = this.bots.filter(bot => sectionKey(bot.section) === name);
     const rooms = this.groups.filter(group => sectionKey(group.section) === name);
     const affected = this.bots.filter(bot => members.includes(bot) || bot.managedSections?.some(section => sectionKey(section) === name));
@@ -1094,24 +1081,21 @@ export class Store {
     }
     // Keep the established empty-team lifecycle: old grants are revoked when
     // an empty identity is removed, so recreating it cannot restore access.
-    if (!members.length && !rooms.length && !computers?.forSection(name)) return this.changeEmptySection(name, nextName);
+    if (!members.length && !rooms.length) return this.changeEmptySection(name, nextName);
     const nextBots = this.bots.map(bot => ({ ...bot,
       ...(members.includes(bot) ? { section: nextName } : {}),
       ...(bot.managedSections ? { managedSections: [...new Set(bot.managedSections.map(section => sectionKey(section) === name ? nextName : section))] } : {}),
     }));
     const nextGroups = this.groups.map(group => rooms.includes(group) ? { ...group, section: nextName } : group);
-    let computerChanged = false;
     try {
       // Register the new name only after saving the records; otherwise the
       // registry's duplicate-name check would reject this same rename.
       this.saveBots(nextBots, false);
       this.saveGroups(nextGroups, false);
-      computerChanged = computers?.renameSection(name, nextName) ?? false;
       changeEmptySection(name, nextName);
     } catch (error) {
       this.saveBots(this.bots, false);
       this.saveGroups(this.groups, false);
-      if (computerChanged) computers!.renameSection(nextName, name);
       throw error;
     }
     // Preserve identities held by the schedulers and other store consumers.
@@ -2455,26 +2439,6 @@ export class Store {
     return task;
   }
 
-  /** A Works on change is the newest explicit choice, so this bot's
-   * machine-recorded pins that now point somewhere else give way. A pin a
-   * person set, a legacy pin with unknown provenance, and a pin that already
-   * matches the new destination survive. Returns how many pins were cleared. */
-  clearAutoSurfacePins(botId: string, destination: Destination): number {
-    const bot = this.bot(botId);
-    if (!bot?.tasks) return 0;
-    let cleared = 0;
-    for (const task of bot.tasks) {
-      if (task.surface === undefined || task.surfaceSource !== "auto" || task.surface === destination) continue;
-      task.surface = undefined;
-      task.surfaceSource = undefined;
-      cleared++;
-    }
-    if (!cleared) return 0;
-    this.saveBots();
-    this.emit({ type: "bot", botId });
-    return cleared;
-  }
-
   /** Model/provider changes are one configuration transaction: never publish
    * a new provider before its confirmed approval downgrade, or change the
    * default while leaving the selected thread behind after a write failure. */
@@ -2820,8 +2784,6 @@ export class Store {
       }
       const bot = this.createBot({ ...seed.profile, name }, { relayAgent: seed.role, ownerUserId });
       this.patchBot(bot.id, {
-        computer: "off",
-        autoStartVps: false,
         composio: false,
         approvalMode: "auto",
       });

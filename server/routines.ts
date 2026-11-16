@@ -49,10 +49,6 @@ export type RoutineScheduleInput =
   | Exclude<RoutineSchedule, RoutineIntervalSchedule>
   | RoutineIntervalScheduleInput;
 
-/** `cloud` was Boat's historical destination; stored values are read as
- * `maus`, which keeps using the provider selected on the MAUS and only
- * borrows its configured computer tools, if any. */
-export type RoutineRunOn = "maus" | "cloud";
 export type RoutineTarget = "bot" | "room-goal";
 export type RoutineGoalStatus = Exclude<GroupGoalRunStatus, "working">;
 
@@ -85,7 +81,6 @@ export interface Routine {
   /** A bot routine's owner, or the lead coordinator for a room goal. */
   botId: string;
   groupId?: string;
-  runOn: RoutineRunOn;
   enabled: boolean;
   schedule: RoutineSchedule;
   /** Legacy calendar/display length. Kept for persisted-data compatibility. */
@@ -164,7 +159,6 @@ export interface RoutineRun {
    * not redirect already-queued team work. */
   groupId?: string;
   botId: string;
-  runOn: RoutineRunOn;
   scheduledFor: number;
   status: RoutineRunStatus;
   manual: boolean;
@@ -237,7 +231,6 @@ export interface RoutineInput {
   botId: string;
   /** `null` deliberately clears a room when changing the target back to a bot. */
   groupId?: string | null;
-  runOn?: RoutineRunOn;
   enabled?: boolean;
   schedule: RoutineScheduleInput;
   durationMinutes?: number;
@@ -352,7 +345,6 @@ export interface RoutineManagerOptions {
     botId: string,
     threadId: string,
     prompt: string,
-    runOn: RoutineRunOn,
     triggerSource: RoutineRunTrigger,
     onDispatchError: (message: string) => void,
   ) => Promise<void>;
@@ -364,7 +356,7 @@ export interface RoutineManagerOptions {
     runId: string,
     onDispatchError: (message: string) => void,
   ) => Promise<void>;
-  interruptTurn?: (botId: string, threadId: string, runOn: RoutineRunOn) => Promise<void>;
+  interruptTurn?: (botId: string, threadId: string) => Promise<void>;
   interruptGoal?: (
     groupId: string,
     threadId: string,
@@ -794,7 +786,6 @@ function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" |
   if (target !== "bot" && target !== "room-goal") throw new Error("Choose a valid routine target");
   const groupId = typeof input.groupId === "string" ? input.groupId.trim() : "";
   if (target === "room-goal" && !groupId) throw new Error("Choose a room for this goal");
-  const runOn: RoutineRunOn = "maus";
   const attachments = cleanAttachments(input.attachments);
   const timeoutMinutes = cleanTimeoutMinutes(input.timeoutMinutes);
   if (target === "room-goal" && attachments.length > 0) {
@@ -813,7 +804,6 @@ function sanitizeInput(input: RoutineInput, after: number): Omit<Routine, "id" |
     target,
     botId,
     groupId: target === "room-goal" ? groupId : undefined,
-    runOn,
     enabled: input.enabled !== false,
     schedule: cleanSchedule(input.schedule, after),
     durationMinutes: Math.min(240, Math.max(5, Math.round(Number(input.durationMinutes) || 30))),
@@ -851,7 +841,6 @@ export class RoutineManager {
               schedule,
               target,
               groupId: loadGroupId(routine.groupId, target),
-              runOn: "maus",
               timeoutMinutes: loadTimeoutMinutes(routine.timeoutMinutes),
               attachments: loadAttachments(routine.attachments),
               sourceThreadId: persistedSourceThreadId.parse(routine.sourceThreadId),
@@ -864,6 +853,8 @@ export class RoutineManager {
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
             if (loaded.installedPackage === undefined) delete loaded.installedPackage;
             delete loaded.failureStreak;
+            // Legacy Works-on destination is ignored and never re-saved.
+            delete (loaded as { runOn?: unknown }).runOn;
             return [loaded];
           })
         : [];
@@ -875,13 +866,13 @@ export class RoutineManager {
               target,
               goalStatus: loadGoalStatus(run.goalStatus, target),
               groupId: loadGroupId(run.groupId, target),
-              runOn: "maus",
               timeoutMinutes: loadTimeoutMinutes(run.timeoutMinutes),
               attachments: loadAttachments(run.attachments),
               sourceThreadId: persistedSourceThreadId.parse(run.sourceThreadId),
               resultsThreadId: persistedSourceThreadId.parse(run.resultsThreadId),
             };
             if (loaded.timeoutMinutes === undefined) delete loaded.timeoutMinutes;
+            delete (loaded as { runOn?: unknown }).runOn;
             return loaded;
           })
         : [];
@@ -1141,7 +1132,6 @@ export class RoutineManager {
       target: patch.target ?? routine.target,
       botId: patch.botId ?? routine.botId,
       groupId: Object.hasOwn(patch, "groupId") ? patch.groupId : routine.groupId,
-      runOn: patch.runOn ?? routine.runOn,
       enabled: patch.enabled ?? routine.enabled,
       schedule: patch.schedule ? mergeScheduleUpdate(routine.schedule, patch.schedule) : routine.schedule,
       durationMinutes: patch.durationMinutes ?? routine.durationMinutes,
@@ -1244,7 +1234,7 @@ export class RoutineManager {
         if (run.target === "room-goal" && run.groupId) {
           void this.options.interruptGoal?.(run.groupId, run.threadId).catch(() => {});
         } else {
-          void this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
+          void this.options.interruptTurn?.(run.botId, run.threadId).catch(() => {});
         }
       }
       changed = true;
@@ -1326,7 +1316,6 @@ export class RoutineManager {
     webhookName: string;
     prompt: string;
     botId: string;
-    runOn: RoutineRunOn;
     deliveryId: string;
     receivedAt: number;
   }): { id: string } {
@@ -1342,7 +1331,6 @@ export class RoutineManager {
       prompt: input.prompt,
       target: "bot",
       botId: input.botId,
-      runOn: "maus",
       scheduledFor: input.receivedAt,
       status: "queued",
       manual: false,
@@ -1388,7 +1376,7 @@ export class RoutineManager {
       if (candidate.routineId !== run.routineId) continue;
       // Reassigning a routine must not disclose the old bot's report to a
       // different bot or execution destination.
-      if (candidate.botId !== run.botId || candidate.target !== run.target || candidate.runOn !== run.runOn) continue;
+      if (candidate.botId !== run.botId || candidate.target !== run.target) continue;
       if (candidate.id === run.id) continue;
       if (candidate.status !== "completed") continue;
       if (!candidate.output?.trim()) continue;
@@ -1439,7 +1427,7 @@ export class RoutineManager {
       if (run.target === "room-goal" && run.groupId) {
         await this.options.interruptGoal?.(run.groupId, run.threadId).catch(() => {});
       } else {
-        await this.options.interruptTurn?.(run.botId, run.threadId, run.runOn ?? "maus").catch(() => {});
+        await this.options.interruptTurn?.(run.botId, run.threadId).catch(() => {});
       }
     }
     queueMicrotask(() => void this.tick());
@@ -1514,7 +1502,7 @@ export class RoutineManager {
             detail,
           }).catch(() => {});
         } else {
-          await this.options.interruptTurn?.(run.botId, threadId, run.runOn ?? "maus").catch(() => {});
+          await this.options.interruptTurn?.(run.botId, threadId).catch(() => {});
         }
       }
       const dueRoutines = this.routines.filter(
@@ -1681,7 +1669,6 @@ export class RoutineManager {
               run.botId,
               task.threadId,
               composeExecutionPrompt(prompt, run.attachments, this.continuityCarry(run)),
-              run.runOn ?? "maus",
               triggerSource,
               (message) => this.failThread(task.threadId, message),
             );
@@ -1868,7 +1855,6 @@ export class RoutineManager {
       target: routine.target,
       groupId: routine.groupId,
       botId: routine.botId,
-      runOn: routine.runOn ?? "maus",
       scheduledFor,
       status: "queued",
       manual,

@@ -429,7 +429,6 @@ describe("RoutineRequestService", () => {
                 ? { ...routine.schedule }
                 : { weekdays: [...routine.schedule.weekdays], time: routine.schedule.time, type: "daily" },
           instructions: routine.instructions,
-          runOn: routine.runOn,
           name: routine.name,
         },
         action: "create",
@@ -910,7 +909,6 @@ describe("RoutineRequestService", () => {
       botId: "bot-a",
       name: "Morning brief",
       prompt: "Summarize the overnight support queue.",
-      runOn: "maus",
       enabled: true,
       schedule: { type: "daily", time: "09:00", weekdays: [1, 3] },
       durationMinutes: 5,
