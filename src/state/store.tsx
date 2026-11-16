@@ -25,6 +25,7 @@ import type { QuestionRequestCardData } from "../../shared/ask-question";
 import type { ProfileRequestCardData } from "../../shared/profile-request";
 import type { ModelRequestCardData } from "../../shared/model-request";
 import type { RoutineRequestCardData } from "../../shared/routine-request";
+import type { PublishRequestCardData } from "../../shared/publish-request";
 import type { RoutineRunCardData } from "../../shared/routine-run";
 import type { GroupGoalRunCardData } from "../../shared/group-goal-run";
 import {
@@ -102,6 +103,8 @@ export interface OptionCardData {
   commandAllowlist?: { command: string; cwd: string; providerInstanceId: string };
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: RoutineRequestCardData;
+  /** Local commit waiting for publication approval. */
+  publishRequest?: PublishRequestCardData;
   /** Staged learned-skill change; applied only after the user confirms this card. */
   skillRequest?: SkillRequestCardData;
   /** Persisted profile proposal used by the server when the user confirms it. */

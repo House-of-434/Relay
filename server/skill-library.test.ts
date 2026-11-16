@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -149,31 +149,20 @@ describe("bundled verification skill", () => {
   });
 });
 
-describe("repo changes skill", () => {
+describe("repo changes seed", () => {
   const skills = loadBundledSkills(join(dirname(fileURLToPath(import.meta.url)), "..", "skills"));
-  const skill = skills.find((candidate) => candidate.manifest.id === "repo-changes");
-  if (!skill) throw new Error("repo-changes skill missing");
+  const markdown = readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", "skills", "repo-changes", "SKILL.md"), "utf8");
 
-  it("loads the tracked skill with a valid manifest and frontmatter", () => {
-    expect(skill.manifest.version).toBe("1.0.0");
-    expect(skill.manifest.defaultEnabled).toBe(true);
-    expect(skill.instructions).toMatch(/^---\nname: repo-changes\n/);
-    expect(skill.instructions).toContain("relay-git checkout relay/");
-    expect(skill.instructions).toContain("relay-git push relay/");
+  it("is a per-bot seed, not a globally bundled skill", () => {
+    expect(skills.map((candidate) => candidate.manifest.id)).not.toContain("repo-changes");
+    expect(selectBundledSkills("Please update the website events page", [], skills).map((candidate) => candidate.manifest.id))
+      .not.toContain("repo-changes");
   });
 
-  it("selects repository work and ignores nearby false positives", () => {
-    for (const text of [
-      "Please update the website events page from this Luma link",
-      "Open a pull request for the git repo",
-    ]) {
-      expect(selectBundledSkills(text, [], skills).map((candidate) => candidate.manifest.id)).toContain("repo-changes");
-    }
-    for (const text of [
-      "Write a poem",
-      "Please send the quarterly report",
-    ]) {
-      expect(selectBundledSkills(text, [], skills).map((candidate) => candidate.manifest.id)).not.toContain("repo-changes");
-    }
+  it("describes the native Git and approval-bound publish workflow", () => {
+    expect(markdown).toMatch(/^---\nname: repo-changes\n/);
+    expect(markdown).toContain("github_git_remote");
+    expect(markdown).toContain("propose_publish");
+    expect(markdown).not.toContain("relay_git");
   });
 });

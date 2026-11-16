@@ -14,6 +14,7 @@ import { boundedText, isHttpUrl, type ConnectorResult } from "../domain/connecto
 
 export const GITHUB_INTERNAL_PATHS = {
   repositoriesSearch: "/api/internal/github/repositories/search",
+  repositoriesList: "/api/internal/github/repositories/list",
   repositoryGet: "/api/internal/github/repositories/get",
   repositoryContents: "/api/internal/github/repositories/contents",
   issuesSearch: "/api/internal/github/issues/search",
@@ -90,6 +91,10 @@ export class RelayGitHubClient {
 
   searchRepositories(actorAssertion: string, input: { query: string; sort?: string; order?: string; limit?: number }) {
     return this.call<{ items: GitHubRepositorySummary[] }>(GITHUB_INTERNAL_PATHS.repositoriesSearch, actorAssertion, input);
+  }
+
+  listRepositories(actorAssertion: string, input: { limit?: number }) {
+    return this.call<{ items: GitHubRepositorySummary[] }>(GITHUB_INTERNAL_PATHS.repositoriesList, actorAssertion, input);
   }
 
   getRepository(actorAssertion: string, input: { repo: string }) {

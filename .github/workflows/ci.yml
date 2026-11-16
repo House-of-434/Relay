@@ -66,6 +66,8 @@ jobs:
       - run: pnpm typecheck
       - name: Tool Layer typecheck + tests (workspace identity, lifecycle policy)
         run: pnpm --filter @relay/tool-layer typecheck && pnpm --filter @relay/tool-layer test
+      - name: Git broker typecheck + tests (publish authorization)
+        run: pnpm --filter @relay/git-broker typecheck && pnpm --filter @relay/git-broker test
       - name: BFF tests (Gmail/Calendar internal routes, actor assertion)
         run: pnpm test:bff
       - run: pnpm lint

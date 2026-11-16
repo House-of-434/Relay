@@ -39,6 +39,10 @@ export function isRoutineApproval(pending: Pending): boolean {
   return Boolean(pending.message.card?.routineRequest);
 }
 
+export function isPublishApproval(pending: Pending): boolean {
+  return Boolean(pending.message.card?.publishRequest);
+}
+
 export function isSkillApproval(pending: Pending): boolean {
   return Boolean(pending.message.card?.skillRequest);
 }
@@ -81,6 +85,7 @@ function label(pending: Pending): string {
       ? t("approval.label.confirmRoutine")
       : t("approval.label.confirmRoutineChange");
   }
+  if (isPublishApproval(pending)) return "Publish changes";
   const nice: ApprovalLabels = {
     Bash: "approval.label.commandRequested",
     shell: "approval.label.commandRequested",
@@ -182,10 +187,11 @@ export function PendingApprovalActions({
   const { dispatch } = useStore();
   const ownerOrAdmin = useOwnerOrAdmin();
   const isRoutineRequest = isRoutineApproval(pending);
+  const isPublishRequest = isPublishApproval(pending);
   const isSkillRequest = isSkillApproval(pending);
   const isProfileRequest = isProfileApproval(pending);
   const isTeamSetup = Boolean(pending.message.card?.teamSetupRequest);
-  const durableRequest = isRoutineRequest || isSkillRequest || isProfileRequest || isTeamSetup;
+  const durableRequest = isRoutineRequest || isSkillRequest || isProfileRequest || isTeamSetup || isPublishRequest;
   const canRememberCommand = ownerOrAdmin === true && !durableRequest && !pending.allowKey && Boolean(pending.commandAllowlist);
   const reviewedSha256 = pending.message.card?.skillRequest
     ? reviewedSkillSha256(pending.message.card.skillRequest)
@@ -218,7 +224,7 @@ export function PendingApprovalActions({
         autoFocus={isTeamSetup}
         className={cn(base, "border border-danger/40 text-danger hover:bg-danger/10")}
       >
-        {isRoutineRequest || isProfileRequest || isTeamSetup ? t("approval.action.cancel") : t("approval.action.deny")}
+        {isRoutineRequest || isProfileRequest || isTeamSetup || isPublishRequest ? t("approval.action.cancel") : t("approval.action.deny")}
       </button>
       {!durableRequest && bot && pending.allowKey && (
         <button
@@ -255,7 +261,9 @@ export function PendingApprovalActions({
           "bg-accent font-medium text-white hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-40",
         )}
       >
-        {isTeamSetup ? pending.message.card?.options[0] : isSkillRequest
+        {isTeamSetup ? pending.message.card?.options[0] : isPublishRequest
+          ? "Publish"
+          : isSkillRequest
           ? pending.message.card?.skillRequest?.action === "update"
             ? t("approval.action.update")
             : t("approval.action.enable")

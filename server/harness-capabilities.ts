@@ -28,7 +28,7 @@ const ENVELOPE: CatalogProfile = {
   skillAuthoring: true,
   sharedComputers: true,
   cloudHome: false,
-  relayGit: false,
+  githubGit: false,
   botId: "",
 };
 

@@ -434,21 +434,33 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   const { botId: BOT_ID, threadId: THREAD_ID, depth: DEPTH, externalRuntime: EXTERNAL_RUNTIME, coordinating: COORDINATING, turn } = context;
   const { delegationTaskIdsThisTurn } = turn;
   const { api, apiResponse } = context.client;
-  if (name === "relay_git") {
-    const command = typeof args.command === "string" ? args.command : "";
-    const { ok, body } = await apiResponse("/api/internal/relay-git", {
+  if (name === "github_git_remote") {
+    const repo = typeof args.repo === "string" ? args.repo.trim() : "";
+    const { ok, body } = await apiResponse("/api/internal/github-git-remote", {
       method: "POST",
-      body: JSON.stringify({ command }),
+      body: JSON.stringify({ repo }),
     });
-    if (!ok) return { text: String(body.error ?? "Could not run that repository command."), isError: true };
-    const exitCode = Number(body.exitCode ?? 0);
-    const stdout = String(body.stdout ?? "");
-    const stderr = String(body.stderr ?? "");
-    const lines = [body.timedOut ? "The command was stopped: it ran past its time limit." : `exit code ${exitCode}`];
-    if (stdout) lines.push("--- stdout ---", stdout.replace(/\s+$/, ""));
-    if (stderr) lines.push("--- stderr ---", stderr.replace(/\s+$/, ""));
-    if (!stdout && !stderr && !body.timedOut) lines.push("(no output)");
-    return { text: lines.join("\n"), ...(exitCode !== 0 || body.timedOut ? { isError: true } : {}) };
+    if (!ok) return { text: String(body.error ?? "Could not open GitHub access for that repository."), isError: true };
+    const cloneUrl = String(body.cloneUrl ?? "");
+    const path = String(body.path ?? "");
+    if (!cloneUrl || !path) return { text: "GitHub access was not configured.", isError: true };
+    return {
+      text: `Clone with ordinary git:\n\ngit clone ${cloneUrl} ${path}\n\nThe URL is read-only. It cannot push. Work in the returned path, then call propose_publish with the exact commit and visual evidence.`,
+    };
+  }
+  if (name === "propose_publish") {
+    const repo = typeof args.repo === "string" ? args.repo.trim() : "";
+    const branch = typeof args.branch === "string" ? args.branch.trim() : "";
+    const title = typeof args.title === "string" ? args.title.trim() : "";
+    const bodyText = typeof args.body === "string" ? args.body : "";
+    const path = typeof args.path === "string" ? args.path.trim() : "";
+    const attachments = Array.isArray(args.attachments) ? args.attachments.filter((entry): entry is string => typeof entry === "string") : [];
+    const { ok, body } = await apiResponse("/api/internal/publish-request", {
+      method: "POST",
+      body: JSON.stringify({ repo, branch, title, body: bodyText, path, attachments }),
+    });
+    if (!ok) return { text: String(body.error ?? "Could not prepare that publish request."), isError: true };
+    return { text: String(body.message ?? "Publish request is waiting for the person to approve it.") };
   }
   if (name === "list_files") {
     const threadId = typeof args.thread_id === "string" ? args.thread_id.trim() : "";

@@ -156,6 +156,18 @@ importers:
 
   packages/relay-shared: {}
 
+  services/git-broker:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.13.3
+      tsx:
+        specifier: ^4.16.0
+        version: 4.23.15
+      typescript:
+        specifier: ^5.5.0
+        version: 5.9.3
+
   services/scribe-capture:
     dependencies:
       '@vexa/gmeet-capture':

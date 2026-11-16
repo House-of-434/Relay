@@ -25,12 +25,6 @@ services:
     env_file:
       - .env
       - .env.secrets
-      # Relay's GitHub workspace token is app-only: Scout-scoped repository
-      # operations must not be visible to tools, scribe, or other agents.
-      # Optional so environments without a token (CI smoke, fresh clones)
-      # still boot; relay-git operations fail closed without it.
-      - path: .env.workspace
-        required: false
       # The harness monitor holds the worker capability to arm captures; the app
       # must never hold the ingest capability (that is tools + scribe only).
       - .env.scribe
@@ -63,6 +57,35 @@ services:
       # The harness monitor arms captures by calling the worker over the compose
       # network (capability from .env.scribe, in-memory only).
       RELAY_SCRIBE_WORKER_URL: http://scribe:8791
+      # Read-only Git transport and approval-bound publish broker. The app
+      # never receives a GitHub token; the broker keeps it.
+      RELAY_GIT_BROKER_URL: http://git-broker:8792
+  git-broker:
+    init: true
+    build:
+      context: .
+      dockerfile: deploy/local/Dockerfile
+    image: ${RELAY_LOCAL_IMAGE:-relay-local:latest}
+    command: ["node", "--experimental-strip-types", "/app/services/git-broker/src/index.ts"]
+    restart: unless-stopped
+    volumes:
+      - data:/data
+    env_file:
+      - .env
+      - .env.secrets
+    environment:
+      RELAY_GIT_BROKER_HOST: "0.0.0.0"
+      RELAY_GIT_BROKER_PORT: "8792"
+      RELAY_GIT_BROKER_PUBLIC_URL: http://git-broker:8792
+      RELAY_BFF_INTERNAL_URL: http://app:8798
+    expose:
+      - "8792"
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "http://127.0.0.1:8792/healthz"]
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 5
   tools:
     init: true
     build:

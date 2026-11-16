@@ -637,6 +637,18 @@ export function installSkill(
   return installPreparedSkill(botId, source, prepared, { enabled: false });
 }
 
+/** Seed a shipped skill switched ON. The caller has already decided this
+ * bot should carry it; the source identifies the seed for later checks. */
+export function installSeedSkill(
+  botId: string,
+  source: string,
+  skillMd: string,
+): SkillListing | { error: string } {
+  const prepared = preparedSkillFiles([{ path: "SKILL.md", content: skillMd }]);
+  if ("error" in prepared) return prepared;
+  return installPreparedSkill(botId, source, prepared, { enabled: true });
+}
+
 /** The organization library's path: a skill the organization's Admin
  * published arrives switched ON (the Admin is the review), with the install
  * stamp that lets the library find it again. `source` is chosen by the

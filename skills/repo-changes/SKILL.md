@@ -1,34 +1,44 @@
 ---
 name: repo-changes
-description: Clone a repository in this conversation's working folder, make a change on a relay/ branch, verify it, and open a pull request as Relay.
+description: Clone a repository with the person's connected GitHub account, make a change on a relay/ branch, verify it, and ask the person to approve publishing it as a pull request.
 ---
 
 # Repo changes
 
 Use this skill only when the person actually asks for a repository change. Do not use it merely because a message mentions a report, analytics, or another unrelated use of a trigger word.
 
-This skill applies to Scout when the `relay_git` tool is available. If `relay_git` is unavailable, stop and hand repository work to Scout. Do not try to run git through a general shell tool.
+This skill applies to Scout when the `github_git_remote` and `propose_publish` tools are available. If they are unavailable, tell the person to connect GitHub in Apps and stop. Do not try to reach GitHub through another tool.
 
-## Authorized repository workflow
+## Workflow
 
-1. Work inside this conversation's working folder. The `relay_git` tool creates and uses `repos/House-of-434-house-of-434-site` there; never operate outside it.
-2. Check identity first: `relay-git auth-status`. If authentication fails, report that the workspace token is missing or invalid and stop before editing.
-3. Fetch or clone only `House-of-434/house-of-434-site`:
-   `relay-git clone House-of-434/house-of-434-site`
-4. Create or switch to a `relay/` branch:
-   `relay-git checkout relay/<slug>`
-5. Read the repository's `CLAUDE.md` and `README.md`, then follow them.
-6. Edit files with your normal file tools, then run the repository's lint, typecheck, and build checks. If a database-backed test cannot run because PostgreSQL is unavailable in this workspace, run the checks that can run, state exactly which checks were not run, rely on CI for the remainder, and never treat a successful build as evidence that database-backed tests passed.
-7. For user-visible web changes, start the repository's development server in the background, open the page with the browser tools, save a screenshot in this conversation's working folder, stop the server, and `attach_file` the screenshot for the person.
-8. Commit and push only the `relay/` branch:
-   `relay-git commit "<message>"`
-   `relay-git push relay/<slug>`
-9. Open the pull request against `main`:
-   `relay-git create-pr --branch relay/<slug> --title "<title>" --body "<summary, checks, test status>"`
-10. Return the pull request URL. Never push to `main`. Never merge.
+1. Check that GitHub is connected. If `github_git_remote` is unavailable or refuses, stop and ask the person to connect GitHub in Apps.
+2. Open a read-only transport for the repository:
+   `github_git_remote` with `repo: "owner/name"`.
+   It returns a clone URL and the exact path to clone into.
+3. Clone with ordinary git in this conversation's working folder:
+   `git clone <cloneUrl> <path>`
+   The URL can fetch but cannot push. Never copy a token or put one in a remote URL.
+4. Read the repository's `CLAUDE.md` and `README.md`, then follow them.
+5. Create a branch:
+   `git switch -c relay/<slug>`
+6. Edit files with your normal file tools. Run the repository's lint, typecheck, and build checks. If a database-backed test cannot run, run what can run, state exactly what was not run, and do not claim a successful build proves database tests passed.
+7. For user-visible web changes, start the repository's development server, open the page with the browser tools, and capture before/after screenshots or a short screen recording. Save them outside the clone in this conversation's working folder. Attach them to the chat with `attach_file`.
+8. Commit locally only:
+   `git add -A && git commit -m "<message>"`
+   Do not run `git push`. It has no GitHub credential and will fail.
+9. Ask the person to publish the exact commit:
+   `propose_publish` with the repo, `relay/<slug>` branch, PR title and body, the repository path returned by `github_git_remote`, and the screenshot/video paths.
+10. Wait for the approval card. Relay pushes only the approved commit and opens the pull request. Never merge it.
 
-Call `relay_git` once per operation. It accepts only the validated operations above; it never runs arbitrary shell and never returns the GitHub token.
+## Pull-request body
 
-For House-of-434/house-of-434-site, events are static in `apps/web/src/data/events.ts`; posters go in `apps/web/src/assets/events/`. Use the source link and follow `CLAUDE.md`.
+Include:
 
-If a repository is inaccessible, stop and ask the person to add `relay-434` as a collaborator. If a repository change would require a `.github/workflows` edit, call it out explicitly in the pull request body; the person reviews it before merge.
+- what changed and why
+- the checks that ran and their real results
+- any check that could not run
+- a short visual-review note for UI changes
+
+The broker attaches the screenshots or recording to the PR when GitHub accepts them. Always keep them attached in the Relay conversation too.
+
+Never push to `main`, `master`, or `production`. Never force-push, delete a branch, or merge. If a repository needs a `.github/workflows` edit, call it out explicitly in the pull-request body.

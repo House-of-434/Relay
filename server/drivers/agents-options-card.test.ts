@@ -12,7 +12,7 @@ function profile(overrides: Partial<CatalogProfile> = {}): CatalogProfile {
     skillAuthoring: false,
     sharedComputers: false,
     cloudHome: false,
-    relayGit: false,
+    githubGit: false,
     botId: WATCHER_OPTIONS_CARD_BOT_ID,
     ...overrides,
   };
@@ -48,9 +48,9 @@ describe("Watcher options-card tool", () => {
     expect(availableTools(profile({ externalRuntime: true })).map((tool) => tool.name)).not.toContain("create_options_card");
   });
 
-  it("advertises relay_git only when the harness enables Scout's workspace", () => {
-    expect(availableTools(profile()).map((tool) => tool.name)).not.toContain("relay_git");
-    expect(availableTools(profile({ relayGit: true })).map((tool) => tool.name)).toContain("relay_git");
+  it("advertises github_git_remote only when the harness enables Scout's workspace", () => {
+    expect(availableTools(profile()).map((tool) => tool.name)).not.toContain("github_git_remote");
+    expect(availableTools(profile({ githubGit: true })).map((tool) => tool.name)).toContain("github_git_remote");
   });
 
   it("advertises the bounded two-through-six choice schema", () => {

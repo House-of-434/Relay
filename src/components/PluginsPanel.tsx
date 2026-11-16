@@ -67,7 +67,7 @@ export const GITHUB_SERVICE: ConnectionService = {
   label: "GitHub",
   detail: "Repos, issues, releases",
   category: "Coding",
-  about: "The repositories you grant access to, readable by your bots. They can explore code, open and track issues, and read releases — the install decides which repos are in scope.",
+  about: "The repositories you grant access to, read and updated as you. Relay can clone, edit, and propose a pull request; GitHub still checks your own repository permission.",
   usage: ["Ask what changed in a repo this week", "Open an issue from a bug you describe", "Read release notes without opening GitHub"],
   icon: <GithubMark size={22} />,
 };
@@ -128,7 +128,9 @@ export function connectionViews(
 export interface GithubConnection {
   configured: boolean;
   connected: boolean;
+  reauthorizationRequired?: boolean;
   account?: string;
+  installUrl?: string;
   connections: readonly { id: string; account: string }[];
 }
 

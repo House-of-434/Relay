@@ -2,13 +2,12 @@ import { createHash } from "node:crypto";
 
 import { dataDirPath, readJsonFile, SerialQueue, writeJsonFileAtomic } from "./json-store.ts";
 
-/** Per-user GitHub App installation records.
+/** Per-user GitHub App installation metadata.
  *
- * No token is stored: the installation id is exchanged for a short-lived
- * installation token on demand. One installation belongs to exactly one Relay
- * user; a second user claiming the same installation is refused rather than
- * silently shared. This backs the "private access cannot cross user
- * boundaries" guarantee. */
+ * No token is stored here. The user access token is the credential and lives
+ * in github-user-connections.json. One installation may be visible to several
+ * Relay users in the same organization; each user still has their own token
+ * and their own repository permissions. */
 
 export interface GitHubConnection {
   /** Stable id derived from the installation, used by the UI and disconnect. */
@@ -26,13 +25,6 @@ export interface GitHubConnection {
 interface StoreFile {
   version: 1;
   connections: GitHubConnection[];
-}
-
-export class GitHubConnectionConflictError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "GitHubConnectionConflictError";
-  }
 }
 
 export function githubConnectionId(installationId: number): string {
@@ -78,15 +70,10 @@ export class GitHubConnectionStore {
     return (await this.list(userId)).find((connection) => connection.id === id);
   }
 
-  /** Record an installation for a user. Refuses if the installation already
-   * belongs to a different user; replaces the same user's own record. */
+  /** Record an installation for a user. Replaces the same user's own record. */
   async save(connection: GitHubConnection): Promise<GitHubConnection> {
     return this.queue.run(async () => {
       const connections = await this.load();
-      const owner = connections.find((entry) => entry.installationId === connection.installationId);
-      if (owner && owner.userId !== connection.userId) {
-        throw new GitHubConnectionConflictError("this GitHub installation is already linked to another account");
-      }
       const next = connections.filter((entry) =>
         entry.installationId !== connection.installationId || entry.userId !== connection.userId);
       next.push(connection);

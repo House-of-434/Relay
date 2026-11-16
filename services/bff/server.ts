@@ -17,8 +17,9 @@ import { handleInternalNotion, isInternalNotionPath } from "./notion-internal.ts
 import { exchangeNotionToken, normalizeNotionId, NOTION_OAUTH_AUTHORIZE_URL } from "./notion-api.ts";
 import { NotionConnectionStore } from "./notion-connections.ts";
 import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
-import { GitHubConnectionConflictError, GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
-import { GitHubAppGateway } from "./github-api.ts";
+import { GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
+import { GITHUB_OAUTH_AUTHORIZE_URL, GitHubAppGateway, GitHubApiError } from "./github-api.ts";
+import { GitHubUserConnectionStore } from "./github-user-connections.ts";
 import {
   GOOGLE_SERVICE_REGISTRY,
   GoogleConnectionStore,
@@ -81,10 +82,15 @@ export interface RelayBffConfig {
   relayMailboxAddress?: string;
   relayMailboxUserId?: string;
   dataDir?: string;
-  /** GitHub App used for optional private-repository access. */
+  /** GitHub App used for per-user repository access. */
   githubAppId?: string;
   githubAppPrivateKey?: string;
   githubAppSlug?: string;
+  /** GitHub App user OAuth. */
+  githubClientId?: string;
+  githubClientSecret?: string;
+  githubTokenEncryptionKey?: string;
+  githubRedirectUri?: string;
   /** Public Notion OAuth integration for per-user workspace connections. */
   notionClientId?: string;
   notionClientSecret?: string;
@@ -146,6 +152,10 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
   const githubAppId = env.RELAY_CONN_GITHUB_APP_ID?.trim();
   const githubAppPrivateKey = env.RELAY_CONN_GITHUB_APP_PRIVATE_KEY;
   const githubAppSlug = env.RELAY_CONN_GITHUB_APP_SLUG?.trim();
+  const githubClientId = env.RELAY_CONN_GITHUB_CLIENT_ID?.trim();
+  const githubClientSecret = env.RELAY_CONN_GITHUB_CLIENT_SECRET?.trim();
+  const githubTokenEncryptionKey = env.RELAY_CONN_GITHUB_TOKEN_KEY?.trim() || env.RELAY_TOKEN_ENCRYPTION_KEY?.trim();
+  const githubRedirectUri = env.RELAY_GITHUB_REDIRECT_URI?.trim();
   const notionClientId = env.RELAY_CONN_NOTION_CLIENT_ID?.trim();
   const notionClientSecret = env.RELAY_CONN_NOTION_CLIENT_SECRET?.trim();
   const notionTokenEncryptionKey = env.RELAY_CONN_NOTION_TOKEN_KEY?.trim() || env.RELAY_TOKEN_ENCRYPTION_KEY?.trim();
@@ -182,6 +192,10 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     ...(githubAppId ? { githubAppId } : {}),
     ...(githubAppPrivateKey ? { githubAppPrivateKey } : {}),
     ...(githubAppSlug ? { githubAppSlug } : {}),
+    ...(githubClientId ? { githubClientId } : {}),
+    ...(githubClientSecret ? { githubClientSecret } : {}),
+    ...(githubTokenEncryptionKey ? { githubTokenEncryptionKey } : {}),
+    ...(githubRedirectUri ? { githubRedirectUri } : {}),
     ...(notionClientId ? { notionClientId } : {}),
     ...(notionClientSecret ? { notionClientSecret } : {}),
     ...(notionTokenEncryptionKey ? { notionTokenEncryptionKey } : {}),
@@ -908,13 +922,63 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     redirectUri: googleRedirectUri(config, publicUrl)?.toString(),
   });
   const githubConnections = new GitHubConnectionStore({ dataDir: config.dataDir });
+  const githubUsers = new GitHubUserConnectionStore({
+    dataDir: config.dataDir,
+    encryptionKey: config.githubTokenEncryptionKey,
+    now,
+  });
   const githubApp = config.githubAppId && config.githubAppPrivateKey
     ? new GitHubAppGateway({ appId: config.githubAppId, privateKey: config.githubAppPrivateKey, fetcher })
     : undefined;
   const githubInstallUrl = config.githubAppSlug
     ? `${GITHUB_INSTALL_BASE}/${config.githubAppSlug}/installations/new`
     : undefined;
-  const githubTransactions = new Map<string, { userId: string; sessionId: string; expiresAt: number }>();
+  const githubOAuthConfigured = Boolean(
+    config.githubClientId && config.githubClientSecret && config.githubTokenEncryptionKey && githubApp,
+  );
+  const githubTransactions = new Map<string, {
+    userId: string;
+    sessionId: string;
+    codeVerifier: string;
+    redirectUri: string;
+    expiresAt: number;
+  }>();
+  const githubTokenRefreshes = new Map<string, Promise<string | undefined>>();
+  const githubUserTokenFor = async (userId: string): Promise<string | undefined> => {
+    const running = githubTokenRefreshes.get(userId);
+    if (running) return running;
+    const task = (async () => {
+      const record = await githubUsers.tokensFor(userId);
+      if (!record || record.connection.reauthRequired) return undefined;
+      if (record.connection.accessExpiresAt - 60_000 > now()) return record.accessToken;
+      if (!record.refreshToken || !config.githubClientId || !config.githubClientSecret || !githubApp) {
+        await githubUsers.markReauthRequired(userId);
+        return undefined;
+      }
+      try {
+        const refreshed = await githubApp.refreshUserToken({
+          clientId: config.githubClientId,
+          clientSecret: config.githubClientSecret,
+          refreshToken: record.refreshToken,
+        });
+        await githubUsers.updateTokens({
+          userId,
+          accessToken: refreshed.accessToken,
+          ...(refreshed.refreshToken ? { refreshToken: refreshed.refreshToken } : {}),
+          accessExpiresAt: refreshed.accessExpiresAt,
+          refreshExpiresAt: refreshed.refreshExpiresAt,
+        });
+        return refreshed.accessToken;
+      } catch {
+        await githubUsers.markReauthRequired(userId);
+        return undefined;
+      }
+    })().finally(() => {
+      githubTokenRefreshes.delete(userId);
+    });
+    githubTokenRefreshes.set(userId, task);
+    return task;
+  };
   const notionConnections = new NotionConnectionStore({
     dataDir: config.dataDir,
     encryptionKey: config.notionTokenEncryptionKey,
@@ -1076,14 +1140,25 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       `${GITHUB_OAUTH_STATE_COOKIE}=; Path=/api/github/callback; HttpOnly; SameSite=Lax; Max-Age=0${cookieSecurity(publicUrl)}`,
     );
   };
-  const createGitHubState = (userId: string, sessionId: string): string => {
+  const githubCallbackUri = (): URL => new URL(
+    config.githubRedirectUri ?? `${publicUrl.origin}/api/github/callback`,
+  );
+  const createGitHubState = (userId: string, sessionId: string, redirectUri: string): { state: string; codeVerifier: string; codeChallenge: string } => {
     if (githubTransactions.size >= MAX_PENDING_LOGINS) {
       const oldest = githubTransactions.keys().next().value;
       if (oldest !== undefined) githubTransactions.delete(oldest);
     }
     const state = randomBytes(32).toString("base64url");
-    githubTransactions.set(state, { userId, sessionId, expiresAt: now() + oauthStateTtlMs });
-    return state;
+    const codeVerifier = randomBytes(48).toString("base64url");
+    const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
+    githubTransactions.set(state, {
+      userId,
+      sessionId,
+      codeVerifier,
+      redirectUri,
+      expiresAt: now() + oauthStateTtlMs,
+    });
+    return { state, codeVerifier, codeChallenge };
   };
 
   const notionCallbackUri = (): URL => new URL(
@@ -1164,9 +1239,10 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     res.end();
   };
 
-  /** GitHub App install callback. Mirrors the Google callback's binding: the
-   * state must match its HttpOnly cookie and the *live* session, so a stolen
-   * state cannot attach an installation to another account. */
+  /** GitHub user authorization callback. The installation callback may also
+   * arrive here with no code when an organization owner installed the app.
+   * The user token is the credential; installation metadata is recorded for
+   * repository discovery and display. */
   const handleGitHubCallback = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
     res.setHeader("cache-control", "no-store");
     clearGitHubStateCookie(res);
@@ -1184,29 +1260,57 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       reject(req, res, 401, "GitHub connection could not be completed");
       return;
     }
+    const code = url.searchParams.get("code");
     const installationRaw = url.searchParams.get("installation_id");
     const installationId = installationRaw && /^\d{1,12}$/.test(installationRaw) ? Number(installationRaw) : undefined;
-    if (installationId === undefined) {
-      reject(req, res, 400, "GitHub connection could not be completed");
-      return;
-    }
     try {
-      const info = await githubApp.installation(installationId);
-      await githubConnections.save({
-        id: githubConnectionId(installationId),
-        userId: transaction.userId,
-        installationId,
-        account: info.account,
-        permissions: info.permissions,
-        repositorySelection: info.repositorySelection,
-        createdAt: new Date(now()).toISOString(),
-      });
-    } catch (error) {
-      if (error instanceof GitHubConnectionConflictError) {
-        reject(req, res, 409, "this GitHub installation is already linked to another account");
+      if (code && githubOAuthConfigured) {
+        const tokens = await githubApp.exchangeUserCode({
+          clientId: config.githubClientId!,
+          clientSecret: config.githubClientSecret!,
+          code,
+          redirectUri: transaction.redirectUri,
+          codeVerifier: transaction.codeVerifier,
+        });
+        const identity = await githubApp.getUser(tokens.accessToken);
+        await githubUsers.save({
+          userId: transaction.userId,
+          githubUserId: identity.id,
+          login: identity.login,
+          accessToken: tokens.accessToken,
+          ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
+          accessExpiresAt: tokens.accessExpiresAt,
+          refreshExpiresAt: tokens.refreshExpiresAt,
+        });
+        const installations = await githubApp.listUserInstallations(tokens.accessToken);
+        for (const entry of installations) {
+          await githubConnections.save({
+            id: githubConnectionId(entry.id),
+            userId: transaction.userId,
+            installationId: entry.id,
+            account: entry.account,
+            permissions: entry.permissions,
+            repositorySelection: entry.repositorySelection,
+            createdAt: new Date(now()).toISOString(),
+          });
+        }
+      } else if (installationId !== undefined) {
+        const info = await githubApp.installation(installationId);
+        await githubConnections.save({
+          id: githubConnectionId(installationId),
+          userId: transaction.userId,
+          installationId,
+          account: info.account,
+          permissions: info.permissions,
+          repositorySelection: info.repositorySelection,
+          createdAt: new Date(now()).toISOString(),
+        });
+      } else {
+        reject(req, res, 400, "GitHub connection could not be completed");
         return;
       }
-      reject(req, res, 502, "GitHub connection could not be saved");
+    } catch (error) {
+      reject(req, res, error instanceof GitHubApiError && error.status === 401 ? 401 : 502, "GitHub connection could not be saved");
       return;
     }
     res.statusCode = 303;
@@ -1237,12 +1341,15 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 
     if (url.pathname === "/api/connectors" && method === "GET") {
       const connections = await githubConnections.list(session.subject);
+      const githubUser = await githubUsers.get(session.subject);
       const notionList = await notionConnections.list(session.subject);
       json(res, 200, {
         github: {
-          configured: Boolean(githubApp && githubInstallUrl),
-          connected: connections.length > 0,
-          account: connections.at(-1)?.account,
+          configured: githubOAuthConfigured,
+          connected: Boolean(githubUser) && githubUser?.reauthRequired !== true,
+          reauthorizationRequired: githubUser?.reauthRequired === true,
+          account: githubUser?.login ?? connections.at(-1)?.account,
+          installUrl: githubInstallUrl,
           connections: connections.map((connection) => ({ id: connection.id, account: connection.account })),
         },
         notion: {
@@ -1263,15 +1370,21 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         reject(req, res, 403, "forbidden");
         return;
       }
-      if (!githubApp || !githubInstallUrl) {
+      if (!githubOAuthConfigured || !githubApp) {
         json(res, 503, { error: "GitHub is not configured" });
         return;
       }
-      const state = createGitHubState(session.subject, sessionId!);
+      const redirectUri = githubCallbackUri().toString();
+      const { state, codeChallenge } = createGitHubState(session.subject, sessionId!, redirectUri);
       setGitHubStateCookie(res, state);
-      const install = new URL(githubInstallUrl);
-      install.searchParams.set("state", state);
-      json(res, 200, { authorizationUrl: install.toString() });
+      const authorize = new URL(GITHUB_OAUTH_AUTHORIZE_URL);
+      authorize.searchParams.set("client_id", config.githubClientId!);
+      authorize.searchParams.set("redirect_uri", redirectUri);
+      authorize.searchParams.set("state", state);
+      authorize.searchParams.set("scope", "offline_access");
+      authorize.searchParams.set("code_challenge", codeChallenge);
+      authorize.searchParams.set("code_challenge_method", "S256");
+      json(res, 200, { authorizationUrl: authorize.toString() });
       return;
     }
 
@@ -1321,8 +1434,13 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
 
     if (url.pathname === "/api/github/connection" && method === "GET") {
       const connections = await githubConnections.list(session.subject);
+      const githubUser = await githubUsers.get(session.subject);
       json(res, 200, {
-        configured: Boolean(githubApp && githubInstallUrl),
+        configured: githubOAuthConfigured,
+        connected: Boolean(githubUser) && githubUser?.reauthRequired !== true,
+        reauthorizationRequired: githubUser?.reauthRequired === true,
+        account: githubUser?.login,
+        installUrl: githubInstallUrl,
         connections: connections.map((connection) => ({
           id: connection.id,
           account: connection.account,
@@ -1336,19 +1454,32 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     if (disconnectMatch) {
       const id = disconnectMatch[1]!;
       const connection = await githubConnections.get(session.subject, id);
-      if (!connection) {
+      const githubUser = await githubUsers.get(session.subject);
+      if (!connection && !githubUser) {
         json(res, 404, { error: "GitHub connection not found" });
         return;
       }
-      // Best-effort remote uninstall; the local record is removed either way.
-      if (githubApp) {
+      // Revoke only this user's token. The GitHub App installation is shared
+      // by every user in the organization and must stay installed.
+      if (githubUser && githubApp && config.githubClientId && config.githubClientSecret) {
         try {
-          await githubApp.deleteInstallation(connection.installationId);
+          const tokens = await githubUsers.tokensFor(session.subject);
+          if (tokens) {
+            await githubApp.revokeUserToken({
+              clientId: config.githubClientId,
+              clientSecret: config.githubClientSecret,
+              accessToken: tokens.accessToken,
+            });
+          }
         } catch {
-          // The user can also remove the app from GitHub; local removal stands.
+          // Local removal still wins when GitHub's revocation endpoint fails.
         }
       }
-      await githubConnections.delete(session.subject, id);
+      const installations = await githubConnections.list(session.subject);
+      for (const installation of installations) {
+        await githubConnections.delete(session.subject, installation.id);
+      }
+      await githubUsers.delete(session.subject);
       json(res, 200, { ok: true, disconnected: true });
       return;
     }
@@ -1866,21 +1997,54 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         now,
       }, "/api/internal/connectors/state");
       if (!verified) return;
-      const githubConnected = (await githubConnections.list(verified.actor.userId)).length > 0;
+      const githubUser = await githubUsers.get(verified.actor.userId);
+      const githubConnected = Boolean(githubUser) && githubUser?.reauthRequired !== true;
       const notionConnected = (await notionConnections.list(verified.actor.userId)).length > 0;
-      jsonResponse(res, 200, { github: { connected: githubConnected }, notion: { connected: notionConnected } });
+      jsonResponse(res, 200, {
+        github: { connected: githubConnected, reauthorizationRequired: githubUser?.reauthRequired === true },
+        notion: { connected: notionConnected },
+      });
+      return;
+    }
+
+    if (url.pathname === "/api/internal/github/user-token") {
+      if (!config.githubTokenEncryptionKey) {
+        jsonResponse(res, 503, { error: "GitHub is not configured" });
+        return;
+      }
+      const verified = await verifyInternalRequest(req, res, url.pathname, {
+        capability: config.relayBffCapability,
+        actorSecret: config.relayToolActorSecret,
+        now,
+      }, "/api/internal/github/user-token");
+      if (!verified) return;
+      if (verified.actor.agent !== "scout") {
+        jsonResponse(res, 403, { error: "repository access is available only to Scout" });
+        return;
+      }
+      const token = await githubUserTokenFor(verified.actor.userId);
+      if (!token) {
+        jsonResponse(res, 409, { error: "GitHub is not connected for this user; reconnect GitHub in Apps" });
+        return;
+      }
+      const connection = await githubUsers.get(verified.actor.userId);
+      jsonResponse(res, 200, {
+        accessToken: token,
+        login: connection?.login,
+        accessExpiresAt: connection?.accessExpiresAt,
+      });
       return;
     }
 
     if (isInternalGitHubPath(url.pathname)) {
-      if (!githubApp) {
+      if (!githubOAuthConfigured || !githubApp) {
         jsonResponse(res, 503, { error: "GitHub is not configured" });
         return;
       }
       await handleInternalGitHub(req, res, url.pathname, {
         capability: config.relayBffCapability,
         actorSecret: config.relayToolActorSecret,
-        connections: githubConnections,
+        userToken: githubUserTokenFor,
         app: githubApp,
         now,
       });

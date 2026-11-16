@@ -304,19 +304,65 @@
       }
     },
     {
-      "name": "relay_git",
-      "description": "Run one validated relay-git operation inside this conversation's working folder. Use it for the repository workflow in the repo-changes skill, never for arbitrary shell. Supported commands: auth-status; clone House-of-434/house-of-434-site; checkout relay/<branch>; commit \"<message>\"; push relay/<branch>; create-pr --branch relay/<branch> --title \"<title>\" --body \"<body>\". Repository operations are available only to Scout, are limited to the one authorized repository, and refuse main/master/production. The GitHub token stays on the Relay server and is never returned.",
+      "name": "github_git_remote",
+      "description": "Open a read-only GitHub transport for one repository in this conversation. Returns a clone URL and the exact local path to clone into. The URL can clone and fetch but cannot push. Use ordinary git in the conversation workspace; publishing goes through propose_publish after the person approves the exact commit.",
       "inputSchema": {
         "type": "object",
         "additionalProperties": false,
         "properties": {
-          "command": {
+          "repo": {
             "type": "string",
-            "description": "One relay-git command, for example: relay-git checkout relay/events-poster"
+            "description": "Repository as owner/name, for example House-of-434/house-of-434-site."
           }
         },
         "required": [
-          "command"
+          "repo"
+        ]
+      }
+    },
+    {
+      "name": "propose_publish",
+      "description": "Ask the person to publish the current local commit. Relay will push only this exact commit to a relay/ branch and open the pull request after they approve. Include a summary, test status, and paths to screenshots or recordings in this conversation's working folder. Never run git push yourself; it has no GitHub credential and will fail.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "repo": {
+            "type": "string",
+            "description": "Repository as owner/name from github_git_remote."
+          },
+          "branch": {
+            "type": "string",
+            "description": "New branch starting with relay/."
+          },
+          "title": {
+            "type": "string",
+            "description": "Pull request title."
+          },
+          "body": {
+            "type": "string",
+            "description": "Pull request body: summary, checks, test status, and a visual-review note."
+          },
+          "path": {
+            "type": "string",
+            "description": "Local repository path returned by github_git_remote, relative to the working folder."
+          },
+          "attachments": {
+            "type": "array",
+            "maxItems": 12,
+            "items": {
+              "type": "string",
+              "description": "Screenshot or video path relative to the working folder."
+            },
+            "description": "Optional visual evidence for the pull request."
+          }
+        },
+        "required": [
+          "repo",
+          "branch",
+          "title",
+          "body",
+          "path"
         ]
       }
     },

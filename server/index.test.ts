@@ -6688,44 +6688,39 @@ describe("bot memory API", () => {
     }
   });
 
-  it("refuses repository commands from non-Scout and fails closed without a token", async () => {
+  it("refuses repository access from non-Scout and fails closed without a Git broker", async () => {
     const bots = (await api("GET", "/api/bots")).body.bots as Array<{ id: string; threadId: string; relayAgent?: string }>;
     const scout = bots.find((bot) => bot.relayAgent === "scout");
     expect(scout).toBeDefined();
     const scoutToken = await mintTestCapability(BASE, scout!.id, scout!.threadId);
-    const scoutResult = await fetch(`${BASE}/api/internal/relay-git`, {
+    const scoutResult = await fetch(`${BASE}/api/internal/github-git-remote`, {
       method: "POST",
       headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ command: "relay-git auth-status" }),
+      body: JSON.stringify({ repo: "House-of-434/house-of-434-site" }),
     });
     expect(scoutResult.status).toBe(409);
-    expect(((await scoutResult.json()) as { error: string }).error).toContain("token is not configured");
+    expect(((await scoutResult.json()) as { error: string }).error).toContain("working folder");
+
+    const invalid = await fetch(`${BASE}/api/internal/github-git-remote`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ repo: "../outside" }),
+    });
+    expect(invalid.status).toBe(400);
 
     const other = (await api("POST", "/api/bots", {})).body.bot;
     try {
       const token = await mintTestCapability(BASE, other.id, other.threadId);
-      const refused = await fetch(`${BASE}/api/internal/relay-git`, {
+      const refused = await fetch(`${BASE}/api/internal/github-git-remote`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ command: "relay-git auth-status" }),
+        body: JSON.stringify({ repo: "House-of-434/house-of-434-site" }),
       });
       expect(refused.status).toBe(403);
       expect(((await refused.json()) as { error: string }).error).toContain("only to Scout");
-
-      const invalid = await fetch(`${BASE}/api/internal/relay-git`, {
-        method: "POST",
-        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        body: JSON.stringify({ command: "not a relay-git command" }),
-      });
-      expect(invalid.status).toBe(400);
     } finally {
       await api("DELETE", `/api/bots/${other.id}`);
     }
-    expect((await fetch(`${BASE}/api/internal/vm-exec`, {
-      method: "POST",
-      headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
-      body: JSON.stringify({ command: "ls" }),
-    })).status).toBe(404);
   });
 
   it("keeps a turn to its attachment limit when the calls arrive at the same time", async () => {

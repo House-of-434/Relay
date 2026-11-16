@@ -141,7 +141,7 @@ function GoogleConnectionsDialog() {
     if (revoked.includes(false)) throw new Error("Could not disconnect every Google account for this service.");
   };
 
-  // Mirrors the Google connect: the BFF answers with a GitHub install URL and
+  // Mirrors the Google connect: the BFF answers with a GitHub authorization URL and
   // the browser leaves Relay for it, so success never returns here.
   const connectGithub = async () => {
     const response = await fetch("/api/github/connection/connect", {
@@ -153,7 +153,7 @@ function GoogleConnectionsDialog() {
     if (response.status === 503) throw new Error("GitHub is not configured yet.");
     if (!response.ok) throw new Error("Could not start GitHub authorization.");
     const result = await response.json() as { authorizationUrl?: unknown };
-    if (typeof result.authorizationUrl !== "string") throw new Error("GitHub authorization did not return an install URL.");
+    if (typeof result.authorizationUrl !== "string") throw new Error("GitHub authorization did not return an authorization URL.");
     const authorizationUrl = new URL(result.authorizationUrl);
     if (authorizationUrl.origin !== "https://github.com") throw new Error("GitHub authorization returned an unexpected destination.");
     window.location.assign(authorizationUrl.toString());

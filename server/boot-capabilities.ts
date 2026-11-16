@@ -19,18 +19,15 @@ export interface HeldHarnessCapabilities {
   scribeWorkerCapability?: string;
   /** Shared only with the BFF for the trusted mailbox reply route. */
   mailMirrorCapability?: string;
-  githubWorkspaceToken?: string;
 }
 
 export function holdHarnessCapabilities(env: NodeJS.ProcessEnv = process.env): HeldHarnessCapabilities {
   const bffCapability = env.RELAY_BFF_CAPABILITY;
   const scribeWorkerCapability = env.RELAY_SCRIBE_WORKER_CAPABILITY;
   const mailMirrorCapability = env.RELAY_MAIL_MIRROR_CAPABILITY;
-  const githubWorkspaceToken = env.RELAY_GITHUB_WORKSPACE_TOKEN;
   delete env.RELAY_BFF_CAPABILITY;
   delete env.RELAY_SCRIBE_WORKER_CAPABILITY;
   delete env.RELAY_MAIL_MIRROR_CAPABILITY;
   delete env.RELAY_INGEST_CAPABILITY;
-  delete env.RELAY_GITHUB_WORKSPACE_TOKEN;
-  return { bffCapability, scribeWorkerCapability, mailMirrorCapability, githubWorkspaceToken };
+  return { bffCapability, scribeWorkerCapability, mailMirrorCapability };
 }

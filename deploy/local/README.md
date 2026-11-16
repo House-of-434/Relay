@@ -237,18 +237,23 @@ Two more services, both compose-network only (no published ports):
 | `stt` | Shared Parakeet int8 STT server (`:8090`), 16 kHz WAV → text | `http://stt:8090` from `scribe` only | model baked into the image |
 
 Capabilities live in their own gitignored files (see
-`.env.ingest.example` / `.env.scribe.example` / `.env.workspace.example`):
+`.env.ingest.example` / `.env.scribe.example`):
 
 ```sh
 cp .env.ingest.example .env.ingest   # RELAY_INGEST_CAPABILITY (tools + scribe)
 cp .env.scribe.example .env.scribe   # RELAY_SCRIBE_WORKER_CAPABILITY (app + scribe)
-cp .env.workspace.example .env.workspace # RELAY_GITHUB_WORKSPACE_TOKEN (app only)
 ```
 
 The `scribe` container holds **only** the ingest and scribe files; `app` holds the worker
-capability and the GitHub workspace token; `tools` holds the ingest capability. The harness monitor arms
+capability; `tools` holds the ingest capability. The harness monitor arms
 captures by calling the worker at `RELAY_SCRIBE_WORKER_URL` (`http://scribe:8791`).
 `RELAY_SCRIBE_ENABLED` gates the whole feature.
+
+The `git-broker` service holds the per-user GitHub write path. It receives a
+short-lived user token from the BFF only for a clone/fetch or an approved
+publish, and never exposes a token to the agent's shell. It authenticates with
+the existing `RELAY_BFF_CAPABILITY`; there is no separate broker env file. The
+app reaches it at `RELAY_GIT_BROKER_URL`; the broker's port is never published.
 
 Diagnostic retention defaults to **30 days** and sweeps `/app/storage/screenshots`,
 `/data/scribe/failures`, `/data/scribe/status`, and `/data/scribe/probes`.

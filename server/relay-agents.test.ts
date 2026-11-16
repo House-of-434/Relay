@@ -64,9 +64,10 @@ describe("scout capability manifest", () => {
 });
 
 describe("repository delegation prompts", () => {
-  it("points Scout at validated relay-git operations instead of a generic shell", () => {
+  it("points Scout at the native Git and approval-bound publish workflow", () => {
     expect(scout.profile.soul).toContain("repo-changes skill");
-    expect(scout.profile.soul).toContain("validated relay-git operations");
+    expect(scout.profile.soul).toContain("github_git_remote");
+    expect(scout.profile.soul).toContain("propose_publish");
     expect(scout.profile.soul).toContain("relay/ branch");
     expect(scout.profile.soul).toContain("never push to main");
   });

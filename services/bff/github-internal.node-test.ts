@@ -1,14 +1,9 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
-import { mkdtempSync } from "node:fs";
-import { rm } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, test } from "node:test";
 
-import { GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
 import type { GitHubAppGateway } from "./github-api.ts";
 import { handleInternalGitHub, INTERNAL_GITHUB_ISSUES_SEARCH, INTERNAL_GITHUB_RELEASES } from "./github-internal.ts";
 
@@ -17,7 +12,6 @@ const ACTOR_SECRET = "internal-actor-secret-fixture-value-0000000000000000";
 const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const BOT_ID = "3f2504e0-4f89-41d3-9a0c-0305e82c3301";
 const THREAD_ID = "9c858901-8a57-4791-81fe-4c455b099bc9";
-const INSTALLATION_ID = 12345;
 
 const cleanups: Array<() => Promise<void>> = [];
 afterEach(async () => {
@@ -33,19 +27,8 @@ function actorAssertion(): string {
 }
 
 async function createFixture(items: Array<Record<string, unknown>>) {
-  const dataDir = mkdtempSync(join(tmpdir(), "relay-github-internal-"));
-  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
-  const connections = new GitHubConnectionStore({ dataDir });
-  await connections.save({
-    id: githubConnectionId(INSTALLATION_ID),
-    userId: USER_ID,
-    installationId: INSTALLATION_ID,
-    account: "octo",
-    permissions: ["contents:read"],
-    createdAt: new Date().toISOString(),
-  });
   const app = {
-    rest: async (path: string) => {
+    userRest: async (_token: string, path: string) => {
       assert.match(path, /^\/search\/issues/);
       return { items };
     },
@@ -55,7 +38,7 @@ async function createFixture(items: Array<Record<string, unknown>>) {
     void handleInternalGitHub(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      connections,
+      userToken: async () => "ghu_test",
       app,
     });
   });
@@ -105,19 +88,8 @@ test("issues without a usable repository are dropped instead of becoming ambiguo
 });
 
 test("releases carry the requested repository so citations cannot collide across repos", async () => {
-  const dataDir = mkdtempSync(join(tmpdir(), "relay-github-releases-"));
-  cleanups.push(() => rm(dataDir, { recursive: true, force: true }));
-  const connections = new GitHubConnectionStore({ dataDir });
-  await connections.save({
-    id: githubConnectionId(INSTALLATION_ID),
-    userId: USER_ID,
-    installationId: INSTALLATION_ID,
-    account: "octo",
-    permissions: ["contents:read"],
-    createdAt: new Date().toISOString(),
-  });
   const app = {
-    rest: async (path: string) => {
+    userRest: async (_token: string, path: string) => {
       assert.match(path, /^\/repos\/octo\/repo\/releases/);
       return [{ tag_name: "v1.0.0", name: "First", html_url: "https://github.com/octo/repo/releases/tag/v1.0.0" }];
     },
@@ -126,7 +98,7 @@ test("releases carry the requested repository so citations cannot collide across
     void handleInternalGitHub(req, res, new URL(req.url ?? "/", "http://bff.test").pathname, {
       capability: CAPABILITY,
       actorSecret: ACTOR_SECRET,
-      connections,
+      userToken: async () => "ghu_test",
       app,
     });
   });

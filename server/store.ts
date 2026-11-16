@@ -408,6 +408,10 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
   /** The owning account's Supabase UUID, stamped at creation. A bot with none
    * is visible to no one; email is contact metadata, never an owner key. */
   ownerUserId?: string;
+  /** Shipped skill seeds already installed or deliberately skipped. Never a
+   * client field; it keeps a one-time backfill from re-adding a deleted
+   * skill on every restart. */
+  seededSkills?: string[];
 }
 
 /** BotRecord fields no client may see, plus the two the projection
@@ -415,7 +419,7 @@ export interface BotRecord extends Omit<WireBot, "avatarUrl" | "tasks"> {
  * WireTask[], avatarUrl is coerced to always-present). The exactness
  * assertion fails to compile when either side drifts, so a new server
  * field forces a decision — wire-visible or private here. */
-export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase" | "ownerUserId";
+export type BotWirePrivateKeys = "resumeCursors" | "tasks" | "avatarUrl" | "approvalGrant" | "lastProfileRequestId" | "lastTighteningRequestId" | "lastTeamSetupReceipt" | "packageBase" | "ownerUserId" | "seededSkills";
 export type BotWireProjection = Pick<BotRecord, Exclude<keyof BotRecord, BotWirePrivateKeys>>;
 export type BotWireProjectionIsExact = AssertExact<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection> & AssertSameKeys<Omit<WireBot, "avatarUrl" | "tasks">, BotWireProjection>;
 export const botWireProjectionIsExact: BotWireProjectionIsExact = true;
@@ -2791,6 +2795,18 @@ export class Store {
       present.set(seed.role, bot);
     }
     return created;
+  }
+
+  /** Record a shipped skill seed after a successful install or a deliberate
+   * skip. The record lives with the bot so deleting the skill does not make it
+   * reappear. */
+  markSkillSeed(botId: string, seed: string): void {
+    const bot = this.bot(botId);
+    if (!bot) return;
+    const seeded = new Set(bot.seededSkills ?? []);
+    if (seeded.has(seed)) return;
+    seeded.add(seed);
+    this.patchBot(botId, { seededSkills: [...seeded] });
   }
 
   seedIfEmpty() {

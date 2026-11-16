@@ -59,6 +59,24 @@ export function registerGithubTools(server: McpServer, agent: Agent, context: Gi
   );
 
   server.registerTool(
+    "github_list_repositories",
+    {
+      description: "List the repositories this user can access through the Relay GitHub App installation. Read-only.",
+      inputSchema: { limit: z.number().int().min(1).max(100).optional() },
+      annotations: { readOnlyHint: true },
+    },
+    async ({ limit }) => {
+      try {
+        authorizeGithub(agent, "read");
+        const { items } = await client.listRepositories(actorAssertion, { limit });
+        return { content: [{ type: "text" as const, text: JSON.stringify({ results: items.map(repositoryResult) }) }] };
+      } catch (error) {
+        return toolError(error);
+      }
+    },
+  );
+
+  server.registerTool(
     "github_repository",
     {
       description: "Read one GitHub repository's metadata (description, stars, visibility, last update) by owner/name. Read-only.",

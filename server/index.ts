@@ -2,13 +2,13 @@
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { AsyncLocalStorage } from "node:async_hooks";
-import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { copyFileSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync, mkdirSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, mkdirSync, statSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { basename, dirname, extname, isAbsolute, join, relative as relativePath, resolve as resolvePath, sep } from "node:path";
+import { basename, extname, isAbsolute, join, relative as relativePath, resolve as resolvePath, sep } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
 
 import { z } from "zod";
@@ -16,7 +16,10 @@ import { selectReplay, DEFAULT_REBUILD_BYTES, MAX_SUMMARY_BYTES } from "./contex
 import { draftSummary, foldPoint } from "./compaction-summary.ts";
 import { compactBudget, contextWindowFor, shouldCompact } from "./context-budget.ts";
 import { autoCompactWindow } from "./drivers/claude.ts";
-import { authorizeRelayGitOperation, buildRelayGitShell, githubWorkspaceEnvironment, parseRelayGitCommand, relayGitDirectory, redactRelayGitSecret } from "./scout-git.ts";
+import { gitBrokerConfigured, gitBrokerSession, publishRequestSchema, publishToBroker, signPublishAuthorization } from "./git-broker.ts";
+import { PublishRequests } from "./publish-requests.ts";
+import { seedAllScoutSkills, seedScoutSkillsForOwner } from "./seed-skills.ts";
+import { appendGitAudit } from "./git-audit.ts";
 import { provenRequestPerson, SharedComputers, sharedComputerOperation, sharedComputerRegistration } from "./shared-computers.ts";
 import { cloudHomeLendingRefusal, createCloudRoutineAuthors, ownerOnlyConversation, type CloudLendingTurn } from "./cloud-lending.ts";
 import { botMemoryFiles, createLendingMemory } from "./lending-memory.ts";
@@ -202,7 +205,6 @@ const heldCapabilities = holdHarnessCapabilities();
 const relayBffCapability = heldCapabilities.bffCapability;
 const scribeWorkerCapability = heldCapabilities.scribeWorkerCapability;
 const relayMailMirrorCapability = heldCapabilities.mailMirrorCapability;
-const githubWorkspaceToken = heldCapabilities.githubWorkspaceToken;
 const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "http://127.0.0.1:8791";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -1218,7 +1220,7 @@ async function ensureUserWorkspace(userId: string): Promise<void> {
   if (!inFlight) {
     inFlight = (async () => {
       store.seedRelayAgentsForOwner(userId, RELAY_AGENT_SEEDS);
-      ensuredWorkspaces.add(userId);
+      if (seedScoutSkillsForOwner(store, userId)) ensuredWorkspaces.add(userId);
     })();
     workspaceSeeding.set(userId, inFlight);
   }
@@ -2037,7 +2039,7 @@ function agentsIntegration(
   roomHandoffId?: string,
   roomCoordination = false,
   ownThreadCreation = false,
-  relayGit = false,
+  githubGit = false,
 ) {
   const token = mintInternalCapability({
     botId,
@@ -2069,9 +2071,9 @@ function agentsIntegration(
       // gate is on; the routes behind them refuse regardless.
       RELAY_SHARED_COMPUTERS_ENABLED: lendingEnabled() ? "1" : "0",
       RELAY_CLOUD_HOME: CLOUD_HOME ? "1" : "0",
-      // Scout with an initialized workspace may run validated relay-git
-      // operations in this conversation's pinned folder.
-      RELAY_RELAY_GIT: relayGit ? "1" : "0",
+      // Scout with an initialized workspace may use the read-only Git broker
+      // and propose an approval-bound publish.
+      RELAY_GITHUB_GIT: githubGit ? "1" : "0",
       // Voice notes are stripped from server core: never advertise the tool.
       RELAY_VOICE_NOTES: "0",
     },
@@ -2898,6 +2900,7 @@ bootSelection = await defaultSelection();
 // the now-resolved workspace default so the shipped roster can run.
 store.healEmptyModelSelections();
 store.migrateRelayAgentSouls(RELAY_AGENT_SEEDS);
+seedAllScoutSkills(store);
 hostedModels?.reconcile(store);
 
 /** A bot as a client may see it: no provider session bookkeeping.
@@ -2919,7 +2922,7 @@ const wireTask = (task: TaskRecord): WireTask => {
 };
 
 const wireBot = (bot: BotRecord): WireBot => {
-  const { resumeCursors: _resumeCursors, tasks, approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ownerUserId: _ownerUserId, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ownerUserId: _ownerUserId, seededSkills: _seededSkills, ...rest } = bot;
   // An elevated selection is inert until the desktop confirms its exact
   // private reply. Every ordinary client sees the effective Ask state during
   // that two-phase window, never a grant that may still roll back.
@@ -2935,7 +2938,7 @@ const wireBot = (bot: BotRecord): WireBot => {
 /** The correlated private response carries the requested value so Electron
  * can validate it before sending the confirmation that makes it effective. */
 const wireTrustedApprovalBot = (bot: NonNullable<ReturnType<typeof store.bot>>) => {
-  const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ownerUserId: _ownerUserId, ...rest } = bot;
+  const { resumeCursors: _resumeCursors, tasks, approvalGrant: _approvalGrant, lastProfileRequestId: _lastProfileRequestId, lastTighteningRequestId: _lastTighteningRequestId, lastTeamSetupReceipt: _lastTeamSetupReceipt, packageBase: _packageBase, ownerUserId: _ownerUserId, seededSkills: _seededSkills, ...rest } = bot;
   const relayVisible = rest;
   if (RELAY_SHARED_WORKSPACE) Object.assign(relayVisible, { composio: false, connectorTools: undefined });
   return { ...relayVisible, approvalMode: approvalModeFor(rest), avatarUrl: rest.avatarUrl ?? null, ...(tasks ? { tasks: tasks.map(wireTask) } : {}) };
@@ -8434,6 +8437,7 @@ function relayMailboxActor(): MailboxActor | undefined {
 function ensureOwnerMercury(ownerUserId: string | undefined): string | undefined {
   if (!ownerUserId) return undefined;
   store.seedRelayAgentsForOwner(ownerUserId, RELAY_AGENT_SEEDS);
+  seedScoutSkillsForOwner(store, ownerUserId);
   return store.bots.find((b) => b.relayAgent === "mercury" && b.ownerUserId === ownerUserId)?.id;
 }
 
@@ -9017,6 +9021,7 @@ const tighteningRequests = new TighteningRequestService({
 /** User-confirmed Google actions. The pending entry is server-side only; the
  * card the user sees carries display text, never the event or draft id. */
 const connectorActions = new PendingConnectorActions();
+const publishRequests = new PublishRequests();
 /** One-shot research proposals live apart from routines: no schedule, no
  * calendar entry, one execution per confirmation. */
 researchJobs = new PendingResearchJobs();
@@ -9240,6 +9245,111 @@ function resolveAndSendRoutine(
     });
   }
   return sendRoutineResolution(res, result);
+}
+async function resolveAndSendPublish(
+  res: ServerResponse,
+  args: { botId: string; botName?: string; threadId: string; requestId: string; behavior: string },
+): Promise<boolean> {
+  const message = store.messagesFor(args.threadId).find(
+    (candidate) => candidate.card?.requestId === args.requestId && candidate.card.publishRequest,
+  );
+  const card = message?.card;
+  if (!message || !card?.publishRequest) return false;
+  const result = publishRequests.take(args.requestId, args.behavior === "allow" ? "allow" : "deny");
+  if (result.state === "missing") {
+    json(res, 410, { error: "this publish request is no longer pending" });
+    return true;
+  }
+  if (result.state === "already") {
+    json(res, 200, { ok: true, outcome: result.outcome === "approved" ? "published" : "rejected", alreadySettled: true });
+    return true;
+  }
+  const request = result.request;
+  store.patchMessage(args.threadId, message.id, {
+    card: { ...card, answered: args.behavior === "allow" ? "allow" : "deny", dismissed: args.behavior !== "allow" },
+  });
+  appendDecision(DATA_DIR, {
+    threadId: args.threadId,
+    requestId: args.requestId,
+    botId: args.botId,
+    botName: args.botName,
+    tool: "propose_publish",
+    summary: card.subtitle,
+    decision: result.state === "approved" ? "user-approved" : "user-denied",
+    source: "user",
+  });
+  if (result.state === "denied") {
+    appendGitAudit({
+      at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
+      repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "denied",
+    });
+    store.appendMessage(args.threadId, {
+      role: "bot",
+      kind: "text",
+      text: "Publishing was cancelled. Nothing was pushed to GitHub.",
+    });
+    json(res, 200, { ok: true, outcome: "rejected" });
+    return true;
+  }
+  try {
+    const repoPath = resolvePath(request.workspace, request.path);
+    const realRepo = realpathSync(repoPath);
+    const relativeRepo = relativePath(request.workspace, realRepo);
+    if (isAbsolute(relativeRepo) || relativeRepo === ".." || relativeRepo.startsWith(`..${sep}`)) {
+      json(res, 403, { error: "the repository path escapes this conversation's workspace" });
+      return true;
+    }
+    const head = execFileSync("git", ["-C", realRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    if (head !== request.commit) {
+      json(res, 409, { error: "the local commit changed after approval; ask Scout to propose the current commit again" });
+      return true;
+    }
+    const assertion = signedActorContext(
+      { userId: request.userId, botId: request.botId, threadId: request.threadId, agent: "scout" },
+      process.env.RELAY_TOOL_ACTOR_SECRET,
+    );
+    const session = await gitBrokerSession(assertion, request.workspace);
+    const authorization = signPublishAuthorization({
+      userId: request.userId,
+      botId: request.botId,
+      threadId: request.threadId,
+      agent: "scout",
+      repo: request.repo,
+      path: request.path,
+      branch: request.branch,
+      commit: request.commit,
+      title: request.title,
+      body: request.body,
+      attachments: request.attachments,
+      nonce: randomBytes(24).toString("base64url"),
+      issuedAt: Math.floor(Date.now() / 1000),
+      expiresAt: Math.floor(Date.now() / 1000) + 10 * 60,
+    }, process.env.RELAY_TOOL_ACTOR_SECRET);
+    const published = await publishToBroker(authorization, session.token);
+    appendGitAudit({
+      at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
+      repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "published", prUrl: published.prUrl,
+    });
+    store.appendMessage(args.threadId, {
+      role: "bot",
+      kind: "text",
+      text: `Published ${request.branch} and opened ${published.prUrl}`,
+    });
+    json(res, 200, { ok: true, outcome: "published", prUrl: published.prUrl, branch: published.branch, commit: published.commit });
+  } catch (error) {
+    appendGitAudit({
+      at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
+      repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "failed",
+      error: error instanceof Error ? error.message : String(error),
+    });
+    store.appendMessage(args.threadId, {
+      role: "bot",
+      kind: "text",
+      text: `Publishing failed: ${error instanceof Error ? error.message : String(error)}. The local commit is still here.`,
+    });
+    json(res, 502, { error: error instanceof Error ? error.message : "publishing failed" });
+  }
+  return true;
 }
 function resolveAndSendProfile(
   res: ServerResponse,
@@ -11116,71 +11226,6 @@ function attachmentConversationRootForThread(threadId: string): string | null {
   } catch {
     return null;
   }
-}
-
-const RELAY_GIT_TIMEOUT_MS = 300_000;
-const RELAY_GIT_OUTPUT_LIMIT = 64 * 1024;
-
-function clipRelayGitOutput(value: string): string {
-  return value.length <= RELAY_GIT_OUTPUT_LIMIT
-    ? value
-    : `${value.slice(0, RELAY_GIT_OUTPUT_LIMIT)}\n[output truncated]`;
-}
-
-/** Run one already-validated relay-git shell in a pinned workspace. The
- * process gets its own group on POSIX and is killed as a tree on timeout. */
-function runRelayGitCommand(
-  command: string,
-  options: { cwd: string; env: Record<string, string>; timeoutMs?: number },
-): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }> {
-  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? RELAY_GIT_TIMEOUT_MS, RELAY_GIT_TIMEOUT_MS));
-  return new Promise((resolve, reject) => {
-    const child = spawn("sh", ["-lc", command], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "pipe", "pipe"],
-      ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
-    });
-    let stdout = "";
-    let stderr = "";
-    let timedOut = false;
-    let settled = false;
-    let fallback: NodeJS.Timeout | undefined;
-    const finish = (result: { exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (fallback) clearTimeout(fallback);
-      resolve(result);
-    };
-    const killTree = () => {
-      const pid = child.pid;
-      if (!pid) return;
-      if (process.platform === "win32") {
-        spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
-        return;
-      }
-      try { process.kill(-pid, "SIGKILL"); }
-      catch { try { child.kill("SIGKILL"); } catch { /* already gone */ } }
-    };
-    const timer = setTimeout(() => {
-      timedOut = true;
-      killTree();
-      // A shell that ignores the group kill must not hang the route forever.
-      fallback = setTimeout(() => finish({ exitCode: null, stdout, stderr, timedOut }), 5_000);
-      fallback.unref?.();
-    }, timeoutMs);
-    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
-    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
-    child.once("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (fallback) clearTimeout(fallback);
-      reject(error);
-    });
-    child.once("close", (code) => finish({ exitCode: code, stdout, stderr, timedOut }));
-  });
 }
 
 function messageFileRootsForThread(senderId: string, threadId: string): string[] {
@@ -13739,27 +13784,24 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
       }
 
-      if (method === "POST" && path === "/api/internal/relay-git") {
+      if (method === "POST" && path === "/api/internal/github-git-remote") {
         const from = internalSender;
         const threadId = internalCapability.threadId;
         if (!connectorThread(from.id, threadId)) {
           return json(res, 403, { error: "source conversation does not belong to sender" });
         }
+        if (from.relayAgent !== "scout" || !from.ownerUserId) {
+          return json(res, 403, { error: "repository access is available only to Scout" });
+        }
         const body = await readInternalBody();
-        const parsed = parseRelayGitCommand(body.command);
-        if (!parsed.ok) return json(res, parsed.status, { error: parsed.error });
-        const token = githubWorkspaceToken;
-        const authorized = authorizeRelayGitOperation({
-          senderRole: from.relayAgent,
-          command: body.command,
-          operation: parsed.operation,
-          token,
-        });
-        if (!authorized.ok) return json(res, authorized.status, { error: authorized.error });
+        const repo = typeof body.repo === "string" ? body.repo.trim() : "";
+        if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repo) || repo.split("/").some((part: string) => part === "." || part === "..")) {
+          return json(res, 400, { error: "repo must look like owner/name" });
+        }
         const task = store.taskByThread(from.id, threadId);
         const workspace = task?.cwd ?? from.cwd;
         if (!workspace) {
-          return json(res, 409, { error: "This conversation has no working folder yet, so there is nowhere to run a repository command." });
+          return json(res, 409, { error: "This conversation has no working folder yet, so there is nowhere to clone a repository." });
         }
         let canonicalWorkspace: string;
         try {
@@ -13768,68 +13810,115 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         } catch {
           return json(res, 409, { error: "This conversation's working folder is unavailable." });
         }
-        const repoDirectory = relayGitDirectory(canonicalWorkspace);
-        const lexical = relativePath(canonicalWorkspace, repoDirectory);
-        if (isAbsolute(lexical) || lexical === ".." || lexical.startsWith(`..${sep}`)) {
-          return json(res, 400, { error: "the repository folder is outside this conversation's working folder" });
+        if (!gitBrokerConfigured()) return json(res, 503, { error: "GitHub transport is not configured" });
+        try {
+          const assertion = signedActorContext(
+            { userId: from.ownerUserId, botId: from.id, threadId, agent: "scout", turnId: internalCapability.generation },
+            process.env.RELAY_TOOL_ACTOR_SECRET,
+          );
+          const session = await gitBrokerSession(assertion, canonicalWorkspace);
+          const owner = repo.split("/")[0]!;
+          const name = repo.split("/")[1]!;
+          const suffix = createHash("sha256").update(`${owner}/${name}`.toLowerCase()).digest("hex").slice(0, 8);
+          return json(res, 200, {
+            cloneUrl: `${session.url}/${owner}/${name}.git`,
+            path: `repos/${owner}__${name}__${suffix}`,
+            expiresAt: session.expiresAt,
+          });
+        } catch (error) {
+          return json(res, typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 502, {
+            error: error instanceof Error ? error.message : "GitHub transport is unavailable",
+          });
         }
-        const repoParent = dirname(repoDirectory);
-        if (existsSync(repoParent)) {
-          let canonicalParent: string;
-          try {
-            canonicalParent = realpathSync(repoParent);
-          } catch {
-            return json(res, 409, { error: "the repository folder is unavailable" });
-          }
-          const parentRelative = relativePath(canonicalWorkspace, canonicalParent);
-          if (isAbsolute(parentRelative) || parentRelative === ".." || parentRelative.startsWith(`..${sep}`)) {
-            return json(res, 403, { error: "the repository folder escapes this conversation's working folder" });
-          }
-          try {
-            if (lstatSync(repoParent).isSymbolicLink()) {
-              return json(res, 403, { error: "the repository folder may not be a symbolic link" });
-            }
-          } catch {
-            return json(res, 409, { error: "the repository folder is unavailable" });
-          }
+      }
+
+      if (method === "POST" && path === "/api/internal/publish-request") {
+        const from = internalSender;
+        const threadId = internalCapability.threadId;
+        if (!connectorThread(from.id, threadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
         }
-        if (existsSync(repoDirectory)) {
-          let canonicalRepo: string;
-          try {
-            canonicalRepo = realpathSync(repoDirectory);
-          } catch {
-            return json(res, 409, { error: "the repository folder is unavailable" });
-          }
-          const contained = relativePath(canonicalWorkspace, canonicalRepo);
-          if (isAbsolute(contained) || contained === ".." || contained.startsWith(`..${sep}`)) {
-            return json(res, 403, { error: "the repository folder escapes this conversation's working folder" });
-          }
-          try {
-            if (lstatSync(repoDirectory).isSymbolicLink()) {
-              return json(res, 403, { error: "the repository folder may not be a symbolic link" });
-            }
-          } catch {
-            return json(res, 409, { error: "the repository folder is unavailable" });
-          }
+        if (from.relayAgent !== "scout" || !from.ownerUserId) {
+          return json(res, 403, { error: "repository publishing is available only to Scout" });
+        }
+        const body = await readInternalBody();
+        const parsed = publishRequestSchema.safeParse(body);
+        if (!parsed.success) return json(res, 400, { error: "invalid publish request" });
+        const task = store.taskByThread(from.id, threadId);
+        const workspace = task?.cwd ?? from.cwd;
+        if (!workspace) return json(res, 409, { error: "This conversation has no working folder yet." });
+        let canonicalWorkspace: string;
+        try {
+          canonicalWorkspace = realpathSync(workspace);
+          if (!statSync(canonicalWorkspace).isDirectory()) throw new Error("not a directory");
+        } catch {
+          return json(res, 409, { error: "This conversation's working folder is unavailable." });
+        }
+        if (!gitBrokerConfigured()) return json(res, 503, { error: "GitHub publishing is not configured" });
+        const repoPath = resolvePath(canonicalWorkspace, parsed.data.path);
+        const lexical = relativePath(canonicalWorkspace, repoPath);
+        if (isAbsolute(lexical) || lexical === ".." || lexical.startsWith(`..${sep}`) || !lexical.replaceAll("\\", "/").startsWith("repos/")) {
+          return json(res, 400, { error: "the repository path is outside this conversation's workspace" });
         }
         try {
-          const result = await runRelayGitCommand(buildRelayGitShell(parsed.operation, canonicalWorkspace), {
-            cwd: canonicalWorkspace,
-            env: {
-              PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
-              HOME: process.env.HOME ?? DATA_DIR,
-              LANG: process.env.LANG ?? "C.UTF-8",
-              ...githubWorkspaceEnvironment(token as string),
+          if (!statSync(repoPath).isDirectory()) throw new Error("not a directory");
+          const realRepo = realpathSync(repoPath);
+          const realRelative = relativePath(canonicalWorkspace, realRepo);
+          if (isAbsolute(realRelative) || realRelative === ".." || realRelative.startsWith(`..${sep}`)) {
+            return json(res, 403, { error: "the repository path escapes this conversation's workspace" });
+          }
+          const head = execFileSync("git", ["-C", realRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+          if (!/^[a-f0-9]{40}$/.test(head)) throw new Error("HEAD is not a commit");
+          let diffStat = "";
+          try {
+            diffStat = execFileSync("git", ["-C", realRepo, "diff", "--stat", "origin/main...HEAD"], { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+          } catch {
+            diffStat = execFileSync("git", ["-C", realRepo, "diff", "--stat", "HEAD~1...HEAD"], { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+          }
+          const request = publishRequests.submit({
+            userId: from.ownerUserId,
+            botId: from.id,
+            threadId,
+            repo: parsed.data.repo,
+            path: parsed.data.path,
+            branch: parsed.data.branch,
+            commit: head,
+            title: parsed.data.title,
+            body: parsed.data.body,
+            attachments: parsed.data.attachments,
+            workspace: canonicalWorkspace,
+            diffStat,
+          });
+          store.appendMessage(threadId, {
+            role: "bot",
+            kind: "options",
+            from: { botId: from.id, name: from.name, color: from.color },
+            card: {
+              title: "Publish changes?",
+              subtitle: `${parsed.data.repo} · ${parsed.data.branch} · ${head.slice(0, 7)}${diffStat ? ` · ${diffStat.split("\n").at(-1)}` : ""}`,
+              options: ["Publish", "Cancel"],
+              requestId: request.requestId,
+              tool: "propose_publish",
+              publishRequest: {
+                requestId: request.requestId,
+                botId: from.id,
+                repo: request.repo,
+                branch: request.branch,
+                commit: request.commit,
+                title: request.title,
+                body: request.body,
+                attachments: request.attachments,
+                diffStat: request.diffStat,
+              },
             },
           });
           return json(res, 200, {
-            exitCode: result.exitCode,
-            stdout: redactRelayGitSecret(clipRelayGitOutput(result.stdout), token as string),
-            stderr: redactRelayGitSecret(clipRelayGitOutput(result.stderr), token as string),
-            timedOut: result.timedOut,
+            ok: true,
+            requestId: request.requestId,
+            message: `Publish request staged for ${parsed.data.repo} @ ${parsed.data.branch} (${head.slice(0, 7)}). The person must approve the card before anything is pushed.`,
           });
         } catch (error) {
-          return json(res, 500, { error: error instanceof Error ? error.message : "could not run that repository command" });
+          return json(res, 409, { error: error instanceof Error ? error.message : "could not prepare the publish request" });
         }
       }
 
@@ -19333,6 +19422,21 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             behavior,
             reviewedSha256,
           }))) return;
+        }
+        const publishCard = store.messagesFor(threadId).find(
+          (message) => message.card?.requestId === requestId && message.card.publishRequest,
+        );
+        if (publishCard?.card?.publishRequest) {
+          const publishBotId = publishCard.from?.botId ?? store.botByThread(threadId)?.id;
+          if (!publishBotId) return json(res, 400, { error: "this publish request has no valid owner" });
+          const publishOwner = store.bot(publishBotId);
+          if (await resolveAndSendPublish(res, {
+            botId: publishBotId,
+            botName: publishOwner?.name,
+            threadId,
+            requestId,
+            behavior,
+          })) return;
         }
         const routineCard = store.messagesFor(threadId).find(
           (message) => message.card?.requestId === requestId && message.card.routineRequest,

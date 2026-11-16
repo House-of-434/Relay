@@ -28,9 +28,9 @@ export interface CatalogProfile {
   sharedComputers: boolean;
   /** The server is a Cloud home (server/cloud-home.ts). */
   cloudHome: boolean;
-  /** Scout with an initialized workspace may run validated relay-git
-   * operations in this conversation's pinned working folder. */
-  relayGit: boolean;
+  /** Scout with an initialized workspace may clone repositories through the
+   * Relay Git broker and propose an approval-bound publish. */
+  githubGit: boolean;
   /** Written into start_thread's schema in a coordinating turn. */
   botId: string;
 }
@@ -46,7 +46,7 @@ export function catalogProfileFromEnv(env: NodeJS.ProcessEnv): CatalogProfile {
     skillAuthoring: env.RELAY_SKILL_AUTHORING_ENABLED === "1",
     sharedComputers: env.RELAY_SHARED_COMPUTERS_ENABLED === "1",
     cloudHome: env.RELAY_CLOUD_HOME === "1",
-    relayGit: env.RELAY_RELAY_GIT === "1",
+    githubGit: env.RELAY_GITHUB_GIT === "1",
     botId: env.RELAY_BOT_ID ?? "",
   };
 }
@@ -363,16 +363,39 @@ const toolDefinitions = (externalRuntime: boolean) => [
     },
   },
   {
-    name: "relay_git",
+    name: "github_git_remote",
     description:
-      "Run one validated relay-git operation inside this conversation's working folder. Use it for the repository workflow in the repo-changes skill, never for arbitrary shell. Supported commands: auth-status; clone House-of-434/house-of-434-site; checkout relay/<branch>; commit \"<message>\"; push relay/<branch>; create-pr --branch relay/<branch> --title \"<title>\" --body \"<body>\". Repository operations are available only to Scout, are limited to the one authorized repository, and refuse main/master/production. The GitHub token stays on the Relay server and is never returned.",
+      "Open a read-only GitHub transport for one repository in this conversation. Returns a clone URL and the exact local path to clone into. The URL can clone and fetch but cannot push. Use ordinary git in the conversation workspace; publishing goes through propose_publish after the person approves the exact commit.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        command: { type: "string", description: "One relay-git command, for example: relay-git checkout relay/events-poster" },
+        repo: { type: "string", description: "Repository as owner/name, for example House-of-434/house-of-434-site." },
       },
-      required: ["command"],
+      required: ["repo"],
+    },
+  },
+  {
+    name: "propose_publish",
+    description:
+      "Ask the person to publish the current local commit. Relay will push only this exact commit to a relay/ branch and open the pull request after they approve. Include a summary, test status, and paths to screenshots or recordings in this conversation's working folder. Never run git push yourself; it has no GitHub credential and will fail.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        repo: { type: "string", description: "Repository as owner/name from github_git_remote." },
+        branch: { type: "string", description: "New branch starting with relay/." },
+        title: { type: "string", description: "Pull request title." },
+        body: { type: "string", description: "Pull request body: summary, checks, test status, and a visual-review note." },
+        path: { type: "string", description: "Local repository path returned by github_git_remote, relative to the working folder." },
+        attachments: {
+          type: "array",
+          maxItems: 12,
+          items: { type: "string", description: "Screenshot or video path relative to the working folder." },
+          description: "Optional visual evidence for the pull request.",
+        },
+      },
+      required: ["repo", "branch", "title", "body", "path"],
     },
   },
   {
@@ -851,14 +874,14 @@ const ROOM_REPLACED_TOOLS = new Set(["ask_bot", "delegate_bot", "check_delegatio
 const EXTERNAL_TOOL_NAMES = new Set(["list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation"]);
 const WATCHER_TOOL_NAMES = new Set(["create_options_card"]);
 // Scout only, and only when this turn has an initialized workspace.
-const RELAY_GIT_TOOL_NAMES = new Set(["relay_git"]);
+const GITHUB_GIT_TOOL_NAMES = new Set(["github_git_remote", "propose_publish"]);
 
 /** The tools one turn is shown, exactly as tools/list serializes them. */
 export function availableTools(profile: CatalogProfile) {
   const tools = catalogTools(profile);
-  return profile.relayGit
+  return profile.githubGit
     ? tools
-    : tools.filter((tool) => !RELAY_GIT_TOOL_NAMES.has(tool.name));
+    : tools.filter((tool) => !GITHUB_GIT_TOOL_NAMES.has(tool.name));
 }
 
 function catalogTools(profile: CatalogProfile) {

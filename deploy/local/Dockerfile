@@ -23,6 +23,7 @@ ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 # every workspace member's manifest must exist before install resolves the lockfile
 COPY services/tool-layer/package.json ./services/tool-layer/package.json
+COPY services/git-broker/package.json ./services/git-broker/package.json
 COPY packages/relay-shared/package.json ./packages/relay-shared/package.json
 # package.json's `prepare` runs during install. The script itself is written to
 # no-op without a .git (it exits 0 here), but node still has to be able to LOAD
@@ -70,6 +71,7 @@ COPY --from=build --chown=maus:maus /src/services/tool-layer/dist ./services/too
 # The BFF runs from source via Node type-stripping (it has no bundle step),
 # so it ships with the shared tree it imports and production node_modules.
 COPY --from=build --chown=maus:maus /src/services/bff ./services/bff
+COPY --from=build --chown=maus:maus /src/services/git-broker ./services/git-broker
 COPY --from=build --chown=maus:maus /src/shared ./shared
 COPY --from=build --chown=maus:maus /src/packages ./packages
 # Bundled skills ship beside the app so the repo-changes and other shipped

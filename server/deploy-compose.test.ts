@@ -30,21 +30,9 @@ describe("deploy compose — capability separation", () => {
     expect(envFiles("app")).not.toContain(".env.ingest");
   });
 
-  it("the workspace token is app-only, not shared with tools or scribe", () => {
-    // The token authorizes Scout repository writes. Tools calling the public
-    // API and scribe's capture worker must never be able to read it from
-    // their service environment, so it gets its own app-only env file.
-    expect(envFiles("app")).toContain(".env.workspace");
-    expect(envFiles("tools")).not.toContain(".env.workspace");
-    expect(envFiles("scribe")).not.toContain(".env.workspace");
-  });
-
-  it("the workspace token file is optional so token-less environments still boot", () => {
-    // CI smoke and fresh clones boot without .env.workspace; compose aborts
-    // the boot on a missing required env file, so optionality is pinned here.
-    const raw = compose.services.app.env_file ?? [];
-    const entry = raw.find((candidate) => (typeof candidate === "string" ? candidate : candidate.path) === ".env.workspace");
-    expect(entry).toMatchObject({ path: ".env.workspace", required: false });
+  it("the Git broker uses the shared service capability and is reached over the compose network", () => {
+    expect(envFiles("git-broker")).toContain(".env.secrets");
+    expect(compose.services.app.environment?.RELAY_GIT_BROKER_URL).toBe("http://git-broker:8792");
   });
 
   it("the harness loads the worker capability (to arm captures)", () => {
