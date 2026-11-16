@@ -9308,7 +9308,7 @@ async function resolveAndSendPublish(
       { userId: request.userId, botId: request.botId, threadId: request.threadId, agent: "scout" },
       process.env.RELAY_TOOL_ACTOR_SECRET,
     );
-    const session = await gitBrokerSession(assertion, request.workspace);
+    const session = await gitBrokerSession(assertion, request.workspace, relayBffCapability);
     const authorization = signPublishAuthorization({
       userId: request.userId,
       botId: request.botId,
@@ -9325,7 +9325,7 @@ async function resolveAndSendPublish(
       issuedAt: Math.floor(Date.now() / 1000),
       expiresAt: Math.floor(Date.now() / 1000) + 10 * 60,
     }, process.env.RELAY_TOOL_ACTOR_SECRET);
-    const published = await publishToBroker(authorization, session.token);
+    const published = await publishToBroker(authorization, session.token, relayBffCapability);
     appendGitAudit({
       at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
       repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "published", prUrl: published.prUrl,
@@ -13810,13 +13810,13 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         } catch {
           return json(res, 409, { error: "This conversation's working folder is unavailable." });
         }
-        if (!gitBrokerConfigured()) return json(res, 503, { error: "GitHub transport is not configured" });
+        if (!gitBrokerConfigured(relayBffCapability)) return json(res, 503, { error: "GitHub transport is not configured" });
         try {
           const assertion = signedActorContext(
             { userId: from.ownerUserId, botId: from.id, threadId, agent: "scout", turnId: internalCapability.generation },
             process.env.RELAY_TOOL_ACTOR_SECRET,
           );
-          const session = await gitBrokerSession(assertion, canonicalWorkspace);
+          const session = await gitBrokerSession(assertion, canonicalWorkspace, relayBffCapability);
           const owner = repo.split("/")[0]!;
           const name = repo.split("/")[1]!;
           const suffix = createHash("sha256").update(`${owner}/${name}`.toLowerCase()).digest("hex").slice(0, 8);
@@ -13854,7 +13854,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         } catch {
           return json(res, 409, { error: "This conversation's working folder is unavailable." });
         }
-        if (!gitBrokerConfigured()) return json(res, 503, { error: "GitHub publishing is not configured" });
+        if (!gitBrokerConfigured(relayBffCapability)) return json(res, 503, { error: "GitHub publishing is not configured" });
         const repoPath = resolvePath(canonicalWorkspace, parsed.data.path);
         const lexical = relativePath(canonicalWorkspace, repoPath);
         if (isAbsolute(lexical) || lexical === ".." || lexical.startsWith(`..${sep}`) || !lexical.replaceAll("\\", "/").startsWith("repos/")) {

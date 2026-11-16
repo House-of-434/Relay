@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { publishRequestSchema, signPublishAuthorization } from "./git-broker.ts";
+import { gitBrokerConfigured, publishRequestSchema, signPublishAuthorization } from "./git-broker.ts";
 
 const base = {
   userId: "1457cb2a-7543-4b48-8854-a63cd160241f",
@@ -18,6 +18,20 @@ const base = {
   issuedAt: Math.floor(Date.now() / 1000),
   expiresAt: Math.floor(Date.now() / 1000) + 600,
 };
+
+describe("Git broker configuration", () => {
+  it("accepts the capability held by the harness after environment scrubbing", () => {
+    const saved = process.env.RELAY_GIT_BROKER_URL;
+    process.env.RELAY_GIT_BROKER_URL = "http://git-broker:8792";
+    try {
+      expect(gitBrokerConfigured("x".repeat(32))).toBe(true);
+      expect(gitBrokerConfigured("short")).toBe(false);
+    } finally {
+      if (saved === undefined) delete process.env.RELAY_GIT_BROKER_URL;
+      else process.env.RELAY_GIT_BROKER_URL = saved;
+    }
+  });
+});
 
 describe("publish requests", () => {
   it("accepts only repository paths under repos/", () => {

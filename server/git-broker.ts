@@ -67,18 +67,21 @@ export function signPublishAuthorization(
   return { ...payload, signature };
 }
 
-function brokerCapability(): string | undefined {
-  return process.env.RELAY_BFF_CAPABILITY;
+function brokerCapability(capability?: string): string | undefined {
+  // The harness deletes RELAY_BFF_CAPABILITY from process.env at boot and
+  // keeps it in memory. Callers pass that held value; the environment is only
+  // a fallback for tests and non-harness callers.
+  return capability ?? process.env.RELAY_BFF_CAPABILITY;
 }
 
-export function gitBrokerConfigured(): boolean {
-  const capability = brokerCapability();
-  return Boolean(process.env.RELAY_GIT_BROKER_URL?.trim() && capability && Buffer.byteLength(capability) >= 32);
+export function gitBrokerConfigured(capability?: string): boolean {
+  const token = brokerCapability(capability);
+  return Boolean(process.env.RELAY_GIT_BROKER_URL?.trim() && token && Buffer.byteLength(token) >= 32);
 }
 
-export async function gitBrokerSession(actorAssertion: string, workspace: string): Promise<{ token: string; url: string; expiresAt: number }> {
+export async function gitBrokerSession(actorAssertion: string, workspace: string, capabilityInput?: string): Promise<{ token: string; url: string; expiresAt: number }> {
   const base = process.env.RELAY_GIT_BROKER_URL?.trim();
-  const capability = brokerCapability();
+  const capability = brokerCapability(capabilityInput);
   if (!base || !capability) throw new Error("GitHub transport is not configured");
   let response: Response;
   try {
@@ -102,9 +105,9 @@ export async function gitBrokerSession(actorAssertion: string, workspace: string
   return { token: body.token, url: body.url, expiresAt: body.expiresAt };
 }
 
-export async function publishToBroker(authorization: PublishAuthorization, sessionToken: string): Promise<{ prUrl: string; branch: string; commit: string }> {
+export async function publishToBroker(authorization: PublishAuthorization, sessionToken: string, capabilityInput?: string): Promise<{ prUrl: string; branch: string; commit: string }> {
   const base = process.env.RELAY_GIT_BROKER_URL?.trim();
-  const capability = brokerCapability();
+  const capability = brokerCapability(capabilityInput);
   if (!base || !capability) throw new Error("GitHub publishing is not configured");
   let response: Response;
   try {
