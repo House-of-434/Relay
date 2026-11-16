@@ -331,6 +331,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect(JSON.stringify(listedA.body)).not.toContain("b.pdf");
     const bAttached = await internal(tokenB, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") });
     expect(bAttached.status).toBe(200);
+    expect(bAttached.body).toMatchObject({ ok: true, fileId: expect.stringMatching(/^file_/) });
     const handoff = await internal(tokenA, "POST", "/api/internal/attach-file", { fileId: bAttached.body.fileId });
     expect(handoff.status).toBe(200);
 
