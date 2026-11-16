@@ -2,12 +2,13 @@
 // (upstream rule): the React app dispatches typed commands over HTTP and
 // folds one SSE event stream; every provider process runs here.
 import { AsyncLocalStorage } from "node:async_hooks";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, realpathSync, rmSync, mkdirSync } from "node:fs";
+import { copyFileSync, existsSync, lstatSync, readFileSync, realpathSync, rmSync, mkdirSync, statSync } from "node:fs";
 import { writeFileAtomic } from "./atomic.ts";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { ToolResults, TOOL_RESULT_MAX_CHARS } from "./tool-results.ts";
-import { basename, extname, join, resolve as resolvePath } from "node:path";
+import { basename, dirname, extname, isAbsolute, join, relative as relativePath, resolve as resolvePath, sep } from "node:path";
 import { authorizeExternalRuntime, externalRuntimeIsActive, type ExternalRuntimeGrant } from "./external-runtime.ts";
 
 import { z } from "zod";
@@ -15,6 +16,7 @@ import { selectReplay, DEFAULT_REBUILD_BYTES, MAX_SUMMARY_BYTES } from "./contex
 import { draftSummary, foldPoint } from "./compaction-summary.ts";
 import { compactBudget, contextWindowFor, shouldCompact } from "./context-budget.ts";
 import { autoCompactWindow } from "./drivers/claude.ts";
+import { authorizeRelayGitOperation, buildRelayGitShell, githubWorkspaceEnvironment, parseRelayGitCommand, relayGitDirectory, redactRelayGitSecret } from "./scout-git.ts";
 import { provenRequestPerson, SharedComputers, sharedComputerOperation, sharedComputerRegistration } from "./shared-computers.ts";
 import { cloudHomeLendingRefusal, createCloudRoutineAuthors, ownerOnlyConversation, type CloudLendingTurn } from "./cloud-lending.ts";
 import { botMemoryFiles, createLendingMemory } from "./lending-memory.ts";
@@ -200,6 +202,7 @@ const heldCapabilities = holdHarnessCapabilities();
 const relayBffCapability = heldCapabilities.bffCapability;
 const scribeWorkerCapability = heldCapabilities.scribeWorkerCapability;
 const relayMailMirrorCapability = heldCapabilities.mailMirrorCapability;
+const githubWorkspaceToken = heldCapabilities.githubWorkspaceToken;
 const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "http://127.0.0.1:8791";
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
@@ -2034,6 +2037,7 @@ function agentsIntegration(
   roomHandoffId?: string,
   roomCoordination = false,
   ownThreadCreation = false,
+  relayGit = false,
 ) {
   const token = mintInternalCapability({
     botId,
@@ -2064,8 +2068,10 @@ function agentsIntegration(
       // The shared-computer tools are advertised only while the workspace
       // gate is on; the routes behind them refuse regardless.
       RELAY_SHARED_COMPUTERS_ENABLED: lendingEnabled() ? "1" : "0",
-      // A Cloud home offers no this computer and no Local VM (cloud-home.ts),
       RELAY_CLOUD_HOME: CLOUD_HOME ? "1" : "0",
+      // Scout with an initialized workspace may run validated relay-git
+      // operations in this conversation's pinned folder.
+      RELAY_RELAY_GIT: relayGit ? "1" : "0",
       // Voice notes are stripped from server core: never advertise the tool.
       RELAY_VOICE_NOTES: "0",
     },
@@ -2097,7 +2103,6 @@ type DirectTurnDispatchClaim = {
   phase: "setup" | "dispatching";
 };
 class DirectTurnSetupCancelled extends Error {}
-class ComputerWaitGaveUp extends Error {}
 const directTurnDispatchClaims = new Map<string, DirectTurnDispatchClaim>();
 const directTurnGenerationByThread = new Map<string, string>();
 // Only the latest direct request per thread is retained. A fresh user turn
@@ -6058,7 +6063,7 @@ bus.subscribe((event: RuntimeEvent) => {
           Boolean(store.taskByThread(bot.id, event.threadId));
         const settleDirectTurn = (resumeQueued = false) => {
           // Resource claims can outlive a deleted thread, but a stale capture
-          // must never release a replacement generation's VM or busy state.
+          // must never release a replacement generation's resources or busy state.
           const ownsResources = resourceOwner &&
             turnResourceOwners.get(event.threadId)?.generation === resourceOwner.generation;
           if (ownsResources) {
@@ -7441,8 +7446,7 @@ async function startTurn(
   const agentsMounted = (commsDepth < MAX_COMMS_DEPTH || Boolean(opts?.coordination)) && instance.adapter.capabilities.agentsMcp === true;
 
   // busy flips immediately so the composer locks; the dispatch itself runs
-  // in the background — boat provisioning can take ~90s and must never
-  // hang the HTTP request
+  // in the background — setup can be slow and must never hang the HTTP request
   const dispatchClaimId = randomUUID();
   if (opts?.mailRouted === true || opts?.inheritedMailAttachments ||
       (opts?.unattended === true && Boolean(task.mailRouted))) {
@@ -7478,7 +7482,7 @@ async function startTurn(
   beginInternalCapabilityGeneration(threadId, dispatchClaimId);
   store.setTaskActivity(bot.id, threadId, "working");
   // Watch from admission, not dispatch: a turn can wedge in setup — context
-  // compaction that never returns, a hung browser or VM mount — long before
+  // compaction that never returns, a hung browser mount — long before
   // any provider event exists, and a watch armed only at dispatch never saw
   // those. Every setup exit below settles or throws into the catch, which
   // settles under the same generation ownership it already enforces.
@@ -7705,9 +7709,9 @@ async function startTurn(
       // the private bot workspace. A legacy task with an existing provider
       // session deliberately pins to null (the old home-folder behavior),
       // because moving a live session would break resume.
-      // A cloud run happens on the boat, where a host folder means nothing:
-      // pin the task to the default so the header chip never shows the
-      // bot's folder for a task that runs elsewhere.
+      // A cloud run happens where a host folder means nothing: pin the task
+      // to the default so the header chip never shows the bot's folder for a
+      // task that runs elsewhere.
       // On a Cloud home a conversation a guest opened works only in its own
       // folder, never the bot's project folder the owner's conversations
       // share (what it leaves there reaches none of them).
@@ -7737,7 +7741,8 @@ async function startTurn(
           ? store.activePath(threadId).findLast(message => message.role === "user" && message.kind === "text")
           : userMessage;
         const ownThreadCreation = boundedCoordination && !opts?.coordination && Boolean(origin && !origin.peerAsk);
-        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring, dispatchClaimId, opts?.coordination?.id, boundedCoordination, ownThreadCreation);
+        integrations.agents = agentsIntegration(bot.id, threadId, commsDepth, skillAuthoring, dispatchClaimId, opts?.coordination?.id, boundedCoordination, ownThreadCreation,
+          bot.relayAgent === "scout" && Boolean(privateWorkspace) && !CLOUD_HOME);
       }
       if (instance.adapter.capabilities.hooks === true && hooksEnabled()) {
         integrations.hooks = hooksIntegration(bot.id, threadId, dispatchClaimId);
@@ -8041,7 +8046,7 @@ async function startTurn(
       settleDirectFollowup(dispatchClaimId, { ok: false, text: message });
       // The wait already wrote its failure resolution; keep all dispatch
       // failure bookkeeping below without adding the same error twice.
-      if (!(e instanceof ComputerWaitGaveUp)) store.appendMessage(threadId, {
+      store.appendMessage(threadId, {
         role: "bot",
         kind: "activity",
         turnSucceeded: false,
@@ -9813,7 +9818,7 @@ async function runGroupMemberTurn(
   orchestration?.onClaimed?.();
   // The stall completion handler only exists once the provider turn runs
   // (registered at dispatch below), but this watch is armed at claim. Latch
-  // a stall that fires during setup — browser, boat, and VM mounts can all
+  // a stall that fires during setup — browser and connector mounts can all
   // wedge — so the dispatch site completes the turn instead of launching a
   // provider turn the person was already told was stopped. The finally
   // below unregisters the latch on every other exit.
@@ -9822,7 +9827,7 @@ async function runGroupMemberTurn(
     setupStalled = true;
   });
   // Watch from claim, not provider dispatch: room setup (connected-app
-  // discovery, browser, boat, and VM mounts) can wedge before any provider
+  // discovery, browser, and connector mounts) can wedge before any provider
   // event exists. The exits between here and dispatch either throw into the
   // finally's guarded cleanup or return through the revalidation block,
   // both of which settle the watch.
@@ -10284,8 +10289,8 @@ async function runGroupMemberTurn(
     const isSpendCap = typeof error === "object" && error !== null && (error as { code?: string }).code === "spend_cap";
     const isVariantError = typeof error === "object" && error !== null && (error as { code?: string }).code === "unsupported_model_variant";
     if (!roomSpeaker && !isSpendCap && !isVariantError) throw error;
-    const message = error instanceof Error ? error.message : "Local VM setup failed";
-    if (!(error instanceof ComputerWaitGaveUp)) store.appendMessage(threadId, {
+    const message = error instanceof Error ? error.message : "computer setup failed";
+    store.appendMessage(threadId, {
       role: "bot", kind: "activity",
       from: { botId: bot.id, name: bot.name, color: bot.color },
       tool: { name: `error: ${message}`, ok: false },
@@ -11097,6 +11102,87 @@ const pendingConnectorResumes = new Map<
 /** The host folders a bot's own files may be read from in one conversation:
  * the conversation's pinned or configured working folder, the bot's own
  * workspace, and the private attachment store. */
+/** The one directory a direct conversation may attach a path from: its pinned
+ * working folder, or the bot's configured folder before the first pin. The
+ * path is canonicalised here, and a pinned folder that cannot be resolved
+ * fails closed rather than falling back to another root. */
+function attachmentConversationRootForThread(threadId: string): string | null {
+  const directBot = store.botByThread(threadId);
+  if (!directBot) return null;
+  const root = store.taskByThread(directBot.id, threadId)?.cwd ?? directBot.cwd;
+  if (!root) return null;
+  try {
+    return realpathSync(root);
+  } catch {
+    return null;
+  }
+}
+
+const RELAY_GIT_TIMEOUT_MS = 300_000;
+const RELAY_GIT_OUTPUT_LIMIT = 64 * 1024;
+
+function clipRelayGitOutput(value: string): string {
+  return value.length <= RELAY_GIT_OUTPUT_LIMIT
+    ? value
+    : `${value.slice(0, RELAY_GIT_OUTPUT_LIMIT)}\n[output truncated]`;
+}
+
+/** Run one already-validated relay-git shell in a pinned workspace. The
+ * process gets its own group on POSIX and is killed as a tree on timeout. */
+function runRelayGitCommand(
+  command: string,
+  options: { cwd: string; env: Record<string, string>; timeoutMs?: number },
+): Promise<{ exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }> {
+  const timeoutMs = Math.max(1, Math.min(options.timeoutMs ?? RELAY_GIT_TIMEOUT_MS, RELAY_GIT_TIMEOUT_MS));
+  return new Promise((resolve, reject) => {
+    const child = spawn("sh", ["-lc", command], {
+      cwd: options.cwd,
+      env: options.env,
+      stdio: ["ignore", "pipe", "pipe"],
+      ...(process.platform === "win32" ? { windowsHide: true } : { detached: true }),
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    let settled = false;
+    let fallback: NodeJS.Timeout | undefined;
+    const finish = (result: { exitCode: number | null; stdout: string; stderr: string; timedOut: boolean }) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (fallback) clearTimeout(fallback);
+      resolve(result);
+    };
+    const killTree = () => {
+      const pid = child.pid;
+      if (!pid) return;
+      if (process.platform === "win32") {
+        spawn("taskkill", ["/PID", String(pid), "/T", "/F"], { windowsHide: true, stdio: "ignore" });
+        return;
+      }
+      try { process.kill(-pid, "SIGKILL"); }
+      catch { try { child.kill("SIGKILL"); } catch { /* already gone */ } }
+    };
+    const timer = setTimeout(() => {
+      timedOut = true;
+      killTree();
+      // A shell that ignores the group kill must not hang the route forever.
+      fallback = setTimeout(() => finish({ exitCode: null, stdout, stderr, timedOut }), 5_000);
+      fallback.unref?.();
+    }, timeoutMs);
+    child.stdout?.on("data", (chunk: Buffer) => { stdout += chunk.toString("utf8"); });
+    child.stderr?.on("data", (chunk: Buffer) => { stderr += chunk.toString("utf8"); });
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      if (fallback) clearTimeout(fallback);
+      reject(error);
+    });
+    child.once("close", (code) => finish({ exitCode: code, stdout, stderr, timedOut }));
+  });
+}
+
 function messageFileRootsForThread(senderId: string, threadId: string): string[] {
   const directBot = store.botByThread(threadId);
   const group = directBot ? undefined : store.groupByThread(threadId);
@@ -12163,8 +12249,7 @@ function configStatus() {
     profile: { name: cfg.profile?.name ?? "", email: cfg.profile?.email ?? "", aboutMe: cfg.profile?.aboutMe ?? "" },
     // the enrolled organisation's read-only desktop policy; null when not enrolled
     managedPolicy: managedPolicy.summary(),
-    // an OMB Cloud home (cloud-home.ts): the app offers no this computer and
-    // no Local VM here
+    // an OMB Cloud home (cloud-home.ts)
     ...(CLOUD_HOME ? { cloudHome: true } : {}),
     // not a secret — the settings picker shows it; "" = follow the system
     language: cfg.language ?? "",
@@ -13581,7 +13666,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
         const owner = from.ownerUserId?.toLowerCase();
         let requestedPath = requestedPathValue;
-        let roots = messageFileRootsForThread(from.id, threadId).filter((root) => root !== ATTACHMENTS_DIR);
+        let roots: string[];
         if (requestedFileId) {
           if (!owner) return json(res, 400, { error: "this conversation has no owner, so file ids are unavailable" });
           const resolved = resolveFile(owner, requestedFileId);
@@ -13589,13 +13674,24 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           requestedPath = resolved.record.path;
           // The id is the authority, not a caller-supplied path. Keep the
           // read inside this user's managed root even though the registry
-          // already checked it.
+          // already checked it. This explicit handoff is intentionally wider
+          // than path isolation: a fileId may name another thread's file.
           roots = [managedFilesRoot(owner)];
+        } else if (store.botByThread(threadId)) {
+          const conversationRoot = attachmentConversationRootForThread(threadId);
+          if (!conversationRoot) {
+            return json(res, 409, { error: "This conversation has no working folder yet, so there is nowhere to attach a file from." });
+          }
+          // A direct conversation attaches only from its own pinned folder.
+          // No sender-workspace fallback: a missing or unusable pin fails
+          // closed above rather than silently reading another directory.
+          roots = [conversationRoot];
+        } else {
+          roots = messageFileRootsForThread(from.id, threadId).filter((root) => root !== ATTACHMENTS_DIR);
         }
         try {
           const outcome = await attachForTurn(internalCapability, MAX_ATTACHED_FILES_PER_TURN, {
             save: () => {
-              // The agents capability carries no VM; the thread's claimed desktop does.
               return saveBotAttachment({
                 path: requestedPath,
                 name: requestedName,
@@ -13637,11 +13733,106 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         } catch (error) {
           const status = typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 500;
           const message = status === 404
-            ? `No file was found at ${requestedPath}. Save it under /home/cua/workspace (or your working folder) and pass its exact path.`
+            ? `No file was found at ${requestedPath}. Save it under this conversation's working folder and pass its exact path.`
             : error instanceof Error ? error.message : "could not attach that file";
           return json(res, status, { error: message });
         }
       }
+
+      if (method === "POST" && path === "/api/internal/relay-git") {
+        const from = internalSender;
+        const threadId = internalCapability.threadId;
+        if (!connectorThread(from.id, threadId)) {
+          return json(res, 403, { error: "source conversation does not belong to sender" });
+        }
+        const body = await readInternalBody();
+        const parsed = parseRelayGitCommand(body.command);
+        if (!parsed.ok) return json(res, parsed.status, { error: parsed.error });
+        const token = githubWorkspaceToken;
+        const authorized = authorizeRelayGitOperation({
+          senderRole: from.relayAgent,
+          command: body.command,
+          operation: parsed.operation,
+          token,
+        });
+        if (!authorized.ok) return json(res, authorized.status, { error: authorized.error });
+        const task = store.taskByThread(from.id, threadId);
+        const workspace = task?.cwd ?? from.cwd;
+        if (!workspace) {
+          return json(res, 409, { error: "This conversation has no working folder yet, so there is nowhere to run a repository command." });
+        }
+        let canonicalWorkspace: string;
+        try {
+          canonicalWorkspace = realpathSync(workspace);
+          if (!statSync(canonicalWorkspace).isDirectory()) throw new Error("not a directory");
+        } catch {
+          return json(res, 409, { error: "This conversation's working folder is unavailable." });
+        }
+        const repoDirectory = relayGitDirectory(canonicalWorkspace);
+        const lexical = relativePath(canonicalWorkspace, repoDirectory);
+        if (isAbsolute(lexical) || lexical === ".." || lexical.startsWith(`..${sep}`)) {
+          return json(res, 400, { error: "the repository folder is outside this conversation's working folder" });
+        }
+        const repoParent = dirname(repoDirectory);
+        if (existsSync(repoParent)) {
+          let canonicalParent: string;
+          try {
+            canonicalParent = realpathSync(repoParent);
+          } catch {
+            return json(res, 409, { error: "the repository folder is unavailable" });
+          }
+          const parentRelative = relativePath(canonicalWorkspace, canonicalParent);
+          if (isAbsolute(parentRelative) || parentRelative === ".." || parentRelative.startsWith(`..${sep}`)) {
+            return json(res, 403, { error: "the repository folder escapes this conversation's working folder" });
+          }
+          try {
+            if (lstatSync(repoParent).isSymbolicLink()) {
+              return json(res, 403, { error: "the repository folder may not be a symbolic link" });
+            }
+          } catch {
+            return json(res, 409, { error: "the repository folder is unavailable" });
+          }
+        }
+        if (existsSync(repoDirectory)) {
+          let canonicalRepo: string;
+          try {
+            canonicalRepo = realpathSync(repoDirectory);
+          } catch {
+            return json(res, 409, { error: "the repository folder is unavailable" });
+          }
+          const contained = relativePath(canonicalWorkspace, canonicalRepo);
+          if (isAbsolute(contained) || contained === ".." || contained.startsWith(`..${sep}`)) {
+            return json(res, 403, { error: "the repository folder escapes this conversation's working folder" });
+          }
+          try {
+            if (lstatSync(repoDirectory).isSymbolicLink()) {
+              return json(res, 403, { error: "the repository folder may not be a symbolic link" });
+            }
+          } catch {
+            return json(res, 409, { error: "the repository folder is unavailable" });
+          }
+        }
+        try {
+          const result = await runRelayGitCommand(buildRelayGitShell(parsed.operation, canonicalWorkspace), {
+            cwd: canonicalWorkspace,
+            env: {
+              PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
+              HOME: process.env.HOME ?? DATA_DIR,
+              LANG: process.env.LANG ?? "C.UTF-8",
+              ...githubWorkspaceEnvironment(token as string),
+            },
+          });
+          return json(res, 200, {
+            exitCode: result.exitCode,
+            stdout: redactRelayGitSecret(clipRelayGitOutput(result.stdout), token as string),
+            stderr: redactRelayGitSecret(clipRelayGitOutput(result.stderr), token as string),
+            timedOut: result.timedOut,
+          });
+        } catch (error) {
+          return json(res, 500, { error: error instanceof Error ? error.message : "could not run that repository command" });
+        }
+      }
+
       if (method === "GET" && path === "/api/internal/rooms") {
         const from = internalSender;
         const fromThreadId = internalCapability.threadId;
@@ -19876,7 +20067,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // the GUI app can't see) means every turn would fail, so the UI asks
     // before saving rather than registering a dead engine.
     if (method === "POST" && path === "/api/cli-test") {
-      // same gate as the local-VM lifecycle routes: this executes a local
+      // same gate as the other local-execution routes: this executes a local
       // binary, so a hostile page must not be able to submit it as a simple
       // text/plain cross-origin request
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
@@ -19942,7 +20133,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
     // driver default. Only this idle instance is replaced; siblings keep running.
     const instancePatch = /^\/api\/instances\/([\w.-]+)$/.exec(path);
     if (method === "PATCH" && instancePatch) {
-      // same non-simple-request gate as the local-VM lifecycle routes
+      // same non-simple-request gate as the other local-execution routes
       if (!String(req.headers["content-type"] ?? "").toLowerCase().startsWith("application/json")) {
         return json(res, 415, { error: "content-type must be application/json" });
       }

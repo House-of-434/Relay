@@ -26,9 +26,11 @@ export interface CatalogProfile {
   skillAuthoring: boolean;
   /** Opt-in computer sharing (server features.sharedComputers). */
   sharedComputers: boolean;
-  /** The server is a Cloud home (server/cloud-home.ts): no "this computer"
-   * of the person's and no Local VM to offer. */
+  /** The server is a Cloud home (server/cloud-home.ts). */
   cloudHome: boolean;
+  /** Scout with an initialized workspace may run validated relay-git
+   * operations in this conversation's pinned working folder. */
+  relayGit: boolean;
   /** Written into start_thread's schema in a coordinating turn. */
   botId: string;
 }
@@ -44,6 +46,7 @@ export function catalogProfileFromEnv(env: NodeJS.ProcessEnv): CatalogProfile {
     skillAuthoring: env.RELAY_SKILL_AUTHORING_ENABLED === "1",
     sharedComputers: env.RELAY_SHARED_COMPUTERS_ENABLED === "1",
     cloudHome: env.RELAY_CLOUD_HOME === "1",
+    relayGit: env.RELAY_RELAY_GIT === "1",
     botId: env.RELAY_BOT_ID ?? "",
   };
 }
@@ -360,9 +363,22 @@ const toolDefinitions = (externalRuntime: boolean) => [
     },
   },
   {
+    name: "relay_git",
+    description:
+      "Run one validated relay-git operation inside this conversation's working folder. Use it for the repository workflow in the repo-changes skill, never for arbitrary shell. Supported commands: auth-status; clone House-of-434/house-of-434-site; checkout relay/<branch>; commit \"<message>\"; push relay/<branch>; create-pr --branch relay/<branch> --title \"<title>\" --body \"<body>\". Repository operations are available only to Scout, are limited to the one authorized repository, and refuse main/master/production. The GitHub token stays on the Relay server and is never returned.",
+    inputSchema: {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        command: { type: "string", description: "One relay-git command, for example: relay-git checkout relay/events-poster" },
+      },
+      required: ["command"],
+    },
+  },
+  {
     name: "list_files",
     description:
-      "List the files in this conversation's Relay folder. Returns each file's id, name, size and modified time. Use a file id with attach_file to share a file in chat, or with fetch_file when you need to read or run it. This is a read: it starts nothing and changes nothing. Files in a custom working folder or a Local VM are not listed here.",
+      "List the files in this conversation's Relay folder. Returns each file's id, name, size and modified time. Use a file id with attach_file to share a file in chat, or with fetch_file when you need to read or run it. This is a read: it starts nothing and changes nothing. Files in a custom working folder are not listed here.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -387,12 +403,12 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "attach_file",
     description:
-      "Attach a finished file to the chat so the user can preview and download it: an image, video, audio clip, PDF, spreadsheet, slide deck or other document. Pass path for a file in this conversation, or fileId for a file another conversation or teammate produced. A path inside your computer's /home/cua/workspace is supported; a path inside a VM cannot be opened from chat. Supported: images (png, jpg, gif, webp), video (mp4, webm, mov), audio (mp3, m4a, aac, wav, ogg, opus, flac), pdf, Word/Excel/PowerPoint and OpenDocument files, and csv, tsv, txt, md, json, rtf. Up to 25 MB (images 10 MB). Finish writing the file first, then call this directly: it reports an error if the file is missing. After attaching, name the file in your reply — never quote its contents; the card already previews them. The result includes a fileId and a ref: to email that file, pass {\"source\":\"attachment\",\"ref\":<ref>} in gmail_send_email attachments.",
+      "Attach a finished file to the chat so the user can preview and download it: an image, video, audio clip, PDF, spreadsheet, slide deck or other document. Pass path for a file in this conversation's working folder, or fileId for a file another conversation or teammate produced. Supported: images (png, jpg, gif, webp), video (mp4, webm, mov), audio (mp3, m4a, aac, wav, ogg, opus, flac), pdf, Word/Excel/PowerPoint and OpenDocument files, and csv, tsv, txt, md, json, rtf. Up to 25 MB (images 10 MB). Finish writing the file first, then call this directly: it reports an error if the file is missing. After attaching, name the file in your reply — never quote its contents; the card already previews them. The result includes a fileId and a ref: to email that file, pass {\"source\":\"attachment\",\"ref\":<ref>} in gmail_send_email attachments.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        path: { type: "string", description: "The file's path, for example /home/cua/workspace/report.pdf." },
+        path: { type: "string", description: "The file's path in this conversation's working folder, for example report.pdf." },
         fileId: { type: "string", description: "A file id from list_files, attach_file, or a handoff. Use instead of path for another conversation's file." },
         name: { type: "string", description: "Optional file name to show the user. Defaults to the file's own name." },
       },
@@ -834,10 +850,15 @@ const DIRECT_FILES_TOOL_NAMES = new Set(["list_files", "fetch_file"]);
 const ROOM_REPLACED_TOOLS = new Set(["ask_bot", "delegate_bot", "check_delegation", "wait_delegation", "start_thread", "send_to_thread", "wait_thread"]);
 const EXTERNAL_TOOL_NAMES = new Set(["list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation"]);
 const WATCHER_TOOL_NAMES = new Set(["create_options_card"]);
+// Scout only, and only when this turn has an initialized workspace.
+const RELAY_GIT_TOOL_NAMES = new Set(["relay_git"]);
 
 /** The tools one turn is shown, exactly as tools/list serializes them. */
 export function availableTools(profile: CatalogProfile) {
-  return catalogTools(profile);
+  const tools = catalogTools(profile);
+  return profile.relayGit
+    ? tools
+    : tools.filter((tool) => !RELAY_GIT_TOOL_NAMES.has(tool.name));
 }
 
 function catalogTools(profile: CatalogProfile) {

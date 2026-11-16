@@ -4,7 +4,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, openSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, dirname, join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { parseArgs, type ParseArgsOptionsConfig } from "node:util";
 
@@ -394,29 +394,13 @@ export function verificationServerEnvironment(parentEnv: NodeJS.ProcessEnv, data
 export async function launchVerificationServer(
   parentEnv: NodeJS.ProcessEnv = process.env,
   signal?: AbortSignal,
-  localVm?: { binDir: string; host: string; sshKey: string; staticDir: string },
   /** A stand-in enterprise layer (the folder shape core loads) and the key
    * it should accept, so a recipe can prove entitled behaviour offline. */
   enterprise?: { dir: string; licenseKey: string },
   room?: { scripted: boolean },
   /** Optional repository-owned fake providers for multi-engine setup checks. */
   extraProviders: Array<"codex"> = [],
-  /** Programmatic tests only: an owned loopback Boat provider, never a live account. */
-  boatFixtureApi?: string,
 ): Promise<VerificationServer> {
-  if (boatFixtureApi) {
-    if (!/^http:\/\/127\.0\.0\.1:[1-9]\d{0,4}$/.test(boatFixtureApi)) {
-      throw new ControlOmbError("Boat verification requires an explicit loopback HTTP provider");
-    }
-    try { new URL(boatFixtureApi); }
-    catch { throw new ControlOmbError("Boat verification requires a valid loopback port"); }
-  }
-  if (localVm) {
-    const endpoint = new URL(localVm.host);
-    if (endpoint.protocol !== "ssh:" || endpoint.hostname !== "127.0.0.1" || endpoint.password) {
-      throw new ControlOmbError("Local VM verification requires an explicit loopback Podman machine");
-    }
-  }
   const port = await freePortBlock([0, 1]);
   if (signal?.aborted) throw new ControlOmbError("verification launch cancelled");
   const url = `http://127.0.0.1:${port}`;
@@ -432,11 +416,7 @@ export async function launchVerificationServer(
     // The owner email is on the sign-in list so the server keeps the owner's
     // session through its boot-time revalidation.
     signIn: { admins: [TEST_OWNER_EMAIL] },
-    ...(boatFixtureApi ? { box: { token: "box_verification_fixture" } } : {}),
     instances: {
-      // The synthetic map omits the default computer engine. Register it
-      // only when an owned Boat provider backs this fixture's cloud panel.
-      ...(boatFixtureApi ? { computer: { driver: "boxAgent" } } : {}),
       ...(extraProviders.includes("codex") ? { codex: {
         driver: "codex", displayName: "Verification Codex", config: { cli: fileURLToPath(new URL("../server/testing/fake-codex-app-server.ts", import.meta.url)) },
       } } : {}),
@@ -460,16 +440,7 @@ export async function launchVerificationServer(
 
   const log = openSync(logPath, "a", 0o600);
   const childEnv = verificationServerEnvironment(parentEnv, dataDir, port);
-  // Opt-in live Local VM fixture: keep the temporary home and fake engine,
-  // granting only the explicitly selected machine connection and static UI.
-  if (localVm) Object.assign(childEnv, {
-    RELAY_EXTRA_PATH: [localVm.binDir, ...(process.platform === "win32" ? [join(childEnv.SYSTEMROOT || "C:\\Windows", "System32")] : [])].join(delimiter),
-    CONTAINER_HOST: localVm.host,
-    CONTAINER_SSHKEY: localVm.sshKey,
-    RELAY_STATIC_DIR: localVm.staticDir,
-  });
   if (enterprise) Object.assign(childEnv, { RELAY_ENTERPRISE_DIR: enterprise.dir, RELAY_LICENSE_KEY: enterprise.licenseKey });
-  if (boatFixtureApi) childEnv.RELAY_BOX_API = boatFixtureApi;
   const serverArgs = ["--experimental-strip-types"];
   if (childEnv.RELAY_TEST_FAIL_AUDIO_APPEND_ONCE === "1") {
     serverArgs.push("--import", pathToFileURL(join(ROOT, "server", "testing", "fail-audio-append-once.mjs")).href);

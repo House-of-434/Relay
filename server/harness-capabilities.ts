@@ -27,8 +27,8 @@ const ENVELOPE: CatalogProfile = {
   ownThreadCreation: true,
   skillAuthoring: true,
   sharedComputers: true,
-  // Not a tool it adds: a Cloud home only hides its Local VM shell.
   cloudHome: false,
+  relayGit: false,
   botId: "",
 };
 

@@ -7,10 +7,12 @@ import {
   githubWorkspaceEnvironment,
   parseRelayGitCommand,
   redactRelayGitSecret,
+  relayGitDirectory,
   type RelayGitOperation,
 } from "./scout-git.ts";
 
 const token = "workspace-token-for-tests";
+const workspace = "/tmp/relay-scout-workspace";
 const branch = "relay/test-event";
 const commandFor = (operation: RelayGitOperation): string => {
   if (operation.kind === "auth-status") return "relay-git auth-status";
@@ -48,7 +50,7 @@ describe("Scout repository command validation", () => {
       expect(parsed.ok).toBe(true);
       if (parsed.ok) expect(parsed.operation).toEqual(operation);
       expect(authorize(operation)).toEqual({ ok: true });
-      expect(buildRelayGitShell(operation)).not.toContain(token);
+      expect(buildRelayGitShell(operation, workspace)).not.toContain(token);
     }
   });
 
@@ -72,11 +74,11 @@ describe("Scout repository command validation", () => {
     expect(pr.ok).toBe(true);
     if (commit.ok) {
       expect(authorize(commit.operation)).toEqual({ ok: true });
-      expect(buildRelayGitShell(commit.operation)).toContain(`'Refresh events; keep Luma link (see Bob'\\''s note)'`);
+      expect(buildRelayGitShell(commit.operation, workspace)).toContain(`'Refresh events; keep Luma link (see Bob'\\''s note)'`);
     }
     if (pr.ok) {
       expect(authorize(pr.operation)).toEqual({ ok: true });
-      const shell = buildRelayGitShell(pr.operation);
+      const shell = buildRelayGitShell(pr.operation, workspace);
       expect(shell).toContain(`'Refresh events; Luma update'`);
       expect(shell).toContain(`'Checked /events; screenshot attached (see Bob'\\''s note).'`);
     }
@@ -148,9 +150,12 @@ describe("Scout repository command validation", () => {
     const environment = githubWorkspaceEnvironment(token);
     expect(environment.GH_TOKEN).toBe(token);
     expect(environment.GITHUB_TOKEN).toBe(token);
-    const shell = buildRelayGitShell({ kind: "push", branch });
+    expect(environment.GIT_AUTHOR_NAME).toBe("Relay");
+    expect(environment.GIT_COMMITTER_EMAIL).toBe("relay@houseof434.com");
+    const shell = buildRelayGitShell({ kind: "push", branch }, workspace);
     expect(shell).toContain("git -C");
     expect(shell).toContain(branch);
+    expect(shell).toContain(relayGitDirectory(workspace));
     expect(shell).not.toContain(token);
     expect(redactRelayGitSecret(`gh failed: ${token}`, token)).toBe("gh failed: [redacted-secret]");
   });

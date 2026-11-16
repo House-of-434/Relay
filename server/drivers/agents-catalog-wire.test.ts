@@ -55,17 +55,20 @@ function profiles(): Record<string, Profile> {
     for (const ownThread of room ? [false, true] : [false]) {
       for (const skills of [false, true]) {
         for (const shared of [false, true]) {
-          const name = [room ? "room" : "direct", ownThread && "own-thread", skills && "skills", shared && "shared"]
-            .filter(Boolean).join("+");
-          all[name] = {
-            family: room ? "room" : "direct",
-            env: {
-              RELAY_ROOM_TURN: flag(room),
-              RELAY_OWN_THREAD_CREATION: flag(ownThread),
-              RELAY_SKILL_AUTHORING_ENABLED: flag(skills),
-              RELAY_SHARED_COMPUTERS_ENABLED: flag(shared),
-            },
-          };
+          for (const relayGit of room ? [false] : [false, true]) {
+            const name = [room ? "room" : "direct", ownThread && "own-thread", skills && "skills", shared && "shared", relayGit && "relay-git"]
+              .filter(Boolean).join("+");
+            all[name] = {
+              family: room ? "room" : "direct",
+              env: {
+                RELAY_ROOM_TURN: flag(room),
+                RELAY_OWN_THREAD_CREATION: flag(ownThread),
+                RELAY_SKILL_AUTHORING_ENABLED: flag(skills),
+                RELAY_SHARED_COMPUTERS_ENABLED: flag(shared),
+                ...(relayGit ? { RELAY_RELAY_GIT: "1" } : {}),
+              },
+            };
+          }
         }
       }
     }
@@ -96,26 +99,30 @@ const PROFILES = profiles();
 /** The profile of each family that mounts the most: checked in whole, as
  * readable JSON. Every other profile is a by-name subset of one of these and
  * is pinned by tool names, byte count and sha256 in profiles.json. */
-const FULL = { direct: "direct+skills+shared", room: "room+own-thread+skills+shared", external: "external" } as const;
+const FULL = { direct: "direct+skills+shared+relay-git", room: "room+own-thread+skills+shared", external: "external" } as const;
 
 /** Bytes measured when the budget was last set. A profile may not exceed this
  * by more than 2%, and may not undercut it by more than 2% either: a smaller
  * catalog is the goal, so lock the win in by lowering the number. */
 const BUDGET_BASELINE: Record<string, number> = {
-  "direct": 47935,
-  "direct+shared": 49680,
-  "direct+skills": 49861,
-  "direct+skills+shared": 51606,
-  "room": 43210,
-  "room+shared": 44955,
-  "room+skills": 45136,
-  "room+skills+shared": 47833,
-  "room+own-thread": 44766,
-  "room+own-thread+shared": 46511,
-  "room+own-thread+skills": 47644,
-  "room+own-thread+skills+shared": 49389,
-  "direct+skills+shared+cloud-home": 50654,
-  "room+own-thread+skills+shared+cloud-home": 48437,
+  "direct": 46893,
+  "direct+relay-git": 47728,
+  "direct+shared": 48638,
+  "direct+shared+relay-git": 49473,
+  "direct+skills": 48819,
+  "direct+skills+relay-git": 49654,
+  "direct+skills+shared": 50564,
+  "direct+skills+shared+relay-git": 51399,
+  "room": 43134,
+  "room+shared": 44879,
+  "room+skills": 45060,
+  "room+skills+shared": 46805,
+  "room+own-thread": 44690,
+  "room+own-thread+shared": 46435,
+  "room+own-thread+skills": 46616,
+  "room+own-thread+skills+shared": 48361,
+  "direct+skills+shared+cloud-home": 50564,
+  "room+own-thread+skills+shared+cloud-home": 48361,
   "external": 3287,
   "external+everything": 3287,
 };

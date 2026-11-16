@@ -318,6 +318,22 @@ describe("independent bot tasks through the isolated control surface", () => {
     const tokenA = launchedA.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
     const tokenB = launchedB.mcpConfig.mcpServers.agents.env.RELAY_COMMS_TOKEN;
     expect(tokenA).not.toBe(tokenB);
+
+    // Path attachments stay inside each thread's pinned folder. An explicit
+    // fileId handoff remains the one intentional cross-thread path.
+    const wsA = join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, taskA);
+    const wsB = join(session.info.dataDir, "users", TEST_OWNER_USER_ID, "threads", botId, taskB);
+    writeFileSync(join(wsA, "a.pdf"), "%PDF-a");
+    writeFileSync(join(wsB, "b.pdf"), "%PDF-b");
+    expect((await internal(tokenA, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") })).status).toBe(403);
+    expect((await internal(tokenA, "POST", "/api/internal/attach-file", { path: `../${taskB}/b.pdf` })).status).toBeGreaterThanOrEqual(403);
+    const listedA = await internal(tokenA, "GET", `/api/internal/files?fromBotId=${botId}&fromThreadId=${taskA}`);
+    expect(JSON.stringify(listedA.body)).not.toContain("b.pdf");
+    const bAttached = await internal(tokenB, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") });
+    expect(bAttached.status).toBe(200);
+    const handoff = await internal(tokenA, "POST", "/api/internal/attach-file", { fileId: bAttached.body.fileId });
+    expect(handoff.status).toBe(200);
+
     const appended = await Promise.all([
       internal(tokenA, "POST", "/api/internal/memory", { botId, threadId: taskA, action: "append", text: "A remembers apples." }),
       internal(tokenB, "POST", "/api/internal/memory", { botId, threadId: taskB, action: "append", text: "B remembers berries." }),
@@ -372,6 +388,7 @@ describe("independent bot tasks through the isolated control surface", () => {
     const final = await botState(botId);
     expect(final.tasks.find((task: any) => task.taskId === taskB).modelSelection.model).toBe(legacyModel);
     expect(final.tasks.find((task: any) => task.taskId === taskA).modelSelection.model).toBe(models[0]);
+
   }, 45_000);
 
   it("cancels a detached routine on its captured provider after an idle sibling changes the default", async () => {

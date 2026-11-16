@@ -1,6 +1,9 @@
+import { join } from "node:path";
+
 export const SCOUT_GIT_ROLE = "scout";
 export const AUTHORIZED_GITHUB_REPO = "House-of-434/house-of-434-site";
-export const AUTHORIZED_GIT_DIRECTORY = "/home/cua/workspace/repos/House-of-434-house-of-434-site";
+/** The repository lives inside the conversation's pinned working folder. */
+export const AUTHORIZED_GIT_SUBDIR = "repos/House-of-434-house-of-434-site";
 const PROTECTED_GIT_REFS = new Set(["main", "master", "production"]);
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PATTERN = /^relay\/[A-Za-z0-9._-]{1,100}$/;
@@ -172,7 +175,16 @@ export function githubWorkspaceEnvironment(token: string): Record<string, string
     GIT_CONFIG_COUNT: "1",
     GIT_CONFIG_KEY_0: "credential.https://github.com.helper",
     GIT_CONFIG_VALUE_0: "!gh auth git-credential",
+    GIT_AUTHOR_NAME: "Relay",
+    GIT_AUTHOR_EMAIL: "relay@houseof434.com",
+    GIT_COMMITTER_NAME: "Relay",
+    GIT_COMMITTER_EMAIL: "relay@houseof434.com",
   };
+}
+
+/** The validated repository directory inside one pinned workspace. */
+export function relayGitDirectory(workspace: string): string {
+  return join(workspace, ...AUTHORIZED_GIT_SUBDIR.split("/"));
 }
 
 export function redactRelayGitSecret(text: string, token: string): string {
@@ -190,8 +202,8 @@ function gitPrelude(): string {
   ].join("; ");
 }
 
-export function buildRelayGitShell(operation: RelayGitOperation): string {
-  const directory = shellQuote(AUTHORIZED_GIT_DIRECTORY);
+export function buildRelayGitShell(operation: RelayGitOperation, workspace: string): string {
+  const directory = shellQuote(relayGitDirectory(workspace));
   const repo = shellQuote(AUTHORIZED_GITHUB_REPO);
   const prelude = gitPrelude();
   if (operation.kind === "auth-status") return `${prelude}; gh auth status`;

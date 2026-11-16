@@ -204,7 +204,6 @@ const EXPLAINED: ReadonlyArray<{ path: RegExp; error: string }> = [
     error: "Remote access settings are managed on the host computer",
   },
   { path: /^\/api\/config$/, error: "API keys can only be changed on your computer" },
-  { path: /^\/api\/local-computer(\/|$)/, error: "the Local VM is set up on your computer" },
   {
     // Creating one exposes an endpoint to the internet, and rotating a
     // secret breaks whatever was sending to it. Neither belongs on a device

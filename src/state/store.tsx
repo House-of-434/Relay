@@ -100,7 +100,6 @@ export interface OptionCardData {
   allowSession?: boolean;
   /** Exact provider command eligible for a durable, folder-scoped allow. */
   commandAllowlist?: { command: string; cwd: string; providerInstanceId: string };
-  approvalScope?: "local-computer";
   /** Persisted proposal used by the server when the user confirms it. */
   routineRequest?: RoutineRequestCardData;
   /** Staged learned-skill change; applied only after the user confirms this card. */
@@ -608,8 +607,7 @@ export interface ConfigStatus {
   /** The enrolled organisation's read-only desktop policy; null when this
    * desktop is not enrolled or its Admin sends no policy. */
   managedPolicy?: ManagedPolicySummary | null;
-  /** This server is an OMB Cloud home: it offers no "this computer" and no
-   * Local VM (server/cloud-home.ts). Absent everywhere else. */
+  /** This server is an OMB Cloud home (server/cloud-home.ts). */
   cloudHome?: boolean;
   /** Relay shared workspace: bots/models are centrally configured by the team. */
   sharedWorkspace?: boolean;
@@ -1591,8 +1589,6 @@ export function reducer(state: AppState, action: Action): AppState {
         threadId: switchedThread ? action.bot.threadId : b.threadId,
         activeLeafId: switchedThread ? null : b.activeLeafId,
         awaitingThreadSnapshot: switchedThread || b.awaitingThreadSnapshot,
-        // Resetting Works on to Auto removes the field from the complete
-        // server frame; merging alone would keep the old target highlighted.
         // A complete frame omits section after another client moves the bot
         // into General. Retaining the old label strands an empty team in UI.
         section: action.bot.section,

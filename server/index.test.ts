@@ -6602,6 +6602,7 @@ describe("bot memory API", () => {
     try {
       const workspace = workspaceOf(bot.id);
       mkdirSync(workspace, { recursive: true });
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { cwd: workspace })).status).toBe(200);
       const xlsx = Buffer.from("PK-fake-workbook-bytes");
       writeFileSync(join(workspace, "budget.xlsx"), xlsx);
       writeFileSync(join(workspace, "song.mp3"), "ID3-fake-audio");
@@ -6656,9 +6657,9 @@ describe("bot memory API", () => {
       expect((await serve(first.id, join(workspace, "budget.xlsx"))).status).toBe(403);
 
       // Refusals say what to do instead.
-      const missing = await attach({ path: "/home/cua/workspace/none.pdf" });
+      const missing = await attach({ path: "none.pdf" });
       expect(missing.status).toBe(404);
-      expect(((await missing.json()) as { error: string }).error).toContain("/home/cua/workspace");
+      expect(((await missing.json()) as { error: string }).error).toContain("working folder");
       const unsupported = await attach({ path: "page.html" });
       expect(unsupported.status).toBe(415);
       expect(((await unsupported.json()) as { error: string }).error).toContain("Supported:");
@@ -6687,12 +6688,53 @@ describe("bot memory API", () => {
     }
   });
 
+  it("refuses repository commands from non-Scout and fails closed without a token", async () => {
+    const bots = (await api("GET", "/api/bots")).body.bots as Array<{ id: string; threadId: string; relayAgent?: string }>;
+    const scout = bots.find((bot) => bot.relayAgent === "scout");
+    expect(scout).toBeDefined();
+    const scoutToken = await mintTestCapability(BASE, scout!.id, scout!.threadId);
+    const scoutResult = await fetch(`${BASE}/api/internal/relay-git`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ command: "relay-git auth-status" }),
+    });
+    expect(scoutResult.status).toBe(409);
+    expect(((await scoutResult.json()) as { error: string }).error).toContain("token is not configured");
+
+    const other = (await api("POST", "/api/bots", {})).body.bot;
+    try {
+      const token = await mintTestCapability(BASE, other.id, other.threadId);
+      const refused = await fetch(`${BASE}/api/internal/relay-git`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ command: "relay-git auth-status" }),
+      });
+      expect(refused.status).toBe(403);
+      expect(((await refused.json()) as { error: string }).error).toContain("only to Scout");
+
+      const invalid = await fetch(`${BASE}/api/internal/relay-git`, {
+        method: "POST",
+        headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+        body: JSON.stringify({ command: "not a relay-git command" }),
+      });
+      expect(invalid.status).toBe(400);
+    } finally {
+      await api("DELETE", `/api/bots/${other.id}`);
+    }
+    expect((await fetch(`${BASE}/api/internal/vm-exec`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
+      body: JSON.stringify({ command: "ls" }),
+    })).status).toBe(404);
+  });
+
   it("keeps a turn to its attachment limit when the calls arrive at the same time", async () => {
     const bot = (await api("POST", "/api/bots", {})).body.bot;
     try {
       const workspace = workspaceOf(bot.id);
       mkdirSync(workspace, { recursive: true });
       writeFileSync(join(workspace, "song.mp3"), "ID3-fake-audio");
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { cwd: workspace })).status).toBe(200);
       const token = await mintTestCapability(BASE, bot.id, bot.threadId);
       const attach = () => fetch(`${BASE}/api/internal/attach-file`, {
         method: "POST",
@@ -6717,6 +6759,7 @@ describe("bot memory API", () => {
       const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from("chart-pixels")]);
       writeFileSync(join(workspace, "chart.png"), png);
       writeFileSync(join(workspace, "notes.txt"), "not an attachment of that message");
+      expect((await api("PATCH", `/api/bots/${bot.id}`, { cwd: workspace })).status).toBe(200);
       const token = await mintTestCapability(BASE, bot.id, bot.threadId);
       const attached = await fetch(`${BASE}/api/internal/attach-file`, {
         method: "POST",

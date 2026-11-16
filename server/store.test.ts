@@ -828,6 +828,33 @@ describe("Store", () => {
     expect(persisted.find((bot) => bot.id === first.id)).not.toHaveProperty("browserProfile");
   });
 
+  it("loads production bots with removed Works-on fields and strips task surfaces", () => {
+    const store = new Store(selection);
+    const bot = store.createBot();
+    const task = store.createTask(bot.id, "Legacy destination")!;
+    const botsFile = join(DATA_DIR, "bots.json");
+    const bots: Array<Record<string, unknown>> = JSON.parse(readFileSync(botsFile, "utf8"));
+    const saved = bots.find((candidate) => candidate.id === bot.id)!;
+    saved.ownerUserId = "123e4567-e89b-42d3-a456-426614174000";
+    saved.computer = "off";
+    saved.cloudBackend = "box";
+    saved.autoStartVps = true;
+    const savedTask = (saved.tasks as Array<Record<string, unknown>>).find((candidate) => candidate.threadId === task.threadId)!;
+    savedTask.surface = "vm";
+    savedTask.surfaceSource = "user";
+    writeFileSync(botsFile, JSON.stringify(bots));
+
+    const reloaded = new Store(selection);
+    expect(reloaded.bot(bot.id)).toBeDefined();
+    expect(reloaded.taskByThread(bot.id, task.threadId)).not.toHaveProperty("surface");
+    expect(reloaded.taskByThread(bot.id, task.threadId)).not.toHaveProperty("surfaceSource");
+    const persisted: Array<Record<string, unknown>> = JSON.parse(readFileSync(botsFile, "utf8"));
+    const persistedTask = (persisted.find((candidate) => candidate.id === bot.id)!.tasks as Array<Record<string, unknown>>)
+      .find((candidate) => candidate.threadId === task.threadId)!;
+    expect(persistedTask).not.toHaveProperty("surface");
+    expect(persistedTask).not.toHaveProperty("surfaceSource");
+  });
+
 
   it("migrates unambiguous legacy peer grants without guessing duplicate names", () => {
     const store = new Store(selection);
