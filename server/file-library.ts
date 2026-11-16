@@ -116,19 +116,7 @@ export function managedLocationForPath(ownerUserId: string, path: string): { bot
 export function mintFileId(ownerUserId: string, path: string): FileRecord | null {
   if (!regularFile(path)) return null;
   const location = managedLocationForPath(ownerUserId, path);
-  if (!location) {
-    if (process.platform === "win32") {
-      try {
-        const root = managedFilesRoot(ownerUserId);
-        const canonical = realpathSync(path);
-        const canonicalRoot = realpathSync(root);
-        console.warn("[mintFileId-debug]", JSON.stringify({ path, root, canonical, canonicalRoot, rel: relative(canonicalRoot, canonical) }));
-      } catch (error) {
-        console.warn("[mintFileId-debug]", JSON.stringify({ path, root: managedFilesRoot(ownerUserId), error: error instanceof Error ? error.message : String(error) }));
-      }
-    }
-    return null;
-  }
+  if (!location) return null;
   let canonical: string;
   try {
     canonical = realpathSync(path);

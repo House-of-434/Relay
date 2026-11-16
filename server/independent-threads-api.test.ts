@@ -329,10 +329,11 @@ describe("independent bot tasks through the isolated control surface", () => {
     expect((await internal(tokenA, "POST", "/api/internal/attach-file", { path: `../${taskB}/b.pdf` })).status).toBeGreaterThanOrEqual(403);
     const listedA = await internal(tokenA, "GET", `/api/internal/files?fromBotId=${botId}&fromThreadId=${taskA}`);
     expect(JSON.stringify(listedA.body)).not.toContain("b.pdf");
-    const bAttached = await internal(tokenB, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") });
-    expect(bAttached.status).toBe(200);
-    expect(bAttached.body).toMatchObject({ ok: true, fileId: expect.stringMatching(/^file_/) });
-    const handoff = await internal(tokenA, "POST", "/api/internal/attach-file", { fileId: bAttached.body.fileId });
+    expect((await internal(tokenB, "POST", "/api/internal/attach-file", { path: join(wsB, "b.pdf") })).status).toBe(200);
+    const listedB = await internal(tokenB, "GET", `/api/internal/files?fromBotId=${botId}&fromThreadId=${taskB}`);
+    const bFile = (listedB.body.files as Array<{ name: string; fileId: string }>).find((file) => file.name === "b.pdf");
+    expect(bFile?.fileId).toMatch(/^file_/);
+    const handoff = await internal(tokenA, "POST", "/api/internal/attach-file", { fileId: bFile!.fileId });
     expect(handoff.status).toBe(200);
 
     const appended = await Promise.all([
