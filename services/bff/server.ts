@@ -1250,6 +1250,20 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     const cookieState = cookieValue(req, GITHUB_OAUTH_STATE_COOKIE);
     const transaction = state && cookieState === state ? githubTransactions.get(state) : undefined;
     if (state) githubTransactions.delete(state);
+    const code = url.searchParams.get("code");
+    const installationRaw = url.searchParams.get("installation_id");
+    const installationId = installationRaw && /^\d{1,12}$/.test(installationRaw) ? Number(installationRaw) : undefined;
+    // A direct install/update from GitHub's own app page has no OAuth state.
+    // It is not a user authorization and must not be treated as one; send the
+    // person back to Relay, where Connect starts the real OAuth flow.
+    if (!transaction && installationId !== undefined && !code) {
+      res.statusCode = 303;
+      const installedLocation = new URL(uiLocation);
+      installedLocation.searchParams.set("connections", "installed");
+      res.setHeader("location", installedLocation.toString());
+      res.end();
+      return;
+    }
     if (!transaction || transaction.expiresAt <= now() || !githubApp) {
       reject(req, res, 400, "GitHub connection could not be completed");
       return;
@@ -1260,9 +1274,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       reject(req, res, 401, "GitHub connection could not be completed");
       return;
     }
-    const code = url.searchParams.get("code");
-    const installationRaw = url.searchParams.get("installation_id");
-    const installationId = installationRaw && /^\d{1,12}$/.test(installationRaw) ? Number(installationRaw) : undefined;
     try {
       if (code && githubOAuthConfigured) {
         const tokens = await githubApp.exchangeUserCode({
