@@ -718,6 +718,14 @@ test("rejects an unknown OAuth state without exchanging its code", async () => {
   assert.doesNotMatch(await response.text(), /auth-code-secret/);
 });
 
+test("a GitHub install/update landing page needs no Relay session", async () => {
+  const fixture = await startFixture();
+  const response = await fetch(`${fixture.baseUrl}/api/github/setup?installation_id=182734936&setup_action=update`, { redirect: "manual" });
+  assert.equal(response.status, 303);
+  const location = new URL(response.headers.get("location")!);
+  assert.equal(location.searchParams.get("connections"), "updated");
+});
+
 test("requires the BFF cookie and strips browser credentials before proxying application APIs", async () => {
   const fixture = await startFixture();
   const unsigned = await fetch(`${fixture.baseUrl}/api/bots`, {
