@@ -179,4 +179,46 @@ describe("groupTranscript", () => {
       "message",
     ]);
   });
+
+  const attachmentMessage = (turnId: string, at: number): Message => ({
+    id: `m${++seq}`,
+    at,
+    role: "bot",
+    kind: "text",
+    text: "",
+    turnId,
+    attachments: [{ kind: "file", path: "/store/report.pdf", mime: "application/pdf", name: "report.pdf" }],
+  });
+  const renderedIds = (items: ReturnType<typeof groupTranscript>): string[] =>
+    items.flatMap((item) =>
+      item.kind === "message" ? [item.message.id] : item.messages.map((message) => message.id),
+    );
+
+  it("never folds an attachment-owning message into the turn", () => {
+    const user: Message = { id: "u1", at: 1_000, role: "user", kind: "text", text: "make a report" };
+    const progress = assistant("Writing the report.", "turn-1", false, 2_000);
+    const report = attachmentMessage("turn-1", 3_000);
+    const final = assistant("Here is the report.", "turn-1", true, 5_000);
+
+    const items = groupTranscript([user, progress, report, final]);
+    expect(items.map((item) => item.kind)).toEqual(["message", "turn", "message", "message"]);
+    const turn = items[1];
+    expect(turn.kind === "turn" && turn.messages).toEqual([progress]);
+    // The card is rendered once, from the message that actually owns the file.
+    expect(renderedIds(items).filter((id) => id === report.id)).toHaveLength(1);
+    expect(items[2]).toEqual({ kind: "message", message: report });
+    expect(items[3]).toEqual({ kind: "message", message: final });
+  });
+
+  it("keeps an attachment message unfolded wherever it sits in the turn", () => {
+    const user: Message = { id: "u1", at: 1_000, role: "user", kind: "text", text: "make a report" };
+    const report = attachmentMessage("turn-1", 2_000);
+    const progress = assistant("Writing the report.", "turn-1", false, 3_000);
+    const final = assistant("Here is the report.", "turn-1", true, 5_000);
+
+    const items = groupTranscript([user, report, progress, final]);
+    expect(items.map((item) => item.kind)).toEqual(["message", "message", "turn", "message"]);
+    expect(items[1]).toEqual({ kind: "message", message: report });
+    expect(renderedIds(items).filter((id) => id === report.id)).toHaveLength(1);
+  });
 });
