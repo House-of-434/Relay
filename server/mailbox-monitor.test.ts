@@ -330,6 +330,13 @@ describe("routed mail message and prompt", () => {
     expect(prompt).not.toContain("https://us05web.zoom.us/j/123");
   });
 
+  it("tells the bot to read the routed message from Relay's shared mailbox", () => {
+    const prompt = routedMailPrompt();
+    expect(prompt).toContain("Message id above belongs to Relay's shared mailbox");
+    expect(prompt).toContain('mailbox "relay"');
+    expect(prompt).toContain("gmail_read");
+  });
+
   it("states one rule about calendar events instead of a NO_ACTION matrix", () => {
     const prompt = routedMailPrompt();
     // No accept/decline on someone's behalf, but nothing that tells the agent to

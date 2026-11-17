@@ -195,6 +195,17 @@ function json(res: ServerResponse, status: number, body: unknown): void {
   res.end(JSON.stringify(body));
 }
 
+/** The HTTP status a Google API client error carries. Kept to the status only:
+ * the provider's message can name tokens or internals and never crosses this
+ * boundary. A 404 means the id is not in the requested mailbox, which is worth
+ * saying so the caller can retry against the right one. */
+function googleErrorStatus(error: unknown): number | undefined {
+  if (typeof error !== "object" || error === null) return undefined;
+  const candidate = error as { code?: unknown; response?: { status?: unknown } };
+  const status = typeof candidate.response?.status === "number" ? candidate.response.status : candidate.code;
+  return typeof status === "number" ? status : undefined;
+}
+
 /** Header values must never carry a line break: a CRLF inside a filename or
  * subject could inject a header or a new part. */
 function headerValue(value: string): string {
@@ -1288,7 +1299,15 @@ export async function handleInternalGmail(
       },
     );
     json(res, 200, { account: { email: account.email }, sent, to: parsed.data.to, cc, bcc });
-  } catch {
+  } catch (error) {
+    if (googleErrorStatus(error) === 404) {
+      json(res, 404, {
+        error: pathname === INTERNAL_GMAIL_MESSAGES_GET || pathname === INTERNAL_GMAIL_ATTACHMENT_GET
+          ? "message not found in this mailbox"
+          : "Gmail resource not found",
+      });
+      return;
+    }
     json(res, 502, { error: "Gmail request failed" });
   }
 }
