@@ -164,7 +164,7 @@ describe("message gallery", () => {
     expect(markup).toContain("divide-y");
     expect(markup).toContain("Markdown");
     expect(markup).toContain("Python");
-    expect(markup).toContain("Open file");
+    expect(markup).toContain("Preview");
   });
 
   it("collapses large collections and deduplicates paths", () => {
