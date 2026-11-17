@@ -6693,7 +6693,7 @@ describe("bot memory API", () => {
     const scout = bots.find((bot) => bot.relayAgent === "scout");
     expect(scout).toBeDefined();
     const scoutToken = await mintTestCapability(BASE, scout!.id, scout!.threadId);
-    const scoutResult = await fetch(`${BASE}/api/internal/github-git-remote`, {
+    const scoutResult = await fetch(`${BASE}/api/internal/github-clone`, {
       method: "POST",
       headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
       body: JSON.stringify({ repo: "House-of-434/house-of-434-site" }),
@@ -6701,7 +6701,7 @@ describe("bot memory API", () => {
     expect(scoutResult.status).toBe(409);
     expect(((await scoutResult.json()) as { error: string }).error).toContain("working folder");
 
-    const invalid = await fetch(`${BASE}/api/internal/github-git-remote`, {
+    const invalid = await fetch(`${BASE}/api/internal/github-clone`, {
       method: "POST",
       headers: { authorization: `Bearer ${scoutToken}`, "content-type": "application/json" },
       body: JSON.stringify({ repo: "../outside" }),
@@ -6711,7 +6711,7 @@ describe("bot memory API", () => {
     const other = (await api("POST", "/api/bots", {})).body.bot;
     try {
       const token = await mintTestCapability(BASE, other.id, other.threadId);
-      const refused = await fetch(`${BASE}/api/internal/github-git-remote`, {
+      const refused = await fetch(`${BASE}/api/internal/github-clone`, {
         method: "POST",
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
         body: JSON.stringify({ repo: "House-of-434/house-of-434-site" }),

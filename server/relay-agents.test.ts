@@ -64,10 +64,10 @@ describe("scout capability manifest", () => {
 });
 
 describe("repository delegation prompts", () => {
-  it("points Scout at the native Git and approval-bound publish workflow", () => {
+  it("points Scout at the native Git and direct PR publish workflow", () => {
     expect(scout.profile.soul).toContain("repo-changes skill");
-    expect(scout.profile.soul).toContain("github_git_remote");
-    expect(scout.profile.soul).toContain("propose_publish");
+    expect(scout.profile.soul).toContain("github_clone");
+    expect(scout.profile.soul).toContain("github_open_pull_request");
     expect(scout.profile.soul).toContain("relay/ branch");
     expect(scout.profile.soul).toContain("never push to main");
   });

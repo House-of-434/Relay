@@ -649,6 +649,49 @@ export function installSeedSkill(
   return installPreparedSkill(botId, source, prepared, { enabled: true });
 }
 
+/** Replace a shipped seed in place when its installed source still belongs to
+ * that seed family. A person's imported skill with the same name is never
+ * touched. The review and enablement state stay as the person left them. */
+export function replaceSeedSkill(
+  botId: string,
+  source: string,
+  expectedSourcePrefix: string,
+  skillMd: string,
+): SkillListing | { error: string } {
+  const prepared = preparedSkillFiles([{ path: "SKILL.md", content: skillMd }]);
+  if ("error" in prepared) return prepared;
+  const name = prepared.parsed.name;
+  const manifest = readManifest(botId);
+  const existing = manifest[name];
+  if (!existing) return installPreparedSkill(botId, source, prepared, { enabled: true });
+  if (!existing.source.startsWith(expectedSourcePrefix)) {
+    return { error: `a skill named "${name}" is already imported — choose a different name` };
+  }
+  const directory = skillDirectory(botId, name, existing);
+  if (!directory) return { error: `the installed seed "${name}" is unavailable` };
+  const skillPath = join(directory, "SKILL.md");
+  try {
+    writeFileAtomic(skillPath, skillMd, { mode: 0o600 });
+  } catch (error) {
+    return { error: `seed update failed: ${error instanceof Error ? error.message : String(error)}` };
+  }
+  const entry: SkillManifestEntry = {
+    ...existing,
+    description: prepared.parsed.description,
+    source,
+    sha256: createHash("sha256").update(skillMd).digest("hex"),
+    importedAt: new Date().toISOString(),
+    license: prepared.parsed.license,
+    compatibility: prepared.parsed.compatibility,
+    warnings: prepared.warnings,
+    skippedFiles: prepared.skippedFiles,
+  };
+  manifest[name] = entry;
+  writeManifest(botId, manifest);
+  syncSkillLinks(botId);
+  return skillListing(botId, name, entry);
+}
+
 /** The organization library's path: a skill the organization's Admin
  * published arrives switched ON (the Admin is the review), with the install
  * stamp that lets the library find it again. `source` is chosen by the

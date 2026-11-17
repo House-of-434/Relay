@@ -15,7 +15,6 @@ import type { BotAvatarCrop } from "./bot-avatar.ts";
 import type { MascotBodyId } from "./mascot-bodies.ts";
 import type { TeamSetupRequest } from "./team-setup.ts";
 import type { RoutineRequestCardData } from "./routine-request.ts";
-import type { PublishRequestCardData } from "./publish-request.ts";
 import type { ProfileRequestCardData } from "./profile-request.ts";
 import type { ModelRequestCardData } from "./model-request.ts";
 import type { TighteningRequestCardData } from "./tightening-request.ts";
@@ -484,8 +483,6 @@ export interface OptionCardData {
   commandAllowlist?: CommandAllowlistCandidate;
   /** A durable chat-created routine proposal. */
   routineRequest?: RoutineRequestCardData;
-  /** A local commit waiting for publication approval. */
-  publishRequest?: PublishRequestCardData;
   /** A durable profile-change proposal (propose_profile). */
   profileRequest?: ProfileRequestCardData;
   /** A durable default-model proposal (propose_model). */

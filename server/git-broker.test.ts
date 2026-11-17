@@ -13,7 +13,14 @@ const base = {
   commit: "a".repeat(40),
   title: "Fix login",
   body: "Checks pass.",
-  attachments: ["before.png"],
+  attachments: [{
+    fileId: "file_abc123",
+    name: "after.png",
+    mime: "image/png",
+    bytes: 123,
+    sha256: "b".repeat(64),
+    path: "/tmp/workspace/after.png",
+  }],
   nonce: "nonce-1234567890",
   issuedAt: Math.floor(Date.now() / 1000),
   expiresAt: Math.floor(Date.now() / 1000) + 600,
@@ -34,14 +41,14 @@ describe("Git broker configuration", () => {
 });
 
 describe("publish requests", () => {
-  it("accepts only repository paths under repos/", () => {
+  it("accepts file ids for evidence and only repository paths under repos/", () => {
     expect(publishRequestSchema.safeParse({
       repo: "octo/repo",
       branch: "relay/fix-login",
       title: "Fix login",
       body: "Checks pass.",
       path: "repos/octo__repo",
-      attachments: [],
+      attachments: ["file_abc123"],
     }).success).toBe(true);
     expect(publishRequestSchema.safeParse({
       repo: "octo/repo",
@@ -49,7 +56,7 @@ describe("publish requests", () => {
       title: "Fix login",
       body: "Checks pass.",
       path: "../escape",
-      attachments: [],
+      attachments: ["file_abc123"],
     }).success).toBe(false);
     expect(publishRequestSchema.safeParse({
       repo: "octo/repo",
@@ -57,7 +64,7 @@ describe("publish requests", () => {
       title: "Fix login",
       body: "Checks pass.",
       path: "repos/octo__repo",
-      attachments: [],
+      attachments: ["file_abc123"],
     }).success).toBe(false);
     expect(publishRequestSchema.safeParse({
       repo: "octo/repo",
@@ -65,11 +72,19 @@ describe("publish requests", () => {
       title: "Fix login",
       body: "Checks pass.",
       path: "repos/octo__repo",
-      attachments: [],
+      attachments: ["file_abc123"],
+    }).success).toBe(false);
+    expect(publishRequestSchema.safeParse({
+      repo: "octo/repo",
+      branch: "relay/fix-login",
+      title: "Fix login",
+      body: "Checks pass.",
+      path: "repos/octo__repo",
+      attachments: ["/tmp/before.png"],
     }).success).toBe(false);
   });
 
-  it("signs a publish authorization only with a strong secret", () => {
+  it("signs attachment bytes and identity only with a strong secret", () => {
     expect(() => signPublishAuthorization(base, "short")).toThrow(/RELAY_TOOL_ACTOR_SECRET/);
     expect(signPublishAuthorization(base, "x".repeat(32)).signature).toMatch(/^[A-Za-z0-9_-]{43}$/);
   });

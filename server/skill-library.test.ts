@@ -159,10 +159,10 @@ describe("repo changes seed", () => {
       .not.toContain("repo-changes");
   });
 
-  it("describes the native Git and approval-bound publish workflow", () => {
+  it("describes the native Git and direct PR publish workflow", () => {
     expect(markdown).toMatch(/^---\nname: repo-changes\n/);
-    expect(markdown).toContain("github_git_remote");
-    expect(markdown).toContain("propose_publish");
+    expect(markdown).toContain("github_clone");
+    expect(markdown).toContain("github_open_pull_request");
     expect(markdown).not.toContain("relay_git");
   });
 });

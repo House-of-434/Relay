@@ -16,8 +16,7 @@ import { selectReplay, DEFAULT_REBUILD_BYTES, MAX_SUMMARY_BYTES } from "./contex
 import { draftSummary, foldPoint } from "./compaction-summary.ts";
 import { compactBudget, contextWindowFor, shouldCompact } from "./context-budget.ts";
 import { autoCompactWindow } from "./drivers/claude.ts";
-import { gitBrokerConfigured, gitBrokerSession, publishRequestSchema, publishToBroker, signPublishAuthorization } from "./git-broker.ts";
-import { PublishRequests } from "./publish-requests.ts";
+import { gitBrokerConfigured, gitBrokerSession, publishRequestSchema, publishToBroker, signPublishAuthorization, type PublishAttachment } from "./git-broker.ts";
 import { seedAllScoutSkills, seedScoutSkillsForOwner } from "./seed-skills.ts";
 import { appendGitAudit } from "./git-audit.ts";
 import { provenRequestPerson, SharedComputers, sharedComputerOperation, sharedComputerRegistration } from "./shared-computers.ts";
@@ -9021,7 +9020,6 @@ const tighteningRequests = new TighteningRequestService({
 /** User-confirmed Google actions. The pending entry is server-side only; the
  * card the user sees carries display text, never the event or draft id. */
 const connectorActions = new PendingConnectorActions();
-const publishRequests = new PublishRequests();
 /** One-shot research proposals live apart from routines: no schedule, no
  * calendar entry, one execution per confirmation. */
 researchJobs = new PendingResearchJobs();
@@ -9245,111 +9243,6 @@ function resolveAndSendRoutine(
     });
   }
   return sendRoutineResolution(res, result);
-}
-async function resolveAndSendPublish(
-  res: ServerResponse,
-  args: { botId: string; botName?: string; threadId: string; requestId: string; behavior: string },
-): Promise<boolean> {
-  const message = store.messagesFor(args.threadId).find(
-    (candidate) => candidate.card?.requestId === args.requestId && candidate.card.publishRequest,
-  );
-  const card = message?.card;
-  if (!message || !card?.publishRequest) return false;
-  const result = publishRequests.take(args.requestId, args.behavior === "allow" ? "allow" : "deny");
-  if (result.state === "missing") {
-    json(res, 410, { error: "this publish request is no longer pending" });
-    return true;
-  }
-  if (result.state === "already") {
-    json(res, 200, { ok: true, outcome: result.outcome === "approved" ? "published" : "rejected", alreadySettled: true });
-    return true;
-  }
-  const request = result.request;
-  store.patchMessage(args.threadId, message.id, {
-    card: { ...card, answered: args.behavior === "allow" ? "allow" : "deny", dismissed: args.behavior !== "allow" },
-  });
-  appendDecision(DATA_DIR, {
-    threadId: args.threadId,
-    requestId: args.requestId,
-    botId: args.botId,
-    botName: args.botName,
-    tool: "propose_publish",
-    summary: card.subtitle,
-    decision: result.state === "approved" ? "user-approved" : "user-denied",
-    source: "user",
-  });
-  if (result.state === "denied") {
-    appendGitAudit({
-      at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
-      repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "denied",
-    });
-    store.appendMessage(args.threadId, {
-      role: "bot",
-      kind: "text",
-      text: "Publishing was cancelled. Nothing was pushed to GitHub.",
-    });
-    json(res, 200, { ok: true, outcome: "rejected" });
-    return true;
-  }
-  try {
-    const repoPath = resolvePath(request.workspace, request.path);
-    const realRepo = realpathSync(repoPath);
-    const relativeRepo = relativePath(request.workspace, realRepo);
-    if (isAbsolute(relativeRepo) || relativeRepo === ".." || relativeRepo.startsWith(`..${sep}`)) {
-      json(res, 403, { error: "the repository path escapes this conversation's workspace" });
-      return true;
-    }
-    const head = execFileSync("git", ["-C", realRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
-    if (head !== request.commit) {
-      json(res, 409, { error: "the local commit changed after approval; ask Scout to propose the current commit again" });
-      return true;
-    }
-    const assertion = signedActorContext(
-      { userId: request.userId, botId: request.botId, threadId: request.threadId, agent: "scout" },
-      process.env.RELAY_TOOL_ACTOR_SECRET,
-    );
-    const session = await gitBrokerSession(assertion, request.workspace, relayBffCapability);
-    const authorization = signPublishAuthorization({
-      userId: request.userId,
-      botId: request.botId,
-      threadId: request.threadId,
-      agent: "scout",
-      repo: request.repo,
-      path: request.path,
-      branch: request.branch,
-      commit: request.commit,
-      title: request.title,
-      body: request.body,
-      attachments: request.attachments,
-      nonce: randomBytes(24).toString("base64url"),
-      issuedAt: Math.floor(Date.now() / 1000),
-      expiresAt: Math.floor(Date.now() / 1000) + 10 * 60,
-    }, process.env.RELAY_TOOL_ACTOR_SECRET);
-    const published = await publishToBroker(authorization, session.token, relayBffCapability);
-    appendGitAudit({
-      at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
-      repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "published", prUrl: published.prUrl,
-    });
-    store.appendMessage(args.threadId, {
-      role: "bot",
-      kind: "text",
-      text: `Published ${request.branch} and opened ${published.prUrl}`,
-    });
-    json(res, 200, { ok: true, outcome: "published", prUrl: published.prUrl, branch: published.branch, commit: published.commit });
-  } catch (error) {
-    appendGitAudit({
-      at: new Date().toISOString(), userId: request.userId, botId: request.botId, threadId: request.threadId,
-      repo: request.repo, branch: request.branch, commit: request.commit, operation: "publish", outcome: "failed",
-      error: error instanceof Error ? error.message : String(error),
-    });
-    store.appendMessage(args.threadId, {
-      role: "bot",
-      kind: "text",
-      text: `Publishing failed: ${error instanceof Error ? error.message : String(error)}. The local commit is still here.`,
-    });
-    json(res, 502, { error: error instanceof Error ? error.message : "publishing failed" });
-  }
-  return true;
 }
 function resolveAndSendProfile(
   res: ServerResponse,
@@ -13784,7 +13677,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
       }
 
-      if (method === "POST" && path === "/api/internal/github-git-remote") {
+      if (method === "POST" && path === "/api/internal/github-clone") {
         const from = internalSender;
         const threadId = internalCapability.threadId;
         if (!connectorThread(from.id, threadId)) {
@@ -13832,7 +13725,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         }
       }
 
-      if (method === "POST" && path === "/api/internal/publish-request") {
+      if (method === "POST" && path === "/api/internal/github-publish") {
         const from = internalSender;
         const threadId = internalCapability.threadId;
         if (!connectorThread(from.id, threadId)) {
@@ -13860,6 +13753,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (isAbsolute(lexical) || lexical === ".." || lexical.startsWith(`..${sep}`) || !lexical.replaceAll("\\", "/").startsWith("repos/")) {
           return json(res, 400, { error: "the repository path is outside this conversation's workspace" });
         }
+        let auditCommit = "";
         try {
           if (!statSync(repoPath).isDirectory()) throw new Error("not a directory");
           const realRepo = realpathSync(repoPath);
@@ -13869,56 +13763,89 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           }
           const head = execFileSync("git", ["-C", realRepo, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
           if (!/^[a-f0-9]{40}$/.test(head)) throw new Error("HEAD is not a commit");
-          let diffStat = "";
-          try {
-            diffStat = execFileSync("git", ["-C", realRepo, "diff", "--stat", "origin/main...HEAD"], { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
-          } catch {
-            diffStat = execFileSync("git", ["-C", realRepo, "diff", "--stat", "HEAD~1...HEAD"], { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
+          auditCommit = head;
+
+          let totalAttachmentBytes = 0;
+          const attachments: PublishAttachment[] = [];
+          for (const fileId of parsed.data.attachments) {
+            const resolved = resolveFile(from.ownerUserId, fileId);
+            if (!resolved) return json(res, 400, { error: `no file matches ${fileId}; attach the image again` });
+            let attachmentPath: string;
+            try {
+              attachmentPath = realpathSync(resolved.record.path);
+            } catch {
+              return json(res, 409, { error: `${resolved.name} is no longer available; attach it again` });
+            }
+            const attachmentRelative = relativePath(canonicalWorkspace, attachmentPath);
+            if (isAbsolute(attachmentRelative) || attachmentRelative === ".." || attachmentRelative.startsWith(`..${sep}`)) {
+              return json(res, 403, { error: "publishing evidence must come from this conversation's working folder" });
+            }
+            totalAttachmentBytes += resolved.bytes;
+            if (totalAttachmentBytes > 100 * 1024 * 1024) {
+              return json(res, 413, { error: "the combined visual evidence is larger than 100 MB" });
+            }
+            attachments.push({
+              fileId,
+              name: resolved.name,
+              mime: resolved.mime,
+              bytes: resolved.bytes,
+              sha256: createHash("sha256").update(readFileSync(attachmentPath)).digest("hex"),
+              path: attachmentPath,
+            });
           }
-          const request = publishRequests.submit({
+
+          const assertion = signedActorContext(
+            { userId: from.ownerUserId, botId: from.id, threadId, agent: "scout", turnId: internalCapability.generation },
+            process.env.RELAY_TOOL_ACTOR_SECRET,
+          );
+          const session = await gitBrokerSession(assertion, canonicalWorkspace, relayBffCapability);
+          const authorization = signPublishAuthorization({
             userId: from.ownerUserId,
             botId: from.id,
             threadId,
+            agent: "scout",
             repo: parsed.data.repo,
             path: parsed.data.path,
             branch: parsed.data.branch,
             commit: head,
             title: parsed.data.title,
             body: parsed.data.body,
-            attachments: parsed.data.attachments,
-            workspace: canonicalWorkspace,
-            diffStat,
+            attachments,
+            nonce: randomBytes(24).toString("base64url"),
+            issuedAt: Math.floor(Date.now() / 1000),
+            expiresAt: Math.floor(Date.now() / 1000) + 10 * 60,
+          }, process.env.RELAY_TOOL_ACTOR_SECRET);
+          const published = await publishToBroker(authorization, session.token, relayBffCapability);
+          appendGitAudit({
+            at: new Date().toISOString(), userId: from.ownerUserId, botId: from.id, threadId,
+            repo: parsed.data.repo, branch: parsed.data.branch, commit: head, operation: "publish", outcome: "published", prUrl: published.prUrl,
           });
           store.appendMessage(threadId, {
             role: "bot",
-            kind: "options",
-            from: { botId: from.id, name: from.name, color: from.color },
-            card: {
-              title: "Publish changes?",
-              subtitle: `${parsed.data.repo} · ${parsed.data.branch} · ${head.slice(0, 7)}${diffStat ? ` · ${diffStat.split("\n").at(-1)}` : ""}`,
-              options: ["Publish", "Cancel"],
-              requestId: request.requestId,
-              tool: "propose_publish",
-              publishRequest: {
-                requestId: request.requestId,
-                botId: from.id,
-                repo: request.repo,
-                branch: request.branch,
-                commit: request.commit,
-                title: request.title,
-                body: request.body,
-                attachments: request.attachments,
-                diffStat: request.diffStat,
-              },
-            },
+            kind: "text",
+            text: `${published.updated ? "Updated" : "Opened"} ${published.prUrl}`,
           });
           return json(res, 200, {
             ok: true,
-            requestId: request.requestId,
-            message: `Publish request staged for ${parsed.data.repo} @ ${parsed.data.branch} (${head.slice(0, 7)}). The person must approve the card before anything is pushed.`,
+            prUrl: published.prUrl,
+            branch: published.branch,
+            commit: published.commit,
+            updated: published.updated,
+            attachments: attachments.map((attachment) => attachment.fileId),
+            message: `${published.updated ? "Updated" : "Opened"} ${published.prUrl}`,
           });
         } catch (error) {
-          return json(res, 409, { error: error instanceof Error ? error.message : "could not prepare the publish request" });
+          const message = error instanceof Error ? error.message : "publishing failed";
+          appendGitAudit({
+            at: new Date().toISOString(), userId: from.ownerUserId, botId: from.id, threadId,
+            repo: parsed.data.repo, branch: parsed.data.branch, commit: auditCommit, operation: "publish", outcome: "failed", error: message,
+          });
+          store.appendMessage(threadId, {
+            role: "bot",
+            kind: "text",
+            text: `Publishing failed: ${message}. The local commit is still here.`,
+          });
+          return json(res, typeof (error as { status?: unknown }).status === "number" ? (error as { status: number }).status : 502, { error: message });
         }
       }
 
@@ -19422,21 +19349,6 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
             behavior,
             reviewedSha256,
           }))) return;
-        }
-        const publishCard = store.messagesFor(threadId).find(
-          (message) => message.card?.requestId === requestId && message.card.publishRequest,
-        );
-        if (publishCard?.card?.publishRequest) {
-          const publishBotId = publishCard.from?.botId ?? store.botByThread(threadId)?.id;
-          if (!publishBotId) return json(res, 400, { error: "this publish request has no valid owner" });
-          const publishOwner = store.bot(publishBotId);
-          if (await resolveAndSendPublish(res, {
-            botId: publishBotId,
-            botName: publishOwner?.name,
-            threadId,
-            requestId,
-            behavior,
-          })) return;
         }
         const routineCard = store.messagesFor(threadId).find(
           (message) => message.card?.requestId === requestId && message.card.routineRequest,

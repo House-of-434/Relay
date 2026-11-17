@@ -122,16 +122,16 @@ export function connectionViews(
   };
 }
 
-/** GitHub's connection as the BFF reports it: whether the workspace is set up
- *  for it, whether the teammate has linked an installation, and the
- *  installations Disconnect must revoke. */
+/** GitHub's connection as the BFF reports it. One record belongs to the
+ *  signed-in teammate; the optional organization is display metadata for the
+ *  App installation that grants repository access. */
 export interface GithubConnection {
   configured: boolean;
   connected: boolean;
   reauthorizationRequired?: boolean;
   account?: string;
+  organization?: string;
   installUrl?: string;
-  connections: readonly { id: string; account: string }[];
 }
 
 /** Notion's connection as the BFF reports it: whether the workspace is set up
@@ -185,9 +185,10 @@ export function PluginsPanel({
   // dead Connect.
   const githubConfigured = Boolean(github?.configured);
   const notionConfigured = Boolean(notion?.configured);
+  const githubIdentity = [github?.account, github?.organization].filter(Boolean).join(" · ");
   const services: readonly ConnectionService[] = [
     ...CONNECTION_SERVICES,
-    ...(githubConfigured ? [GITHUB_SERVICE] : []),
+    ...(githubConfigured ? [{ ...GITHUB_SERVICE, detail: github?.connected && githubIdentity ? githubIdentity : GITHUB_SERVICE.detail }] : []),
     ...(notionConfigured ? [NOTION_SERVICE] : []),
   ];
   const externallyConnected = new Set<ConnectionService["id"]>([

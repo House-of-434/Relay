@@ -3,6 +3,7 @@ import { z } from "zod";
 
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 const BRANCH_PATTERN = /^relay\/[A-Za-z0-9._-]{1,100}$/;
+const FILE_ID_PATTERN = /^file_[a-z0-9]{6,32}$/;
 
 export const publishRequestSchema = z.object({
   repo: z.string().min(3).max(200).regex(REPO_PATTERN).refine((value) => !value.split("/").some((part) => part === "." || part === "..")),
@@ -10,10 +11,22 @@ export const publishRequestSchema = z.object({
   title: z.string().trim().min(1).max(256),
   body: z.string().max(24_000),
   path: z.string().min(1).max(512).refine((value) => value.startsWith("repos/") && !value.split("/").includes("..")),
-  attachments: z.array(z.string().min(1).max(512).refine((value) => !value.split("/").includes("..") && !value.startsWith("/"))).max(12).default([]),
+  attachments: z.array(z.string().regex(FILE_ID_PATTERN)).max(12).default([]),
 }).strict();
 
 export type PublishRequestInput = z.infer<typeof publishRequestSchema>;
+
+/** One reviewed screenshot or recording. The BFF resolves the file id to a
+ * canonical path and binds the exact bytes; the broker revalidates before it
+ * uploads anything. */
+export interface PublishAttachment {
+  fileId: string;
+  name: string;
+  mime: string;
+  bytes: number;
+  sha256: string;
+  path: string;
+}
 
 export interface PublishAuthorization {
   version: 1;
@@ -27,7 +40,7 @@ export interface PublishAuthorization {
   commit: string;
   title: string;
   body: string;
-  attachments: string[];
+  attachments: PublishAttachment[];
   nonce: string;
   issuedAt: number;
   expiresAt: number;
@@ -48,7 +61,14 @@ function signingBytes(value: Omit<PublishAuthorization, "signature">): string {
     value.commit,
     value.title,
     value.body,
-    value.attachments,
+    value.attachments.map((attachment) => [
+      attachment.fileId,
+      attachment.name,
+      attachment.mime,
+      attachment.bytes,
+      attachment.sha256,
+      attachment.path,
+    ]),
     value.nonce,
     value.issuedAt,
     value.expiresAt,
@@ -105,7 +125,7 @@ export async function gitBrokerSession(actorAssertion: string, workspace: string
   return { token: body.token, url: body.url, expiresAt: body.expiresAt };
 }
 
-export async function publishToBroker(authorization: PublishAuthorization, sessionToken: string, capabilityInput?: string): Promise<{ prUrl: string; branch: string; commit: string }> {
+export async function publishToBroker(authorization: PublishAuthorization, sessionToken: string, capabilityInput?: string): Promise<{ prUrl: string; branch: string; commit: string; updated: boolean }> {
   const base = process.env.RELAY_GIT_BROKER_URL?.trim();
   const capability = brokerCapability(capabilityInput);
   if (!base || !capability) throw new Error("GitHub publishing is not configured");
@@ -120,10 +140,10 @@ export async function publishToBroker(authorization: PublishAuthorization, sessi
   } catch {
     throw new Error("GitHub publishing is unreachable");
   }
-  const body = await response.json().catch(() => ({})) as { error?: unknown; prUrl?: unknown; branch?: unknown; commit?: unknown };
+  const body = await response.json().catch(() => ({})) as { error?: unknown; prUrl?: unknown; branch?: unknown; commit?: unknown; updated?: unknown };
   if (!response.ok) throw new Error(typeof body.error === "string" ? body.error : "GitHub refused the publish");
   if (typeof body.prUrl !== "string" || typeof body.branch !== "string" || typeof body.commit !== "string") {
     throw new Error("GitHub publishing returned an invalid result");
   }
-  return { prUrl: body.prUrl, branch: body.branch, commit: body.commit };
+  return { prUrl: body.prUrl, branch: body.branch, commit: body.commit, updated: body.updated === true };
 }

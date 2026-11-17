@@ -17,7 +17,6 @@ import { handleInternalNotion, isInternalNotionPath } from "./notion-internal.ts
 import { exchangeNotionToken, normalizeNotionId, NOTION_OAUTH_AUTHORIZE_URL } from "./notion-api.ts";
 import { NotionConnectionStore } from "./notion-connections.ts";
 import { jsonResponse, verifyInternalRequest } from "./internal-request.ts";
-import { GitHubConnectionStore, githubConnectionId } from "./github-connections.ts";
 import { GITHUB_OAUTH_AUTHORIZE_URL, GitHubAppGateway, GitHubApiError } from "./github-api.ts";
 import { GitHubUserConnectionStore } from "./github-user-connections.ts";
 import {
@@ -86,6 +85,8 @@ export interface RelayBffConfig {
   githubAppId?: string;
   githubAppPrivateKey?: string;
   githubAppSlug?: string;
+  /** Optional organization label shown with the per-user GitHub connection. */
+  githubOrg?: string;
   /** GitHub App user OAuth. */
   githubClientId?: string;
   githubClientSecret?: string;
@@ -152,6 +153,7 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
   const githubAppId = env.RELAY_CONN_GITHUB_APP_ID?.trim();
   const githubAppPrivateKey = env.RELAY_CONN_GITHUB_APP_PRIVATE_KEY;
   const githubAppSlug = env.RELAY_CONN_GITHUB_APP_SLUG?.trim();
+  const githubOrg = env.RELAY_CONN_GITHUB_ORG?.trim();
   const githubClientId = env.RELAY_CONN_GITHUB_CLIENT_ID?.trim();
   const githubClientSecret = env.RELAY_CONN_GITHUB_CLIENT_SECRET?.trim();
   const githubTokenEncryptionKey = env.RELAY_CONN_GITHUB_TOKEN_KEY?.trim() || env.RELAY_TOKEN_ENCRYPTION_KEY?.trim();
@@ -192,6 +194,7 @@ export function configFromEnvironment(env: NodeJS.ProcessEnv = process.env): Rel
     ...(githubAppId ? { githubAppId } : {}),
     ...(githubAppPrivateKey ? { githubAppPrivateKey } : {}),
     ...(githubAppSlug ? { githubAppSlug } : {}),
+    ...(githubOrg ? { githubOrg } : {}),
     ...(githubClientId ? { githubClientId } : {}),
     ...(githubClientSecret ? { githubClientSecret } : {}),
     ...(githubTokenEncryptionKey ? { githubTokenEncryptionKey } : {}),
@@ -921,7 +924,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     clients: googleRegistry,
     redirectUri: googleRedirectUri(config, publicUrl)?.toString(),
   });
-  const githubConnections = new GitHubConnectionStore({ dataDir: config.dataDir });
   const githubUsers = new GitHubUserConnectionStore({
     dataDir: config.dataDir,
     encryptionKey: config.githubTokenEncryptionKey,
@@ -1239,10 +1241,10 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     res.end();
   };
 
-  /** GitHub user authorization callback. The installation callback may also
-   * arrive here with no code when an organization owner installed the app.
-   * The user token is the credential; installation metadata is recorded for
-   * repository discovery and display. */
+  /** GitHub user authorization callback. The App install/update redirect may
+   * also arrive here with no code; that is not a user authorization, so it
+   * only sends the person back to Relay to connect their own account. The
+   * user token is the one credential every GitHub action uses. */
   const handleGitHubCallback = async (req: IncomingMessage, res: ServerResponse, url: URL): Promise<void> => {
     res.setHeader("cache-control", "no-store");
     clearGitHubStateCookie(res);
@@ -1261,54 +1263,39 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
       return;
     }
     const code = url.searchParams.get("code");
-    const installationRaw = url.searchParams.get("installation_id");
-    const installationId = installationRaw && /^\d{1,12}$/.test(installationRaw) ? Number(installationRaw) : undefined;
+    if (!code) {
+      // The App install/update redirect can reach this route without a code.
+      // It only means the App was installed; the person still connects their
+      // own account, which is the credential every GitHub action uses.
+      res.statusCode = 303;
+      const installLocation = new URL(uiLocation);
+      installLocation.searchParams.set("connections", url.searchParams.get("setup_action") === "update" ? "updated" : "installed");
+      res.setHeader("location", installLocation.toString());
+      res.end();
+      return;
+    }
+    if (!githubOAuthConfigured) {
+      reject(req, res, 503, "GitHub OAuth is not configured");
+      return;
+    }
     try {
-      if (code && githubOAuthConfigured) {
-        const tokens = await githubApp.exchangeUserCode({
-          clientId: config.githubClientId!,
-          clientSecret: config.githubClientSecret!,
-          code,
-          redirectUri: transaction.redirectUri,
-          codeVerifier: transaction.codeVerifier,
-        });
-        const identity = await githubApp.getUser(tokens.accessToken);
-        await githubUsers.save({
-          userId: transaction.userId,
-          githubUserId: identity.id,
-          login: identity.login,
-          accessToken: tokens.accessToken,
-          ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
-          accessExpiresAt: tokens.accessExpiresAt,
-          refreshExpiresAt: tokens.refreshExpiresAt,
-        });
-        const installations = await githubApp.listUserInstallations(tokens.accessToken);
-        for (const entry of installations) {
-          await githubConnections.save({
-            id: githubConnectionId(entry.id),
-            userId: transaction.userId,
-            installationId: entry.id,
-            account: entry.account,
-            permissions: entry.permissions,
-            repositorySelection: entry.repositorySelection,
-            createdAt: new Date(now()).toISOString(),
-          });
-        }
-      } else if (installationId !== undefined) {
-        const info = await githubApp.installation(installationId);
-        await githubConnections.save({
-          id: githubConnectionId(installationId),
-          userId: transaction.userId,
-          installationId,
-          account: info.account,
-          permissions: info.permissions,
-          repositorySelection: info.repositorySelection,
-          createdAt: new Date(now()).toISOString(),
-        });
-      } else {
-        reject(req, res, 400, "GitHub connection could not be completed");
-        return;
-      }
+      const tokens = await githubApp.exchangeUserCode({
+        clientId: config.githubClientId!,
+        clientSecret: config.githubClientSecret!,
+        code,
+        redirectUri: transaction.redirectUri,
+        codeVerifier: transaction.codeVerifier,
+      });
+      const identity = await githubApp.getUser(tokens.accessToken);
+      await githubUsers.save({
+        userId: transaction.userId,
+        githubUserId: identity.id,
+        login: identity.login,
+        accessToken: tokens.accessToken,
+        ...(tokens.refreshToken ? { refreshToken: tokens.refreshToken } : {}),
+        accessExpiresAt: tokens.accessExpiresAt,
+        refreshExpiresAt: tokens.refreshExpiresAt,
+      });
     } catch (error) {
       reject(req, res, error instanceof GitHubApiError && error.status === 401 ? 401 : 502, "GitHub connection could not be saved");
       return;
@@ -1354,7 +1341,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     req.resume();
 
     if (url.pathname === "/api/connectors" && method === "GET") {
-      const connections = await githubConnections.list(session.subject);
       const githubUser = await githubUsers.get(session.subject);
       const notionList = await notionConnections.list(session.subject);
       json(res, 200, {
@@ -1362,9 +1348,9 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
           configured: githubOAuthConfigured,
           connected: Boolean(githubUser) && githubUser?.reauthRequired !== true,
           reauthorizationRequired: githubUser?.reauthRequired === true,
-          account: githubUser?.login ?? connections.at(-1)?.account,
+          account: githubUser?.login,
+          organization: config.githubOrg,
           installUrl: githubInstallUrl,
-          connections: connections.map((connection) => ({ id: connection.id, account: connection.account })),
         },
         notion: {
           configured: notionConfigured,
@@ -1447,29 +1433,21 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     }
 
     if (url.pathname === "/api/github/connection" && method === "GET") {
-      const connections = await githubConnections.list(session.subject);
       const githubUser = await githubUsers.get(session.subject);
       json(res, 200, {
         configured: githubOAuthConfigured,
         connected: Boolean(githubUser) && githubUser?.reauthRequired !== true,
         reauthorizationRequired: githubUser?.reauthRequired === true,
         account: githubUser?.login,
+        organization: config.githubOrg,
         installUrl: githubInstallUrl,
-        connections: connections.map((connection) => ({
-          id: connection.id,
-          account: connection.account,
-          permissions: connection.permissions,
-        })),
       });
       return;
     }
 
-    const disconnectMatch = method === "DELETE" ? /^\/api\/github\/connection\/([a-f0-9]{64})$/.exec(url.pathname) : null;
-    if (disconnectMatch) {
-      const id = disconnectMatch[1]!;
-      const connection = await githubConnections.get(session.subject, id);
+    if (url.pathname === "/api/github/connection" && method === "DELETE") {
       const githubUser = await githubUsers.get(session.subject);
-      if (!connection && !githubUser) {
+      if (!githubUser) {
         json(res, 404, { error: "GitHub connection not found" });
         return;
       }
@@ -1488,10 +1466,6 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
         } catch {
           // Local removal still wins when GitHub's revocation endpoint fails.
         }
-      }
-      const installations = await githubConnections.list(session.subject);
-      for (const installation of installations) {
-        await githubConnections.delete(session.subject, installation.id);
       }
       await githubUsers.delete(session.subject);
       json(res, 200, { ok: true, disconnected: true });

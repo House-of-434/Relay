@@ -38,8 +38,8 @@
     ]
   },
   "direct+github-git": {
-    "bytes": 48642,
-    "sha256": "87ef05e127be55ed8052ba4ccc6625167c2682db37cf6ed9faa67d3c5b54ea4c",
+    "bytes": 48871,
+    "sha256": "9c870e54cf32fb9b5fdefac7b1c77d10edb58efdd07487d0eaf3874db875f120",
     "tools": [
       "tool_result_read",
       "list_bots",
@@ -51,8 +51,8 @@
       "list_threads",
       "close_thread",
       "start_thread",
-      "github_git_remote",
-      "propose_publish",
+      "github_clone",
+      "github_open_pull_request",
       "list_files",
       "fetch_file",
       "attach_file",
@@ -118,8 +118,8 @@
     ]
   },
   "direct+shared+github-git": {
-    "bytes": 50387,
-    "sha256": "b8a7f95fb28d6625af70710918151197fc10326612b8e6f8251aba403ed89f70",
+    "bytes": 50616,
+    "sha256": "3126c9f79c4f445990890f3ad58a0ca88c367f7e793c625536664bbc4eae1285",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -133,8 +133,8 @@
       "list_threads",
       "close_thread",
       "start_thread",
-      "github_git_remote",
-      "propose_publish",
+      "github_clone",
+      "github_open_pull_request",
       "list_files",
       "fetch_file",
       "attach_file",
@@ -200,8 +200,8 @@
     ]
   },
   "direct+skills+github-git": {
-    "bytes": 50568,
-    "sha256": "808308c1b50b85e6b414f3f5e940a719a79c0d7122ae9b747748e0cea6b74ce4",
+    "bytes": 50797,
+    "sha256": "5454f337e36296b51924a593ae84812bbe5a1464db8090f897bf7311dc7f357c",
     "tools": [
       "tool_result_read",
       "list_bots",
@@ -213,8 +213,8 @@
       "list_threads",
       "close_thread",
       "start_thread",
-      "github_git_remote",
-      "propose_publish",
+      "github_clone",
+      "github_open_pull_request",
       "list_files",
       "fetch_file",
       "attach_file",
@@ -284,8 +284,8 @@
     ]
   },
   "direct+skills+shared+github-git": {
-    "bytes": 52313,
-    "sha256": "2df3a5e69f9552aa104a382108d9d959e470ec305515529c4d5e5d727f0e39c0",
+    "bytes": 52542,
+    "sha256": "6d2b4d371dba978a8aee54d57b7ed19464c044f5b89f4f96893720c688e2eb26",
     "tools": [
       "tool_result_read",
       "list_shared_computers",
@@ -299,8 +299,8 @@
       "list_threads",
       "close_thread",
       "start_thread",
-      "github_git_remote",
-      "propose_publish",
+      "github_clone",
+      "github_open_pull_request",
       "list_files",
       "fetch_file",
       "attach_file",

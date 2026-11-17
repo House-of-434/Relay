@@ -4,9 +4,9 @@ import { dataDirPath, readJsonFile, SerialQueue, writeJsonFileAtomic } from "./j
 
 /** Per-user GitHub App user authorization.
  *
- * One record per Relay user. The GitHub App installation is metadata only;
- * the user token is the credential every GitHub action uses. Tokens are
- * AES-256-GCM encrypted with AAD bound to the owning user, following the
+ * One record per Relay user. The GitHub App installation grants repository
+ * access; the user token is the credential every GitHub action uses. Tokens
+ * are AES-256-GCM encrypted with AAD bound to the owning user, following the
  * Notion connection store.
  *
  * No token is ever returned to an agent. The BFF resolves it from the

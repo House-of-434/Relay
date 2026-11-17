@@ -363,9 +363,9 @@ const toolDefinitions = (externalRuntime: boolean) => [
     },
   },
   {
-    name: "github_git_remote",
+    name: "github_clone",
     description:
-      "Open a read-only GitHub transport for one repository in this conversation. Returns a clone URL and the exact local path to clone into. The URL can clone and fetch but cannot push. Use ordinary git in the conversation workspace; publishing goes through propose_publish after the person approves the exact commit.",
+      "Open a read-only clone URL for one repository in this conversation. Returns the URL and the exact local path to clone into. The URL can fetch but cannot push. Use ordinary git in the conversation workspace; when the person asked for a pull request, publish the exact commit with github_open_pull_request.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -376,23 +376,23 @@ const toolDefinitions = (externalRuntime: boolean) => [
     },
   },
   {
-    name: "propose_publish",
+    name: "github_open_pull_request",
     description:
-      "Ask the person to publish the current local commit. Relay will push only this exact commit to a relay/ branch and open the pull request after they approve. Include a summary, test status, and paths to screenshots or recordings in this conversation's working folder. Never run git push yourself; it has no GitHub credential and will fail.",
+      "Open or update a pull request for the current local commit. Call only when the person asked for a repository change to be published as a PR, or explicitly approved publication. Relay pushes only this exact commit to a relay/ branch and never merges, force-pushes, or publishes to the default branch. Run checks first; for user-visible web changes, attach before/after screenshots with attach_file and pass their file ids. Never run git push yourself; it has no GitHub credential.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
       properties: {
-        repo: { type: "string", description: "Repository as owner/name from github_git_remote." },
-        branch: { type: "string", description: "New branch starting with relay/." },
+        repo: { type: "string", description: "Repository as owner/name from github_clone." },
+        branch: { type: "string", description: "Branch starting with relay/. Reuse the same branch for a follow-up on the same PR." },
         title: { type: "string", description: "Pull request title." },
-        body: { type: "string", description: "Pull request body: summary, checks, test status, and a visual-review note." },
-        path: { type: "string", description: "Local repository path returned by github_git_remote, relative to the working folder." },
+        body: { type: "string", description: "Pull request body: what changed, checks, test status, and any check that could not run." },
+        path: { type: "string", description: "Local repository path returned by github_clone, relative to the working folder." },
         attachments: {
           type: "array",
           maxItems: 12,
-          items: { type: "string", description: "Screenshot or video path relative to the working folder." },
-          description: "Optional visual evidence for the pull request.",
+          items: { type: "string", description: "A file id from attach_file, for example file_7f3k2m9q." },
+          description: "Optional before/after images or a short recording, already attached with attach_file.",
         },
       },
       required: ["repo", "branch", "title", "body", "path"],
@@ -874,7 +874,7 @@ const ROOM_REPLACED_TOOLS = new Set(["ask_bot", "delegate_bot", "check_delegatio
 const EXTERNAL_TOOL_NAMES = new Set(["list_bots", "ask_bot", "delegate_bot", "check_delegation", "wait_delegation"]);
 const WATCHER_TOOL_NAMES = new Set(["create_options_card"]);
 // Scout only, and only when this turn has an initialized workspace.
-const GITHUB_GIT_TOOL_NAMES = new Set(["github_git_remote", "propose_publish"]);
+const GITHUB_GIT_TOOL_NAMES = new Set(["github_clone", "github_open_pull_request"]);
 
 /** The tools one turn is shown, exactly as tools/list serializes them. */
 export function availableTools(profile: CatalogProfile) {

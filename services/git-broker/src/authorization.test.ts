@@ -20,7 +20,14 @@ function authorization(overrides: Partial<Parameters<typeof signPublishAuthoriza
     commit: "a".repeat(40),
     title: "Fix login",
     body: "Checks pass.",
-    attachments: ["before.png"],
+    attachments: [{
+      fileId: "file_abc123",
+      name: "before.png",
+      mime: "image/png",
+      bytes: 123,
+      sha256: "b".repeat(64),
+      path: "/tmp/workspace/before.png",
+    }],
     nonce: "nonce-1234567890",
     issuedAt: Math.floor(Date.now() / 1000),
     expiresAt: Math.floor(Date.now() / 1000) + 600,
@@ -33,11 +40,17 @@ test("round-trips an approved publish payload", () => {
   assert.deepEqual(verifyPublishAuthorization(signed, SECRET), signed);
 });
 
-test("rejects tampering, expiry, and non-relay branches", () => {
+test("rejects tampering, expiry, non-relay branches, and changed attachment bytes", () => {
   const signed = authorization();
   assert.throws(() => verifyPublishAuthorization({ ...signed, commit: "b".repeat(40) }, SECRET), /signature/);
   assert.throws(() => verifyPublishAuthorization(authorization({ expiresAt: Math.floor(Date.now() / 1000) - 1 }), SECRET), /expired/);
   assert.throws(() => verifyPublishAuthorization({ ...signed, branch: "main" }, SECRET), /invalid/);
+  const changed = {
+    ...signed,
+    attachments: [{ ...signed.attachments[0]!, sha256: "c".repeat(64) }],
+  };
+  assert.throws(() => verifyPublishAuthorization(changed, SECRET), /signature/);
+  assert.throws(() => verifyPublishAuthorization({ ...signed, attachments: [{ ...signed.attachments[0]!, fileId: "/tmp/x" }] }, SECRET), /invalid/);
 });
 
 test("Git smart HTTP uses the x-access-token Basic credential, not Bearer", () => {

@@ -159,24 +159,16 @@ function GoogleConnectionsDialog() {
     window.location.assign(authorizationUrl.toString());
   };
 
-  // Disconnect revokes every installation Relay holds for the teammate, then
-  // reads the state back so a partial failure cannot leave a surviving
-  // installation hidden behind a row the user believes is gone.
+  // One per-user token is the whole GitHub connection. Disconnect revokes it
+  // and reads the state back so a partial failure cannot leave the row showing
+  // a grant the teammate believes is gone.
   const disconnectGithub = async () => {
-    const connections = github?.connections ?? [];
-    const revoked = await Promise.all(connections.map(async (connection) => {
-      try {
-        const response = await fetch(`/api/github/connection/${encodeURIComponent(connection.id)}`, {
-          method: "DELETE",
-          credentials: "same-origin",
-        });
-        return response.ok || response.status === 404;
-      } catch {
-        return false;
-      }
-    }));
+    const response = await fetch("/api/github/connection", {
+      method: "DELETE",
+      credentials: "same-origin",
+    });
     await refreshGithub();
-    if (revoked.includes(false)) throw new Error("Could not disconnect every GitHub installation.");
+    if (!response.ok && response.status !== 404) throw new Error("Could not disconnect GitHub.");
   };
 
   // Mirrors the GitHub connect: the BFF answers with a Notion authorization URL

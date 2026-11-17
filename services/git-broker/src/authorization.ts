@@ -2,6 +2,15 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 
 export const PUBLISH_AUTH_PURPOSE = "relay-github-publish";
 
+export interface PublishAttachment {
+  fileId: string;
+  name: string;
+  mime: string;
+  bytes: number;
+  sha256: string;
+  path: string;
+}
+
 export interface PublishAuthorization {
   version: 1;
   userId: string;
@@ -14,7 +23,7 @@ export interface PublishAuthorization {
   commit: string;
   title: string;
   body: string;
-  attachments: string[];
+  attachments: PublishAttachment[];
   nonce: string;
   issuedAt: number;
   expiresAt: number;
@@ -27,7 +36,10 @@ const COMMIT = /^[a-f0-9]{40}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SIGNATURE = /^[A-Za-z0-9_-]{43}$/;
 const NONCE = /^[A-Za-z0-9_-]{16,128}$/;
-const ATTACHMENT = /^[A-Za-z0-9._/-]{1,512}$/;
+const FILE_ID = /^file_[a-z0-9]{6,32}$/;
+const MIME = /^[a-z0-9][a-z0-9.+-]*\/[a-z0-9][a-z0-9.+-]*$/;
+const SHA256 = /^[a-f0-9]{64}$/;
+const MAX_ATTACHMENT_BYTES = 100 * 1024 * 1024;
 
 function signingBytes(value: Omit<PublishAuthorization, "signature">): string {
   return JSON.stringify([
@@ -43,7 +55,14 @@ function signingBytes(value: Omit<PublishAuthorization, "signature">): string {
     value.commit,
     value.title,
     value.body,
-    value.attachments,
+    value.attachments.map((attachment) => [
+      attachment.fileId,
+      attachment.name,
+      attachment.mime,
+      attachment.bytes,
+      attachment.sha256,
+      attachment.path,
+    ]),
     value.nonce,
     value.issuedAt,
     value.expiresAt,
@@ -58,6 +77,24 @@ export function signPublishAuthorization(
   const payload = { version: 1 as const, ...value };
   const signature = createHmac("sha256", secret).update(signingBytes(payload)).digest("base64url");
   return { ...payload, signature };
+}
+
+function validAttachments(value: unknown): value is PublishAttachment[] {
+  if (!Array.isArray(value) || value.length > 12) return false;
+  return value.every((entry) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return false;
+    const attachment = entry as Partial<PublishAttachment>;
+    return (
+      typeof attachment.fileId === "string" && FILE_ID.test(attachment.fileId) &&
+      typeof attachment.name === "string" && attachment.name.length > 0 && attachment.name.length <= 255 &&
+      !attachment.name.includes("/") && !attachment.name.includes("\\") &&
+      typeof attachment.mime === "string" && MIME.test(attachment.mime) &&
+      typeof attachment.bytes === "number" && Number.isSafeInteger(attachment.bytes) &&
+      attachment.bytes > 0 && attachment.bytes <= MAX_ATTACHMENT_BYTES &&
+      typeof attachment.sha256 === "string" && SHA256.test(attachment.sha256) &&
+      typeof attachment.path === "string" && attachment.path.length > 0 && attachment.path.length <= 4096
+    );
+  });
 }
 
 export function verifyPublishAuthorization(
@@ -82,8 +119,7 @@ export function verifyPublishAuthorization(
     typeof auth.commit !== "string" || !COMMIT.test(auth.commit) ||
     typeof auth.title !== "string" || auth.title.trim().length < 1 || auth.title.length > 256 ||
     typeof auth.body !== "string" || auth.body.length > 24_000 ||
-    !Array.isArray(auth.attachments) || auth.attachments.length > 12 ||
-    !auth.attachments.every((entry) => typeof entry === "string" && ATTACHMENT.test(entry) && !entry.split("/").includes("..")) ||
+    !validAttachments(auth.attachments) ||
     typeof auth.nonce !== "string" || !NONCE.test(auth.nonce) ||
     typeof auth.issuedAt !== "number" || !Number.isSafeInteger(auth.issuedAt) ||
     typeof auth.expiresAt !== "number" || !Number.isSafeInteger(auth.expiresAt) ||

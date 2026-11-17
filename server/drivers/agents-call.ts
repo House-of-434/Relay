@@ -434,9 +434,9 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
   const { botId: BOT_ID, threadId: THREAD_ID, depth: DEPTH, externalRuntime: EXTERNAL_RUNTIME, coordinating: COORDINATING, turn } = context;
   const { delegationTaskIdsThisTurn } = turn;
   const { api, apiResponse } = context.client;
-  if (name === "github_git_remote") {
+  if (name === "github_clone") {
     const repo = typeof args.repo === "string" ? args.repo.trim() : "";
-    const { ok, body } = await apiResponse("/api/internal/github-git-remote", {
+    const { ok, body } = await apiResponse("/api/internal/github-clone", {
       method: "POST",
       body: JSON.stringify({ repo }),
     });
@@ -445,22 +445,23 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
     const path = String(body.path ?? "");
     if (!cloneUrl || !path) return { text: "GitHub access was not configured.", isError: true };
     return {
-      text: `Clone with ordinary git:\n\ngit clone ${cloneUrl} ${path}\n\nThe URL is read-only. It cannot push. Work in the returned path, then call propose_publish with the exact commit and visual evidence.`,
+      text: `Clone with ordinary git:\n\ngit clone ${cloneUrl} ${path}\n\nThe URL is read-only. It cannot push. Work in the returned path, then call github_open_pull_request with the exact commit and attached visual evidence.`,
     };
   }
-  if (name === "propose_publish") {
+  if (name === "github_open_pull_request") {
     const repo = typeof args.repo === "string" ? args.repo.trim() : "";
     const branch = typeof args.branch === "string" ? args.branch.trim() : "";
     const title = typeof args.title === "string" ? args.title.trim() : "";
     const bodyText = typeof args.body === "string" ? args.body : "";
     const path = typeof args.path === "string" ? args.path.trim() : "";
     const attachments = Array.isArray(args.attachments) ? args.attachments.filter((entry): entry is string => typeof entry === "string") : [];
-    const { ok, body } = await apiResponse("/api/internal/publish-request", {
+    const { ok, body } = await apiResponse("/api/internal/github-publish", {
       method: "POST",
       body: JSON.stringify({ repo, branch, title, body: bodyText, path, attachments }),
     });
-    if (!ok) return { text: String(body.error ?? "Could not prepare that publish request."), isError: true };
-    return { text: String(body.message ?? "Publish request is waiting for the person to approve it.") };
+    if (!ok) return { text: String(body.error ?? "Could not open that pull request."), isError: true };
+    const prUrl = String(body.prUrl ?? "");
+    return { text: prUrl ? String(body.message ?? `Opened ${prUrl}`) : "The pull request was opened." };
   }
   if (name === "list_files") {
     const threadId = typeof args.thread_id === "string" ? args.thread_id.trim() : "";

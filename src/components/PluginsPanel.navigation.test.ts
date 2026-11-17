@@ -124,12 +124,12 @@ describe("Connections marketplace", () => {
 });
 
 describe("github connection", () => {
-  const available: GithubConnection = { configured: true, connected: false, connections: [] };
+  const available: GithubConnection = { configured: true, connected: false };
   const connected: GithubConnection = {
     configured: true,
     connected: true,
     account: "pranam434",
-    connections: [{ id: "gh_1", account: "pranam434" }],
+    organization: "House-of-434",
   };
 
   it("offers GitHub alongside the Google services once the workspace is configured for it", () => {
@@ -139,10 +139,16 @@ describe("github connection", () => {
     expect(html).toContain('aria-label="Connect GitHub"');
   });
 
+  it("shows the GitHub user and organization as one identity", () => {
+    const { html } = render({ github: connected });
+    expect(html).toContain("pranam434");
+    expect(html).toContain("House-of-434");
+  });
+
   it("hides GitHub entirely when the workspace is not configured for it", () => {
     // A dead Connect would be worse than no row; not configured is distinct
     // from configured-but-disconnected, which does show Connect.
-    expect(render({ github: { configured: false, connected: false, connections: [] } }).html).not.toContain("GitHub");
+    expect(render({ github: { configured: false, connected: false } }).html).not.toContain("GitHub");
     expect(render().html).not.toContain("GitHub");
   });
 
@@ -250,7 +256,7 @@ describe("connectionViews", () => {
   });
 
   it("groups the catalog by category, Coding before Productivity", () => {
-    const { html } = render({ github: { configured: true, connected: false, connections: [] } });
+    const { html } = render({ github: { configured: true, connected: false } });
     expect(html).toContain("Coding");
     expect(html).toContain("Productivity");
     expect(html.indexOf("Coding")).toBeLessThan(html.indexOf("GitHub"));

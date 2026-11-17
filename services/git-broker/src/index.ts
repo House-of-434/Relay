@@ -6,7 +6,8 @@ import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 
-import { gitReadAuthorization, verifyPublishAuthorization } from "./authorization.ts";
+import { gitReadAuthorization, verifyPublishAuthorization, type PublishAttachment } from "./authorization.ts";
+import { fastForwardable, pullBody } from "./publish.ts";
 
 const PORT = Number(process.env.RELAY_GIT_BROKER_PORT ?? 8792);
 const HOST = process.env.RELAY_GIT_BROKER_HOST ?? "127.0.0.1";
@@ -35,10 +36,14 @@ interface PublishResult {
   prUrl: string;
   branch: string;
   commit: string;
+  updated: boolean;
 }
 
 const sessions = new Map<string, Session>();
 const usedNonces = new Map<string, number>();
+const attachmentUploads = new Map<string, { url: string; expiresAt: number }>();
+const publishQueues = new Map<string, Promise<void>>();
+const ATTACHMENT_CACHE_TTL_MS = 60 * 60_000;
 
 function log(message: string): void {
   console.log(`[git-broker] ${message}`);
@@ -262,7 +267,7 @@ async function remoteBranchHead(repo: string, branch: string, token: string): Pr
   return typeof body.object?.sha === "string" ? body.object.sha : null;
 }
 
-async function repoId(repo: string, token: string): Promise<number | undefined> {
+async function repositoryIdentity(repo: string, token: string): Promise<{ id: number; fullName: string } | undefined> {
   const [owner, name] = repoParts(repo);
   const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}`, {
     headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
@@ -272,8 +277,10 @@ async function repoId(repo: string, token: string): Promise<number | undefined> 
     await response.body?.cancel().catch(() => {});
     return undefined;
   }
-  const body = await response.json() as { id?: unknown };
-  return typeof body.id === "number" ? body.id : undefined;
+  const body = await response.json() as { id?: unknown; full_name?: unknown };
+  return typeof body.id === "number" && typeof body.full_name === "string"
+    ? { id: body.id, fullName: body.full_name }
+    : undefined;
 }
 
 const MIME: Record<string, string> = {
@@ -288,18 +295,99 @@ const MIME: Record<string, string> = {
   ".webm": "video/webm",
 };
 
-async function uploadAttachment(input: { workspace: string; path: string; repo: string; token: string }): Promise<string | undefined> {
-  const absolute = resolve(input.workspace, input.path);
-  if (!inside(input.workspace, absolute)) return undefined;
+interface PullRequestState {
+  state: "none" | "open" | "closed" | "merged";
+  number?: number;
+  url?: string;
+  headSha?: string;
+}
+
+async function existingPullRequest(repo: string, branch: string, token: string): Promise<PullRequestState> {
+  const [owner, name] = repoParts(repo);
+  const response = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls?state=all&head=${encodeURIComponent(`${owner}:${branch}`)}&per_page=20`,
+    {
+      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw Object.assign(new Error(`GitHub refused the pull-request check (${response.status})`), { status: 502 });
+  }
+  const items = await response.json() as Array<{
+    number?: unknown;
+    state?: unknown;
+    html_url?: unknown;
+    merged_at?: unknown;
+    head?: { ref?: unknown; sha?: unknown; repo?: { full_name?: unknown } };
+    base?: { repo?: { full_name?: unknown } };
+  }>;
+  const expected = repo.toLowerCase();
+  const matches = items.filter((item) =>
+    item.head?.ref === branch &&
+    typeof item.head.repo?.full_name === "string" && item.head.repo.full_name.toLowerCase() === expected &&
+    typeof item.base?.repo?.full_name === "string" && item.base.repo.full_name.toLowerCase() === expected);
+  const open = matches.find((item) => item.state === "open");
+  const chosen = open ?? matches[0];
+  if (!chosen) return { state: "none" };
+  const state = chosen.state === "open" ? "open" : chosen.merged_at ? "merged" : "closed";
+  return {
+    state,
+    ...(typeof chosen.number === "number" ? { number: chosen.number } : {}),
+    ...(typeof chosen.html_url === "string" ? { url: chosen.html_url } : {}),
+    ...(typeof chosen.head?.sha === "string" ? { headSha: chosen.head.sha } : {}),
+  };
+}
+
+async function compareCommits(repo: string, base: string, head: string, token: string): Promise<string> {
+  const [owner, name] = repoParts(repo);
+  const response = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
+    {
+      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
+      signal: AbortSignal.timeout(20_000),
+    },
+  );
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw Object.assign(new Error(`GitHub refused the commit comparison (${response.status})`), { status: 502 });
+  }
+  const body = await response.json() as { status?: unknown };
+  return typeof body.status === "string" ? body.status : "unknown";
+}
+
+async function uploadAttachment(input: {
+  workspace: string;
+  attachment: PublishAttachment;
+  repo: string;
+  token: string;
+}): Promise<string> {
+  const cacheKey = `${input.repo}\0${input.attachment.sha256}`;
+  const cached = attachmentUploads.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  const absolute = resolve(input.workspace, input.attachment.path);
+  if (!inside(input.workspace, absolute)) fail("attachment path escapes the conversation workspace");
+  let real: string;
   let info;
-  try { info = await stat(absolute); } catch { return undefined; }
-  if (!info.isFile() || info.size <= 0 || info.size > MAX_ATTACHMENT) return undefined;
-  const mime = MIME[extname(absolute).toLowerCase()];
-  if (!mime) return undefined;
-  const id = await repoId(input.repo, input.token);
-  if (!id) return undefined;
-  const name = basename(absolute);
-  const query = new URLSearchParams({ name, content_type: mime, repository_id: String(id) });
+  try {
+    real = await realpath(absolute);
+    info = await stat(real);
+  } catch {
+    fail("attachment is unavailable");
+  }
+  if (!inside(input.workspace, real)) fail("attachment path escapes the conversation workspace");
+  if (!info.isFile() || info.size <= 0 || info.size > MAX_ATTACHMENT) fail("attachment is not a supported file");
+  if (info.size !== input.attachment.bytes) fail("attachment changed after it was attached");
+  const mime = MIME[extname(real).toLowerCase()];
+  if (!mime || mime !== input.attachment.mime) fail("attachment type changed after it was attached");
+  const bytes = await readFile(real);
+  if (bytes.byteLength !== input.attachment.bytes) fail("attachment changed after it was attached");
+  const sha256 = createHash("sha256").update(bytes).digest("hex");
+  if (sha256 !== input.attachment.sha256) fail("attachment changed after it was attached");
+  const identity = await repositoryIdentity(input.repo, input.token);
+  if (!identity) throw Object.assign(new Error("GitHub refused the attachment repository lookup"), { status: 502 });
+  const query = new URLSearchParams({ name: basename(real), content_type: mime, repository_id: String(identity.id) });
   let response: Response;
   try {
     response = await fetch(`https://uploads.github.com/user-attachments/assets?${query.toString()}`, {
@@ -309,15 +397,56 @@ async function uploadAttachment(input: { workspace: string; path: string; repo: 
         accept: "application/json",
         "content-type": mime,
       },
-      body: await readFile(absolute),
+      body: bytes,
       signal: AbortSignal.timeout(60_000),
     });
   } catch {
-    return undefined;
+    throw Object.assign(new Error("GitHub attachment upload is unreachable"), { status: 502 });
   }
-  if (!response.ok) { await response.body?.cancel().catch(() => {}); return undefined; }
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {});
+    throw Object.assign(new Error(`GitHub refused an attachment upload (${response.status})`), { status: 502 });
+  }
   const body = await response.json() as { url?: unknown };
-  return typeof body.url === "string" && body.url.startsWith("https://github.com/user-attachments/") ? body.url : undefined;
+  if (typeof body.url !== "string" || !body.url.startsWith("https://github.com/user-attachments/")) {
+    throw Object.assign(new Error("GitHub returned no attachment URL"), { status: 502 });
+  }
+  attachmentUploads.set(cacheKey, { url: body.url, expiresAt: Date.now() + ATTACHMENT_CACHE_TTL_MS });
+  return body.url;
+}
+
+async function updatePullRequest(input: {
+  repo: string;
+  number: number;
+  title: string;
+  body: string;
+  token: string;
+}): Promise<{ url: string; headSha?: string }> {
+  const [owner, name] = repoParts(input.repo);
+  const response = await fetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${input.number}`,
+    {
+      method: "PATCH",
+      headers: {
+        accept: "application/vnd.github+json",
+        authorization: `Bearer ${input.token}`,
+        "content-type": "application/json",
+        "x-github-api-version": "2022-11-28",
+      },
+      body: JSON.stringify({ title: input.title, body: input.body }),
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  const text = await response.text().catch(() => "");
+  if (!response.ok) {
+    throw Object.assign(new Error(`GitHub refused the pull-request update (${response.status})${text ? `: ${text.slice(0, 200)}` : ""}`), { status: 502 });
+  }
+  const body = JSON.parse(text) as { html_url?: unknown; head?: { sha?: unknown } };
+  if (typeof body.html_url !== "string") throw Object.assign(new Error("GitHub returned no pull-request URL"), { status: 502 });
+  return {
+    url: body.html_url,
+    ...(typeof body.head?.sha === "string" ? { headSha: body.head.sha } : {}),
+  };
 }
 
 async function createPullRequest(input: {
@@ -326,21 +455,10 @@ async function createPullRequest(input: {
   commit: string;
   title: string;
   body: string;
-  workspace: string;
-  attachments: string[];
   token: string;
-}): Promise<string> {
-  const [owner] = repoParts(input.repo);
-  let body = input.body;
-  const visual: string[] = [];
-  for (const attachment of input.attachments) {
-    const url = await uploadAttachment({ workspace: input.workspace, path: attachment, repo: input.repo, token: input.token });
-    if (url) visual.push(`![${basename(attachment)}](${url})`);
-  }
-  if (visual.length) {
-    body = `${body.trim()}\n\n## Visual review\n\n${visual.join("\n\n")}\n`;
-  }
-  const create = async (): Promise<Response> => fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(input.repo.split("/")[1]!)}/pulls`, {
+}): Promise<{ url: string; headSha?: string }> {
+  const [owner, name] = repoParts(input.repo);
+  const response = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls`, {
     method: "POST",
     headers: {
       accept: "application/vnd.github+json",
@@ -348,71 +466,141 @@ async function createPullRequest(input: {
       "content-type": "application/json",
       "x-github-api-version": "2022-11-28",
     },
-    body: JSON.stringify({ title: input.title, body, head: input.branch, base: "main" }),
+    body: JSON.stringify({ title: input.title, body: input.body, head: input.branch, base: "main" }),
     signal: AbortSignal.timeout(30_000),
   });
-  let response = await create();
   if (response.status === 422) {
     await response.body?.cancel().catch(() => {});
-    const lookup = await fetch(`https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(input.repo.split("/")[1]!)}/pulls?state=open&head=${encodeURIComponent(`${owner}:${input.branch}`)}`, {
-      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${input.token}`, "x-github-api-version": "2022-11-28" },
-      signal: AbortSignal.timeout(20_000),
-    });
-    if (lookup.ok) {
-      const existing = await lookup.json() as Array<{ html_url?: unknown }>;
-      const found = existing.find((entry): entry is { html_url: string } => typeof entry.html_url === "string");
-      if (found) return found.html_url;
+    const existing = await existingPullRequest(input.repo, input.branch, input.token);
+    if (existing.state === "open" && existing.url) {
+      return { url: existing.url, ...(existing.headSha ? { headSha: existing.headSha } : {}) };
     }
-    response = await create();
+    throw Object.assign(new Error("the pull request could not be created because its branch already has another state"), { status: 409 });
   }
+  const text = await response.text().catch(() => "");
   if (!response.ok) {
-    const text = await response.text().catch(() => "");
     throw Object.assign(new Error(`GitHub refused the pull request (${response.status})${text ? `: ${text.slice(0, 200)}` : ""}`), { status: 502 });
   }
-  const bodyJson = await response.json() as { html_url?: unknown };
-  if (typeof bodyJson.html_url !== "string") throw Object.assign(new Error("GitHub returned no pull-request URL"), { status: 502 });
-  return bodyJson.html_url;
+  const body = JSON.parse(text) as { html_url?: unknown; head?: { sha?: unknown } };
+  if (typeof body.html_url !== "string") throw Object.assign(new Error("GitHub returned no pull-request URL"), { status: 502 });
+  return {
+    url: body.html_url,
+    ...(typeof body.head?.sha === "string" ? { headSha: body.head.sha } : {}),
+  };
+}
+
+async function withPublishLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = publishQueues.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const current = new Promise<void>((resolve) => { release = resolve; });
+  const queued = previous.then(() => current);
+  publishQueues.set(key, queued);
+  await previous;
+  try {
+    return await action();
+  } finally {
+    release();
+    if (publishQueues.get(key) === queued) publishQueues.delete(key);
+  }
 }
 
 async function publish(value: unknown): Promise<PublishResult> {
   const auth = verifyPublishAuthorization(value, ACTOR_SECRET);
   if (usedNonces.has(auth.nonce)) fail("publish authorization was already used");
-  const session = sessions.get(String((value as { sessionToken?: unknown }).sessionToken ?? ""));
-  if (!session || session.expiresAt <= Date.now()) fail("publish session is unavailable");
-  if (session.userId !== auth.userId) fail("publish session does not belong to this user");
-  const workspace = canonicalWorkspace(session.workspace);
-  const repoPath = checkedRepoPath(workspace, auth.path, auth.repo);
-  await ensureRealDirectory(repoPath);
-  const realRepo = await realpath(repoPath);
-  if (!inside(workspace, realRepo)) fail("repository workspace escapes the conversation");
-  const token = await userToken(session.actorAssertion);
-  const askpass = await askPassEnvironment(token);
-  try {
-    const head = await git(["-C", repoPath, "rev-parse", "HEAD"], repoPath, askpass.env);
-    if (head !== auth.commit) fail("the approved commit is not the current HEAD");
-    const existing = await remoteBranchHead(auth.repo, auth.branch, token);
-    if (existing && existing !== auth.commit) fail("the remote branch already exists with different changes");
-    if (!existing) {
-      await git([
-        "-C", repoPath, "-c", "core.hooksPath=/dev/null",
-        "push", githubUrl(auth.repo), `${auth.commit}:refs/heads/${auth.branch}`,
-      ], repoPath, askpass.env);
+  // Reserve the nonce before any external write. A retry must come from a
+  // fresh BFF authorization, never by replaying this payload for later state.
+  usedNonces.set(auth.nonce, Date.now());
+  return withPublishLock(`${auth.repo.toLowerCase()}\0${auth.branch}`, async () => {
+    const session = sessions.get(String((value as { sessionToken?: unknown }).sessionToken ?? ""));
+    if (!session || session.expiresAt <= Date.now()) fail("publish session is unavailable");
+    if (session.userId !== auth.userId) fail("publish session does not belong to this user");
+    const workspace = canonicalWorkspace(session.workspace);
+    const repoPath = checkedRepoPath(workspace, auth.path, auth.repo);
+    await ensureRealDirectory(repoPath);
+    const realRepo = await realpath(repoPath);
+    if (!inside(workspace, realRepo)) fail("repository workspace escapes the conversation");
+    const token = await userToken(session.actorAssertion);
+    const identity = await repositoryIdentity(auth.repo, token);
+    if (!identity || identity.fullName.toLowerCase() !== auth.repo.toLowerCase()) {
+      fail("repository identity does not match the signed request");
     }
-    const prUrl = await createPullRequest({
-      repo: auth.repo,
-      branch: auth.branch,
-      commit: auth.commit,
-      title: auth.title,
-      body: auth.body,
-      workspace,
-      attachments: auth.attachments,
-      token,
-    });
-    usedNonces.set(auth.nonce, Date.now());
-    return { ok: true, prUrl, branch: auth.branch, commit: auth.commit };
-  } finally {
-    await askpass.cleanup();
-  }
+    const repo = identity.fullName;
+    const askpass = await askPassEnvironment(token);
+    try {
+      const head = await git(["-C", repoPath, "rev-parse", "HEAD"], repoPath, askpass.env);
+      if (head !== auth.commit) fail("the approved commit is not the current HEAD");
+
+      const existing = await remoteBranchHead(repo, auth.branch, token);
+      const pull = await existingPullRequest(repo, auth.branch, token);
+      if (pull.state === "closed" || pull.state === "merged") {
+        throw Object.assign(new Error("the pull request for this branch is closed or merged; use a new relay/ branch"), { status: 409 });
+      }
+      let update = false;
+      if (existing && existing !== auth.commit) {
+        const status = await compareCommits(repo, existing, auth.commit, token);
+        if (!fastForwardable(status)) {
+          throw Object.assign(new Error("the remote relay branch has diverged; use a new relay/ branch"), { status: 409 });
+        }
+        update = true;
+      } else if (existing === auth.commit) {
+        update = true;
+      }
+
+      // Upload first: a missing screenshot must stop publication before any
+      // commit reaches GitHub. Uploaded URLs are cached so a retry after a
+      // push failure does not create duplicate attachments.
+      const urls: string[] = [];
+      for (const attachment of auth.attachments) {
+        urls.push(await uploadAttachment({ workspace, attachment, repo, token }));
+      }
+      const body = pullBody(auth.body, auth.attachments, urls);
+
+      if (!existing || existing !== auth.commit) {
+        try {
+          await git([
+            "-C", repoPath, "-c", "core.hooksPath=/dev/null",
+            "push", githubUrl(repo), `${auth.commit}:refs/heads/${auth.branch}`,
+          ], repoPath, askpass.env);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (/non-fast-forward|fetch first|rejected/i.test(message)) {
+            throw Object.assign(new Error("the remote relay branch moved during publish; retry with the current branch"), { status: 409 });
+          }
+          throw error;
+        }
+        const remote = await remoteBranchHead(repo, auth.branch, token);
+        if (remote !== auth.commit) {
+          throw Object.assign(new Error("the remote branch did not advance to the approved commit"), { status: 502 });
+        }
+      }
+
+      let result: { url: string; headSha?: string };
+      if (pull.state === "open" && pull.number) {
+        result = await updatePullRequest({
+          repo,
+          number: pull.number,
+          title: auth.title,
+          body,
+          token,
+        });
+      } else {
+        result = await createPullRequest({
+          repo,
+          branch: auth.branch,
+          commit: auth.commit,
+          title: auth.title,
+          body,
+          token,
+        });
+      }
+      if (result.headSha && result.headSha !== auth.commit) {
+        throw Object.assign(new Error("the pull request does not point at the approved commit"), { status: 502 });
+      }
+      return { ok: true, prUrl: result.url, branch: auth.branch, commit: auth.commit, updated: update || pull.state === "open" };
+    } finally {
+      await askpass.cleanup();
+    }
+  });
 }
 
 function protocolResponse(res: ServerResponse, status: number, message: string): void {
@@ -431,10 +619,10 @@ async function readProxy(req: IncomingMessage, res: ServerResponse, url: URL): P
   const action = parts.slice(4).join("/");
   if (!REPO_PATTERN.test(`${owner}/${repo}`)) return protocolResponse(res, 400, "invalid repository");
   if (action !== "info/refs" && action !== "git-upload-pack") {
-    return protocolResponse(res, 403, "publishing requires approval inside Relay");
+    return protocolResponse(res, 403, "publishing is available only through Relay");
   }
   const service = action === "info/refs" ? url.searchParams.get("service") : "git-upload-pack";
-  if (service !== "git-upload-pack") return protocolResponse(res, 403, "publishing requires approval inside Relay");
+  if (service !== "git-upload-pack") return protocolResponse(res, 403, "publishing is available only through Relay");
   const token = await userToken(session.actorAssertion);
   const target = action === "info/refs"
     ? `https://github.com/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}.git/info/refs?service=git-upload-pack`

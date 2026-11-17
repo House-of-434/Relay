@@ -106,13 +106,13 @@ const FULL = { direct: "direct+skills+shared+github-git", room: "room+own-thread
  * catalog is the goal, so lock the win in by lowering the number. */
 const BUDGET_BASELINE: Record<string, number> = {
   "direct": 46893,
-  "direct+github-git": 48642,
+  "direct+github-git": 48871,
   "direct+shared": 48638,
-  "direct+shared+github-git": 50387,
+  "direct+shared+github-git": 50616,
   "direct+skills": 48819,
-  "direct+skills+github-git": 50568,
+  "direct+skills+github-git": 50797,
   "direct+skills+shared": 50564,
-  "direct+skills+shared+github-git": 52313,
+  "direct+skills+shared+github-git": 52542,
   "room": 43134,
   "room+shared": 44879,
   "room+skills": 45060,
