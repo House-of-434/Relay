@@ -6,7 +6,7 @@ import { basename, extname, join, relative, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 
-import { verifyPublishAuthorization } from "./authorization.ts";
+import { gitReadAuthorization, verifyPublishAuthorization } from "./authorization.ts";
 
 const PORT = Number(process.env.RELAY_GIT_BROKER_PORT ?? 8792);
 const HOST = process.env.RELAY_GIT_BROKER_HOST ?? "127.0.0.1";
@@ -449,12 +449,13 @@ async function readProxy(req: IncomingMessage, res: ServerResponse, url: URL): P
       chunks.push(buffer);
     }
   }
+  const authorization = gitReadAuthorization(token);
   let response: Response;
   try {
     response = await fetch(target, {
       method: req.method === "POST" ? "POST" : "GET",
       headers: {
-        authorization: `Bearer ${token}`,
+        authorization,
         accept: req.headers.accept ?? "*/*",
         ...(req.headers["git-protocol"] ? { "git-protocol": String(req.headers["git-protocol"]) } : {}),
         ...(req.method === "POST" ? { "content-type": String(req.headers["content-type"] ?? "application/x-git-upload-pack-request") } : {}),

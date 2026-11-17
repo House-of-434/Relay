@@ -100,3 +100,9 @@ export function verifyPublishAuthorization(
   }
   return auth as PublishAuthorization;
 }
+
+/** Git smart HTTP uses Basic auth with the `x-access-token` username, not the
+ * REST API's Bearer header. */
+export function gitReadAuthorization(token: string): string {
+  return `Basic ${Buffer.from(`x-access-token:${token}`, "utf8").toString("base64")}`;
+}
