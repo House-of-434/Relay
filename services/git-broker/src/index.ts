@@ -7,7 +7,7 @@ import { Readable } from "node:stream";
 import { spawn } from "node:child_process";
 
 import { gitReadAuthorization, verifyPublishAuthorization, type PublishAttachment } from "./authorization.ts";
-import { fastForwardable, pullBody } from "./publish.ts";
+import { pullBody } from "./publish.ts";
 
 const PORT = Number(process.env.RELAY_GIT_BROKER_PORT ?? 8792);
 const HOST = process.env.RELAY_GIT_BROKER_HOST ?? "127.0.0.1";
@@ -340,23 +340,6 @@ async function existingPullRequest(repo: string, branch: string, token: string):
   };
 }
 
-async function compareCommits(repo: string, base: string, head: string, token: string): Promise<string> {
-  const [owner, name] = repoParts(repo);
-  const response = await fetch(
-    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/compare/${encodeURIComponent(base)}...${encodeURIComponent(head)}`,
-    {
-      headers: { accept: "application/vnd.github+json", authorization: `Bearer ${token}`, "x-github-api-version": "2022-11-28" },
-      signal: AbortSignal.timeout(20_000),
-    },
-  );
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw Object.assign(new Error(`GitHub refused the commit comparison (${response.status})`), { status: 502 });
-  }
-  const body = await response.json() as { status?: unknown };
-  return typeof body.status === "string" ? body.status : "unknown";
-}
-
 async function verifyAttachment(workspace: string, attachment: PublishAttachment): Promise<{ real: string; mime: string }> {
   const absolute = resolve(workspace, attachment.path);
   if (!inside(workspace, absolute)) fail("attachment path escapes the conversation workspace");
@@ -581,8 +564,14 @@ async function publish(value: unknown): Promise<PublishResult> {
       }
       let update = false;
       if (existing && existing !== auth.commit) {
-        const status = await compareCommits(repo, existing, auth.commit, token);
-        if (!fastForwardable(status)) {
+        // The new commit is local, so GitHub's compare API cannot see it yet.
+        // Fetch the remote branch and prove ancestry locally instead.
+        await git(["-C", repoPath, "fetch", "--no-tags", githubUrl(repo), `refs/heads/${auth.branch}`], repoPath, askpass.env);
+        const fetched = await git(["-C", repoPath, "rev-parse", "FETCH_HEAD"], repoPath, askpass.env);
+        if (fetched !== existing) fail("the remote relay branch moved during publish");
+        try {
+          await git(["-C", repoPath, "merge-base", "--is-ancestor", existing, auth.commit], repoPath, askpass.env);
+        } catch {
           throw Object.assign(new Error("the remote relay branch has diverged; use a new relay/ branch"), { status: 409 });
         }
         update = true;

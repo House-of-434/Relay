@@ -1,15 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fastForwardable, pullBody } from "./publish.ts";
-
-test("only a descendant (or the same commit) may fast-forward", () => {
-  assert.equal(fastForwardable("ahead"), true);
-  assert.equal(fastForwardable("identical"), true);
-  assert.equal(fastForwardable("behind"), false);
-  assert.equal(fastForwardable("diverged"), false);
-  assert.equal(fastForwardable("unknown"), false);
-});
+import { pullBody } from "./publish.ts";
 
 test("visual evidence is appended without duplicating the body", () => {
   const attachment = {
