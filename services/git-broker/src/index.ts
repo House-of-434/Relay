@@ -41,7 +41,7 @@ interface PublishResult {
 
 const sessions = new Map<string, Session>();
 const usedNonces = new Map<string, number>();
-const attachmentUploads = new Map<string, { url: string; expiresAt: number }>();
+const evidenceUrls = new Map<string, { url: string; expiresAt: number }>();
 const publishQueues = new Map<string, Promise<void>>();
 const ATTACHMENT_CACHE_TTL_MS = 60 * 60_000;
 
@@ -357,17 +357,9 @@ async function compareCommits(repo: string, base: string, head: string, token: s
   return typeof body.status === "string" ? body.status : "unknown";
 }
 
-async function uploadAttachment(input: {
-  workspace: string;
-  attachment: PublishAttachment;
-  repo: string;
-  token: string;
-}): Promise<string> {
-  const cacheKey = `${input.repo}\0${input.attachment.sha256}`;
-  const cached = attachmentUploads.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
-  const absolute = resolve(input.workspace, input.attachment.path);
-  if (!inside(input.workspace, absolute)) fail("attachment path escapes the conversation workspace");
+async function verifyAttachment(workspace: string, attachment: PublishAttachment): Promise<{ real: string; mime: string }> {
+  const absolute = resolve(workspace, attachment.path);
+  if (!inside(workspace, absolute)) fail("attachment path escapes the conversation workspace");
   let real: string;
   let info;
   try {
@@ -376,43 +368,95 @@ async function uploadAttachment(input: {
   } catch {
     fail("attachment is unavailable");
   }
-  if (!inside(input.workspace, real)) fail("attachment path escapes the conversation workspace");
+  if (!inside(workspace, real)) fail("attachment path escapes the conversation workspace");
   if (!info.isFile() || info.size <= 0 || info.size > MAX_ATTACHMENT) fail("attachment is not a supported file");
-  if (info.size !== input.attachment.bytes) fail("attachment changed after it was attached");
+  if (info.size !== attachment.bytes) fail("attachment changed after it was attached");
   const mime = MIME[extname(real).toLowerCase()];
-  if (!mime || mime !== input.attachment.mime) fail("attachment type changed after it was attached");
+  if (!mime || mime !== attachment.mime) fail("attachment type changed after it was attached");
   const bytes = await readFile(real);
-  if (bytes.byteLength !== input.attachment.bytes) fail("attachment changed after it was attached");
+  if (bytes.byteLength !== attachment.bytes) fail("attachment changed after it was attached");
   const sha256 = createHash("sha256").update(bytes).digest("hex");
-  if (sha256 !== input.attachment.sha256) fail("attachment changed after it was attached");
-  const identity = await repositoryIdentity(input.repo, input.token);
-  if (!identity) throw Object.assign(new Error("GitHub refused the attachment repository lookup"), { status: 502 });
-  const query = new URLSearchParams({ name: basename(real), content_type: mime, repository_id: String(identity.id) });
-  let response: Response;
+  if (sha256 !== attachment.sha256) fail("attachment changed after it was attached");
+  return { real, mime };
+}
+
+/** GitHub's native attachment upload endpoint rejects user-to-server tokens
+ * minted by third-party GitHub Apps. Store visual evidence as blobs on a
+ * repo-only branch instead; same-repo blob URLs render with the viewer's
+ * repository access, so private repositories are not exposed publicly. */
+async function publishEvidence(input: {
+  repo: string;
+  repoPath: string;
+  workspace: string;
+  sourceCommit: string;
+  attachments: PublishAttachment[];
+  token: string;
+  askpassEnv: Record<string, string>;
+}): Promise<string[]> {
+  if (!input.attachments.length) return [];
+  const urls: Array<string | undefined> = input.attachments.map((attachment) => {
+    const cached = evidenceUrls.get(`${input.repo}\0${input.sourceCommit}\0${attachment.sha256}`);
+    return cached && cached.expiresAt > Date.now() ? cached.url : undefined;
+  });
+  const missing: number[] = [];
+  for (let index = 0; index < input.attachments.length; index += 1) {
+    if (!urls[index]) missing.push(index);
+  }
+  if (!missing.length) return urls as string[];
+
+  const branch = "relay-evidence";
+  const directory = await mkdtemp(join(tmpdir(), "relay-evidence-"));
+  const indexFile = join(directory, "index");
+  const env = {
+    ...input.askpassEnv,
+    GIT_INDEX_FILE: indexFile,
+    GIT_AUTHOR_NAME: "Relay",
+    GIT_AUTHOR_EMAIL: "relay@houseof434.com",
+    GIT_COMMITTER_NAME: "Relay",
+    GIT_COMMITTER_EMAIL: "relay@houseof434.com",
+  };
   try {
-    response = await fetch(`https://uploads.github.com/user-attachments/assets?${query.toString()}`, {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${input.token}`,
-        accept: "application/json",
-        "content-type": mime,
-      },
-      body: bytes,
-      signal: AbortSignal.timeout(60_000),
-    });
-  } catch {
-    throw Object.assign(new Error("GitHub attachment upload is unreachable"), { status: 502 });
+    const paths = new Map<number, string>();
+    await git(["-C", input.repoPath, "read-tree", "--empty"], input.repoPath, env);
+    for (const position of missing) {
+      const attachment = input.attachments[position]!;
+      const { real } = await verifyAttachment(input.workspace, attachment);
+      const blob = await git(["-C", input.repoPath, "hash-object", "-w", "--no-filters", real], input.repoPath, env);
+      const safeName = basename(real).replace(/[^A-Za-z0-9._-]/g, "_") || `evidence-${position + 1}`;
+      const path = `.relay/evidence/${input.sourceCommit}/${String(position + 1).padStart(2, "0")}-${safeName}`;
+      await git(["-C", input.repoPath, "update-index", "--add", "--cacheinfo", `100644,${blob},${path}`], input.repoPath, env);
+      paths.set(position, path);
+    }
+    const tree = await git(["-C", input.repoPath, "write-tree"], input.repoPath, env);
+    const parent = await remoteBranchHead(input.repo, branch, input.token);
+    if (parent) {
+      await git(["-C", input.repoPath, "fetch", "--no-tags", githubUrl(input.repo), `refs/heads/${branch}`], input.repoPath, env);
+      const fetched = await git(["-C", input.repoPath, "rev-parse", "FETCH_HEAD"], input.repoPath, env);
+      if (fetched !== parent) fail("the evidence branch moved during publish");
+    }
+    const commit = await git([
+      "-C", input.repoPath, "commit-tree", tree,
+      ...(parent ? ["-p", parent] : []),
+      "-m", `Relay visual evidence for ${input.sourceCommit}`,
+    ], input.repoPath, env);
+    await git([
+      "-C", input.repoPath, "-c", "core.hooksPath=/dev/null",
+      "push", githubUrl(input.repo), `${commit}:refs/heads/${branch}`,
+    ], input.repoPath, env);
+    if (await remoteBranchHead(input.repo, branch, input.token) !== commit) {
+      fail("the evidence branch did not advance to the new commit");
+    }
+    for (const position of missing) {
+      const attachment = input.attachments[position]!;
+      const path = paths.get(position)!;
+      const url = `https://github.com/${input.repo}/blob/${commit}/${path.split("/").map(encodeURIComponent).join("/")}?raw=true`;
+      urls[position] = url;
+      evidenceUrls.set(`${input.repo}\0${input.sourceCommit}\0${attachment.sha256}`, { url, expiresAt: Date.now() + ATTACHMENT_CACHE_TTL_MS });
+    }
+    return urls as string[];
+  } finally {
+    await rm(directory, { recursive: true, force: true });
   }
-  if (!response.ok) {
-    await response.body?.cancel().catch(() => {});
-    throw Object.assign(new Error(`GitHub refused an attachment upload (${response.status})`), { status: 502 });
-  }
-  const body = await response.json() as { url?: unknown };
-  if (typeof body.url !== "string" || !body.url.startsWith("https://github.com/user-attachments/")) {
-    throw Object.assign(new Error("GitHub returned no attachment URL"), { status: 502 });
-  }
-  attachmentUploads.set(cacheKey, { url: body.url, expiresAt: Date.now() + ATTACHMENT_CACHE_TTL_MS });
-  return body.url;
 }
 
 async function updatePullRequest(input: {
@@ -546,13 +590,18 @@ async function publish(value: unknown): Promise<PublishResult> {
         update = true;
       }
 
-      // Upload first: a missing screenshot must stop publication before any
-      // commit reaches GitHub. Uploaded URLs are cached so a retry after a
-      // push failure does not create duplicate attachments.
-      const urls: string[] = [];
-      for (const attachment of auth.attachments) {
-        urls.push(await uploadAttachment({ workspace, attachment, repo, token }));
-      }
+      // Evidence first: a missing screenshot must stop publication before any
+      // code commit reaches GitHub. The second lock serializes the shared
+      // asset branch when two different PRs publish in the same repository.
+      const urls = await withPublishLock(`${repo.toLowerCase()}\0relay-evidence`, () => publishEvidence({
+        repo,
+        repoPath,
+        workspace,
+        sourceCommit: auth.commit,
+        attachments: auth.attachments,
+        token,
+        askpassEnv: askpass.env,
+      }));
       const body = pullBody(auth.body, auth.attachments, urls);
 
       if (!existing || existing !== auth.commit) {
