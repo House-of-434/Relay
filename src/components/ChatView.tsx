@@ -259,6 +259,11 @@ function Bubble({
   return (
     <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
       {peer && <PeerLabel peer={peer} />}
+      {!hideAttachments && user && !webhookView && attachments && hasAttachments && (
+        <div className="mb-1.5 flex w-full justify-end">
+          <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} className={attachments.images.length === 0 ? "w-fit" : undefined} />
+        </div>
+      )}
       <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
         {user && (
           <MessageActions side="user">
@@ -372,24 +377,15 @@ function Bubble({
           </MessageActions>
         )}
       </div>
-      {!hideAttachments && (
-        <>
-          {user && !webhookView && attachments && hasAttachments && (
-            <div className="mt-1.5 flex w-full justify-end">
-              <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} />
-            </div>
-          )}
-          {!user && (
-            <div className="mt-1.5 flex w-full justify-start">
-              <MessageAttachments
-                images={generatedPaths}
-                files={linkedFiles}
-                message={{ threadId: bot.threadId, messageId: message.id }}
-                eager={eagerAttachments}
-              />
-            </div>
-          )}
-        </>
+      {!hideAttachments && !user && (
+        <div className="mt-1.5 flex w-full justify-start">
+          <MessageAttachments
+            images={generatedPaths}
+            files={linkedFiles}
+            message={{ threadId: bot.threadId, messageId: message.id }}
+            eager={eagerAttachments}
+          />
+        </div>
       )}
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">

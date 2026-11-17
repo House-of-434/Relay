@@ -175,7 +175,7 @@ describe("attachment preview surfaces", () => {
     expect(html).toContain('aria-label="Save a copy of Q3 report.md"');
     expect(html).toContain('title="Download"');
     expect(html).toContain("Markdown");
-    expect(html).toContain("Open file");
+    expect(html).toContain("Preview");
     expect(html).toContain("opacity-0");
     expect(html).toContain("max-w-[320px]");
     expect(markupButtons(html)).toHaveLength(2);
@@ -193,15 +193,17 @@ describe("attachment preview surfaces", () => {
     expect(markupButtons(html)).toHaveLength(2);
   });
 
-  it("keeps non-markdown files on the single download button", () => {
+  it("previews other documents and keeps a separate download button", () => {
     const html = renderStatic(createElement(AttachedFileChips, {
       files: [{ path: "/workspace/report.pdf", name: "Q3 report.pdf", private: true }],
       message: { threadId: "thread-1", messageId: "message-1" },
     }));
+    expect(html).toContain('aria-label="Preview Q3 report.pdf"');
     expect(html).toContain('aria-label="Save a copy of Q3 report.pdf"');
-    expect(html).not.toContain("Preview Q3 report.pdf");
+    expect(html).toContain('title="Download"');
     expect(html).toContain("PDF");
-    expect(markupButtons(html)).toHaveLength(1);
+    expect(html).toContain("Preview");
+    expect(markupButtons(html)).toHaveLength(2);
   });
 });
 

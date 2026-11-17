@@ -1,6 +1,7 @@
 // The Files panel's client side: the thread listing shape plus the small
 // helpers the panel renders with.
 import { api } from "@/state/store";
+import { fileKind } from "@/lib/file-kind";
 
 export interface ListedFile {
   fileId: string;
@@ -65,15 +66,13 @@ export function formatBytes(bytes: number): string {
 }
 
 export function isImage(file: ListedFile): boolean {
-  return file.mime.startsWith("image/");
+  return fileKind(file.name, file.mime) === "image";
 }
 
 export function isPdf(file: ListedFile): boolean {
-  return file.mime === "application/pdf" || /\.pdf$/i.test(file.name);
+  return fileKind(file.name, file.mime) === "pdf";
 }
 
-const TEXT_FILE = /\.(?:md|markdown|txt|csv|tsv|json|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|css|html?|xml|ya?ml|toml|sh|bash|zsh|sql|log)$/i;
-
 export function isText(file: ListedFile): boolean {
-  return file.mime.startsWith("text/") || file.mime === "application/json" || TEXT_FILE.test(file.name);
+  return fileKind(file.name, file.mime) === "text";
 }
