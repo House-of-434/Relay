@@ -24,6 +24,7 @@ Use this skill only when the person actually asks for a repository change. Do no
    Do not run `git push`. It has no GitHub credential and will fail.
 8. Publish only when the person asked for a pull request or explicitly approved publication. Do not publish for an investigation-only request, and do not publish when the person asked to keep the change local.
    `github_open_pull_request` with the repo, `relay/<slug>` branch, PR title and body, the repository path returned by `github_clone`, and the `fileId` values from `attach_file`.
+   Never use `gh`, `git push`, or the GitHub API directly to create or edit a pull request. `github_open_pull_request` is the only path for the PR body and screenshots.
 9. Relay pushes only the exact commit and opens or updates the pull request. Never merge it.
 
 ## Pull-request body
