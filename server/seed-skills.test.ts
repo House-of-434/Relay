@@ -22,7 +22,7 @@ describe("shipped Scout skill seed", () => {
 
     expect(marked).toEqual([REPO_CHANGES_SEED]);
     expect(listSkills(bot.id)).toMatchObject([
-      { name: "repo-changes", enabled: true, source: "relay:seed:repo-changes@2" },
+      { name: "repo-changes", enabled: true, source: "relay:seed:repo-changes@3" },
     ]);
   });
 
@@ -48,7 +48,7 @@ describe("shipped Scout skill seed", () => {
 
     expect(marked).toEqual([REPO_CHANGES_SEED]);
     expect(listSkills(bot.id)).toMatchObject([
-      { name: "repo-changes", enabled: false, source: "relay:seed:repo-changes@2" },
+      { name: "repo-changes", enabled: false, source: "relay:seed:repo-changes@3" },
     ]);
     expect(readSkillFile(bot.id, "repo-changes")).toContain("github_open_pull_request");
     expect(old.source).toBe("relay:seed:repo-changes@1");

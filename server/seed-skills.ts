@@ -7,8 +7,8 @@ import type { BotRecord, Store } from "./store.ts";
 /** Shipped skill seeds. The id is stored on the bot after a successful
  * install or a deliberate skip, so deleting a seeded skill never makes it
  * reappear on the next restart. */
-export const REPO_CHANGES_SEED = "repo-changes@2";
-const REPO_CHANGES_SOURCE = "relay:seed:repo-changes@2";
+export const REPO_CHANGES_SEED = "repo-changes@3";
+const REPO_CHANGES_SOURCE = "relay:seed:repo-changes@3";
 const REPO_CHANGES_SOURCE_PREFIX = "relay:seed:repo-changes@";
 
 function skillsRoot(): string {

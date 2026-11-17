@@ -35,6 +35,6 @@ Include:
 - any check that could not run
 - a short visual-review note for UI changes
 
-The broker appends the attached before/after images or recording to the PR body. The same images are already attached in the Relay conversation, so the person can review them in both places.
+The broker stores the attached before/after images or recording on the repository's `relay-evidence` branch and links them in the PR body. The same images are already attached in the Relay conversation, so the person can review them in both places. Do not edit or delete the `relay-evidence` branch.
 
 Never push to `main`, `master`, or `production`. Never force-push, delete a branch, or merge. If a repository needs a `.github/workflows` edit, call it out explicitly in the pull-request body.
