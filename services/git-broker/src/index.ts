@@ -340,6 +340,15 @@ async function existingPullRequest(repo: string, branch: string, token: string):
   };
 }
 
+async function verifyPullRequestHead(repo: string, branch: string, commit: string, token: string): Promise<PullRequestState> {
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const pull = await existingPullRequest(repo, branch, token);
+    if (pull.state === "open" && pull.headSha === commit) return pull;
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
+  }
+  throw Object.assign(new Error("the pull request did not point at the approved commit"), { status: 502 });
+}
+
 async function verifyAttachment(workspace: string, attachment: PublishAttachment): Promise<{ real: string; mime: string }> {
   const absolute = resolve(workspace, attachment.path);
   if (!inside(workspace, absolute)) fail("attachment path escapes the conversation workspace");
@@ -631,10 +640,8 @@ async function publish(value: unknown): Promise<PublishResult> {
           token,
         });
       }
-      if (result.headSha && result.headSha !== auth.commit) {
-        throw Object.assign(new Error("the pull request does not point at the approved commit"), { status: 502 });
-      }
-      return { ok: true, prUrl: result.url, branch: auth.branch, commit: auth.commit, updated: update || pull.state === "open" };
+      const verified = await verifyPullRequestHead(repo, auth.branch, auth.commit, token);
+      return { ok: true, prUrl: verified.url ?? result.url, branch: auth.branch, commit: auth.commit, updated: update || pull.state === "open" };
     } finally {
       await askpass.cleanup();
     }
