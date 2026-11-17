@@ -22,13 +22,20 @@ export function isRecoveryActivity(message: Message): boolean {
   return message.kind === "activity" && message.tool?.name.startsWith("recovery:") === true;
 }
 
+/** A message carrying an attachment is content, not foldable narration.
+ * Folding it would move the file onto a message that does not grant access
+ * to it: the server authorizes a download by the message that owns it. */
+function carriesAttachment(message: Message): boolean {
+  return message.kind === "text" && Boolean(message.attachments?.length);
+}
+
 /** A step that may be folded away: finished, a real tool, and not a
  * bot⇄bot or opened-thread chip (those are navigation, not work) or a
  * failed turn (that renders as an error). A step still running stays out,
  * so live progress is never hidden behind a fold. */
 function foldable(message: Message): boolean {
   const tool = message.tool;
-  if (message.kind === "text" && message.attachments?.length) return false;
+  if (carriesAttachment(message)) return false;
   if (message.kind !== "activity" || !tool) return false;
   if (message.comm || message.threadRef || isRecoveryActivity(message)) return false;
   if (tool.ok !== true) return false;
@@ -59,7 +66,8 @@ function assistantTurnFolds(messages: Message[]): {
       message.role === "bot" &&
       message.kind === "text" &&
       message.turnId === terminal.turnId &&
-      !message.turnTerminal
+      !message.turnTerminal &&
+      !carriesAttachment(message)
     );
     if (!narration.length) return;
 
