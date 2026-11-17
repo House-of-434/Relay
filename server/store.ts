@@ -613,6 +613,12 @@ interface ThreadState {
   activeLeafId: string | null;
 }
 
+const STALE_RELAY_AGENT_SOUL_MARKERS = ["relay_git", "relay-git", "github_git_remote", "propose_publish"] as const;
+
+function hasStaleRelayAgentInstructions(soul: string | undefined): boolean {
+  return typeof soul === "string" && STALE_RELAY_AGENT_SOUL_MARKERS.some((marker) => soul.includes(marker));
+}
+
 export class Store {
   bots: BotRecord[] = [];
   groups: GroupRecord[] = [];
@@ -2743,7 +2749,8 @@ export class Store {
       const next = seed.profile.soul;
       if (seed.previousSoul === undefined || next === undefined) continue;
       for (const bot of this.bots) {
-        if (bot.relayAgent !== seed.role || bot.soul !== seed.previousSoul || bot.soul === next) continue;
+        if (bot.relayAgent !== seed.role || bot.soul === next) continue;
+        if (bot.soul !== seed.previousSoul && !hasStaleRelayAgentInstructions(bot.soul)) continue;
         this.setSoul(bot.id, next);
       }
     }
@@ -2767,7 +2774,11 @@ export class Store {
         // A released default may be replaced only when the record still holds
         // exactly that default; any person edit is left untouched.
         const nextSoul = seed.profile.soul;
-        if (seed.previousSoul !== undefined && nextSoul !== undefined && existing.soul === seed.previousSoul && nextSoul !== existing.soul) {
+        if (
+          nextSoul !== undefined &&
+          nextSoul !== existing.soul &&
+          (existing.soul === seed.previousSoul || hasStaleRelayAgentInstructions(existing.soul))
+        ) {
           this.setSoul(existing.id, nextSoul);
         }
         // Server-owned default: a seeded agent runs at Auto so its sandboxed

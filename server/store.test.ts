@@ -1252,6 +1252,15 @@ describe("Store", () => {
     expect(store.bot(scout.id)?.soul).toBe("My own Scout instructions.");
   });
 
+  it("hard-refreshes a stale Relay-agent soul that names retired repository tools", () => {
+    const store = new Store(selection);
+    const scout = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS).find((bot) => bot.relayAgent === "scout")!;
+    const seed = RELAY_AGENT_SEEDS.find((candidate) => candidate.role === "scout")!;
+    store.setSoul(scout.id, "You are Scout. For website work, use the repo-changes skill and its relay_git tool.");
+    store.migrateRelayAgentSouls(RELAY_AGENT_SEEDS);
+    expect(store.bot(scout.id)?.soul).toBe(seed.profile.soul);
+  });
+
   it("migrates an old default when the roster seeds on first sight", () => {
     const store = new Store(selection);
     const scout = store.seedRelayAgentsForOwner(undefined, RELAY_AGENT_SEEDS).find((bot) => bot.relayAgent === "scout")!;
