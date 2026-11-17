@@ -35,7 +35,7 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ThreadChip } from "./ThreadChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
-import { SidebarIcon } from "./SidebarIcon";
+import { ThreadFilesIcon } from "./ThreadFilesIcon";
 import { useMenuMotion } from "./MenuMotion";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
@@ -729,6 +729,7 @@ export function ChatView({ bot: profile }: {
   const { dragStyle: headerDragStyle, noDragStyle: headerNoDragStyle, controlsShiftStyle } = useCaptionChrome();
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const chatHeaderRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
   // The input pill alone. The jump pill hugs this, so a selected reply (or
@@ -736,6 +737,21 @@ export function ChatView({ bot: profile }: {
   // pill up over them.
   const composerPillRef = useRef<HTMLDivElement>(null);
   const composerPill = useComposerDockPad(composerPillRef);
+  // The Files panel opens below this header, so its top edge tracks the
+  // header's real height through a root variable.
+  useLayoutEffect(() => {
+    const header = chatHeaderRef.current;
+    if (!header) return;
+    const root = document.documentElement;
+    const sync = () => root.style.setProperty("--relay-chat-header-height", `${header.getBoundingClientRect().height}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--relay-chat-header-height");
+    };
+  }, []);
   // A guest on an OMB Cloud home writes only in conversations it opened.
   const canWrite = useCanWriteIn(bot.threadId);
 
@@ -1032,6 +1048,7 @@ export function ChatView({ bot: profile }: {
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       {/* Header */}
       <div
+        ref={chatHeaderRef}
         style={headerDragStyle}
         className={cn(
           // @container so the chips on the right can fold to icon bubbles
@@ -1095,7 +1112,7 @@ export function ChatView({ bot: profile }: {
                 state.filesOpen && "bg-raised text-ink",
               )}
             >
-              <SidebarIcon size={18} />
+              <ThreadFilesIcon size={18} />
             </button>
           )}
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}
