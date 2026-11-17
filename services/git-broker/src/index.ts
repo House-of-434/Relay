@@ -459,6 +459,9 @@ async function readProxy(req: IncomingMessage, res: ServerResponse, url: URL): P
         accept: req.headers.accept ?? "*/*",
         ...(req.headers["git-protocol"] ? { "git-protocol": String(req.headers["git-protocol"]) } : {}),
         ...(req.method === "POST" ? { "content-type": String(req.headers["content-type"] ?? "application/x-git-upload-pack-request") } : {}),
+        ...(req.method === "POST" && req.headers["content-encoding"]
+          ? { "content-encoding": String(req.headers["content-encoding"]) }
+          : {}),
       },
       ...(req.method === "POST" ? { body: Buffer.concat(chunks) } : {}),
       redirect: "error",
