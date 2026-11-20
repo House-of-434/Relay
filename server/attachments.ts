@@ -80,6 +80,10 @@ const IMAGE_MIMES: Record<string, string> = {
  * despite using ZIP internally. The claimed mime determines the extension;
  * an attacker-controlled filename never does. */
 const FILE_MIMES: Readonly<Record<string, string>> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
   "video/mp4": ".mp4",
   "video/webm": ".webm",
   "video/quicktime": ".mov",

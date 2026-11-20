@@ -509,6 +509,8 @@ describe("shared files", () => {
   it("allows useful document mimes but not executables, archives, or active markup", () => {
     expect(extensionForFileMime("text/plain; charset=utf-8")).toBe(".txt");
     expect(extensionForFileMime("application/pdf")).toBe(".pdf");
+    expect(extensionForFileMime("image/png")).toBe(".png");
+    expect(extensionForFileMime("image/jpeg")).toBe(".jpg");
     expect(extensionForFileMime("application/vnd.openxmlformats-officedocument.wordprocessingml.document")).toBe(".docx");
     expect(extensionForFileMime("application/zip")).toBeNull();
     expect(extensionForFileMime("application/x-msdownload")).toBeNull();
@@ -542,6 +544,16 @@ describe("shared files", () => {
       expect(statSync(ATTACHMENTS_DIR).mode & 0o777).toBe(0o700);
       expect(statSync(saved.path).mode & 0o777).toBe(0o600);
     }
+  });
+
+  it("stores a png sent as a shared file", async () => {
+    async function* chunks() {
+      yield Buffer.from([0x89, 0x50, 0x4e, 0x47]);
+    }
+    const saved = await saveFile(chunks(), "Adi Prasad.png", "image/png");
+    expect(saved.name).toBe("Adi Prasad.png");
+    expect(saved.mime).toBe("image/png");
+    expect(saved.path).toMatch(/[0-9a-f-]+\.png$/);
   });
 
   it.each([

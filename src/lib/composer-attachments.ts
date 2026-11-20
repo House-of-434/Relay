@@ -114,6 +114,11 @@ export const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 export const FILE_MAX_BYTES = 25 * 1024 * 1024;
 
 const DOCUMENT_MIMES: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
   txt: "text/plain",
   md: "text/markdown",
   markdown: "text/markdown",
@@ -157,17 +162,46 @@ export function documentMime(file: Pick<File, "name" | "type">): string | null {
   return DOCUMENT_MIMES[extension] ?? null;
 }
 
+const IMAGE_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
+  "image/png": ".png",
+  "image/jpeg": ".jpg",
+  "image/gif": ".gif",
+  "image/webp": ".webp",
+};
+
+const IMAGE_MIME_BY_EXTENSION: Readonly<Record<string, string>> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+};
+
+const SUPPORTED_IMAGE_MIMES = new Set(Object.keys(IMAGE_EXTENSION_BY_MIME));
+const GENERIC_BINARY_MIMES = new Set(["", "application/octet-stream", "binary/octet-stream"]);
+
+/**
+ * Resolves the MIME type of a supported image. Browsers sometimes hand a
+ * picked or dropped PNG an empty or generic binary type; the filename
+ * extension is authoritative in that case, while an explicit unsupported
+ * image type (SVG) still stays out.
+ */
+export function imageMimeForFile(file: { type: string; name?: string }): string | null {
+  const declared = file.type.split(";", 1)[0]!.trim().toLowerCase();
+  if (SUPPORTED_IMAGE_MIMES.has(declared)) return declared;
+  if (!GENERIC_BINARY_MIMES.has(declared)) return null;
+  const extension = file.name?.split(".").at(-1)?.toLowerCase() ?? "";
+  return IMAGE_MIME_BY_EXTENSION[extension] ?? null;
+}
+
 /**
  * Checks if a given file or descriptor has a supported image MIME type.
  *
  * @param file - Object with a MIME `type` and optional `size`.
  * @returns `true` if the file is a supported image format (PNG, JPEG, GIF, WebP).
  */
-export function isImageFile(file: { type: string; size?: number }): boolean {
-  return (
-    file.type.startsWith("image/") &&
-    ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(file.type.split(";")[0]!.trim().toLowerCase())
-  );
+export function isImageFile(file: { type: string; name?: string; size?: number }): boolean {
+  return imageMimeForFile(file) !== null;
 }
 
 /**
@@ -188,12 +222,9 @@ export function clipboardImageFiles(
   if (clipboardData.items) {
     const fromItems: File[] = [];
     for (const item of clipboardData.items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        const file = item.getAsFile();
-        if (file && isImageFile(file)) {
-          fromItems.push(file);
-        }
-      }
+      if (item.kind !== "file") continue;
+      const file = item.getAsFile();
+      if (file && isImageFile(file)) fromItems.push(file);
     }
     if (fromItems.length > 0) return fromItems;
   }
@@ -211,16 +242,14 @@ export function clipboardImageFiles(
  */
 export function clipboardHasImages(
   clipboardData: {
-    files?: Iterable<{ type: string; size?: number }> | null;
-    items?: Iterable<{ kind: string; type: string }> | null;
+    files?: Iterable<{ type: string; name?: string; size?: number }> | null;
+    items?: Iterable<{ kind: string; type: string; name?: string }> | null;
   } | null | undefined,
 ): boolean {
   if (!clipboardData) return false;
   if (clipboardData.items) {
     for (const item of clipboardData.items) {
-      if (item.kind === "file" && item.type.startsWith("image/")) {
-        return true;
-      }
+      if (item.kind === "file" && isImageFile(item)) return true;
     }
   }
   if (clipboardData.files) {
@@ -230,13 +259,6 @@ export function clipboardHasImages(
   }
   return false;
 }
-
-const IMAGE_EXTENSION_BY_MIME: Readonly<Record<string, string>> = {
-  "image/png": ".png",
-  "image/jpeg": ".jpg",
-  "image/gif": ".gif",
-  "image/webp": ".webp",
-};
 
 const UPLOAD_ATTEMPTS = 2;
 
@@ -293,9 +315,9 @@ function canonicalImageName(originalName: string, path: string, mime: string): s
  * The server writes ~/.relay/attachments/<uuid>.<ext> and answers
  * with the path; the prompt references that path so every CLI can open it. */
 export function optimisticImageAttachment(file: File): ImageAttachment | null {
-  if (!isImageFile(file)) return null;
+  const mime = imageMimeForFile(file);
+  if (!mime) return null;
   if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(`${file.name} exceeds 10 MB`), { status: 413 });
-  const mime = file.type.split(";", 1)[0]!.trim().toLowerCase();
   const previewUrl = typeof URL.createObjectURL === "function" ? URL.createObjectURL(file) : undefined;
   return {
     kind: "image",
@@ -313,7 +335,8 @@ export async function imageAttachmentFromFile(
   file: File,
   optimistic?: Pick<ImageAttachment, "id" | "previewUrl">,
 ): Promise<ImageAttachment | null> {
-  if (!isImageFile(file)) return null;
+  const mime = imageMimeForFile(file);
+  if (!mime) return null;
   if (file.size > IMAGE_MAX_BYTES) throw Object.assign(new Error(`${file.name} exceeds 10 MB`), { status: 413 });
   const bytes = new Uint8Array(await file.arrayBuffer());
   const uploadId = newUploadId();
@@ -321,7 +344,7 @@ export async function imageAttachmentFromFile(
     `/api/attachments?uploadId=${encodeURIComponent(uploadId)}`,
     {
       method: "POST",
-      headers: { "content-type": file.type },
+      headers: { "content-type": mime },
       body: bytes,
     },
   );
