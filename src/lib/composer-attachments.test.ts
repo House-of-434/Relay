@@ -383,6 +383,14 @@ describe("isImageFile", () => {
     expect(isImageFile({ type: "image/svg+xml", size: 10 })).toBe(false);
     expect(isImageFile({ type: "text/plain", size: 10 })).toBe(false);
   });
+
+  it("recognises a png by extension when the browser supplies no image mime", () => {
+    expect(isImageFile({ type: "", name: "Adi Prasad.png", size: 10 })).toBe(true);
+    expect(isImageFile({ type: "application/octet-stream", name: "Tim Sprecher.PNG", size: 10 })).toBe(true);
+    expect(isImageFile({ type: "", name: "Chjango.jpg", size: 10 })).toBe(true);
+    expect(isImageFile({ type: "", name: "diagram.svg", size: 10 })).toBe(false);
+    expect(isImageFile({ type: "image/svg+xml", name: "diagram.png", size: 10 })).toBe(false);
+  });
 });
 
 /**
@@ -518,9 +526,32 @@ describe("private document intake", () => {
     }
   });
 
+  it("uploads a png whose browser mime is missing as an image", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      path: "/private/attachments/11111111-1111-4111-8111-111111111111.png",
+      mime: "image/png",
+      bytes: 3,
+    }), { status: 201, headers: { "content-type": "application/json" } }));
+    try {
+      const file = new File([new Uint8Array([1, 2, 3])], "Adi Prasad.png", { type: "" });
+      await expect(imageAttachmentFromFile(file)).resolves.toMatchObject({
+        kind: "image",
+        name: "Adi Prasad.png",
+        mime: "image/png",
+      });
+      expect(fetch).toHaveBeenCalledWith(
+        expect.stringMatching(/^\/api\/attachments\?/),
+        expect.objectContaining({ method: "POST", headers: { "content-type": "image/png" } }),
+      );
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it("recognises supported documents by declared mime or filename", () => {
     expect(documentMime({ name: "notes.bin", type: "text/markdown; charset=utf-8" })).toBe("text/markdown");
     expect(documentMime({ name: "REPORT.PDF", type: "" })).toBe("application/pdf");
+    expect(documentMime({ name: "Chjango.png", type: "" })).toBe("image/png");
     expect(documentMime({ name: "archive.zip", type: "application/zip" })).toBeNull();
   });
 

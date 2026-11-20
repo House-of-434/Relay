@@ -95,6 +95,41 @@ describe("intakeFiles", () => {
     expect(out.attachments[0].kind).toBe("file");
   });
 
+  it("uploads a pathless png whose browser mime is missing as an image", async () => {
+    const out = await intakeFiles([file("Adi Prasad.png", "")], {
+      allowImages: true,
+      getPath: () => "",
+      uploadImage: upload,
+    });
+    expect(out.attachments).toEqual([expect.objectContaining({ kind: "image", name: "Adi Prasad.png" })]);
+    expect(out.notice).toBeNull();
+  });
+
+  it("uploads a pathless png through the private store when the engine cannot read images", async () => {
+    const fetch = vi.spyOn(globalThis, "fetch").mockResolvedValue(new Response(JSON.stringify({
+      path: "/private/attachments/11111111-1111-4111-8111-111111111111.png",
+      name: "Adi Prasad.png",
+      bytes: 3,
+    }), { status: 201, headers: { "content-type": "application/json" } }));
+    try {
+      const out = await intakeFiles([new File([new Uint8Array([1, 2, 3])], "Adi Prasad.png", { type: "" })], {
+        allowImages: false,
+        getPath: () => "",
+        uploadImage: async () => {
+          throw new Error("must not upload as an image");
+        },
+      });
+      expect(out.attachments).toEqual([expect.objectContaining({
+        kind: "file",
+        name: "Adi Prasad.png",
+        path: "/private/attachments/11111111-1111-4111-8111-111111111111.png",
+      })]);
+      expect(out.notice).toBeNull();
+    } finally {
+      fetch.mockRestore();
+    }
+  });
+
   it("names the files it could not take, rather than dropping them in silence", async () => {
     const out = await intakeFiles([{ ...file("ghost.bin", "application/octet-stream", 999_999_999) }], {
       allowImages: true,
