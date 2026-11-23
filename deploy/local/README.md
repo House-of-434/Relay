@@ -66,6 +66,19 @@ Created → Postgres function → `hook_restrict_signup_domain`**. Confirm with
 `@houseof434.com` and an `@434vc.com` address pass while a non-company
 address returns the 400 message.
 
+The allowed domains live in **two places that must stay in sync**:
+
+- the Supabase hook above (`supabase/migrations/0010_allow_second_signup_domain.sql`);
+- `SIGN_IN_EMAIL_DOMAINS` in `services/bff/server.ts`, which refuses to mint a
+  Relay session for an identity Supabase should never have issued.
+
+To add or remove a company domain, update the SQL function, redeploy the BFF
+with the matching constant, and extend the sign-in test in
+`services/bff/server.node-test.ts`. `/auth/status` advertises the same list to
+the sign-in page. Do **not** revive `RELAY_ALLOWED_EMAIL_DOMAINS`: it was
+removed because a second env-only list drifted from the hook, and the BFF never
+read it.
+
 ## Build and run
 
 ```sh
