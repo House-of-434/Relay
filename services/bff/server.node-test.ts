@@ -30,6 +30,7 @@ const BFF_CAPABILITY = "fixture-bff-capability-that-is-at-least-32-bytes";
 const USER_ID = "1457cb2a-7543-4b48-8854-a63cd160241f";
 const OTHER_USER_ID = "f7cd9c1b-5f39-4892-b37e-baf8ae27c0c5";
 const USER_EMAIL = "teammate@houseof434.com";
+const VC_USER_EMAIL = "teammate@434vc.com";
 const ACCESS_TOKEN_SENTINEL = "supabase-access-token-must-stay-on-bff";
 const RELAY_TOKEN = `relay_sess_${"R".repeat(43)}`;
 const RELAY_SESSION_ID = "2457cb2a-7543-4b48-8854-a63cd160241f";
@@ -476,6 +477,25 @@ test("validates Supabase JWT and canonical Auth user identity", async () => {
   const wrongDomain = await accessToken({ email: "teammate@example.com" });
   await assert.rejects(verifier()(wrongDomain), /Invalid Supabase identity/);
 
+  const vcToken = await accessToken({ email: VC_USER_EMAIL });
+  assert.deepEqual(
+    await verifier(Date.now, { id: USER_ID, email: VC_USER_EMAIL, email_confirmed_at: "2026-01-01T00:00:00.000Z" })(vcToken),
+    { subject: USER_ID, email: VC_USER_EMAIL },
+  );
+  const mixedCaseVcToken = await accessToken({ email: "Teammate@434VC.com" });
+  assert.deepEqual(
+    await verifier(Date.now, {
+      id: USER_ID,
+      email: "Teammate@434VC.com",
+      email_confirmed_at: "2026-01-01T00:00:00.000Z",
+    })(mixedCaseVcToken),
+    { subject: USER_ID, email: "Teammate@434VC.com" },
+  );
+  await assert.rejects(
+    verifier(Date.now, { id: USER_ID, email: VC_USER_EMAIL })(vcToken),
+    /Invalid Supabase identity/,
+  );
+
   const invalidSubject = await accessToken({ sub: "not-a-uuid" });
   await assert.rejects(verifier()(invalidSubject), /Invalid Supabase identity/);
 
@@ -563,7 +583,11 @@ test("advertises the hosted sign-in provider without exposing configuration", as
   const fixture = await startFixture();
   const response = await fetch(`${fixture.baseUrl}/auth/status`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { available: true, provider: "google", domain: "houseof434.com" });
+  assert.deepEqual(await response.json(), {
+    available: true,
+    provider: "google",
+    domains: ["houseof434.com", "434vc.com"],
+  });
   assert.equal(fixture.requests.length, 0);
 });
 

@@ -6,6 +6,11 @@
 -- RELAY_ALLOWED_EMAIL_DOMAINS, because two lists drifted and silently discarded
 -- mail from teammates whose domain was allowed here but missing from the env.
 --
+-- The BFF still keeps a matching SIGN_IN_EMAIL_DOMAINS constant
+-- (services/bff/server.ts) so it cannot mint a Relay session for an identity
+-- Supabase should never have issued. Add or remove a domain in both places,
+-- then redeploy the BFF; see deploy/local/README.md.
+--
 -- Wire-up is unchanged from 0005 (Authentication -> Hooks -> Before User
 -- Created -> hook_restrict_signup_domain). Re-running this file is safe.
 

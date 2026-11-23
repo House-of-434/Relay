@@ -50,6 +50,23 @@ const MAX_OAUTH_STATE_TTL_MS = OAUTH_STATE_TTL_MS;
 const MAX_LIVE_SESSIONS = 500;
 const MAX_PENDING_LOGINS = 500;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** The company sign-in domains. Supabase's "Before User Created" hook is the
+ * real sign-up boundary (supabase/migrations/0010_allow_second_signup_domain.sql);
+ * this list is the BFF's matching defense-in-depth check, so a Supabase project
+ * that starts issuing identities outside those domains cannot mint a Relay
+ * session. Adding a domain means updating both places (and the sign-in test). */
+export const SIGN_IN_EMAIL_DOMAINS = ["houseof434.com", "434vc.com"] as const;
+const SIGN_IN_EMAIL_PATTERN = new RegExp(
+  `^[^@\\s]+@(?:${SIGN_IN_EMAIL_DOMAINS.map((domain) => domain.replace(/\./g, "\\.")).join("|")})$`,
+  "i",
+);
+
+/** Whether a verified Supabase email belongs to a company domain. */
+export function isCompanyEmail(email: string): boolean {
+  return SIGN_IN_EMAIL_PATTERN.test(email);
+}
+
 const RELAY_SESSION_TOKEN_PATTERN = /^relay_sess_[A-Za-z0-9_-]{43}$/;
 const OAUTH_CODE_PATTERN = /^[\x21-\x7e]{1,4096}$/;
 const RFC3339_PATTERN = /^\d{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])T(?:[01]\d|2[0-3]):[0-5]\d:[0-5]\d(?:\.\d+)?(?:Z|[+-](?:[01]\d|2[0-3]):[0-5]\d)$/;
@@ -261,7 +278,7 @@ function asJwtIdentity(payload: JWTPayload): VerifiedSupabaseIdentity {
   if (typeof subject !== "string" || !UUID_PATTERN.test(subject)) throw new Error("Invalid Supabase identity");
   if (
     typeof email !== "string" || email.length > 320 || email.trim() !== email ||
-    !/^[^\s@]+@houseof434\.com$/i.test(email)
+    !isCompanyEmail(email)
   ) throw new Error("Invalid Supabase identity");
   return { subject, email };
 }
@@ -279,7 +296,7 @@ function asVerifiedIdentity(jwtIdentity: VerifiedSupabaseIdentity, profile: unkn
   if (
     id !== jwtIdentity.subject || typeof email !== "string" || email.length > 320 || email.trim() !== email ||
     email.toLowerCase() !== jwtIdentity.email.toLowerCase() ||
-    !/^[^\s@]+@houseof434\.com$/i.test(email) || !hasCanonicalConfirmation
+    !isCompanyEmail(email) || !hasCanonicalConfirmation
   ) throw new Error("Invalid Supabase identity");
   return { subject: jwtIdentity.subject, email, ...supabaseDisplayClaims(profile) };
 }
@@ -1496,7 +1513,7 @@ export function createRelayBff(options: BffOptions): RelayBffApplication {
     logAuthRequest(req, res, method, url.pathname);
     if (url.pathname === "/auth/status" && method === "GET") {
       res.setHeader("cache-control", "no-store");
-      return json(res, 200, { available: true, provider: "google", domain: "houseof434.com" });
+      return json(res, 200, { available: true, provider: "google", domains: [...SIGN_IN_EMAIL_DOMAINS] });
     }
 
     if (url.pathname === "/auth/login" && method === "GET") {
