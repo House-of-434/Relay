@@ -69,6 +69,15 @@ test("a real controller reports its boot id on unknown sessions", async () => {
   assert.equal(second.worker_boot_id, WORKER_BOOT_ID);
 });
 
+test("stopping an unknown instance reports unknown", async () => {
+  const ingest = {
+    async sweep() { return { swept: 0 }; },
+    async post() { return { meeting_id: "m", upserted: 0 }; },
+  } as unknown as IngestClient;
+  const controller = new SessionController(ENABLED(), ingest);
+  assert.equal((await controller.stop("missing")).status, "unknown");
+});
+
 test("selectRoomDuplicate returns the live instance for a room", () => {
   const key = "google_meet|meet.google.com/abc";
   const sessions = [

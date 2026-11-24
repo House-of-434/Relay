@@ -509,8 +509,43 @@ export function createAgentMcpServer(
               text: JSON.stringify({
                 status: result.status,
                 note: result.status === "accepted"
-                  ? "queued. In your reply, name the meeting by its title or room code — never an internal id — and say you will confirm once Scribe has joined rather than claiming it is already in. Confirm later with get_meeting_transcript."
+                  ? "queued. In your reply, name the meeting by its title or room code — never an internal id — and say you will confirm once Scribe has joined rather than claiming it is already in. Check with get_meeting_transcript: status joining or awaiting_admission means it has not been admitted yet; active means it has."
                   : "this room already has a capture queued or underway; check it with get_meeting_transcript.",
+              }),
+            }],
+          };
+        } catch (error) {
+          return toolError(error);
+        }
+      },
+    );
+
+    server.registerTool(
+      "scribe_stop_capture",
+      {
+        description: "Stop a live Relay Scribe capture and free its room. Give the meeting link (or the capture instance id). Use this when the user wants to abort a recording, or to restart one — stop the current capture, then call scribe_join_meeting to start again. Returns \"stopped\" or \"not_recording\".",
+        inputSchema: {
+          meeting_url: z.string().min(1).max(2048).optional(),
+          instance_id: z.string().min(1).max(64).optional(),
+        },
+        annotations: { readOnlyHint: false, destructiveHint: false },
+      },
+      async ({ meeting_url, instance_id }) => {
+        try {
+          authorizeScribe(agent, "stop");
+          if (!meeting_url && !instance_id) throw new Error("provide the meeting link or the capture instance id");
+          const result = await scribeContext.client.stopMeeting(scribeContext.actorAssertion, {
+            ...(meeting_url ? { meetingUrl: meeting_url } : {}),
+            ...(instance_id ? { instanceId: instance_id } : {}),
+          });
+          return {
+            content: [{
+              type: "text",
+              text: JSON.stringify({
+                status: result.status,
+                note: result.status === "stopped"
+                  ? "stopped. If the user wants it recorded again, call scribe_join_meeting with the same link."
+                  : "nothing is currently being recorded for that meeting.",
               }),
             }],
           };

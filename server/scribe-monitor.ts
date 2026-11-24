@@ -96,13 +96,48 @@ export interface ScribeNotice {
   segment_count?: number;
 }
 
-/** A chat update posted back to the initiating thread: capturing started, or
- * the notes are ready. Manual captures only — they carry the requesting
- * thread; calendar captures have nowhere to post. */
+/** A chat update posted back to the initiating thread across a capture's
+ * lifecycle: waiting for admission, joined, notes ready, or an ended-without-
+ * content failure. Manual captures only — they carry the requesting thread;
+ * calendar captures have nowhere to post. */
 export interface ScribeAnnounce {
   instance_id: string;
-  kind: "joined" | "ready";
+  kind: "waiting" | "joined" | "ready" | "failed";
   segment_count?: number;
+  /** Plain-language reason for a failed capture, for the requester. */
+  reason?: string;
+}
+
+const ADMISSION_TIMEOUT_DEFAULT_MS = 3 * 60 * 1000;
+const ADMISSION_TIMEOUT_MIN_MS = 30_000;
+const ADMISSION_TIMEOUT_MAX_MS = 600_000;
+
+/** Same contract and bounds as the worker (services/scribe-capture/src/config.ts).
+ *  One env var, read by both processes, so the row and the announcement cannot
+ *  disagree. Invalid values fall back rather than disabling the wait. */
+export function parseAdmissionTimeoutMs(value: string | undefined): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= ADMISSION_TIMEOUT_MIN_MS && n <= ADMISSION_TIMEOUT_MAX_MS
+    ? Math.floor(n)
+    : ADMISSION_TIMEOUT_DEFAULT_MS;
+}
+
+/** Turn a worker end state into one plain sentence a person can act on — never
+ *  the raw internal string. `admissionTimeoutMs` is the wait the worker was
+ *  configured with, so the sentence states the real duration. Pure, for tests. */
+export function humanizeCaptureEnd(
+  status: string,
+  error: string | undefined,
+  admissionTimeoutMs: number = ADMISSION_TIMEOUT_DEFAULT_MS,
+): string {
+  const e = (error ?? "").toLowerCase();
+  if (/denied your request|rejected by meeting admin/.test(e)) return "the meeting host declined Scribe's request to join";
+  if (/waiting-?room timeout|not admitted/.test(e)) return `Scribe waited ${Math.max(1, Math.round(admissionTimeoutMs / 60_000))} minutes to be admitted and no one let it in`;
+  if (/signed[\s-]?out|re-?authenticate/.test(e)) return "the Scribe account is signed out and needs re-authentication";
+  if (/at capacity/.test(e)) return "Scribe was already recording the maximum number of meetings";
+  if (/not an allowed provider domain/.test(e)) return "that meeting link is not a supported provider";
+  if (status === "completed" || status === "partial") return "the meeting ended without capturing any speech";
+  return error && error.trim() ? error.trim().slice(0, 200) : "the capture ended without producing notes";
 }
 
 export interface ScribeMonitorDeps {
@@ -143,6 +178,9 @@ export interface ScribeMonitorConfig {
   /** Manual joins arm immediately when accepted; past created_at + this with
    * no arm receipt they are terminally unreachable. */
   manualLateMs: number;
+  /** How long the worker was told to wait for admission (drives the wording
+   *  and keeps the announcement honest). Applies to admission only. */
+  admissionTimeoutMs: number;
   maxResults: number;
   /** After scheduled_end, give the worker record this long before giving up on
    *  reconciliation (write the receipt, log, stop polling). */
@@ -172,6 +210,7 @@ export function scribeMonitorConfig(env: NodeJS.ProcessEnv = process.env): Scrib
     armLeadMs: num(env.RELAY_SCRIBE_ARM_LEAD_MS, 60_000),
     lateMaxMs: num(env.RELAY_SCRIBE_LATE_MAX_MS, 5 * 60 * 1000),
     manualLateMs: num(env.RELAY_SCRIBE_MANUAL_LATE_MS, 5 * 60 * 1000),
+    admissionTimeoutMs: parseAdmissionTimeoutMs(env.RELAY_SCRIBE_ADMISSION_TIMEOUT_MS),
     maxResults: num(env.RELAY_SCRIBE_MAX_RESULTS, 250),
     reconcileGraceMs: num(env.RELAY_SCRIBE_RECONCILE_GRACE_MS, 30 * 60 * 1000),
     adminAlertIntervalMs: num(env.RELAY_SCRIBE_ADMIN_ALERT_INTERVAL_MS, 3 * 60 * 60 * 1000),
@@ -524,9 +563,11 @@ export class ScribeMonitor {
       this.lastWorkerBootId = status.worker_boot_id;
     }
     if (!(TERMINAL_SCRIBE_STATES as readonly string[]).includes(status.status)) {
-      // The capture is live: tell the requesting thread Scribe has joined, once.
+      // The capture is live (or waiting): tell the requesting thread, once.
       if (status.status === "active") {
         await this.announce(request, "joined", { segment_count: status.segment_count }, now);
+      } else if (status.status === "awaiting_admission") {
+        await this.announce(request, "waiting", {}, now);
       }
       // Manual captures carry a synthesized end (acceptance + grace), not a
       // real schedule: expiring them by wall clock would kill long meetings
@@ -549,9 +590,13 @@ export class ScribeMonitor {
       return;
     }
     const signedOut = status.status === "failed" && isSignedOutReason(status.error);
-    // The capture ended: tell the requesting thread the notes are ready, once.
-    if ((status.status === "completed" || status.status === "partial") && (status.segment_count ?? 0) > 0) {
-      await this.announce(request, "ready", { segment_count: status.segment_count }, now);
+    // The capture ended: either the notes are ready, or say plainly it didn't
+    // work out — either way the requester is told without having to ask.
+    const segments = status.segment_count ?? 0;
+    if ((status.status === "completed" || status.status === "partial") && segments > 0) {
+      await this.announce(request, "ready", { segment_count: segments }, now);
+    } else {
+      await this.announce(request, "failed", { reason: humanizeCaptureEnd(status.status, status.error, this.config.admissionTimeoutMs) }, now);
     }
     // Rate-limit the signed-out ADMIN alert; the organizer's plain failure notice
     // still sends. When suppressed, signedOut=false so only the organizer hears.
@@ -593,7 +638,7 @@ export class ScribeMonitor {
   private async announce(
     request: JoinRequest,
     kind: ScribeAnnounce["kind"],
-    extra: { segment_count?: number },
+    extra: { segment_count?: number; reason?: string },
     now: number,
   ): Promise<void> {
     if (request.source !== "manual" || !this.deps.announce) return;
