@@ -156,7 +156,7 @@ import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 import { recoveryCapabilityError } from "./automatic-recovery.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { bindRelayMcpForBot, relaySigningOwner, relayToolMcpServer, relayToolProxySpec, signedActorContext } from "./relay-mcp.ts";
-import { callConfirmedRelayTool, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
+import { callConfirmedRelayTool, confirmedMeetLink, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
 import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
 import {
@@ -9017,9 +9017,10 @@ const tighteningRequests = new TighteningRequestService({
   // full/custom → ask downgrade, which applies first and stops after.
   targetBusy: (botId) => Boolean(store.bot(botId)?.busy || activeGroupTurnForBot(botId)),
 });
-/** User-confirmed Google actions. The pending entry is server-side only; the
- * card the user sees carries display text, never the event or draft id. */
-const connectorActions = new PendingConnectorActions();
+/** User-confirmed Google actions. The pending entry is server-side only and
+ * durable; the card the user sees carries display text, never the event or
+ * draft id. */
+const connectorActions = new PendingConnectorActions(Date.now, join(DATA_DIR, "connector-actions.json"));
 /** One-shot research proposals live apart from routines: no schedule, no
  * calendar entry, one execution per confirmation. */
 researchJobs = new PendingResearchJobs();
@@ -19174,9 +19175,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
         if (refusal) return json(res, 403, { error: refusal });
       }
       return await answeringCardAs(auth, threadId, requestId, async () => {
-        // User-confirmed Google actions carry no card payload by design: the
-        // pending entry is server-side only, and ids never reach the browser.
-        // A requestId with no live pending entry is not ours; fall through.
+        // A requestId this store submitted is ours even when no live entry
+        // remains. Recognise it first so it can never fall through to the
+        // provider's generic resolver, which reports the action as never run
+        // and reads as a refusal. Keyed by the store, never by a
+        // provider-authored tool name that could collide with ours.
+        const connectorCard = connectorActions.isKnown(requestId)
+          ? store.messagesFor(threadId).find((message) => message.card?.requestId === requestId)
+          : undefined;
         const connectorPending = connectorActions.peek(requestId);
         // Already answered: replay the recorded outcome. Falling through to the
         // generic resolver here would claim the action never ran, which is how
@@ -19186,27 +19192,53 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           console.log(`[relay-connector] resolve ${requestId} replay -> ${replayed}`);
           return json(res, 200, { ok: true, outcome: replayed, replayed: true });
         }
+        if (!connectorPending) {
+          if (connectorCard) {
+            // A second tap while the first is still delivering is neither a
+            // duplicate nor an expiry.
+            if (connectorActions.isInFlight(requestId)) {
+              return json(res, 409, { error: "this confirmation is already being processed" });
+            }
+            // Ours, with no live entry: its TTL passed. Mark it terminal so it
+            // stops owning the composer and never reads as a delivered action.
+            const card = connectorCard.card!;
+            if (!card.answered && !card.dismissed && !card.expired) {
+              store.patchMessage(threadId, connectorCard.id, { card: { ...card, expired: true, options: [] } });
+            }
+            return json(res, 410, { error: "this invitation confirmation expired — ask Mercury to propose it again" });
+          }
+          // Not a connector card: let the other resolvers have it.
+        }
         if (connectorPending) {
-          const cardMessage = store.messagesFor(threadId).find((message) => message.card?.requestId === requestId);
+          const cardMessage = connectorCard;
           const card = cardMessage?.card;
-          const threadBotId = store.botByThread(threadId)?.id;
-          const settled = !card || card.answered || card.dismissed || card.expired
+          // Room cards carry their trusted sender; one-to-one tasks resolve
+          // through the store's thread ownership. botByThread alone is null on
+          // a shared room thread, which used to consume the action and 410.
+          const threadBotId = cardMessage?.from?.botId ?? store.botByThread(threadId)?.id;
+          const stale = !card || card.answered || card.dismissed || card.expired
             || connectorPending.threadId !== threadId || threadBotId !== connectorPending.botId;
-          const action = connectorActions.take(requestId);
-          console.log(`[relay-connector] resolve ${requestId} ${behavior} taken=${Boolean(action)}`);
-          if (!action || settled) {
+          if (stale) {
+            console.log(`[relay-connector] resolve ${requestId} ${behavior} stale`);
             return json(res, 410, { error: "this confirmation is no longer pending" });
           }
-          const bot = store.bot(action.botId);
+          const bot = store.bot(connectorPending.botId);
           if (!bot) return json(res, 400, { error: "this confirmation has no valid owner" });
           /** A confirmed action leaves the card open otherwise, so it would
            * keep reading as unanswered after the email had already gone. */
           const settleCard = (answered: "allow" | "deny") => {
             if (!cardMessage) return;
             const live = store.messagesFor(threadId).find((message) => message.id === cardMessage.id)?.card;
-            if (live) store.patchMessage(threadId, cardMessage.id, { card: { ...live, answered } });
+            if (live) store.patchMessage(threadId, cardMessage.id, { card: { ...live, answered, held: undefined } });
+          };
+          const holdCard = (notice: string) => {
+            if (!cardMessage) return;
+            const live = store.messagesFor(threadId).find((message) => message.id === cardMessage.id)?.card;
+            if (live) store.patchMessage(threadId, cardMessage.id, { card: { ...live, held: notice } });
           };
           if (behavior !== "allow") {
+            const action = connectorActions.take(requestId);
+            if (!action) return json(res, 410, { error: "this confirmation is no longer pending" });
             appendDecision(DATA_DIR, {
               threadId, requestId, botId: bot.id, botName: bot.name,
               tool: "calendar_create_event",
@@ -19223,7 +19255,7 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           // The action runs as the proposing bot's owner, never as the
           // triggerer, so Mercury always acts through the owner's own Google
           // connection.
-          const proposedBy = store.bot(action.botId);
+          const proposedBy = store.bot(connectorPending.botId);
           const role = proposedBy?.relayAgent;
           const toolUrl = RELAY_TOOL_URL ?? (RELAY_SHARED_WORKSPACE ? "http://127.0.0.1:8787" : undefined);
           if (!proposedBy?.ownerUserId || !role || !toolUrl) {
@@ -19231,13 +19263,14 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           }
           const tool = "calendar_create_event";
           const args = {
-            summary: action.target.summary,
-            start: action.target.start,
-            end: action.target.end,
-            attendees: action.target.attendees,
-            description: action.target.description,
-            location: action.target.location,
-            timeZone: action.target.timeZone,
+            summary: connectorPending.target.summary,
+            start: connectorPending.target.start,
+            end: connectorPending.target.end,
+            attendees: connectorPending.target.attendees,
+            description: connectorPending.target.description,
+            location: connectorPending.target.location,
+            timeZone: connectorPending.target.timeZone,
+            ...(connectorPending.target.createMeet ? { createMeet: true } : {}),
             // The confirmation this branch just verified is what asks Google
             // to email the guests.
             notify: "yes",
@@ -19251,24 +19284,45 @@ const handleRequest = async (req: IncomingMessage, res: ServerResponse) => {
           } catch {
             return json(res, 500, { error: "the confirmation could not be signed" });
           }
+          // Everything that can fail without a side effect is checked BEFORE
+          // this claim, so a failed validation never consumes the confirmation.
+          const action = connectorActions.take(requestId);
+          if (!action) {
+            if (connectorActions.isInFlight(requestId)) {
+              return json(res, 409, { error: "this confirmation is already being processed" });
+            }
+            return json(res, 410, { error: "this confirmation is no longer pending" });
+          }
+          let result: unknown;
           try {
-            await callConfirmedRelayTool({ toolBaseUrl: toolUrl, agent: role, actorAssertion: assertion, tool, args });
+            result = await callConfirmedRelayTool({ toolBaseUrl: toolUrl, agent: role, actorAssertion: assertion, tool, args });
           } catch (error) {
+            const reason = (error instanceof Error ? error.message : "unknown error").slice(0, 500);
+            // Give the confirmation back: a transient failure must not destroy
+            // it, and the card must say what happened instead of staying silent.
+            connectorActions.restore(action);
+            holdCard(`Couldn't create the event: ${reason}. No invitation was sent — confirm again to retry.`);
             appendDecision(DATA_DIR, {
               threadId, requestId, botId: bot.id, botName: bot.name, tool,
-              summary: `confirmed but the action could not be completed: ${(error instanceof Error ? error.message : "unknown error").slice(0, 160)}`,
+              summary: `confirmed but the action could not be completed: ${reason.slice(0, 160)}`,
               decision: "user-approved", source: "connector-scope",
             });
-            return json(res, 502, { error: "the confirmed action could not be completed" });
+            return json(res, 502, { error: `the confirmed action could not be completed: ${reason}` });
           }
           appendDecision(DATA_DIR, {
             threadId, requestId, botId: bot.id, botName: bot.name, tool,
-            summary: "event created and invitations sent",
+            summary: connectorPending.target.createMeet
+              ? "event created with a Google Meet link and invitations sent"
+              : "event created and invitations sent",
             decision: "user-approved", source: "connector-scope",
           });
           connectorActions.settle(requestId, "created");
           settleCard("allow");
-          return json(res, 200, { ok: true, outcome: "created" });
+          const meetLink = confirmedMeetLink(result);
+          if (meetLink) {
+            store.appendMessage(threadId, { role: "bot", kind: "text", text: `Event created — Google Meet: ${meetLink}` });
+          }
+          return json(res, 200, { ok: true, outcome: "created", ...(meetLink ? { meetLink } : {}) });
         }
         // One-shot deep research: the pending job is server-side only. On
         // confirmation this opens ONE dedicated research thread through the

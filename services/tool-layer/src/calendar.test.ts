@@ -66,6 +66,26 @@ test("the client speaks notification intent, never the provider's vocabulary", a
   assert.equal(serialized.includes("sendUpdates"), false);
 });
 
+test("the client forwards createMeet and returns the Meet link", async () => {
+  const seen: RequestInit[] = [];
+  const client = new RelayCalendarClient({
+    bffInternalUrl: "http://127.0.0.1:8798",
+    capability: CAPABILITY,
+    fetcher: (async (_input: string | URL, init: RequestInit = {}) => {
+      seen.push(init);
+      return Response.json({
+        calendar: { email: "one@example.com" },
+        event: undefined,
+        meetLink: "https://meet.google.com/abc-defg-hij",
+      });
+    }) as typeof fetch,
+  });
+
+  const result = await client.createEvent(ACTOR, { ...DRAFT, createMeet: true });
+  assert.equal((JSON.parse(String(seen[0]!.body)) as Record<string, unknown>).createMeet, true);
+  assert.equal(result.meetLink, "https://meet.google.com/abc-defg-hij");
+});
+
 test("the calendar client forwards the actor assertion and capability, never a user id", async () => {
   const seen: Array<{ url: string; init: RequestInit }> = [];
   const client = new RelayCalendarClient({

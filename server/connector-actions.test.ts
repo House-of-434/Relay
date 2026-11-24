@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import {
@@ -47,6 +51,12 @@ describe("connector actions", () => {
     const display = connectorActionDisplay({ ...INVITE, attendees });
     expect(display.detail).toContain("and 4 more");
     expect(display.detail).not.toContain("person13@example.test");
+  });
+
+  it("tells the person when a Meet link will be added", () => {
+    expect(connectorActionDisplay(INVITE).detail).not.toContain("Google Meet");
+    expect(connectorActionDisplay({ ...INVITE, createMeet: true }).detail)
+      .toContain("A Google Meet link will be added");
   });
 
   it("consumes exactly once: miss, expiry, and replay are nothing", () => {
@@ -114,5 +124,89 @@ describe("a consumed confirmation", () => {
 
     expect(actions.settledOutcome(second.requestId)).toBeUndefined();
     expect(actions.settledOutcome("never-existed")).toBeUndefined();
+  });
+});
+
+describe("a delivery that failed after the claim", () => {
+  it("puts the confirmation back so the person can retry", () => {
+    const actions = new PendingConnectorActions();
+    const submitted = actions.submit({ target: INVITE, botId: BOT, threadId: THREAD });
+    const claimed = actions.take(submitted.requestId);
+    expect(claimed).toBeDefined();
+    expect(actions.isInFlight(submitted.requestId)).toBe(true);
+
+    actions.restore(claimed!);
+    expect(actions.isInFlight(submitted.requestId)).toBe(false);
+    expect(actions.peek(submitted.requestId)?.target).toEqual(INVITE);
+    expect(actions.take(submitted.requestId)).toBeDefined();
+  });
+
+  it("never resurrects an action that was already settled", () => {
+    const actions = new PendingConnectorActions();
+    const submitted = actions.submit({ target: INVITE, botId: BOT, threadId: THREAD });
+    const claimed = actions.take(submitted.requestId);
+    actions.settle(submitted.requestId, "created");
+
+    actions.restore(claimed!);
+    expect(actions.peek(submitted.requestId)).toBeUndefined();
+    expect(actions.settledOutcome(submitted.requestId)).toBe("created");
+  });
+});
+
+describe("durable pending actions", () => {
+  it("survives a restart while the person is still reviewing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-connector-actions-"));
+    try {
+      const file = join(dir, "connector-actions.json");
+      const before = new PendingConnectorActions(Date.now, file);
+      const submitted = before.submit({ target: { ...INVITE, createMeet: true }, botId: BOT, threadId: THREAD });
+
+      const after = new PendingConnectorActions(Date.now, file);
+      expect(after.peek(submitted.requestId)).toMatchObject({
+        requestId: submitted.requestId,
+        botId: BOT,
+        threadId: THREAD,
+        target: { createMeet: true },
+      });
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps a settled outcome across a restart", () => {
+    const dir = mkdtempSync(join(tmpdir(), "relay-connector-actions-"));
+    try {
+      const file = join(dir, "connector-actions.json");
+      const before = new PendingConnectorActions(Date.now, file);
+      const submitted = before.submit({ target: INVITE, botId: BOT, threadId: THREAD });
+      before.take(submitted.requestId);
+      before.settle(submitted.requestId, "created");
+
+      const after = new PendingConnectorActions(Date.now, file);
+      expect(after.settledOutcome(submitted.requestId)).toBe("created");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports genuine expiry separately from an entry that never existed", () => {
+    let now = 1_000_000;
+    const actions = new PendingConnectorActions(() => now);
+    const submitted = actions.submit({ target: INVITE, botId: BOT, threadId: THREAD });
+    now += CONNECTOR_ACTION_TTL_MS + 1;
+
+    expect(actions.peek(submitted.requestId)).toBeUndefined();
+    expect(actions.expiredOutcome(submitted.requestId)).toBe(true);
+    expect(actions.expiredOutcome("never-existed")).toBe(false);
+  });
+
+  it("recognizes its own request ids after expiry, but not a stranger's", () => {
+    let now = 1_000_000;
+    const actions = new PendingConnectorActions(() => now);
+    const submitted = actions.submit({ target: INVITE, botId: BOT, threadId: THREAD });
+    expect(actions.isKnown(submitted.requestId)).toBe(true);
+    now += CONNECTOR_ACTION_TTL_MS + 1;
+    expect(actions.isKnown(submitted.requestId)).toBe(true);
+    expect(actions.isKnown("someone-elses-request")).toBe(false);
   });
 });

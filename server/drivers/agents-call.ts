@@ -1084,6 +1084,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
       || typeof args.when !== "string" || !args.when.trim() || args.when.length > 120
       || emails.length < 1 || emails.length > 20
       || emails.some((email) => typeof email !== "string" || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
+      || (args.createMeet !== undefined && typeof args.createMeet !== "boolean")
       || description === null || location === null || timeZone === null) {
       return { text: "propose_calendar_invite needs summary, start, end, when, and 1-20 attendee email addresses.", isError: true };
     }
@@ -1098,6 +1099,7 @@ export async function callTool(name: string, args: Json, context: ToolCallContex
           ...(description === undefined ? {} : { description }),
           ...(location === undefined ? {} : { location }),
           ...(timeZone === undefined ? {} : { timeZone }),
+          ...(args.createMeet === true ? { createMeet: true } : {}),
         },
         reason: args.reason,
       }),

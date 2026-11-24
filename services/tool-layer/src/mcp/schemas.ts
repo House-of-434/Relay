@@ -37,6 +37,8 @@ export const EVENT_DRAFT_INPUT = {
   location: z.string().max(500).optional(),
   attendees: z.array(z.string().min(3).max(320)).max(50).optional(),
   timeZone: z.string().min(1).max(64).optional(),
+  /** Ask Google to add a Meet link. Only when the user asked for one. */
+  createMeet: z.boolean().optional(),
 };
 
 /**
