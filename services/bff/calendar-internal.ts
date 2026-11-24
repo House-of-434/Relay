@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { z } from "zod";
 
@@ -98,6 +99,8 @@ const createSchema = z.object({
   location: z.string().max(MAX_LOCATION).optional(),
   attendees: attendees.optional(),
   timeZone: z.string().min(1).max(64).optional(),
+  /** Ask Google to attach a Meet link to the new event. */
+  createMeet: z.boolean().optional(),
   notify: notify.optional(),
 }).strict();
 
@@ -249,6 +252,28 @@ function safeEvent(raw: unknown, accountEmail: string, options: SafeEventOptions
   };
 }
 
+/** The video join URL of a freshly created event, if Google attached one.
+ * Only the URL crosses back — never dial-in passcodes. */
+function safeMeetLink(raw: unknown): string | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const event = raw as Record<string, unknown>;
+  if (typeof event.hangoutLink === "string" && /^https?:\/\//.test(event.hangoutLink)) {
+    return event.hangoutLink.slice(0, MAX_URI);
+  }
+  const conference = event.conferenceData;
+  if (!conference || typeof conference !== "object") return undefined;
+  const points = (conference as Record<string, unknown>).entryPoints;
+  if (!Array.isArray(points)) return undefined;
+  for (const point of points) {
+    if (!point || typeof point !== "object") continue;
+    const entry = point as Record<string, unknown>;
+    if (entry.entryPointType === "video" && typeof entry.uri === "string" && /^https?:\/\//.test(entry.uri)) {
+      return entry.uri.slice(0, MAX_URI);
+    }
+  }
+  return undefined;
+}
+
 /** Google answers an invalid/expired syncToken with 410 Gone; the monitor drops
  *  the token and re-lists from scratch. */
 function isInvalidSyncToken(error: unknown): boolean {
@@ -387,6 +412,9 @@ export async function handleInternalCalendar(
           const response = await client.events.insert({
             calendarId: PRIMARY,
             sendUpdates: notification,
+            // conferenceData is only honored (and returned) when the caller
+            // asks for version 1 explicitly.
+            ...(parsed.data.createMeet ? { conferenceDataVersion: 1 } : {}),
             requestBody: {
               summary: parsed.data.summary,
               start: parsed.data.start,
@@ -395,16 +423,28 @@ export async function handleInternalCalendar(
               ...(parsed.data.location === undefined ? {} : { location: parsed.data.location }),
               ...(invitees.length === 0 ? {} : { attendees: invitees.map((email) => ({ email })) }),
               ...(parsed.data.timeZone === undefined ? {} : { timeZone: parsed.data.timeZone }),
+              ...(parsed.data.createMeet ? {
+                conferenceData: {
+                  createRequest: {
+                    requestId: randomUUID(),
+                    conferenceSolutionKey: { type: "hangoutsMeet" },
+                  },
+                },
+              } : {}),
             },
           });
-          return safeEvent(response.data, calendar!.email);
+          return {
+            event: safeEvent(response.data, calendar!.email),
+            meetLink: parsed.data.createMeet ? safeMeetLink(response.data) : undefined,
+          };
         },
       );
       json(res, 200, {
         calendar: { email: calendar.email },
-        event: created,
+        event: created.event,
         invited: notification === "none" ? [] : invitees,
         notifications: notification,
+        ...(created.meetLink ? { meetLink: created.meetLink } : {}),
       });
       return;
     }

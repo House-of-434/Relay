@@ -174,9 +174,10 @@ export function verifyActorAssertion(
 }
 
 /** Validate RELAY_TOOL_URL as a bare http(s) origin and return it, so both the
- * proxy spec and the startup smoke check agree on what a valid Tool Layer
- * address is. */
-function relayToolOrigin(baseUrl: string): string {
+ * proxy spec, the confirmed-action caller, and the startup smoke check agree
+ * on what a valid Tool Layer address is. This is a server-configured address
+ * (compose uses http://tools:8787), never a client- or model-supplied URL. */
+export function relayToolOrigin(baseUrl: string): string {
   let url: URL;
   try { url = new URL(baseUrl); }
   catch { throw new Error("RELAY_TOOL_URL must be an http origin"); }

@@ -52,6 +52,8 @@ export interface CalendarEventDraft {
   location?: string;
   attendees?: string[];
   timeZone?: string;
+  /** Ask Google to attach a Meet link to the new event. */
+  createMeet?: boolean;
   notify?: NotifyIntent;
 }
 
@@ -133,7 +135,13 @@ export class RelayCalendarClient {
   }
 
   createEvent(actorAssertion: string, input: CalendarEventDraft) {
-    return this.call<{ calendar: { email: string }; event: CalendarEvent | undefined; invited?: string[]; notifications?: string }>(
+    return this.call<{
+      calendar: { email: string };
+      event: CalendarEvent | undefined;
+      invited?: string[];
+      notifications?: string;
+      meetLink?: string;
+    }>(
       CALENDAR_INTERNAL_PATHS.eventsCreate,
       actorAssertion,
       input,

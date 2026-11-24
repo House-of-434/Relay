@@ -8,6 +8,7 @@ import {
   relayCapabilityKey,
   relaySigningOwner,
   relayToolMcpServer,
+  relayToolOrigin,
   relayToolProxySpec,
   signedActorContext,
   verifyActorAssertion,
@@ -92,6 +93,10 @@ describe("Relay tool proxy spec", () => {
   });
 
   it("accepts a compose-network Tool Layer and refuses malformed origins", () => {
+    // The confirmed-action caller validates the same configured origin; a
+    // loopback-only rule would reject every production confirmation.
+    expect(relayToolOrigin("http://tools:8787")).toBe("http://tools:8787");
+    expect(relayToolOrigin("https://relay-tools.example.test")).toBe("https://relay-tools.example.test");
     expect(proxySpecFor("scout").env.RELAY_TOOL_URL).toBe("http://127.0.0.1:8787");
     expect(relayToolProxySpec({
       agent: "scout", toolUrl: "http://tools:8787", harnessUrl: "http://127.0.0.1:8799", token: "", proxyPath: PROXY_PATH,

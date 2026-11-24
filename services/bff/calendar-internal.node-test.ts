@@ -84,7 +84,13 @@ function calendarGateway(
       insert: async (params: Record<string, unknown>) => {
         calls.push({ userId: "", accountId: "", operation: "events.insert", params });
         if (behaviour === "fail") throw new Error("provider exploded with a secret token in it");
-        return { data: { id: "created-1", summary: "New", start: { dateTime: "2026-01-06T09:00:00Z" }, end: { dateTime: "2026-01-06T10:00:00Z" } } };
+        return { data: {
+          id: "created-1",
+          summary: "New",
+          start: { dateTime: "2026-01-06T09:00:00Z" },
+          end: { dateTime: "2026-01-06T10:00:00Z" },
+          hangoutLink: "https://meet.google.com/abc-defg-hij",
+        } };
       },
       update: async (params: Record<string, unknown>) => {
         calls.push({ userId: "", accountId: "", operation: "events.update", params });
@@ -369,6 +375,37 @@ test("every calendar route is addressed to the owner's primary calendar only", a
   const serialized = JSON.stringify(calls);
   assert.equal(serialized.includes(OTHER_USER_ID), false);
   assert.equal(serialized.includes("refresh-token-for-"), false);
+});
+
+test("createMeet asks Google for a Meet link and returns it; a plain invite does neither", async () => {
+  const { post, calls } = await createFixture({
+    accounts: [{ userId: USER_ID, service: "google-calendar", googleSub: "cal-sub", email: "one@example.com" }],
+  });
+  const assertion = actorAssertion(USER_ID, USER_EMAIL);
+  const times = {
+    start: { dateTime: "2026-01-06T09:00:00Z" },
+    end: { dateTime: "2026-01-06T10:00:00Z" },
+  };
+
+  const withMeet = await post(INTERNAL_CALENDAR_EVENTS_CREATE, { summary: "Interview", ...times, createMeet: true }, assertion);
+  assert.equal(withMeet.status, 200);
+  assert.equal((await withMeet.json() as { meetLink?: string }).meetLink, "https://meet.google.com/abc-defg-hij");
+
+  const meetInsert = calls.find((call) => call.operation === "events.insert");
+  assert.equal(meetInsert?.params.conferenceDataVersion, 1);
+  const meetBody = meetInsert?.params.requestBody as Record<string, any>;
+  assert.equal(meetBody.conferenceData.createRequest.conferenceSolutionKey.type, "hangoutsMeet");
+  assert.match(meetBody.conferenceData.createRequest.requestId, /^[0-9a-f-]{36}$/);
+
+  calls.length = 0;
+  const plain = await post(INTERNAL_CALENDAR_EVENTS_CREATE, { summary: "Interview", ...times }, assertion);
+  assert.equal(plain.status, 200);
+  assert.equal((await plain.json() as { meetLink?: string }).meetLink, undefined);
+
+  const plainInsert = calls.find((call) => call.operation === "events.insert");
+  assert.equal(plainInsert?.params.conferenceDataVersion, undefined);
+  const plainBody = plainInsert?.params.requestBody as Record<string, any>;
+  assert.equal(plainBody.conferenceData, undefined);
 });
 
 test("reads require the read scope and every write requires the events scope", async () => {

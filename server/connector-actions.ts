@@ -1,6 +1,10 @@
+import { mkdirSync, readFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { z } from "zod";
 
+import { writeFileAtomic } from "./atomic.ts";
 import { newId } from "./contracts.ts";
+import { relayToolOrigin } from "./relay-mcp.ts";
 
 /**
  * User-confirmed calendar invites. The card the user sees is display-only: the
@@ -11,8 +15,13 @@ import { newId } from "./contracts.ts";
  * here; the agent shows the draft in chat and the tool-call log is the audit trail.
  */
 
-export const CONNECTOR_ACTION_TTL_MS = 15 * 60 * 1000;
+/** A person may review an invitation for a while before confirming it. Like a
+ * research proposal (24h), the pending action must outlive that review and the
+ * server restarts that can happen in between. */
+export const CONNECTOR_ACTION_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_PENDING_PER_THREAD = 10;
+const MAX_STORED = 1_000;
+const STORE_VERSION = 1;
 const MAX_EMAILS = 20;
 const MAX_ADDRESS = 320;
 const MAX_DISPLAY_ATTENDEES = 10;
@@ -32,6 +41,9 @@ const calendarInviteSchema = z.object({
   description: z.string().max(8_000).optional(),
   location: z.string().max(500).optional(),
   timeZone: z.string().min(1).max(64).optional(),
+  /** Add a Google Meet link to the event. Only when the person explicitly
+   * asked for an interview, call, or remote/video meeting. */
+  createMeet: z.boolean().optional(),
 }).strict();
 
 export interface CalendarInviteTarget {
@@ -43,6 +55,7 @@ export interface CalendarInviteTarget {
   description?: string;
   location?: string;
   timeZone?: string;
+  createMeet?: boolean;
 }
 
 export type ConnectorActionTarget = CalendarInviteTarget;
@@ -76,16 +89,35 @@ export function connectorActionDisplay(target: ConnectorActionTarget): {
   detail: string;
 } {
   const invite = target;
+  const guests = invite.attendees.length === 1 ? "this attendee" : "all these attendees";
+  const meet = invite.createMeet
+    ? "\n\nA Google Meet link will be added to the event and included in the invitation."
+    : "";
   return {
     title: "Confirm event and invitations",
     subtitle: `${invite.summary} · ${invite.when}`,
-    detail: `Attendees (${invite.attendees.length}): ${attendeeNames(invite.attendees)}\n\nConfirming creates this on your primary calendar and Google emails invitations to ${invite.attendees.length === 1 ? "this attendee" : "all these attendees"}.`,
+    detail: `Attendees (${invite.attendees.length}): ${attendeeNames(invite.attendees)}\n\nConfirming creates this on your primary calendar and Google emails invitations to ${guests}.${meet}`,
   };
 }
 
-/** Pending actions, server-side only. A requestId that is missing, expired,
- * or already consumed resolves to nothing, so a stale or replayed card can
- * never fire an action. */
+/** One durable row, validated on load so a tampered or truncated file cannot
+ * smuggle an arbitrary target into a confirmed tool call. */
+function storedAction(raw: unknown): PendingConnectorAction | undefined {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
+  const row = raw as Record<string, unknown>;
+  const target = calendarInviteSchema.safeParse(row.target);
+  if (!target.success) return undefined;
+  if (typeof row.requestId !== "string" || row.requestId.length === 0) return undefined;
+  if (typeof row.botId !== "string" || row.botId.length === 0) return undefined;
+  if (typeof row.threadId !== "string" || row.threadId.length === 0) return undefined;
+  if (typeof row.createdAt !== "number" || !Number.isFinite(row.createdAt)) return undefined;
+  return { requestId: row.requestId, target: target.data, botId: row.botId, threadId: row.threadId, createdAt: row.createdAt };
+}
+
+/** Pending actions, server-side only, persisted so a restart or a deploy does
+ * not silently close an invitation the person was still reviewing. A requestId
+ * that is missing, expired, or already consumed resolves to nothing, so a
+ * stale or replayed card can never fire an action. */
 export class PendingConnectorActions {
   private readonly pending = new Map<string, PendingConnectorAction>();
   /** What a consumed request already did. A repeated tap on Confirm must
@@ -93,10 +125,19 @@ export class PendingConnectorActions {
    * which would report the action as never run and read as a refusal. */
   private readonly settled = new Map<string, string>();
   private readonly settledAt = new Map<string, number>();
+  /** Requests that were live and passed their TTL. Kept so an old card can be
+   * told it expired instead of being mistaken for a stranger's request. */
+  private readonly expired = new Map<string, number>();
+  /** Claimed and currently executing. A second concurrent tap must neither
+   * start a duplicate action nor be treated as expiry. */
+  private readonly inFlight = new Set<string>();
   private readonly now: () => number;
+  private readonly file: string | undefined;
 
-  constructor(now: () => number = Date.now) {
+  constructor(now: () => number = Date.now, file?: string) {
     this.now = now;
+    this.file = file;
+    if (file) this.load();
   }
 
   submit(args: {
@@ -121,6 +162,7 @@ export class PendingConnectorActions {
       createdAt: this.now(),
     };
     this.pending.set(action.requestId, action);
+    this.save();
     return action;
   }
 
@@ -130,7 +172,20 @@ export class PendingConnectorActions {
     const action = this.pending.get(requestId);
     if (!action) return undefined;
     this.pending.delete(requestId);
+    this.inFlight.add(requestId);
+    this.save();
     return action;
+  }
+
+  /** A claimed action whose delivery failed goes back, so one transient error
+   * (Tool Layer restart, Google 5xx) does not destroy a confirmation the
+   * person already gave. Never resurrects a settled action. */
+  restore(action: PendingConnectorAction): void {
+    if (this.settled.has(action.requestId)) return;
+    this.inFlight.delete(action.requestId);
+    this.expired.delete(action.requestId);
+    this.pending.set(action.requestId, action);
+    this.save();
   }
 
   peek(requestId: string): PendingConnectorAction | undefined {
@@ -138,11 +193,19 @@ export class PendingConnectorActions {
     return this.pending.get(requestId);
   }
 
+  /** A tap that arrives while another is still delivering: not a duplicate and
+   * not an expiry, so the caller can say it is already being confirmed. */
+  isInFlight(requestId: string): boolean {
+    return this.inFlight.has(requestId);
+  }
+
   /** Record the outcome of a consumed action, so an identical repeat is
    * answered from history instead of being treated as a stranger's request. */
   settle(requestId: string, outcome: string): void {
     this.settled.set(requestId, outcome);
     this.settledAt.set(requestId, this.now());
+    this.inFlight.delete(requestId);
+    this.save();
   }
 
   settledOutcome(requestId: string): string | undefined {
@@ -150,19 +213,110 @@ export class PendingConnectorActions {
     return this.settled.get(requestId);
   }
 
+  /** True only for a request this store submitted and then evicted past its
+   * TTL — never merely because no entry is present. */
+  expiredOutcome(requestId: string): boolean {
+    this.evictExpired();
+    return this.expired.has(requestId);
+  }
+
+  /** Whether this requestId belongs to this store at all. Used to recognize a
+   * card whose pending entry is gone without trusting a provider-authored tool
+   * name that could collide with ours. */
+  isKnown(requestId: string): boolean {
+    this.evictExpired();
+    return this.pending.has(requestId) || this.settled.has(requestId) || this.expired.has(requestId);
+  }
+
   private evictExpired(): void {
-    const cutoff = this.now() - CONNECTOR_ACTION_TTL_MS;
+    const now = this.now();
+    const cutoff = now - CONNECTOR_ACTION_TTL_MS;
+    let changed = false;
     for (const [id, action] of this.pending) {
-      if (action.createdAt <= cutoff) this.pending.delete(id);
+      if (action.createdAt <= cutoff) {
+        this.pending.delete(id);
+        this.expired.set(id, now);
+        changed = true;
+      }
     }
-    // Keep a consumed request replayable a little longer than it was open, so
-    // a slow second tap still lands on the recorded outcome.
-    const replayCutoff = this.now() - CONNECTOR_ACTION_TTL_MS * 2;
+    // Keep a consumed or expired request replayable a little longer than it
+    // was open, so a slow second tap still lands on a truthful state.
+    const forget = now - CONNECTOR_ACTION_TTL_MS * 2;
+    for (const [id, at] of this.expired) {
+      if (at <= forget) {
+        this.expired.delete(id);
+        changed = true;
+      }
+    }
     for (const [id] of this.settled) {
       if (!this.pending.has(id)) {
         const at = this.settledAt.get(id);
-        if (at !== undefined && at <= replayCutoff) this.settled.delete(id);
+        if (at !== undefined && at <= forget) {
+          this.settled.delete(id);
+          this.settledAt.delete(id);
+          changed = true;
+        }
       }
+    }
+    if (changed) this.save();
+  }
+
+  private load(): void {
+    if (!this.file) return;
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(this.file, "utf8"));
+    } catch {
+      return; // absent or unreadable: no pending actions
+    }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return;
+    const store = raw as Record<string, unknown>;
+    if (store.version !== STORE_VERSION) return;
+    if (Array.isArray(store.pending)) {
+      for (const row of store.pending.slice(-MAX_STORED)) {
+        const action = storedAction(row);
+        if (action) this.pending.set(action.requestId, action);
+      }
+    }
+    if (Array.isArray(store.settled)) {
+      for (const row of store.settled.slice(-MAX_STORED)) {
+        if (!row || typeof row !== "object") continue;
+        const entry = row as Record<string, unknown>;
+        if (typeof entry.requestId !== "string" || typeof entry.outcome !== "string") continue;
+        if (typeof entry.at !== "number" || !Number.isFinite(entry.at)) continue;
+        this.settled.set(entry.requestId, entry.outcome);
+        this.settledAt.set(entry.requestId, entry.at);
+      }
+    }
+    if (Array.isArray(store.expired)) {
+      for (const row of store.expired.slice(-MAX_STORED)) {
+        if (!row || typeof row !== "object") continue;
+        const entry = row as Record<string, unknown>;
+        if (typeof entry.requestId !== "string") continue;
+        if (typeof entry.at !== "number" || !Number.isFinite(entry.at)) continue;
+        this.expired.set(entry.requestId, entry.at);
+      }
+    }
+  }
+
+  private save(): void {
+    if (!this.file) return;
+    const payload = JSON.stringify({
+      version: STORE_VERSION,
+      pending: [...this.pending.values()],
+      settled: [...this.settled].map(([requestId, outcome]) => ({
+        requestId,
+        outcome,
+        at: this.settledAt.get(requestId) ?? this.now(),
+      })),
+      expired: [...this.expired].map(([requestId, at]) => ({ requestId, at })),
+    });
+    try {
+      mkdirSync(dirname(this.file), { recursive: true, mode: 0o700 });
+      writeFileAtomic(this.file, payload, { mode: 0o600 });
+    } catch (error) {
+      // Kept in memory for this run; a restart may forget an open card.
+      console.warn(`connector actions: could not save ${this.file}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 }
@@ -183,6 +337,20 @@ function toolText(result: unknown): string | undefined {
   return typeof first === "string" ? first : undefined;
 }
 
+/** The Meet link a confirmed create returned, when the tool layer included one. */
+export function confirmedMeetLink(result: unknown): string | undefined {
+  const text = toolText(result);
+  if (!text) return undefined;
+  try {
+    const parsed = JSON.parse(text) as { meetLink?: unknown };
+    return typeof parsed.meetLink === "string" && /^https?:\/\//.test(parsed.meetLink)
+      ? parsed.meetLink
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Execute a user-confirmed action through the Tool Layer's own MCP route, so
  * the same registration, permission checks, and actor assertion the agent's
@@ -194,12 +362,14 @@ function toolText(result: unknown): string | undefined {
 export async function callConfirmedRelayTool(input: ConfirmedToolCall): Promise<unknown> {
   let base: URL;
   try {
+    // RELAY_TOOL_URL is server configuration, never client/model input. On a
+    // compose deployment it is the Tool Layer's service origin
+    // (http://tools:8787), so a loopback-only check would reject every
+    // confirmed action in production. Validate it as a bare http(s) origin
+    // instead; identity still comes from the signed actor assertion.
+    relayToolOrigin(input.toolBaseUrl);
     base = new URL(input.toolBaseUrl);
   } catch {
-    throw new ConnectorActionError("the Tool Layer is not configured", 503);
-  }
-  const loopback = ["127.0.0.1", "localhost", "[::1]"].includes(base.hostname);
-  if (base.protocol !== "http:" || !loopback || (base.pathname !== "/" && base.pathname !== "")) {
     throw new ConnectorActionError("the Tool Layer is not configured", 503);
   }
 

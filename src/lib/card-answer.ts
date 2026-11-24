@@ -28,8 +28,10 @@ export function answerResponse(card: CardKind, answer: string): CardResponse {
   if (!card.tool) return { behavior: "answer", message: answer };
   // A permission card's own options are Allow / Deny / Always allow; the
   // grant behind "always" is written separately, so anything that is not a
-  // refusal lets this one action through.
-  return { behavior: answer === "Deny" ? "deny" : "allow" };
+  // refusal lets this one action through. "Cancel" is a refusal too: a
+  // proposal card (a calendar invite) offers Confirm / Cancel, and treating
+  // Cancel as allow would run the action it was meant to stop.
+  return { behavior: answer === "Deny" || answer === "Cancel" ? "deny" : "allow" };
 }
 
 /** The response for closing a card with its X. */

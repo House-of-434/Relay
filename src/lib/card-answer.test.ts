@@ -26,6 +26,10 @@ describe("answerResponse", () => {
     expect(answerResponse({ tool: "ask_bot" }, "Always allow")).toEqual({ behavior: "allow" });
     // a card that says "Yes" rather than "Allow" still lets the action run
     expect(answerResponse({ tool: "Bash" }, "Yes")).toEqual({ behavior: "allow" });
+    // a proposal card offers Confirm / Cancel; Cancel must not run the action
+    // it was meant to stop
+    expect(answerResponse({ tool: "calendar_create_event" }, "Confirm")).toEqual({ behavior: "allow" });
+    expect(answerResponse({ tool: "calendar_create_event" }, "Cancel")).toEqual({ behavior: "deny" });
   });
 });
 

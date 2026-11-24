@@ -751,7 +751,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
   {
     name: "propose_calendar_invite",
     description:
-      "Ask the user to confirm creating an event with attendees on their primary calendar. Pass the complete event exactly as it should be created; the card shows the summary, time, and attendees. On confirmation the event is created and invitations are emailed together — there is no separate notify step." + PROPOSAL_OUTCOME,
+      "Ask the user to confirm creating an event with attendees on their primary calendar. Pass the complete event exactly as it should be created; the card shows the summary, time, and attendees. Set createMeet true only when the user explicitly asked for an interview, video call, or remote meeting, so Google adds a Meet link. On confirmation the event is created and invitations are emailed together — there is no separate notify step." + PROPOSAL_OUTCOME,
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -780,6 +780,7 @@ const toolDefinitions = (externalRuntime: boolean) => [
         description: { type: "string", maxLength: 8000, description: "Event description." },
         location: { type: "string", maxLength: 500, description: "Event location." },
         timeZone: { type: "string", maxLength: 64, description: "IANA time zone for the event." },
+        createMeet: { type: "boolean", description: "Add a Google Meet link. Only when the user explicitly asked for an interview, video call, or remote meeting; never by default." },
         reason: { type: "string", minLength: 1, maxLength: 500, description: "One sentence the user will see explaining why." },
       },
       required: ["summary", "start", "end", "when", "attendees", "reason"],
