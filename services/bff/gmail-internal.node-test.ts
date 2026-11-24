@@ -314,6 +314,38 @@ test("no token or raw provider error escapes the BFF", async () => {
   assert.equal(text.includes("secret token"), false);
 });
 
+test("a message id from another mailbox is reported as not found, not a provider failure", async () => {
+  const notFound = Object.assign(new Error("Requested entity was not found."), { code: 404 });
+  const gateway = {
+    withClient: async (
+      _userId: string,
+      _service: string,
+      _accountId: string,
+      _scopes: readonly string[],
+      operation: (client: unknown) => unknown,
+    ) => operation({
+      users: { messages: { get: async () => { throw notFound; } } },
+    }),
+  } as unknown as GoogleApiGateway;
+  const { call } = await createFixture({
+    gateway,
+    accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],
+  });
+
+  const response = await call(INTERNAL_GMAIL_MESSAGES_GET, {
+    method: "POST",
+    headers: {
+      authorization: `Bearer ${CAPABILITY}`,
+      "x-relay-actor-user": actorAssertion(USER_ID, USER_EMAIL),
+      "content-type": "application/json",
+    },
+    body: JSON.stringify({ messageId: "relay-message-id" }),
+  });
+
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "message not found in this mailbox" });
+});
+
 test("the send route dispatches exactly the confirmed content to messages.send", async () => {
   const { call, calls } = await createFixture({
     accounts: [{ userId: USER_ID, service: "gmail", googleSub: "gmail-sub", email: "one@example.com" }],

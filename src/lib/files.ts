@@ -1,6 +1,7 @@
-// The Files panel's client side: one shape for thread listings and All Files,
-// plus the small helpers the panel renders with.
+// The Files panel's client side: the thread listing shape plus the small
+// helpers the panel renders with.
 import { api } from "@/state/store";
+import { fileKind } from "@/lib/file-kind";
 
 export interface ListedFile {
   fileId: string;
@@ -26,10 +27,6 @@ export interface ListedFiles {
 
 export function fetchThreadFiles(botId: string, threadId: string): Promise<ListedFiles> {
   return api(`/api/bots/${encodeURIComponent(botId)}/threads/${encodeURIComponent(threadId)}/files`);
-}
-
-export function fetchAllFiles(botId: string): Promise<ListedFiles> {
-  return api(`/api/files?botId=${encodeURIComponent(botId)}`);
 }
 
 export function fileContentUrl(fileId: string, download = false): string {
@@ -69,23 +66,13 @@ export function formatBytes(bytes: number): string {
 }
 
 export function isImage(file: ListedFile): boolean {
-  return file.mime.startsWith("image/");
+  return fileKind(file.name, file.mime) === "image";
 }
 
-const TEXT_FILE = /\.(?:md|markdown|txt|csv|tsv|json|js|mjs|cjs|ts|tsx|jsx|py|rb|go|rs|java|kt|swift|c|h|cc|cpp|hpp|css|html?|xml|ya?ml|toml|sh|bash|zsh|sql|log)$/i;
+export function isPdf(file: ListedFile): boolean {
+  return fileKind(file.name, file.mime) === "pdf";
+}
 
 export function isText(file: ListedFile): boolean {
-  return file.mime.startsWith("text/") || file.mime === "application/json" || TEXT_FILE.test(file.name);
-}
-
-export function isPreviewable(file: ListedFile): boolean {
-  return isImage(file) || isText(file);
-}
-
-export function formatModified(at: number): string {
-  try {
-    return new Date(at).toLocaleString(undefined, { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
-  } catch {
-    return "";
-  }
+  return fileKind(file.name, file.mime) === "text";
 }

@@ -35,7 +35,7 @@ import { liveActivityLabel } from "@/lib/live-activity";
 import { ChatMarkdown } from "./ChatMarkdown";
 import { ThreadChip } from "./ThreadChip";
 import { ThreadSwitcher } from "./ThreadSwitcher";
-import { SidebarIcon } from "./SidebarIcon";
+import { ThreadFilesIcon } from "./ThreadFilesIcon";
 import { useMenuMotion } from "./MenuMotion";
 import { VerifyCard } from "./VerifyCard";
 import { askText, runSteps, runSummary, showRun, skillPrompt, skillStaged } from "@/lib/verify-steps";
@@ -50,7 +50,7 @@ import { ReplyQuote } from "./ReplyQuote";
 import { ReplyIcon } from "./ReplyIcon";
 import { ConnectorCard } from "./ConnectorCard";
 import { hasRoutineExecutionTask, RoutineRunCard } from "./RoutineRunCard";
-import { MessageAttachments, collectMessageFiles, splitMessageAttachments, type GalleryFile } from "./AttachmentGallery";
+import { MessageAttachments, collectMessageFiles, splitMessageAttachments } from "./AttachmentGallery";
 import { CompactionChip, DigestChip } from "./DigestChip";
 import { RenameTitle } from "./RenameTitle";
 import { ModelPicker } from "./ModelPicker";
@@ -200,7 +200,6 @@ function Bubble({
   replyTarget,
   onReply,
   hideAttachments = false,
-  extraAttachments,
 }: {
   bot: Bot;
   message: Message;
@@ -212,8 +211,6 @@ function Bubble({
   onSubmitEdit: (text: string) => void;
   replyTarget?: Message;
   onReply: () => void;
-  /** Attachments the transcript hoisted onto this (terminal) message. */
-  extraAttachments?: { images: string[]; files: GalleryFile[] };
   /** Folded narration messages carry no attachments of their own. */
   hideAttachments?: boolean;
 }) {
@@ -238,10 +235,8 @@ function Bubble({
   const visibleText = webhookView?.task ?? attachments?.display ?? text;
   const hasAttachments = Boolean(attachments && (attachments.images.length || attachments.files.length));
   // A message that is only attachments is just the files: no bubble around them.
-  // Turn-hoisted attachments count for the terminal message beside them.
-  const hoisted = hideAttachments ? undefined : extraAttachments;
   const attachmentsOnly = !webhookView && !visibleText.trim() &&
-    (user ? hasAttachments : generatedPaths.length + linkedFiles.length + (hoisted?.images.length ?? 0) + (hoisted?.files.length ?? 0) > 0);
+    (user ? hasAttachments : generatedPaths.length + linkedFiles.length > 0);
   const collapsible =
     user && !webhookView && !expanded && (visibleText.length > USER_COLLAPSE_CHARS || visibleText.split("\n").length > USER_COLLAPSE_LINES);
 
@@ -264,6 +259,11 @@ function Bubble({
   return (
     <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
       {peer && <PeerLabel peer={peer} />}
+      {!hideAttachments && user && !webhookView && attachments && hasAttachments && (
+        <div className="mb-1.5 flex w-full justify-end">
+          <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} className={attachments.images.length === 0 ? "w-fit" : undefined} />
+        </div>
+      )}
       <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
         {user && (
           <MessageActions side="user">
@@ -377,24 +377,15 @@ function Bubble({
           </MessageActions>
         )}
       </div>
-      {!hideAttachments && (
-        <>
-          {user && !webhookView && attachments && hasAttachments && (
-            <div className="mt-1.5 flex w-full justify-end">
-              <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} />
-            </div>
-          )}
-          {!user && (
-            <div className="mt-1.5 flex w-full justify-start">
-              <MessageAttachments
-                images={[...generatedPaths, ...(extraAttachments?.images ?? [])]}
-                files={[...linkedFiles, ...(extraAttachments?.files ?? [])]}
-                message={{ threadId: bot.threadId, messageId: message.id }}
-                eager={eagerAttachments}
-              />
-            </div>
-          )}
-        </>
+      {!hideAttachments && !user && (
+        <div className="mt-1.5 flex w-full justify-start">
+          <MessageAttachments
+            images={generatedPaths}
+            files={linkedFiles}
+            message={{ threadId: bot.threadId, messageId: message.id }}
+            eager={eagerAttachments}
+          />
+        </div>
       )}
       {versions.length > 1 && (
         <div className="mt-1 flex items-center gap-0.5 pr-1 text-[12px] text-ink-secondary">
@@ -524,23 +515,6 @@ const MessagesList = memo(function MessagesList({
   // Finished tool chips become compact runs; settled assistant narration
   // becomes one reversible turn row while the terminal answer stays visible.
   const items = useMemo(() => groupTranscript(messages), [messages, locale]);
-  // A turn's attachments move out of the "Worked for" fold onto the
-  // terminal answer instead: the fold hides them behind the label.
-  const turnAttachments = useMemo(() => {
-    const map = new Map<string, { images: string[]; files: GalleryFile[] }>();
-    for (const item of items) {
-      if (item.kind !== "turn") continue;
-      const images: string[] = [];
-      const files: GalleryFile[] = [];
-      for (const message of item.messages) {
-        const attached = splitMessageAttachments(message.attachments);
-        images.push(...attached.images);
-        files.push(...attached.files);
-      }
-      if (images.length || files.length) map.set(item.turnId, { images, files });
-    }
-    return map;
-  }, [items]);
   // Where this conversation works, for the place icon on screen and page tools.
   const newestMessageId = messages.at(-1)?.id;
   // Settlement can append bookkeeping after the failure. Retry still belongs
@@ -718,7 +692,6 @@ const MessagesList = memo(function MessagesList({
                   emerging={m.id === emergingId}
                   eagerAttachments={m.id === newestMessageId || m.id === newestUserMessageId}
                   editing={editingId === m.id}
-                  extraAttachments={m.turnTerminal && m.turnId ? turnAttachments.get(m.turnId) : undefined}
                   onStartEdit={() => onStartEdit(m.id)}
                   onCancelEdit={onCancelEdit}
                   onSubmitEdit={(text) => onSubmitEdit(m.id, text)}
@@ -752,6 +725,7 @@ export function ChatView({ bot: profile }: {
   const { dragStyle: headerDragStyle, noDragStyle: headerNoDragStyle, controlsShiftStyle } = useCaptionChrome();
   const scrollRef = useRef<HTMLDivElement>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const chatHeaderRef = useRef<HTMLDivElement>(null);
   const composerDockRef = useRef<HTMLDivElement>(null);
   const composerDock = useComposerDockPad(composerDockRef);
   // The input pill alone. The jump pill hugs this, so a selected reply (or
@@ -759,6 +733,21 @@ export function ChatView({ bot: profile }: {
   // pill up over them.
   const composerPillRef = useRef<HTMLDivElement>(null);
   const composerPill = useComposerDockPad(composerPillRef);
+  // The Files panel opens below this header, so its top edge tracks the
+  // header's real height through a root variable.
+  useLayoutEffect(() => {
+    const header = chatHeaderRef.current;
+    if (!header) return;
+    const root = document.documentElement;
+    const sync = () => root.style.setProperty("--relay-chat-header-height", `${header.getBoundingClientRect().height}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(header);
+    return () => {
+      observer.disconnect();
+      root.style.removeProperty("--relay-chat-header-height");
+    };
+  }, []);
   // A guest on an OMB Cloud home writes only in conversations it opened.
   const canWrite = useCanWriteIn(bot.threadId);
 
@@ -1055,6 +1044,7 @@ export function ChatView({ bot: profile }: {
     <main className="relative flex h-full min-w-0 flex-1 flex-col bg-app">
       {/* Header */}
       <div
+        ref={chatHeaderRef}
         style={headerDragStyle}
         className={cn(
           // @container so the chips on the right can fold to icon bubbles
@@ -1118,7 +1108,7 @@ export function ChatView({ bot: profile }: {
                 state.filesOpen && "bg-raised text-ink",
               )}
             >
-              <SidebarIcon size={18} />
+              <ThreadFilesIcon size={18} />
             </button>
           )}
           {!remoteClient && !state.config?.sharedWorkspace && <ModelPicker key={bot.threadId} bot={bot} threadId={bot.threadId} />}

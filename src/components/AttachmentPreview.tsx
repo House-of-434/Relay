@@ -27,13 +27,29 @@ import {
 import {
   attachmentBasename,
   attachmentImageUrl,
+  FILE_MAX_BYTES,
   type TranscriptFileAttachment,
   type TranscriptImageAttachment,
 } from "@/lib/composer-attachments";
-import { previewableDocType, docTypeLabel } from "@/lib/doc-refs";
+import {
+  docLangForPath,
+  docTypeLabel,
+  isMarkdownPath,
+  previewableDocType,
+} from "@/lib/doc-refs";
+import {
+  fetchFileText,
+  fetchThreadFiles,
+  fileContentUrl,
+  isText,
+  type ListedFile,
+} from "@/lib/files";
 import { useStore } from "@/state/store";
 import { cn } from "@/lib/cn";
 import { t } from "@/lib/i18n";
+import { ChatMarkdown } from "./ChatMarkdown";
+import { PreviewCode } from "./DocPane";
+import { FileTypeIcon } from "./FileTypeIcon";
 
 export interface PreviewImage {
   src: string;
@@ -521,6 +537,196 @@ export function AttachmentPreviewDialog({
   );
 }
 
+function matchingListedFile(files: readonly ListedFile[], file: TranscriptFileAttachment): ListedFile | undefined {
+  const path = file.path.replace(/\\/g, "/");
+  return files.find((candidate) => candidate.relativePath === path || path.endsWith(`/${candidate.relativePath}`))
+    ?? files.find((candidate) => candidate.name === file.name);
+}
+
+export function MessageFilePreviewPanel({
+  file,
+  message,
+  onClose,
+}: {
+  file: TranscriptFileAttachment;
+  message: MessageAttachmentContext;
+  onClose: () => void;
+}) {
+  const { state } = useStore();
+  const botId = useMemo(
+    () => state.bots.find((bot) => bot.threadId === message.threadId || bot.tasks?.some((task) => task.threadId === message.threadId))?.id,
+    [state.bots, message.threadId],
+  );
+  const panelRef = useRef<HTMLElement>(null);
+  const closeRef = useRef(onClose);
+  const [url, setUrl] = useState<string | null>(null);
+  const [text, setText] = useState<string | null>(null);
+  const [mime, setMime] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
+  useLayoutEffect(() => {
+    closeRef.current = onClose;
+  }, [onClose]);
+
+  useEffect(() => {
+    const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    panelRef.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeRef.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      previousFocus?.focus();
+    };
+  }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setUrl(null);
+    setText(null);
+    setMime("");
+    setError(null);
+    const load = async () => {
+      if (botId) {
+        try {
+          const listed = await fetchThreadFiles(botId, message.threadId);
+          if (controller.signal.aborted) return;
+          const match = matchingListedFile(listed.files, file);
+          if (match) {
+            if (isText(match)) {
+              const next = await fetchFileText(match.fileId, controller.signal);
+              if (controller.signal.aborted) return;
+              setText(next);
+            }
+            setMime(match.mime);
+            setUrl(fileContentUrl(match.fileId));
+            return;
+          }
+        } catch {
+          if (controller.signal.aborted) return;
+        }
+      }
+      const response = await requestMessageFile(file.path, message, controller.signal);
+      const length = Number(response.headers.get("content-length"));
+      if (Number.isSafeInteger(length) && length > FILE_MAX_BYTES) throw new Error(t("attach.fileTooLarge"));
+      const blob = await response.blob();
+      if (blob.size > FILE_MAX_BYTES) throw new Error(t("attach.fileTooLarge"));
+      if (controller.signal.aborted) return;
+      const contentType = (response.headers.get("content-type") || blob.type || "").split(";", 1)[0]!.trim().toLowerCase();
+      const objectUrl = URL.createObjectURL(blob);
+      if (previewableDocType(file.path) || contentType.startsWith("text/") || contentType === "application/json") {
+        const next = await blob.text();
+        if (controller.signal.aborted) {
+          URL.revokeObjectURL(objectUrl);
+          return;
+        }
+        setText(next);
+      }
+      setMime(contentType);
+      setUrl(objectUrl);
+    };
+    void load().catch((cause) => {
+      if (controller.signal.aborted) return;
+      setError(cause instanceof Error ? cause.message : t("attach.downloadFailed"));
+    });
+    return () => controller.abort();
+  }, [botId, file.path, file.name, message.threadId, message.messageId, attempt]);
+
+  useEffect(() => {
+    if (!url) return;
+    return () => URL.revokeObjectURL(url);
+  }, [url]);
+
+  return createPortal(    <aside
+      ref={panelRef}
+      aria-label={t("attach.previewAria", { name: file.name })}
+      tabIndex={-1}
+      className="animate-panel-in fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-hairline/40 bg-app shadow-2xl outline-none sm:w-[min(380px,40vw)]"
+    >
+      <div className="flex items-center justify-between gap-2 px-4 py-3">
+        <span className="flex min-w-0 items-center gap-2 text-[15px] font-semibold text-ink">
+          <FileTypeIcon name={file.name} mime={mime} />
+          <span className="min-w-0 truncate" title={file.name}>{file.name}</span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1">
+          {url && (
+            <a
+              href={url}
+              download={file.name}
+              className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+              aria-label={t("attach.downloadAria", { name: file.name })}
+              title={t("attach.download")}
+            >
+              <Download size={16} />
+            </a>
+          )}
+          <button
+            onClick={onClose}
+            className="rounded-md p-1 text-ink-secondary hover:bg-raised hover:text-ink"
+            aria-label={t("attach.closeFile")}
+          >
+            <X size={16} />
+          </button>
+        </span>
+      </div>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        {error ? (
+          <div className="flex flex-col items-start gap-3 px-4 py-6 text-[13px] text-danger" role="alert">
+            <span>{error}</span>
+            <button
+              type="button"
+              onClick={() => setAttempt((value) => value + 1)}
+              className="flex items-center gap-1.5 rounded-lg border border-hairline/40 bg-inset px-3 py-1.5 text-[12px] text-ink-secondary hover:bg-raised hover:text-ink"
+            >
+              <RotateCcw size={13} /> {t("chat.retry")}
+            </button>
+          </div>
+        ) : text !== null ? (
+          isMarkdownPath(file.path) ? (
+            <div className="px-4 py-3"><ChatMarkdown text={text} /></div>
+          ) : (
+            <div dir="ltr" className="px-4 py-3"><PreviewCode code={text} lang={docLangForPath(file.path)} /></div>
+          )
+        ) : !url ? (
+          <div className="flex items-center gap-2 px-4 py-6 text-[13px] text-ink-secondary" role="status">
+            <LoaderCircle size={17} className="animate-spin" /> {t("attach.loadingFile")}
+          </div>
+        ) : mime.startsWith("image/") ? (
+          <div className="p-3">
+            <img src={url} alt={file.name} className="mx-auto max-h-[70vh] w-full rounded-xl border border-hairline/40 object-contain" />
+          </div>
+        ) : mime === "application/pdf" ? (
+          <div className="h-full p-3">
+            <iframe src={url} title={file.name} className="size-full rounded-xl border border-hairline/40 bg-app" />
+          </div>
+        ) : mime.startsWith("video/") ? (
+          <div className="flex h-full items-center justify-center p-3">
+            <video src={url} controls className="max-h-full w-full rounded-xl" />
+          </div>
+        ) : mime.startsWith("audio/") ? (
+          <div className="p-4">
+            <audio src={url} controls className="w-full" />
+          </div>
+        ) : (
+          <div className="flex flex-col items-center gap-3 px-4 py-10 text-center text-[13px] text-ink-secondary">
+            <FileText size={34} />
+            <span>{t("attach.noInlinePreview")}</span>
+            <a href={url} download={file.name} className="rounded-lg border border-hairline/40 bg-inset px-3 py-1.5 text-[12px] text-ink hover:bg-raised">
+              {t("attach.download")}
+            </a>
+          </div>
+        )}
+      </div>
+    </aside>,
+    document.body,
+  );
+}
+
 export function AttachmentThumbnail({
   image,
   onPreview,
@@ -771,7 +977,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
   className?: string;
 }) {
   const save = useLocalFileSave(file.path, file.name, message);
-  const { dispatch } = useStore();
+  const [previewOpen, setPreviewOpen] = useState(false);
   const failed = save.state === "failed";
   // Standalone pill chrome; bare rows let the parent container draw the
   // border, rounding and background, separated by its dividers.
@@ -812,12 +1018,10 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
       {save.reason}
     </div>
   );
-  // Selecting a previewable file (markdown, scripts, text) opens it in
-  // the doc pane; the bare download glyph at the edge keeps save-a-copy.
-  // Every other file keeps the single download button it always had.
-  const docType = previewableDocType(file.path);
-  if (docType) {
-    return (
+  // Selecting any authorized file opens the preview; the download glyph at
+  // the edge keeps save-a-copy separate.
+  return (
+    <>
       <div
         title={save.state === "saved" && save.savedTo ? t("attach.savedTo", { path: save.savedTo }) : file.name}
         className={cn("group", shell, className)}
@@ -825,10 +1029,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
         <div className="flex items-center transition-colors hover:bg-menu-hover">
           <button
             type="button"
-            onClick={() => dispatch({
-              type: "openDocPane",
-              ref: { type: docType, threadId: message.threadId, messageId: message.messageId, path: file.path, title: file.name },
-            })}
+            onClick={() => setPreviewOpen(true)}
             aria-label={t("attach.previewAria", { name: file.name })}
             className="flex min-h-12 min-w-0 flex-1 items-center gap-2 px-2.5 py-1.5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
           >
@@ -837,7 +1038,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
               <span className="block truncate text-ink">{file.name}</span>
               <span className="block text-[10.5px]">
                 <span className="block text-ink-secondary group-hover:hidden">{docTypeLabel(file.path)}</span>
-                <span className="hidden text-ink-secondary group-hover:block">Open file</span>
+                <span className="hidden text-ink-secondary group-hover:block">{t("attach.preview")}</span>
               </span>
             </span>
           </button>
@@ -854,29 +1055,10 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
         </div>
         {saveStatus}
       </div>
-    );
-  }
-  return (
-    <div
-      title={save.state === "saved" && save.savedTo ? t("attach.savedTo", { path: save.savedTo }) : file.name}
-      className={cn(shell, className)}
-    >
-      <button
-        type="button"
-        onClick={() => void save.save()}
-        disabled={save.state === "saving"}
-        aria-label={saveLabel}
-        className="flex min-h-12 w-full items-center gap-2 px-2.5 py-1.5 text-left transition-colors hover:bg-menu-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60 disabled:cursor-wait disabled:hover:bg-transparent"
-      >
-        <FileText size={14} className="shrink-0" aria-hidden="true" />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-ink">{file.name}</span>
-          <span className="block text-[10.5px] text-ink-secondary">{docTypeLabel(file.path)}</span>
-        </span>
-        {saveIcon}
-      </button>
-      {saveStatus}
-    </div>
+      {previewOpen && (
+        <MessageFilePreviewPanel file={file} message={message} onClose={() => setPreviewOpen(false)} />
+      )}
+    </>
   );
 }
 
