@@ -17,6 +17,7 @@ import { describeJoinFailure } from "./errors.js";
 import { createNavigationGuard } from "./navigation-guard.js";
 import { sharedBrowserContext } from "./shared-browser.js";
 import { WORKER_BOOT_ID } from "./boot.js";
+import { CaptureStatusWriter } from "./status-writer.js";
 import type { CaptureStatus, JoinController, JoinDescriptor, JoinOutcome, MeetingRow, Segment, StatusOutcome } from "./types.js";
 
 interface GmeetPipeline {
@@ -167,6 +168,8 @@ class MeetSession {
   private page: Page | null = null;
   private stopped = false;
   private stopWake: (() => void) | null = null;
+  /** Ordered, forward-only persisted status writes (see status-writer.ts). */
+  private readonly statusWriter: CaptureStatusWriter;
   private seq = 0;
   private lastEnd = 0;
   private readonly spool: SegmentSpool;
@@ -192,6 +195,9 @@ class MeetSession {
     this.spool = new SegmentSpool(config.flushSegments, config.flushMs, Date.now());
     this.stt = new HttpSttClient({ baseUrl: config.sttUrl });
     this.ingest = new IngestClient({ url: config.ingestUrl, capability: config.ingestCapability });
+    this.statusWriter = new CaptureStatusWriter((status, extra) =>
+      this.config.gmeetProbe ? Promise.resolve() : this.ingest.post(this.meetingRow(status, extra), [])
+    );
   }
 
   private meetingRow(status: CaptureStatus, extra: Partial<MeetingRow> = {}): MeetingRow {
@@ -329,10 +335,16 @@ class MeetSession {
       }
 
       this.status = "joining";
-      // Reflect the waiting room in /status the moment the join layer reports
-      // it, so the monitor can tell the requester to admit Scribe.
+      // Persist the moment the worker picks the capture up, so readers can see
+      // it before admission (the row is the only agent-visible early signal).
+      await this.statusWriter.publish("joining").catch(() => { /* advisory */ });
+      // Reflect the waiting room in /status and the row the moment the join
+      // layer reports it, so the monitor can tell the requester to admit Scribe.
       joinStateListeners.set(this.descriptor.instance_id, (state) => {
-        if (state === "awaiting_admission" && this.status === "joining") this.status = "awaiting_admission";
+        if (state === "awaiting_admission" && this.status === "joining" && !this.stopped) {
+          this.status = "awaiting_admission";
+          void this.statusWriter.publish("awaiting_admission").catch(() => { /* advisory */ });
+        }
       });
       if (this.stopped) {
         joinStateListeners.delete(this.descriptor.instance_id);
@@ -350,7 +362,7 @@ class MeetSession {
         // Google session); Zoom is tried authenticated too — its anti-bot wall
         // asks a guest to "sign in to join", so a signed-in web client may pass.
         authenticated: this.descriptor.platform === "google_meet" || this.descriptor.platform === "zoom",
-        waitingRoomTimeoutMs: 600_000,
+        waitingRoomTimeoutMs: this.config.admissionTimeoutMs,
         hooks: { onState: relayJoinState },
       });
       joinStateListeners.delete(this.descriptor.instance_id);
@@ -374,7 +386,7 @@ class MeetSession {
         } catch { /* best effort: clocks start at first sample anyway */ }
       }
 
-      if (!this.config.gmeetProbe) await this.ingest.post(this.meetingRow("active"), []);
+      await this.statusWriter.publish("active");
 
       if (lane !== "mixed") {
         await this.channelStart(laneApi(lane));
@@ -670,6 +682,9 @@ class MeetSession {
       await this.page?.close().catch(() => {});
       this.page = null;
     }
+    // Drain any queued status write before the terminal row, then refuse new
+    // ones: a late waiting-room signal must never land after the final state.
+    await this.statusWriter.close();
     try {
       await this.flush(true, status);
     } catch (e) {

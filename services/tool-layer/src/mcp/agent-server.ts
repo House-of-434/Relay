@@ -509,7 +509,7 @@ export function createAgentMcpServer(
               text: JSON.stringify({
                 status: result.status,
                 note: result.status === "accepted"
-                  ? "queued. In your reply, name the meeting by its title or room code — never an internal id — and say you will confirm once Scribe has joined rather than claiming it is already in. Confirm later with get_meeting_transcript."
+                  ? "queued. In your reply, name the meeting by its title or room code — never an internal id — and say you will confirm once Scribe has joined rather than claiming it is already in. Check with get_meeting_transcript: status joining or awaiting_admission means it has not been admitted yet; active means it has."
                   : "this room already has a capture queued or underway; check it with get_meeting_transcript.",
               }),
             }],

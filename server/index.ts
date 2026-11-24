@@ -8783,9 +8783,10 @@ if (RELAY_SCRIBE_ENABLED && relayBffCapability && scribeWorkerCapability && RELA
           const intent = getScribeJoinIntent(update.instance_id);
           if (!intent) return;
           const named = intent.title ? `"${intent.title}"` : (meetingCodeFor(intent.meetingUrl) ?? "your meeting");
+          const waitMinutes = Math.max(1, Math.round(scribeConfig.admissionTimeoutMs / 60_000));
           const text =
             update.kind === "waiting"
-              ? `Relay Scribe is in the waiting room for ${named} — admit "Relay Scribe" in the meeting. It leaves on its own after 10 minutes.`
+              ? `Relay Scribe is in the waiting room for ${named} — admit "Relay Scribe" in the meeting. It leaves on its own after ${waitMinutes} minutes.`
               : update.kind === "joined"
                 ? `Relay Scribe has joined ${named} and is recording.`
                 : update.kind === "ready"

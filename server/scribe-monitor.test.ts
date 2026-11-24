@@ -11,6 +11,7 @@ import {
   meetingUrlFor,
   passcodeFor,
   platformForUrl,
+  scribeMonitorConfig,
   type CalendarEvent,
   type JoinRequest,
   type ReceiptStore,
@@ -22,7 +23,7 @@ import {
 
 const NOW = Date.parse("2026-10-11T12:00:00Z");
 const THREE_HOURS = 3 * 60 * 60 * 1000;
-const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, manualLateMs: 300_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
+const cfg: ScribeMonitorConfig = { pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000, armLeadMs: 60_000, lateMaxMs: 300_000, manualLateMs: 300_000, admissionTimeoutMs: 180_000, maxResults: 250, reconcileGraceMs: 30 * 60_000, adminAlertIntervalMs: THREE_HOURS };
 const SELF = "relay@houseof434.com";
 
 function fakeReceipts(): ReceiptStore & { keys: Set<string> } {
@@ -222,7 +223,8 @@ describe("scribe monitor helpers", () => {
 
   it("humanizes an end state into one plain sentence", () => {
     expect(humanizeCaptureEnd("failed", "Bot admission was rejected by meeting admin")).toMatch(/declined/);
-    expect(humanizeCaptureEnd("failed", "not admitted within the waiting-room timeout")).toMatch(/waited 10 minutes/);
+    expect(humanizeCaptureEnd("failed", "not admitted within the waiting-room timeout")).toMatch(/waited 3 minutes/);
+    expect(humanizeCaptureEnd("failed", "not admitted within the waiting-room timeout", 120_000)).toMatch(/waited 2 minutes/);
     expect(humanizeCaptureEnd("failed", "relay@ browser profile is signed out")).toMatch(/signed out/);
     expect(humanizeCaptureEnd("failed", "at capacity")).toMatch(/maximum number of meetings/);
     expect(humanizeCaptureEnd("completed", undefined)).toMatch(/without capturing any speech/);
@@ -234,6 +236,23 @@ describe("scribe monitor helpers", () => {
     expect(d.invitees).toEqual(["host@houseof434.com", "guest@example.com"]);
     expect(d.organizer_email).toBe("host@houseof434.com");
     expect(eventStartMs(meetingEvent())).toBe(NOW + 30_000);
+  });
+});
+
+describe("scribe monitor admission timeout config", () => {
+  it("defaults to three minutes", () => {
+    expect(scribeMonitorConfig({}).admissionTimeoutMs).toBe(180_000);
+  });
+
+  it("accepts values from 30s to 10min", () => {
+    expect(scribeMonitorConfig({ RELAY_SCRIBE_ADMISSION_TIMEOUT_MS: "30000" }).admissionTimeoutMs).toBe(30_000);
+    expect(scribeMonitorConfig({ RELAY_SCRIBE_ADMISSION_TIMEOUT_MS: "600000" }).admissionTimeoutMs).toBe(600_000);
+  });
+
+  it("falls back instead of disabling the wait on invalid values", () => {
+    for (const value of ["0", "-1", "NaN", "Infinity", "1e12", "29999", "600001", "abc"]) {
+      expect(scribeMonitorConfig({ RELAY_SCRIBE_ADMISSION_TIMEOUT_MS: value }).admissionTimeoutMs, value).toBe(180_000);
+    }
   });
 });
 

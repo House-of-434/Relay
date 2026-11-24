@@ -28,6 +28,9 @@ export interface WorkerConfig {
   enabled: boolean;
   /** A meeting longer than this is force-ended (safety). */
   maxMeetingMs: number;
+  /** How long to wait in the provider's waiting room before giving up. Applies
+   *  to admission only — never to the capture itself (see maxMeetingMs). */
+  admissionTimeoutMs: number;
   /** Per-channel Meet lane: cap on concurrent speaker streams (each extra stream
    *  is another STT call site). */
   maxStreams: number;
@@ -60,6 +63,21 @@ function num(value: string | undefined, fallback: number): number {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+const ADMISSION_TIMEOUT_DEFAULT_MS = 3 * 60 * 1000;
+const ADMISSION_TIMEOUT_MIN_MS = 30_000;
+const ADMISSION_TIMEOUT_MAX_MS = 600_000;
+
+/** Admission wait only. A value outside 30s–10min is rejected rather than
+ *  clamped: a typo must not silently become an immediate timeout or an
+ *  effectively unlimited wait. The harness reads the same env var and uses
+ *  the same bounds, so the row, the chat update, and the worker agree. */
+export function parseAdmissionTimeoutMs(value: string | undefined): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= ADMISSION_TIMEOUT_MIN_MS && n <= ADMISSION_TIMEOUT_MAX_MS
+    ? Math.floor(n)
+    : ADMISSION_TIMEOUT_DEFAULT_MS;
+}
+
 export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig {
   return {
     host: env.RELAY_SCRIBE_HOST ?? "127.0.0.1",
@@ -74,6 +92,7 @@ export function workerConfig(env: NodeJS.ProcessEnv = process.env): WorkerConfig
     maxConcurrent: num(env.RELAY_SCRIBE_MAX_CONCURRENT, 2),
     enabled: env.RELAY_SCRIBE_ENABLED === "1",
     maxMeetingMs: num(env.RELAY_SCRIBE_MAX_MEETING_MS, 4 * 60 * 60 * 1000),
+    admissionTimeoutMs: parseAdmissionTimeoutMs(env.RELAY_SCRIBE_ADMISSION_TIMEOUT_MS),
     maxStreams: num(env.RELAY_SCRIBE_MAX_STREAMS, 12),
     selfName: (env.RELAY_SCRIBE_SELF_NAME ?? "Relay Scribe").trim(),
     headless: (env.RELAY_SCRIBE_HEADLESS ?? "1") !== "0",

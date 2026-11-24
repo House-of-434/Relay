@@ -108,12 +108,31 @@ export interface ScribeAnnounce {
   reason?: string;
 }
 
+const ADMISSION_TIMEOUT_DEFAULT_MS = 3 * 60 * 1000;
+const ADMISSION_TIMEOUT_MIN_MS = 30_000;
+const ADMISSION_TIMEOUT_MAX_MS = 600_000;
+
+/** Same contract and bounds as the worker (services/scribe-capture/src/config.ts).
+ *  One env var, read by both processes, so the row and the announcement cannot
+ *  disagree. Invalid values fall back rather than disabling the wait. */
+export function parseAdmissionTimeoutMs(value: string | undefined): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n >= ADMISSION_TIMEOUT_MIN_MS && n <= ADMISSION_TIMEOUT_MAX_MS
+    ? Math.floor(n)
+    : ADMISSION_TIMEOUT_DEFAULT_MS;
+}
+
 /** Turn a worker end state into one plain sentence a person can act on — never
- *  the raw internal string. Pure, for tests. */
-export function humanizeCaptureEnd(status: string, error: string | undefined): string {
+ *  the raw internal string. `admissionTimeoutMs` is the wait the worker was
+ *  configured with, so the sentence states the real duration. Pure, for tests. */
+export function humanizeCaptureEnd(
+  status: string,
+  error: string | undefined,
+  admissionTimeoutMs: number = ADMISSION_TIMEOUT_DEFAULT_MS,
+): string {
   const e = (error ?? "").toLowerCase();
   if (/denied your request|rejected by meeting admin/.test(e)) return "the meeting host declined Scribe's request to join";
-  if (/waiting-?room timeout|not admitted/.test(e)) return "Scribe waited 10 minutes to be admitted and no one let it in";
+  if (/waiting-?room timeout|not admitted/.test(e)) return `Scribe waited ${Math.max(1, Math.round(admissionTimeoutMs / 60_000))} minutes to be admitted and no one let it in`;
   if (/signed[\s-]?out|re-?authenticate/.test(e)) return "the Scribe account is signed out and needs re-authentication";
   if (/at capacity/.test(e)) return "Scribe was already recording the maximum number of meetings";
   if (/not an allowed provider domain/.test(e)) return "that meeting link is not a supported provider";
@@ -159,6 +178,9 @@ export interface ScribeMonitorConfig {
   /** Manual joins arm immediately when accepted; past created_at + this with
    * no arm receipt they are terminally unreachable. */
   manualLateMs: number;
+  /** How long the worker was told to wait for admission (drives the wording
+   *  and keeps the announcement honest). Applies to admission only. */
+  admissionTimeoutMs: number;
   maxResults: number;
   /** After scheduled_end, give the worker record this long before giving up on
    *  reconciliation (write the receipt, log, stop polling). */
@@ -188,6 +210,7 @@ export function scribeMonitorConfig(env: NodeJS.ProcessEnv = process.env): Scrib
     armLeadMs: num(env.RELAY_SCRIBE_ARM_LEAD_MS, 60_000),
     lateMaxMs: num(env.RELAY_SCRIBE_LATE_MAX_MS, 5 * 60 * 1000),
     manualLateMs: num(env.RELAY_SCRIBE_MANUAL_LATE_MS, 5 * 60 * 1000),
+    admissionTimeoutMs: parseAdmissionTimeoutMs(env.RELAY_SCRIBE_ADMISSION_TIMEOUT_MS),
     maxResults: num(env.RELAY_SCRIBE_MAX_RESULTS, 250),
     reconcileGraceMs: num(env.RELAY_SCRIBE_RECONCILE_GRACE_MS, 30 * 60 * 1000),
     adminAlertIntervalMs: num(env.RELAY_SCRIBE_ADMIN_ALERT_INTERVAL_MS, 3 * 60 * 60 * 1000),
@@ -573,7 +596,7 @@ export class ScribeMonitor {
     if ((status.status === "completed" || status.status === "partial") && segments > 0) {
       await this.announce(request, "ready", { segment_count: segments }, now);
     } else {
-      await this.announce(request, "failed", { reason: humanizeCaptureEnd(status.status, status.error) }, now);
+      await this.announce(request, "failed", { reason: humanizeCaptureEnd(status.status, status.error, this.config.admissionTimeoutMs) }, now);
     }
     // Rate-limit the signed-out ADMIN alert; the organizer's plain failure notice
     // still sends. When suppressed, signedOut=false so only the organizer hears.

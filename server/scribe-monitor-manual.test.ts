@@ -24,6 +24,7 @@ const NOW = 1_000_000;
 const cfg: ScribeMonitorConfig = {
   pollMs: 60_000, windowBackMs: 86_400_000, windowForwardMs: 86_400_000,
   armLeadMs: 60_000, lateMaxMs: 300_000, manualLateMs: 300_000,
+  admissionTimeoutMs: 180_000,
   maxResults: 250, reconcileGraceMs: 1_800_000, adminAlertIntervalMs: 10_800_000,
 };
 
