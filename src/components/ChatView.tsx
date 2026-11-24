@@ -257,11 +257,11 @@ function Bubble({
   };
 
   return (
-    <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start")}>
+    <div className={cn("group flex w-full flex-col", user ? "animate-msg-in items-end" : "items-start", attachmentsOnly && "-mb-2")}>
       {peer && <PeerLabel peer={peer} />}
       {!hideAttachments && user && !webhookView && attachments && hasAttachments && (
-        <div className="mb-1.5 flex w-full justify-end">
-          <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} className={attachments.images.length === 0 ? "w-fit" : undefined} />
+        <div className="mb-1 flex w-full justify-end">
+          <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: bot.threadId, messageId: message.id }} eager={eagerAttachments} className={cn(attachments.images.length === 0 && "w-fit", attachmentsOnly && "mb-0")} />
         </div>
       )}
       <div className={cn("flex w-full items-center gap-1.5", user ? "justify-end" : "justify-start")}>
@@ -280,15 +280,17 @@ function Bubble({
               </button>
             )}
             {Boolean(visibleText.trim()) && <CopyButton text={visibleText} />}
-            <button
-              type="button"
-              onClick={onReply}
-              aria-label={t("chat.replyToMessage")}
-              title={t("chat.reply")}
-              className={messageActionClass}
-            >
-              <ReplyIcon size={14} />
-            </button>
+            {!attachmentsOnly && (
+              <button
+                type="button"
+                onClick={onReply}
+                aria-label={t("chat.replyToMessage")}
+                title={t("chat.reply")}
+                className={messageActionClass}
+              >
+                <ReplyIcon size={14} />
+              </button>
+            )}
           </MessageActions>
         )}
         <div className="flex w-fit max-w-[min(42rem,78%)] flex-col">
@@ -365,25 +367,28 @@ function Bubble({
         {!user && (
           <MessageActions side="bot">
             {text && <CopyButton text={text} />}
-            <button
-              type="button"
-              onClick={onReply}
-              aria-label={t("chat.replyToMessage")}
-              title={t("chat.reply")}
-              className={messageActionClass}
-            >
-              <ReplyIcon size={14} />
-            </button>
+            {!attachmentsOnly && (
+              <button
+                type="button"
+                onClick={onReply}
+                aria-label={t("chat.replyToMessage")}
+                title={t("chat.reply")}
+                className={messageActionClass}
+              >
+                <ReplyIcon size={14} />
+              </button>
+            )}
           </MessageActions>
         )}
       </div>
       {!hideAttachments && !user && (
-        <div className="mt-1.5 flex w-full justify-start">
+        <div className="mt-1 flex w-full justify-start">
           <MessageAttachments
             images={generatedPaths}
             files={linkedFiles}
             message={{ threadId: bot.threadId, messageId: message.id }}
             eager={eagerAttachments}
+            className={attachmentsOnly ? "mb-0" : undefined}
           />
         </div>
       )}
@@ -1140,7 +1145,7 @@ export function ChatView({ bot: profile }: {
 
       {/* Messages + composer share one pane so bubbles scroll into the pill
           instead of dying on a rectangular clip above a black dock. */}
-      <div className="relative min-h-0 flex-1">
+      <div className={cn("relative min-h-0 flex-1", state.filesOpen && !remoteClient && "lg:pr-[min(380px,40vw)]")}>
       <div
         ref={scrollRef}
         className="h-full overflow-x-hidden overflow-y-auto overscroll-y-contain px-5 [overflow-anchor:none]"

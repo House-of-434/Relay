@@ -180,6 +180,11 @@ export const Transcript = memo(function Transcript({
         const m = item.message;
         const user = m.role === "user";
         const attachments = user && m.text ? splitTranscriptAttachments(m.text) : null;
+        const hasAttachments = user
+          ? Boolean(attachments && (attachments.images.length || attachments.files.length))
+          : Boolean(m.attachments?.length);
+        const visibleText = user ? (attachments?.display ?? m.text ?? "") : (m.text ?? "");
+        const attachmentsOnly = hasAttachments && !visibleText.trim();
         const newCluster = !prev || prev.role !== m.role || prev.from?.botId !== m.from?.botId || Boolean(prev.comm) || newDay;
         const routineOwner = m.kind === "routine.run" ? memberOf(m.from?.botId) : undefined;
         const routineExecutionThreadId = m.routineRun?.executionThreadId;
@@ -245,9 +250,9 @@ export const Transcript = memo(function Transcript({
           ) : m.kind === "digest" ? (
             showToolCalls ? <DigestChip message={m} /> : null
           ) : (m.kind === "text" || m.kind === "secret") && (m.text || m.attachments?.length) ? (
-            <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start")}>
+            <div className={cn("group flex w-full flex-col", user ? "items-end" : "items-start", attachmentsOnly && "-mb-2")}>
               <div className={cn("flex w-full items-end gap-1.5", user ? "justify-end" : "justify-start")}>
-                {user && (
+                {user && !attachmentsOnly && (
                   <>
                     <button
                       type="button"
@@ -294,7 +299,7 @@ export const Transcript = memo(function Transcript({
                   )}
                   </div>
                 </div>
-                {!user && (
+                {!user && !attachmentsOnly && (
                   <>
                     <button
                       type="button"
@@ -309,13 +314,13 @@ export const Transcript = memo(function Transcript({
                 )}
               </div>
               {user && attachments && (
-                <div className="mt-1.5 flex w-full justify-end">
-                  <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
+                <div className="mt-1 flex w-full justify-end">
+                  <MessageAttachments images={attachments.images} files={attachments.files} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} className={attachmentsOnly ? "mb-0" : undefined} />
                 </div>
               )}
               {!user && (
-                <div className="mt-1.5 flex w-full justify-start">
-                  <MessageAttachments text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} />
+                <div className="mt-1 flex w-full justify-start">
+                  <MessageAttachments text={m.text ?? ""} attachments={m.attachments} message={{ threadId: group.threadId, messageId: m.id }} eager={m.id === newestMessageId || m.id === newestUserMessageId} className={attachmentsOnly ? "mb-0" : undefined} />
                 </div>
               )}
               {!user && m.routedBy && <RoutedByLine routedBy={m.routedBy} />}

@@ -3,12 +3,12 @@
 // first lines instead of flooding the composer; a file dropped anywhere
 // on the window attaches by path.
 import { useEffect, useRef, useState } from "react";
-import { ClipboardPaste, File as FileIcon, Image as ImageIcon, LoaderCircle, MessageSquareText, X } from "lucide-react";
+import { LoaderCircle, MessageSquareText, X } from "lucide-react";
 import { cn } from "@/lib/cn";
+import { docTypeLabel } from "@/lib/doc-refs";
 import {
   attachmentImageUrl,
   intakeFiles,
-  formatSize,
   pasteSummary,
   type Attachment,
   type PasteAttachment,
@@ -157,7 +157,7 @@ export function ComposerAttachments({
                 </button>
               </Chip>
             ) : a.kind === "image" ? (
-              <Chip key={a.id} label="IMAGE" title={a.name} onRemove={() => onRemove(a.id)}>
+              <Chip key={a.id} label={docTypeLabel(a.name)} title={a.name} onRemove={() => onRemove(a.id)}>
                 <button
                   type="button"
                   onClick={() => {
@@ -184,17 +184,13 @@ export function ComposerAttachments({
                   )}
                 </button>
                 <div className="mt-1 truncate text-[10.5px] text-ink-tertiary">
-                  {a.uploading ? "Uploading…" : formatSize(a.size)}
+                  {a.uploading ? "Uploading…" : a.name}
                 </div>
               </Chip>
             ) : (
-              <Chip key={a.id} label="FILE" title={a.path} onRemove={() => onRemove(a.id)}>
-                <div className="flex h-[76px] items-center gap-2">
-                  <FileIcon size={16} className="shrink-0 text-ink-secondary" />
-                  <div className="min-w-0">
-                    <div className="truncate text-[12px] text-ink">{a.name}</div>
-                    <div className="text-[10.5px] text-ink-tertiary">{formatSize(a.size)}</div>
-                  </div>
+              <Chip key={a.id} label={docTypeLabel(a.name)} title={a.path} onRemove={() => onRemove(a.id)}>
+                <div className="flex h-[76px] w-full flex-col items-start justify-start pt-0.5">
+                  <div className="w-full truncate text-[12px] leading-tight text-ink" title={a.name}>{a.name}</div>
                 </div>
               </Chip>
             ),
@@ -213,22 +209,20 @@ function Chip({
   onRemove,
 }: {
   children: React.ReactNode;
-  label: "PASTED" | "FILE" | "IMAGE";
+  label: string;
   title: string;
   onRemove: () => void;
 }) {
-  const Icon = label === "PASTED" ? ClipboardPaste : label === "IMAGE" ? ImageIcon : FileIcon;
   return (
     <div
       title={title}
       className={cn(
-        "group relative w-[172px] rounded-xl border border-hairline/40 bg-raised px-2.5 py-2",
+        "group relative w-[155px] rounded-xl border border-hairline/40 bg-raised px-2.5 py-2",
         "transition-colors hover:border-hairline",
       )}
     >
       {children}
       <div className="mt-1 flex items-center gap-1">
-        <Icon size={11} className="text-ink-tertiary" />
         <span className="rounded border border-hairline/60 px-1 py-px text-[9.5px] font-medium tracking-wide text-ink-secondary">
           {label}
         </span>
