@@ -136,10 +136,10 @@ export function FilesPanel({ bot }: { bot: Bot }) {
   };
 
   return (
-    <aside aria-label={t("files.title")} className="animate-panel-in absolute bottom-0 left-0 right-0 top-[var(--relay-chat-header-height,50.5px)] z-40 flex min-w-0 flex-col border-l border-hairline/40 bg-app lg:static lg:z-auto lg:w-[min(380px,40vw)] lg:shrink-0">
+    <aside aria-label={t("files.title")} className={cn("animate-panel-in absolute bottom-0 left-0 right-0 top-[var(--relay-chat-header-height,50.5px)] z-40 flex min-w-0 flex-col border-l border-hairline/40 bg-app lg:left-auto lg:z-20", selected ? "lg:w-full" : "lg:w-[min(380px,40vw)]")}>
       {selected ? (
         <>
-          <div className={cn("flex items-center justify-between gap-2 px-4 py-3", padClass)}>
+          <div className={cn("flex items-center justify-between gap-2 px-4 py-2", padClass)}>
             <span className="flex min-w-0 items-center gap-2 text-[15px] font-semibold text-ink">
               <FileTypeIcon name={selected.name} mime={selected.mime} />
               <span className="min-w-0 truncate" title={selected.name}>{selected.name}</span>
@@ -171,7 +171,7 @@ export function FilesPanel({ bot }: { bot: Bot }) {
         </>
       ) : (
         <>
-          <div className={cn("flex items-center justify-between px-4 py-3", padClass)}>
+          <div className={cn("flex items-center justify-between px-4 py-2", padClass)}>
             <span className="text-[15px] font-semibold text-ink">{t("files.title")}</span>
             <button
               onClick={() => dispatch({ type: "toggleFiles", open: false })}
@@ -194,21 +194,21 @@ export function FilesPanel({ bot }: { bot: Bot }) {
               <div className="px-4 py-6 text-[13px] text-ink-secondary">{t("files.emptyThread")}</div>
             )}
             {files.length > 0 && (
-              <div role="list" className="flex flex-col gap-3 p-3">
+              <div role="list" className="flex flex-col gap-2 p-2.5">
                 {files.map((file) => {
                   return (
                     <article key={file.fileId} role="listitem" className="group/file relative min-w-0">
                       <button
                         type="button"
                         onClick={() => choose(file)}
-                        className="flex w-full min-w-0 flex-col text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
+                        className="flex h-52 w-full min-w-0 flex-col overflow-hidden rounded-xl border border-hairline/40 bg-panel text-left transition-colors group-hover/file:border-hairline/70 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-accent/60"
                       >
-                        <span className="flex h-52 w-full items-center justify-center overflow-hidden rounded-xl border border-hairline/40 bg-panel transition-colors group-hover/file:border-hairline/70">
+                        <span className="flex min-h-0 w-full flex-1 items-center justify-center overflow-hidden">
                           <FilePreview file={file} />
                         </span>
-                        <span className="mt-2 block min-w-0 px-0.5">
-                          <span className="block truncate text-[13px] text-ink" title={file.name}>{file.name}</span>
-                          <span className="block text-[11px] text-ink-secondary">{docTypeLabel(file.name)}</span>
+                        <span className="flex w-full shrink-0 flex-col gap-0.5 border-t border-hairline/40 px-2.5 py-1.5">
+                          <span className="block truncate text-[12.5px] leading-tight text-ink" title={file.name}>{file.name}</span>
+                          <span className="block truncate text-[10.5px] leading-tight text-ink-secondary">{docTypeLabel(file.name)}</span>
                         </span>
                       </button>
                       <span className="absolute right-1.5 top-1.5 flex gap-1 opacity-0 transition-opacity group-hover/file:opacity-100 group-focus-within/file:opacity-100 touch:opacity-100">

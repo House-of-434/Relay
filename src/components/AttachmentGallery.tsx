@@ -420,7 +420,7 @@ export function AttachmentGallery({ images = [], files = [], message, eager = fa
         </div>
       )}
       {fileRows.length > 0 && (
-        <div className="w-full max-w-[320px] divide-y divide-hairline/30 overflow-hidden rounded-xl border border-hairline/40 bg-inset">
+        <div className="w-full max-w-[259px] divide-y divide-hairline/30 overflow-hidden rounded-xl border border-hairline/40 bg-inset">
           {fileRows.map((item) => item.kind === "file" && (
             <AttachedFileChip key={item.key} bare file={item.file} linked={item.file.linked} message={message} />
           ))}

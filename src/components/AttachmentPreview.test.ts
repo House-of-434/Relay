@@ -177,7 +177,7 @@ describe("attachment preview surfaces", () => {
     expect(html).toContain("Markdown");
     expect(html).toContain("Preview");
     expect(html).toContain("opacity-0");
-    expect(html).toContain("max-w-[320px]");
+    expect(html).toContain("max-w-[259px]");
     expect(markupButtons(html)).toHaveLength(2);
   });
 

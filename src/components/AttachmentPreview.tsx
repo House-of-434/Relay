@@ -646,9 +646,9 @@ export function MessageFilePreviewPanel({
       ref={panelRef}
       aria-label={t("attach.previewAria", { name: file.name })}
       tabIndex={-1}
-      className="animate-panel-in fixed inset-y-0 right-0 z-40 flex w-full flex-col border-l border-hairline/40 bg-app shadow-2xl outline-none sm:w-[min(380px,40vw)]"
+      className="animate-panel-in fixed bottom-0 left-[var(--relay-main-left,0px)] right-0 top-[var(--relay-chat-header-height,50.5px)] z-40 flex flex-col border-l border-hairline/40 bg-app shadow-2xl outline-none"
     >
-      <div className="flex items-center justify-between gap-2 px-4 py-3">
+      <div className="flex items-center justify-between gap-2 px-4 py-2">
         <span className="flex min-w-0 items-center gap-2 text-[15px] font-semibold text-ink">
           <FileTypeIcon name={file.name} mime={mime} />
           <span className="min-w-0 truncate" title={file.name}>{file.name}</span>
@@ -983,7 +983,7 @@ export function AttachedFileChip({ file, message, linked = false, bare = false, 
   // border, rounding and background, separated by its dividers.
   const shell = bare
     ? "min-w-0 text-[12px] text-ink-secondary"
-    : "max-w-[320px] overflow-hidden rounded-lg border border-hairline/40 bg-inset text-[12px] text-ink-secondary";
+    : "max-w-[259px] overflow-hidden rounded-lg border border-hairline/40 bg-inset text-[12px] text-ink-secondary";
   if (!message || (!file.private && !linked)) {
     return (
       <div title={t("attach.legacyFile", { name: file.name })} className={cn(shell, "flex items-center gap-2 px-2.5 py-1.5", className)}>

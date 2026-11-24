@@ -22,7 +22,7 @@ export function ReplyQuote({
   // REPLY tag row at the bottom. Message quotes (onJump, no onClear) keep the bar.
   if (onClear) {
     return (
-      <div className="group relative flex h-[112px] w-[172px] flex-col rounded-xl border border-hairline/40 bg-raised px-2.5 py-2.5 pb-0.5">
+      <div className="group relative flex h-[112px] w-[155px] flex-col rounded-xl border border-hairline/40 bg-raised px-2.5 py-2.5 pb-0.5">
         <span dir="auto" className="min-h-0 flex-1 overflow-hidden whitespace-pre-wrap break-words text-[10.5px] leading-[1.45] text-ink">{snippet}</span>
         <div className="mt-auto flex items-center gap-0.5 pt-1">
           <ReplyIcon size={11} className="text-ink-tertiary" />
