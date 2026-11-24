@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Loader2, Menu } from "lucide-react";
 import { CLOUD_LINK_SETTINGS, StoreProvider, useStore } from "@/state/store";
 import { useWelcomeViewer, WelcomeGate } from "@/components/onboarding/WelcomeGate";
@@ -285,6 +285,24 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
   // the Browser tab, expanded into the main column (the small preview in
   // the panel hands off to this and back)
   const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const mainRegionRef = useRef<HTMLDivElement>(null);
+  // Overlays portaled to <body> (the chat file viewer) start where the main
+  // column starts, so expose the sidebar's edge as a root variable.
+  useLayoutEffect(() => {
+    const region = mainRegionRef.current;
+    if (!region) return;
+    const root = document.documentElement;
+    const sync = () => root.style.setProperty("--relay-main-left", `${region.getBoundingClientRect().left}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(region);
+    window.addEventListener("resize", sync);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", sync);
+      root.style.removeProperty("--relay-main-left");
+    };
+  }, [desktopSidebarOpen]);
   const group = state.groups.find((g) => g.id === state.selectedId);
   const bot = group ? undefined : (state.bots.find((b) => b.id === state.selectedId) ?? state.bots[0]);
   const calendarFocus = state.activeView === "routines";
@@ -368,6 +386,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
         desktopOpen={desktopSidebarOpen}
         onToggleDesktop={toggleDesktopSidebar}
       />}
+      <div ref={mainRegionRef} className="relative flex min-h-0 flex-1">
       {state.activeView === "routines" ? (
         <RoutinesPage onBack={closeCalendar} onOpenRoom={openCalendarRoom} />
       ) : cloudSignIn ? (
@@ -410,6 +429,7 @@ function Shell({ viewer }: { viewer: WelcomeViewer | null }) {
           docRef={state.docPane}
         />
       )}
+      </div>
       {state.appSettingsOpen && <SettingsModal />}
       <GoogleConnectionsDialog />
       {state.newBotOpen && <NewBotDialog />}

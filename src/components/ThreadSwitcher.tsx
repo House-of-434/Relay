@@ -129,11 +129,11 @@ export function ThreadSwitcher({
       </button>
 
       {motion.shown && (
-        // The card keeps its padding; the list scrolls inside it and is pulled
-        // into the card's right padding (-mr-1.5), so the scroll lane lands
-        // on that padding instead of adding width beside it.
+        // The card owns one even gutter: the list reserves the scrollbar
+        // lane on its right, so the row highlight does not need extra
+        // padding to keep its left and right edges in balance.
         <div
-          className={cn("tactile-menu absolute left-0 top-full z-40 mt-1.5 flex max-h-[min(20rem,50vh)] w-full flex-col overflow-hidden p-1.5", motion.className)} {...motion.exitProps}
+          className={cn("tactile-menu absolute left-0 top-full z-40 mt-1.5 flex max-h-[min(20rem,50vh)] w-full flex-col overflow-hidden p-1", motion.className)} {...motion.exitProps}
         >
         <div
           role="menu"
@@ -141,7 +141,7 @@ export function ThreadSwitcher({
           className="thread-menu-scroll min-h-0 flex-1 overflow-y-auto"
         >
           {visible.length === 0 ? (
-            <div className="px-3 py-2 text-[12px] text-ink-secondary">
+            <div className="px-2 py-2 text-[12px] text-ink-secondary">
               {t("thread.switcher.empty")}
             </div>
           ) : (
@@ -160,7 +160,7 @@ export function ThreadSwitcher({
                     aria-current={current || undefined}
                     onClick={() => choose(entry.threadId)}
                     className={cn(
-                      "flex min-w-0 w-full items-center gap-2 self-stretch px-2 text-left text-[13px] text-ink",
+                      "flex min-w-0 w-full items-center gap-2 self-stretch pl-1.5 text-left text-[13px] text-ink",
                       onDelete && entry.deletable !== false ? "pr-8" : "pr-2",
                     )}
                   >

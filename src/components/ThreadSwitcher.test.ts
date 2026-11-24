@@ -106,7 +106,7 @@ describe("ThreadSwitcher", () => {
     expect(markup).toContain("My research");
   });
 
-  it("keeps the scroll lane inside balanced padding", () => {
+  it("keeps the scroll lane inside one even gutter", () => {
     const markup = renderToStaticMarkup(createElement(ThreadSwitcher, {
       currentThreadId: "alpha",
       currentTitle: "Alpha",
@@ -114,9 +114,10 @@ describe("ThreadSwitcher", () => {
       onSelect: vi.fn(),
     }));
 
-    // Rows sit the same distance from every card edge, so the highlight is
-    // inset equally left, right, top and bottom.
-    expect(markup).toContain("p-1.5");
+    // The list reserves the scrollbar lane on its right; the row highlight
+    // sits flush left and the card keeps one even gutter around it.
+    expect(markup).toContain("p-1");
+    expect(markup).toContain("pl-1.5");
     expect(markup).toContain("thread-menu-scroll");
     expect(markup).not.toContain("scroll-thin-autohide");
     // The list ends where the card's padding ends.
