@@ -104,6 +104,39 @@ function open(): DatabaseSync {
     );
     CREATE INDEX IF NOT EXISTS files_owner ON files(owner_user_id);
     CREATE INDEX IF NOT EXISTS files_thread ON files(owner_user_id, bot_id, thread_id);
+    CREATE TABLE IF NOT EXISTS entity_capture_runs (
+      execution_key TEXT PRIMARY KEY,
+      thread_id TEXT NOT NULL,
+      turn_id TEXT NOT NULL,
+      bot_id TEXT NOT NULL,
+      agent TEXT NOT NULL,
+      status TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      next_attempt_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS entity_capture_runs_due
+      ON entity_capture_runs(status, next_attempt_at);
+    CREATE TABLE IF NOT EXISTS entity_capture_jobs (
+      execution_key TEXT NOT NULL,
+      entity_key TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      company_key TEXT,
+      payload TEXT NOT NULL,
+      status TEXT NOT NULL,
+      result_id TEXT,
+      result_status TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      last_error TEXT,
+      next_attempt_at INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (execution_key, entity_key)
+    );
+    CREATE INDEX IF NOT EXISTS entity_capture_jobs_due
+      ON entity_capture_jobs(execution_key, status, next_attempt_at);
   `);
   // Databases created before the optional passcode column existed need it added;
   // CREATE TABLE IF NOT EXISTS is a no-op on them.
@@ -1181,4 +1214,171 @@ export function closeMessageDb(): void {
   } catch {}
   handle = null;
   handlePath = null;
+}
+
+// ---- Research entity capture jobs -----------------------------------------
+// Durable extraction runs and per-entity writes for the background research
+// capture (server/entity-upkeep.ts). A run is keyed by <threadId>:<turnId>, so
+// a later research turn in the same thread is a new execution; the extracted
+// payloads are stored BEFORE any write, so a failed write retries without
+// calling the model again.
+
+export type EntityCaptureStatus = "pending" | "processing" | "done" | "failed";
+export type EntityCaptureJobStatus = "pending" | "done" | "failed";
+
+export interface EntityCaptureRun {
+  executionKey: string;
+  threadId: string;
+  turnId: string;
+  botId: string;
+  agent: string;
+  status: EntityCaptureStatus;
+  attempts: number;
+  lastError: string | null;
+  nextAttemptAt: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+export interface EntityCaptureJob {
+  executionKey: string;
+  entityKey: string;
+  kind: "company" | "person";
+  companyKey: string | null;
+  payload: Record<string, unknown>;
+  status: EntityCaptureJobStatus;
+  resultId: string | null;
+  resultStatus: string | null;
+  attempts: number;
+  lastError: string | null;
+  nextAttemptAt: number;
+  createdAt: number;
+  updatedAt: number;
+}
+
+function rowToRun(row: Record<string, unknown>): EntityCaptureRun {
+  return {
+    executionKey: row.execution_key as string,
+    threadId: row.thread_id as string,
+    turnId: row.turn_id as string,
+    botId: row.bot_id as string,
+    agent: row.agent as string,
+    status: row.status as EntityCaptureStatus,
+    attempts: row.attempts as number,
+    lastError: (row.last_error as string | null) ?? null,
+    nextAttemptAt: row.next_attempt_at as number,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  };
+}
+
+function rowToJob(row: Record<string, unknown>): EntityCaptureJob {
+  return {
+    executionKey: row.execution_key as string,
+    entityKey: row.entity_key as string,
+    kind: row.kind as "company" | "person",
+    companyKey: (row.company_key as string | null) ?? null,
+    payload: JSON.parse(row.payload as string) as Record<string, unknown>,
+    status: row.status as EntityCaptureJobStatus,
+    resultId: (row.result_id as string | null) ?? null,
+    resultStatus: (row.result_status as string | null) ?? null,
+    attempts: row.attempts as number,
+    lastError: (row.last_error as string | null) ?? null,
+    nextAttemptAt: row.next_attempt_at as number,
+    createdAt: row.created_at as number,
+    updatedAt: row.updated_at as number,
+  };
+}
+
+export function createEntityCaptureRun(run: EntityCaptureRun): boolean {
+  const result = db().prepare(
+    "INSERT INTO entity_capture_runs (execution_key, thread_id, turn_id, bot_id, agent, status, attempts, last_error, next_attempt_at, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(execution_key) DO NOTHING",
+  ).run(
+    run.executionKey, run.threadId, run.turnId, run.botId, run.agent, run.status,
+    run.attempts, run.lastError, run.nextAttemptAt, run.createdAt, run.updatedAt,
+  );
+  return result.changes > 0;
+}
+
+export function entityCaptureRun(executionKey: string): EntityCaptureRun | null {
+  const row = db().prepare("SELECT * FROM entity_capture_runs WHERE execution_key = ?").get(executionKey);
+  return row ? rowToRun(row as Record<string, unknown>) : null;
+}
+
+export function updateEntityCaptureRun(
+  executionKey: string,
+  patch: { status?: EntityCaptureStatus; attempts?: number; lastError?: string | null; nextAttemptAt?: number; updatedAt: number },
+): void {
+  const current = entityCaptureRun(executionKey);
+  if (!current) return;
+  db().prepare(
+    "UPDATE entity_capture_runs SET status = ?, attempts = ?, last_error = ?, next_attempt_at = ?, updated_at = ? WHERE execution_key = ?",
+  ).run(
+    patch.status ?? current.status,
+    patch.attempts ?? current.attempts,
+    patch.lastError === undefined ? current.lastError : patch.lastError,
+    patch.nextAttemptAt ?? current.nextAttemptAt,
+    patch.updatedAt,
+    executionKey,
+  );
+}
+
+export function dueEntityCaptureRuns(now: number, limit = 10): EntityCaptureRun[] {
+  const rows = db().prepare(
+    "SELECT * FROM entity_capture_runs WHERE status IN ('pending','processing') AND next_attempt_at <= ? ORDER BY created_at LIMIT ?",
+  ).all(now, limit) as Record<string, unknown>[];
+  return rows.map(rowToRun);
+}
+
+export function createEntityCaptureJobs(executionKey: string, jobs: readonly EntityCaptureJob[]): void {
+  const statement = db().prepare(
+    "INSERT INTO entity_capture_jobs (execution_key, entity_key, kind, company_key, payload, status, result_id, result_status, attempts, last_error, next_attempt_at, created_at, updated_at) " +
+      "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(execution_key, entity_key) DO NOTHING",
+  );
+  for (const job of jobs) {
+    statement.run(
+      executionKey, job.entityKey, job.kind, job.companyKey, JSON.stringify(job.payload),
+      job.status, job.resultId, job.resultStatus, job.attempts, job.lastError,
+      job.nextAttemptAt, job.createdAt, job.updatedAt,
+    );
+  }
+}
+
+export function listEntityCaptureJobs(executionKey: string): EntityCaptureJob[] {
+  const rows = db().prepare(
+    "SELECT * FROM entity_capture_jobs WHERE execution_key = ? ORDER BY CASE kind WHEN 'company' THEN 0 ELSE 1 END, entity_key",
+  ).all(executionKey) as Record<string, unknown>[];
+  return rows.map(rowToJob);
+}
+
+export function updateEntityCaptureJob(
+  executionKey: string,
+  entityKey: string,
+  patch: {
+    status?: EntityCaptureJobStatus;
+    resultId?: string | null;
+    resultStatus?: string | null;
+    attempts?: number;
+    lastError?: string | null;
+    nextAttemptAt?: number;
+    updatedAt: number;
+  },
+): void {
+  const current = listEntityCaptureJobs(executionKey).find((job) => job.entityKey === entityKey);
+  if (!current) return;
+  db().prepare(
+    "UPDATE entity_capture_jobs SET status = ?, result_id = ?, result_status = ?, attempts = ?, last_error = ?, next_attempt_at = ?, updated_at = ? " +
+      "WHERE execution_key = ? AND entity_key = ?",
+  ).run(
+    patch.status ?? current.status,
+    patch.resultId === undefined ? current.resultId : patch.resultId,
+    patch.resultStatus === undefined ? current.resultStatus : patch.resultStatus,
+    patch.attempts ?? current.attempts,
+    patch.lastError === undefined ? current.lastError : patch.lastError,
+    patch.nextAttemptAt ?? current.nextAttemptAt,
+    patch.updatedAt,
+    executionKey,
+    entityKey,
+  );
 }

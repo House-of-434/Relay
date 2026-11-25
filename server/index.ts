@@ -156,7 +156,8 @@ import { RETRY_MAX_ATTEMPTS } from "./drivers/retry.ts";
 import { recoveryCapabilityError } from "./automatic-recovery.ts";
 import { decodeGeneratedImage } from "./generated-image.ts";
 import { bindRelayMcpForBot, relaySigningOwner, relayToolMcpServer, relayToolProxySpec, signedActorContext } from "./relay-mcp.ts";
-import { callConfirmedRelayTool, confirmedMeetLink, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
+import { callConfirmedRelayTool, callRelayTool, confirmedMeetLink, ConnectorActionError, connectorActionDisplay, PendingConnectorActions } from "./connector-actions.ts";
+import { createEntityUpkeep } from "./entity-upkeep.ts";
 import { PendingResearchJobs, ResearchJobError, researchDisplay } from "./research-jobs.ts";
 import { RELAY_AGENT_SEEDS, relaySharedWorkspaceEnabled } from "./relay-agents.ts";
 import {
@@ -208,7 +209,7 @@ const RELAY_SCRIBE_WORKER_URL = process.env.RELAY_SCRIBE_WORKER_URL?.trim() || "
 
 import { BUILT_IN_DRIVERS } from "./drivers/builtIn.ts";
 import { getOrCreateChannel, mirrorActivity, mirrorExchange, mirrorReply, type CommsBus } from "./comms-visibility.ts";
-import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listActiveScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent, upsertCommandReceipt } from "./message-db.ts";
+import { readMessageText, recallMessages, recentMessages, searchMessagesAsync, closeMessageSearch, closeMessageDb, chatFollowups, cancelledChatFollowup, settleChatFollowups, threadsReferencing, listActiveScribeJoinIntents, setScribeJoinIntentStatus, getScribeJoinIntent, upsertCommandReceipt, createEntityCaptureRun, entityCaptureRun, updateEntityCaptureRun, dueEntityCaptureRuns, createEntityCaptureJobs, listEntityCaptureJobs, updateEntityCaptureJob } from "./message-db.ts";
 import { briefCrossingLabel, claimRecallCrossings, recallCrossingLabel } from "./recall-disclosure.ts";
 import { parseSince, parseUntil, recentWork, recentWorkPrompt, turnOutcomeLine } from "./recent-work.ts";
 import { chiefForBot, INCIDENTS_THREAD_TITLE, IncidentLedger, incidentChip, incidentText, type Incident, type IncidentKind } from "./incidents.ts";
@@ -9024,6 +9025,78 @@ const connectorActions = new PendingConnectorActions(Date.now, join(DATA_DIR, "c
 /** One-shot research proposals live apart from routines: no schedule, no
  * calendar entry, one execution per confirmation. */
 researchJobs = new PendingResearchJobs();
+
+// Research entity capture: after a research execution goes quiet, one
+// tool-free extraction call turns the report into company/person records,
+// persisted as retryable jobs and written through the Tool Layer as Scout.
+const entityUpkeep = createEntityUpkeep({
+  store: {
+    createRun: createEntityCaptureRun,
+    getRun: entityCaptureRun,
+    updateRun: updateEntityCaptureRun,
+    dueRuns: dueEntityCaptureRuns,
+    createJobs: createEntityCaptureJobs,
+    listJobs: listEntityCaptureJobs,
+    updateJob: updateEntityCaptureJob,
+  },
+  enabled: () => process.env.RELAY_ENTITY_CAPTURE !== "0",
+  bot: (id) => store.bot(id) ?? undefined,
+  botByThread: (threadId) => store.botByThread(threadId) ?? undefined,
+  eligibleThread: (threadId, botId) => !store.groupByThread(threadId) && !isInternalTurn(threadId) && !isUnattended(botId, threadId),
+  engine: (botId) => {
+    const bot = store.bot(botId);
+    const instance = bot ? registry.get(bot.modelSelection.instanceId) : undefined;
+    if (!bot || !instance || policyModelRefusal(instance)) return null;
+    const generate = instance.generateText?.bind(instance);
+    return generate ? {
+      generateText: async (prompt, options) => {
+        assertWithinBudget(cfg, DATA_DIR);
+        const threadId = `entity-${randomUUID()}`;
+        return generate(prompt, { ...options, onUsage: (usage) => bookTurnUsage({
+          botId: bot.id,
+          botName: bot.name,
+          threadId,
+          instanceId: instance.instanceId,
+          driverKind: instance.driverKind,
+          model: usage.model,
+          input: usage.input ?? 0,
+          output: usage.output ?? 0,
+          ...(usage.cachedInput !== undefined ? { cachedInput: usage.cachedInput } : {}),
+          costUsd: usage.costUsd ?? null,
+          trigger: { kind: "bot", botId: bot.id },
+        }, usage.input !== undefined && usage.output !== undefined, bot.threadId) });
+      },
+    } : {};
+  },
+  threadMessages: (threadId) => store.activePath(threadId),
+  isResearchExecutionThread: (threadId) => researchJobs?.isResearchExecutionThread(threadId) ?? false,
+  quietMs: () => {
+    const value = Number(process.env.RELAY_ENTITY_CAPTURE_QUIET_MS);
+    return Number.isFinite(value) && value > 0 ? value : 120_000;
+  },
+  signActor: (actor) => {
+    try {
+      return signedActorContext(actor, process.env.RELAY_TOOL_ACTOR_SECRET);
+    } catch {
+      return null;
+    }
+  },
+  runTool: async ({ agent, assertion, tool, args }) => {
+    const toolUrl = RELAY_TOOL_URL ?? (RELAY_SHARED_WORKSPACE ? "http://127.0.0.1:8787" : undefined);
+    if (!toolUrl) return { ok: false, text: "the Tool Layer is not configured" };
+    return callRelayTool({ toolBaseUrl: toolUrl, agent, actorAssertion: assertion, tool, args });
+  },
+});
+
+bus.subscribe((event: RuntimeEvent) => {
+  if (shouldIgnoreProviderEvent(event)) return;
+  if (event.type !== "turn.completed" || !event.ok || !event.turnId) return;
+  try {
+    entityUpkeep.noteTurn(event.threadId, event.turnId);
+  } catch (error) {
+    console.warn(`entity capture: could not queue the turn: ${(error as Error).message}`);
+  }
+});
 const teamSetupTeams = () => [...new Set(["", ...readSections(), ...store.bots.map((bot) => sectionKey(bot.section)), ...store.groups.map((group) => sectionKey(group.section))])];
 const teamSetupRequests = new TeamSetupRequestService({
   store, teams: teamSetupTeams, canAccessTeam, canPersist: proposalPersistence, maxBots: MAX_WORKSPACE_BOTS,
@@ -12514,8 +12587,8 @@ const workspaceBackupAccess = {
       !checkpointRestoreLeases.size &&
       store.bots.every((bot) => !botHasActiveTurn(bot.id) && !routines?.activeRunForBot(bot.id) && !botComputerControlSnapshot(bot.id).held) &&
       store.groups.every((group) => !groupIsWorking(group)),
-    pause: () => { routines?.stop(); mailboxMonitor?.stop(); scribeMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); },
-    resume: () => { routines?.start(); mailboxMonitor?.start(); scribeMonitor?.start(); calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); },
+    pause: () => { routines?.stop(); mailboxMonitor?.stop(); scribeMonitor?.stop(); calendarCalls?.stop(); watchdog.stop(); memoryUpkeep.pause(); entityUpkeep.pause(); },
+    resume: () => { routines?.start(); mailboxMonitor?.start(); scribeMonitor?.start(); calendarCalls?.start(); watchdog.start(); memoryUpkeep.resume(); entityUpkeep.resume(); },
     flush: async () => {
       await Promise.all([flushAllProfileHistory(), flushAllMemoryJournals(), flushUsageLedger(DATA_DIR), flushDecisionLog(DATA_DIR), flushAdminActivity(DATA_DIR)]);
       // With writers gated and work idle, release our WAL connection for the
@@ -20733,6 +20806,7 @@ server.listen(PORT, "127.0.0.1", () => {
   mailboxMonitor?.start();
   scribeMonitor?.start();
   memoryUpkeep.start();
+  entityUpkeep.start();
   const leftover = pendingThreads();
   if (leftover.length) console.log(`delegations: ${leftover.length} thread(s) with queued handoffs from a previous run — draining`);
   for (const threadId of leftover) {
@@ -20828,6 +20902,7 @@ const gracefulShutdown = createGracefulShutdown({
       routines?.stop();
       calendarCalls?.stop();
       memoryUpkeep.stop();
+      entityUpkeep.stop();
       webhookIngress?.server.close();
       tunnelListener?.close();
     },

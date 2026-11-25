@@ -2,7 +2,7 @@ import type { Agent } from "./permissions.js";
 
 export type Requirement = {
   f: string;
-  r: "nonempty" | "url" | "number" | "uuid" | "uuid[]" | "jsonb";
+  r: "nonempty" | "url" | "number" | "integer" | "string[]" | "object" | "uuid" | "uuid[]" | "jsonb";
 };
 
 export type Shape = {
@@ -16,6 +16,10 @@ export type Shape = {
   validate?: readonly Requirement[];
   valueEnums?: Readonly<Record<string, readonly string[]>>;
   updateKey?: string;
+  /** A shared-directory entity table: inserts land at scope 'org', and an
+   *  update never rewrites the original owner or flips the row back to
+   *  private. Sensitivity stays in classification. */
+  directory?: boolean;
   /** Default read order. Applied by relay_read before the limit, so
    * `limit: 1` returns the newest/oldest row without a separate sort tool. */
   order?: { column: string; ascending: boolean };
@@ -33,44 +37,59 @@ export const SHAPES: Record<string, Shape> = {
       "website", "has_lead", "domain_expertise", "raise_amount",
       "pre_money_valuation", "founding_date", "submission_date",
       "target_close_date", "deck_url", "data_room_url", "notion_page_id",
-      "notion_url",
+      "notion_url", "location", "employee_count", "tags", "company_type", "linkedin_url",
     ],
+    directory: true,
     serverSet: [
-      "actor_user", "actor_agent", "classification", "embedding", "created_at",
-      "updated_at", "captured_at", "owner_user_id", "scope",
+      "actor_user", "actor_agent", "classification", "embedding", "domain_key",
+      "created_at", "updated_at", "captured_at", "owner_user_id", "scope",
     ],
     filterable: [
       "name", "domains", "classification", "observed_at", "actor_user",
       "owner_user_id", "scope", "notion_page_id", "status", "stage",
-      "technology", "industry",
+      "technology", "industry", "location", "tags", "company_type", "linkedin_url",
     ],
     require: [
       { f: "name", r: "nonempty" },
       { f: "source_url", r: "url" },
     ],
+    valueEnums: { company_type: ["startup", "fund", "corporate", "other"] },
     // Optional on insert: a mirrored board row is data, not an agent
     // observation, so it need not carry a score — but any score supplied must
     // be in range.
     validate: [
       { f: "confidence", r: "number" },
+      { f: "domains", r: "string[]" },
+      { f: "employee_count", r: "integer" },
+      { f: "tags", r: "string[]" },
+      { f: "linkedin_url", r: "url" },
     ],
   },
   "app.people": {
     writable: [
       "full_name", "aliases", "person_type", "company_id", "source", "source_url",
       "observed_at", "confidence", "external_source", "external_source_id",
+      "title", "location", "linkedin_url", "bio", "education", "links", "tags",
     ],
+    directory: true,
     serverSet: [
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
       "owner_user_id", "scope",
     ],
-    filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user", "owner_user_id", "scope"],
+    filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user", "owner_user_id", "scope", "title", "location", "tags", "linkedin_url"],
     valueEnums: { person_type: ["founder", "investor", "partner", "other"] },
     require: [
       { f: "full_name", r: "nonempty" },
-      { f: "company_id", r: "uuid" },
       { f: "confidence", r: "number" },
       { f: "source_url", r: "url" },
+    ],
+    validate: [
+      { f: "company_id", r: "uuid" },
+      { f: "aliases", r: "string[]" },
+      { f: "education", r: "string[]" },
+      { f: "tags", r: "string[]" },
+      { f: "links", r: "object" },
+      { f: "linkedin_url", r: "url" },
     ],
   },
   // The Event Content Tracker (migration 0013). Every signed-in member can read
@@ -111,7 +130,7 @@ export const SHAPES: Record<string, Shape> = {
   // Meeting transcripts are read-only for agents: the capture pipeline writes
   // them through the ingest route, never through relay_write. Segments stay
   // unregistered — relay_read can't order/page transcript text, so they are
-  // served only by the bespoke get_meeting_transcript/search_meetings tools.
+  // served only by the bespoke get_meeting_transcript/search_relay tools.
   "transcripts.meetings": {
     writable: [],
     serverSet: [
@@ -297,6 +316,21 @@ function validateRequirement(field: string, rule: Requirement["r"], value: unkno
         throw new Error(`${field} must be a finite number between 0 and 1`);
       }
       return;
+    case "integer":
+      if (typeof value !== "number" || !Number.isInteger(value) || value < 0) {
+        throw new Error(`${field} must be a non-negative integer`);
+      }
+      return;
+    case "string[]":
+      if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string" && entry.trim().length > 0)) {
+        throw new Error(`${field} must be an array of nonempty strings`);
+      }
+      return;
+    case "object":
+      if (!value || typeof value !== "object" || Array.isArray(value)) {
+        throw new Error(`${field} must be an object`);
+      }
+      return;
     case "uuid":
       if (typeof value !== "string" || !UUID.test(value)) throw new Error(`${field} must be a UUID`);
       return;
@@ -398,8 +432,8 @@ export function prepareWrite(
     if (shape.serverSet.includes("actor_user")) values.actor_user = actor.userId;
     if (shape.serverSet.includes("actor_agent")) values.actor_agent = actor.agent;
     if (shape.serverSet.includes("classification")) values.classification = "internal";
-    if (shape.serverSet.includes("owner_user_id")) values.owner_user_id = actor.userId;
-    if (shape.serverSet.includes("scope")) values.scope = "private";
+    if (shape.serverSet.includes("owner_user_id") && !shape.directory) values.owner_user_id = actor.userId;
+    if (shape.serverSet.includes("scope") && !shape.directory) values.scope = "private";
     if (shape.serverSet.includes("bot_id")) values.bot_id = actor.botId ?? null;
     if (shape.serverSet.includes("thread_id")) values.thread_id = actor.threadId ?? null;
     if (shape.serverSet.includes("updated_at")) values.updated_at = now;
@@ -415,7 +449,7 @@ export function prepareWrite(
   if (shape.serverSet.includes("classification")) values.classification = "internal";
   if (shape.serverSet.includes("created_by")) values.created_by = actor.userId;
   if (shape.serverSet.includes("owner_user_id")) values.owner_user_id = actor.userId;
-  if (shape.serverSet.includes("scope")) values.scope = "private";
+  if (shape.serverSet.includes("scope")) values.scope = shape.directory ? "org" : "private";
   if (shape.serverSet.includes("bot_id")) values.bot_id = actor.botId ?? null;
   if (shape.serverSet.includes("thread_id")) values.thread_id = actor.threadId ?? null;
   if (shape.serverSet.includes("created_at")) values.created_at = now;
