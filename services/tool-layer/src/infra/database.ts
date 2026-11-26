@@ -4,11 +4,13 @@ import { verifyActorAssertion, type RelayActorContext } from "./actor-assertion.
 import type { Project } from "../domain/permissions.js";
 import { getShape, type Filter } from "../domain/shapes.js";
 import {
+  companyReferenceDomain,
   mergeCompany,
   mergePerson,
   normalizeDomains,
   normalizeLinkedIn,
   resolveCompany,
+  resolveCompanyReference,
   resolvePerson,
   type EntityCandidate,
 } from "../domain/entities.js";
@@ -35,11 +37,11 @@ const INTERNAL_ONLY_TABLES = new Set([
  *  mergeable field is not silently dropped from the candidate row. */
 const COMPANY_CANDIDATE_COLUMNS =
   "id, name, domains, domain_key, linkedin_url, description, location, employee_count, " +
-  "industry, vertical, technology, stage, company_type, domain_expertise, website, tags, " +
+  "industry, vertical, technology, stage, company_type, domain_expertise, website, " +
   "source, source_url, confidence, observed_at, classification, scope";
 const PERSON_CANDIDATE_COLUMNS =
   "id, full_name, aliases, person_type, company_id, title, location, linkedin_url, bio, " +
-  "education, links, tags, source, source_url, confidence, observed_at, classification, scope";
+  "education, links, source, source_url, confidence, observed_at, classification, scope";
 
 const MIN_ENTITY_CONFIDENCE = 0.6;
 
@@ -525,9 +527,15 @@ export class RelayDatabase {
 
   /** Entity inserts land in the shared directory through this resolver: an
    *  exact identity match merges, no match inserts, and an ambiguous match
-   *  goes to app.entity_review instead of guessing. */
-  async upsertEntity(table: "app.companies" | "app.people", values: Record<string, unknown>): Promise<EntityWriteResult> {
-    return table === "app.companies" ? this.upsertCompany(values) : this.upsertPerson(values);
+   *  goes to app.entity_review instead of guessing. A person insert may carry
+   *  the report's employer text as a resolver hint; it is never a column and
+   *  only links the person to an existing company. */
+  async upsertEntity(
+    table: "app.companies" | "app.people",
+    values: Record<string, unknown>,
+    reportedCompany?: string | null,
+  ): Promise<EntityWriteResult> {
+    return table === "app.companies" ? this.upsertCompany(values) : this.upsertPerson(values, reportedCompany);
   }
 
   private async upsertCompany(values: Record<string, unknown>): Promise<EntityWriteResult> {
@@ -565,26 +573,50 @@ export class RelayDatabase {
     return { status: "created", id: (data as { id: string }).id, row: data };
   }
 
-  private async upsertPerson(values: Record<string, unknown>): Promise<EntityWriteResult> {
+  private async upsertPerson(values: Record<string, unknown>, reportedCompany?: string | null): Promise<EntityWriteResult> {
     const client = this.client("relay");
     const confidence = typeof values.confidence === "number" ? values.confidence : null;
     if (confidence !== null && confidence < MIN_ENTITY_CONFIDENCE) {
       return this.queueEntityReview("person", values, [], "confidence below 0.6");
     }
-    const name = typeof values.full_name === "string" ? values.full_name : "";
-    const companyId = typeof values.company_id === "string" ? values.company_id : null;
-    const linkedin = normalizeLinkedIn(values.linkedin_url);
+    let companyId = typeof values.company_id === "string" ? values.company_id : null;
+    if (!companyId && reportedCompany?.trim()) {
+      const resolution = await this.resolvePersonCompany(client, reportedCompany);
+      if (resolution.action === "review") {
+        return this.queueEntityReview("person", values, resolution.candidates, resolution.reason);
+      }
+      if (resolution.action === "match") companyId = resolution.candidate.id;
+    }
+    const data = companyId ? { ...values, company_id: companyId } : values;
+    const name = typeof data.full_name === "string" ? data.full_name : "";
+    const linkedin = normalizeLinkedIn(data.linkedin_url);
     const candidates = await this.personCandidates(client, name, companyId, linkedin);
-    const decision = resolvePerson(candidates, values);
+    const decision = resolvePerson(candidates, data);
     if (decision.action === "review") {
-      return this.queueEntityReview("person", values, decision.candidates, decision.reason);
+      return this.queueEntityReview("person", data, decision.candidates, decision.reason);
     }
     if (decision.action === "merge") {
-      return this.mergePersonInto(client, decision.candidate, values, decision.matchedBy);
+      return this.mergePersonInto(client, decision.candidate, data, decision.matchedBy);
     }
-    const { data, error } = await client.schema("app").from("people").insert(values).select("*").single();
+    const { data: inserted, error } = await client.schema("app").from("people").insert(data).select("*").single();
     supabaseError(error);
-    return { status: "created", id: (data as { id: string }).id, row: data };
+    return { status: "created", id: (inserted as { id: string }).id, row: inserted };
+  }
+
+  /** Domain first, then an exact normalized name. Ambiguity goes to review and
+   *  a miss leaves the person unaffiliated; a company is never created here. */
+  private async resolvePersonCompany(
+    client: Client,
+    reported: string,
+  ): Promise<
+    | { action: "none" }
+    | { action: "match"; candidate: EntityCandidate }
+    | { action: "review"; candidates: EntityCandidate[]; reason: string }
+  > {
+    const text = reported.trim();
+    const domain = companyReferenceDomain(text);
+    const candidates = await this.companyCandidates(client, domain ? [domain] : [], domain, text);
+    return resolveCompanyReference(candidates, text);
   }
 
   private async companyCandidates(client: Client, domains: string[], primary: string | null, name: string): Promise<EntityCandidate[]> {
@@ -617,7 +649,7 @@ export class RelayDatabase {
       await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).ilike("full_name", likeEscape(name.trim())).limit(10));
     }
     if (linkedin) {
-      await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).ilike("linkedin_url", `%${likeEscape(linkedin)}%`).limit(10));
+      await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).eq("linkedin_key", linkedin).limit(10));
     }
     if (name.trim() && companyId) {
       await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).eq("company_id", companyId).ilike("full_name", likeEscape(name.trim())).limit(10));
@@ -628,7 +660,7 @@ export class RelayDatabase {
   private async companyByDomainKey(client: Client, primary: string): Promise<EntityCandidate | null> {
     const { data, error } = await client.schema("app").from("companies").select(COMPANY_CANDIDATE_COLUMNS).eq("domain_key", primary).limit(2);
     supabaseError(error);
-    const rows = Array.isArray(data) ? data as EntityCandidate[] : [];
+    const rows = Array.isArray(data) ? data as unknown as EntityCandidate[] : [];
     return rows.length === 1 ? rows[0]! : null;
   }
 

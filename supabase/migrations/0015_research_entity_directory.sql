@@ -2,10 +2,11 @@
 -- behind the background research capture. Applied out of band first; this
 -- file keeps a fresh environment in step.
 --
--- Additive only. `domain_key` is generated from domains[1], so the resolver
--- must keep the canonical primary domain first; the unique index therefore
--- protects primary domains only, and matching must also check every domain.
--- `scope` (who can read) stays separate from `classification` (how sensitive).
+-- Idempotent, so it also converges an environment where an earlier draft ran.
+-- `domain_key` is generated from domains[1], so the resolver must keep the
+-- canonical primary domain first; the unique index therefore protects primary
+-- domains only, and matching must also check every domain. `scope` (who can
+-- read) stays separate from `classification` (how sensitive).
 
 begin;
 
@@ -26,12 +27,41 @@ as $$
     '');
 $$;
 
+-- LinkedIn profile key: lower, no scheme, no regional/www subdomain, no
+-- query/fragment, and only an /in/ path. Mirrors normalizeLinkedIn in
+-- services/tool-layer/src/domain/entities.ts.
+create or replace function app.linkedin_key(value text)
+returns text
+language sql
+immutable
+as $$
+  with cleaned as (
+    select regexp_replace(
+             regexp_replace(
+               regexp_replace(lower(btrim(value)), '^[a-z][a-z0-9+.-]*://', ''),
+               '^www\.', ''),
+             '[?#].*$', '') as text
+  ),
+  parts as (
+    select
+      nullif(split_part(text, '/', 1), '') as host,
+      case when strpos(text, '/') = 0 then null else substr(text, strpos(text, '/')) end as path
+    from cleaned
+  )
+  select case
+    when host is null or path is null then null
+    when host <> 'linkedin.com' and host not like '%.linkedin.com' then null
+    when path !~ '^/in/[^/]+' then null
+    else 'linkedin.com/in/' || (regexp_match(path, '^/in/([^/]+)'))[1]
+  end
+  from parts;
+$$;
+
 alter table app.companies
   add column if not exists domain_key text
     generated always as (app.domain_key(domains[1])) stored,
   add column if not exists location text,
   add column if not exists employee_count integer,
-  add column if not exists tags text[] not null default '{}',
   add column if not exists company_type text,
   add column if not exists linkedin_url text;
 
@@ -49,15 +79,23 @@ alter table app.people
   add column if not exists linkedin_url text,
   add column if not exists bio text,
   add column if not exists education text[] not null default '{}',
-  add column if not exists links jsonb not null default '{}',
-  add column if not exists tags text[] not null default '{}';
+  add column if not exists links jsonb not null default '{}';
+
+alter table app.people
+  add column if not exists linkedin_key text
+    generated always as (app.linkedin_key(linkedin_url)) stored;
 
 alter table app.people alter column company_id drop not null;
 
-create index if not exists companies_tags_gin on app.companies using gin (tags);
+-- Free-form tags were in an earlier draft of this directory; nothing consumes
+-- them yet, so this also removes them from an environment that applied it.
+alter table app.companies drop column if exists tags;
+alter table app.people drop column if exists tags;
+
 create index if not exists companies_location_idx on app.companies (location);
 create index if not exists people_company_id_idx on app.people (company_id);
-create index if not exists people_tags_gin on app.people using gin (tags);
+create index if not exists people_linkedin_key_idx
+  on app.people (linkedin_key) where linkedin_key is not null;
 create index if not exists people_location_idx on app.people (location);
 
 -- Primary-domain uniqueness. If this fails, two existing rows share domains[1]:

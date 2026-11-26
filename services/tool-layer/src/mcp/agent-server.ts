@@ -150,14 +150,21 @@ export function createAgentMcpServer(
       try {
         if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "write", table);
-        const prepared = prepareWrite(table, operation, data, where, {
+        let columns = data;
+        let reportedCompany: string | null = null;
+        if (table === "app.people" && operation === "insert" && typeof data.company === "string") {
+          const { company, ...rest } = data;
+          columns = rest;
+          reportedCompany = company.trim().slice(0, 200) || null;
+        }
+        const prepared = prepareWrite(table, operation, columns, where, {
           agent,
           userId,
           botId: actor.botId ?? null,
           threadId: actor.threadId ?? null,
         });
         const result = operation === "insert" && (table === "app.companies" || table === "app.people")
-          ? await database.upsertEntity(table, prepared.values)
+          ? await database.upsertEntity(table, prepared.values, reportedCompany)
           : await database.write(project, table, operation, prepared.values, prepared.where, { userId });
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (error) {

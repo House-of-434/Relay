@@ -37,7 +37,7 @@ export const SHAPES: Record<string, Shape> = {
       "website", "has_lead", "domain_expertise", "raise_amount",
       "pre_money_valuation", "founding_date", "submission_date",
       "target_close_date", "deck_url", "data_room_url", "notion_page_id",
-      "notion_url", "location", "employee_count", "tags", "company_type", "linkedin_url",
+      "notion_url", "location", "employee_count", "company_type", "linkedin_url",
     ],
     directory: true,
     serverSet: [
@@ -47,7 +47,7 @@ export const SHAPES: Record<string, Shape> = {
     filterable: [
       "name", "domains", "classification", "observed_at", "actor_user",
       "owner_user_id", "scope", "notion_page_id", "status", "stage",
-      "technology", "industry", "location", "tags", "company_type", "linkedin_url",
+      "technology", "industry", "location", "company_type", "linkedin_url",
     ],
     require: [
       { f: "name", r: "nonempty" },
@@ -61,7 +61,6 @@ export const SHAPES: Record<string, Shape> = {
       { f: "confidence", r: "number" },
       { f: "domains", r: "string[]" },
       { f: "employee_count", r: "integer" },
-      { f: "tags", r: "string[]" },
       { f: "linkedin_url", r: "url" },
     ],
   },
@@ -69,14 +68,14 @@ export const SHAPES: Record<string, Shape> = {
     writable: [
       "full_name", "aliases", "person_type", "company_id", "source", "source_url",
       "observed_at", "confidence", "external_source", "external_source_id",
-      "title", "location", "linkedin_url", "bio", "education", "links", "tags",
+      "title", "location", "linkedin_url", "bio", "education", "links",
     ],
     directory: true,
     serverSet: [
       "actor_user", "actor_agent", "classification", "created_at", "updated_at", "captured_at",
-      "owner_user_id", "scope",
+      "owner_user_id", "scope", "linkedin_key",
     ],
-    filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user", "owner_user_id", "scope", "title", "location", "tags", "linkedin_url"],
+    filterable: ["full_name", "person_type", "company_id", "observed_at", "actor_user", "owner_user_id", "scope", "title", "location", "linkedin_url"],
     valueEnums: { person_type: ["founder", "investor", "partner", "other"] },
     require: [
       { f: "full_name", r: "nonempty" },
@@ -87,7 +86,6 @@ export const SHAPES: Record<string, Shape> = {
       { f: "company_id", r: "uuid" },
       { f: "aliases", r: "string[]" },
       { f: "education", r: "string[]" },
-      { f: "tags", r: "string[]" },
       { f: "links", r: "object" },
       { f: "linkedin_url", r: "url" },
     ],

@@ -3,12 +3,14 @@ import test from "node:test";
 
 import {
   canonicalDomain,
+  companyReferenceDomain,
   mergeCompany,
   mergePerson,
   normalizeDomains,
   normalizeLinkedIn,
   normalizeName,
   resolveCompany,
+  resolveCompanyReference,
   resolvePerson,
   type EntityCandidate,
 } from "./domain/entities.js";
@@ -30,7 +32,21 @@ test("domains and names normalize without losing distinct values", () => {
   assert.equal(normalizeName("ACME INC"), "acme inc");
   assert.notEqual(normalizeName("Acme Inc"), normalizeName("Acme Labs"));
   assert.equal(normalizeLinkedIn("https://www.linkedin.com/in/Ada-Test/?trk=x"), "linkedin.com/in/ada-test");
-  assert.equal(normalizeLinkedIn("https://example.com/ada"), null);
+  assert.equal(normalizeLinkedIn("https://uk.linkedin.com/in/ada-test/"), "linkedin.com/in/ada-test");
+  assert.equal(normalizeLinkedIn("linkedin.com/in/ada-test/details/experience"), "linkedin.com/in/ada-test");
+  assert.equal(normalizeLinkedIn("https://www.linkedin.com/company/acme"), null);
+  assert.equal(normalizeLinkedIn("https://www.linkedin.com/school/acme"), null);
+  assert.equal(normalizeLinkedIn("https://linkedin.com.evil.example/in/ada"), null);
+  assert.equal(normalizeLinkedIn("https://example.com/in/ada"), null);
+  assert.equal(normalizeLinkedIn(""), null);
+});
+
+test("a reported employer is a domain only when it names a host", () => {
+  assert.equal(companyReferenceDomain("acme.com"), "acme.com");
+  assert.equal(companyReferenceDomain("https://www.acme.com/about"), "acme.com");
+  assert.equal(companyReferenceDomain("Acme Inc."), null);
+  assert.equal(companyReferenceDomain("Acme"), null);
+  assert.equal(companyReferenceDomain("ada@acme.com"), null);
 });
 
 test("a company resolves by any domain, not only the generated primary key", () => {
@@ -63,6 +79,37 @@ test("a known company is inserted only when nothing matches", () => {
   assert.deepEqual(resolveCompany([], { name: "New Co", domains: ["new.example"] }), { action: "insert" });
 });
 
+test("a person's employer resolves by domain first, then normalized name", () => {
+  const byDomain = candidate({ id: "c1", name: "Acme, Inc.", domains: ["acme.com"] });
+  assert.deepEqual(resolveCompanyReference([byDomain], "https://www.acme.com/about"), {
+    action: "match",
+    candidate: byDomain,
+    matchedBy: "domain",
+  });
+
+  const byName = candidate({ id: "c2", name: "Acme, Inc.", domains: ["acme.com"] });
+  assert.deepEqual(resolveCompanyReference([byName], "ACME INC"), {
+    action: "match",
+    candidate: byName,
+    matchedBy: "name",
+  });
+});
+
+test("an ambiguous or missing employer never guesses", () => {
+  const first = candidate({ id: "c1", name: "Acme", domains: ["acme.com"] });
+  const second = candidate({ id: "c2", name: "Acme", domains: ["acme-labs.io"] });
+  const ambiguous = resolveCompanyReference([first, second], "Acme");
+  assert.equal(ambiguous.action, "review");
+
+  assert.deepEqual(resolveCompanyReference([first], "Unknown Co"), { action: "none" });
+  assert.deepEqual(resolveCompanyReference([], "acme.com"), { action: "none" });
+});
+
+test("a non-internal employer is queued instead of linked", () => {
+  const privateCompany = candidate({ name: "Acme", domains: ["acme.com"], classification: "confidential" });
+  assert.equal(resolveCompanyReference([privateCompany], "acme.com").action, "review");
+});
+
 test("a person resolves by LinkedIn first", () => {
   const existing = candidate({ full_name: "Ada Test", linkedin_url: "https://www.linkedin.com/in/ada-test/" });
   const decision = resolvePerson([existing], {
@@ -88,7 +135,6 @@ test("mergeCompany fills, unions, promotes, and reports identity conflicts", () 
     domains: ["acme.com"],
     description: "Old",
     employee_count: 10,
-    tags: ["ai"],
     scope: "private",
     confidence: 0.8,
     source_url: "https://acme.com",
@@ -98,7 +144,6 @@ test("mergeCompany fills, unions, promotes, and reports identity conflicts", () 
     domains: ["https://acme.com", "https://www.acme.io"],
     description: "Newer",
     employee_count: 12,
-    tags: ["b2b", "ai"],
     confidence: 0.9,
     source_url: "https://www.linkedin.com/company/acme",
     observed_at: "2026-01-01T00:00:00.000Z",
@@ -107,7 +152,6 @@ test("mergeCompany fills, unions, promotes, and reports identity conflicts", () 
   assert.deepEqual(values.domains, ["acme.com", "acme.io"]);
   assert.equal(values.description, "Newer");
   assert.equal(values.employee_count, 12);
-  assert.deepEqual(values.tags, ["ai", "b2b"]);
   assert.equal(values.scope, "org");
   assert.equal(values.observed_at, "2026-02-01T00:00:00.000Z");
   assert.equal(values.confidence, 0.9);
@@ -124,7 +168,6 @@ test("mergePerson unions arrays and links, keeps the earlier actor, and refreshe
     title: "Engineer",
     education: ["IIT"],
     links: { x: "https://x.com/ada" },
-    tags: ["ai"],
     scope: "private",
     confidence: 0.6,
     source_url: "https://linkedin.com/in/ada-test",
@@ -137,7 +180,6 @@ test("mergePerson unions arrays and links, keeps the earlier actor, and refreshe
     title: "Founder",
     education: ["Stanford"],
     links: { github: "https://github.com/ada" },
-    tags: ["founder"],
     confidence: 0.9,
     source_url: "https://example.com/ada",
     observed_at: "2026-01-01T00:00:00.000Z",
@@ -148,7 +190,6 @@ test("mergePerson unions arrays and links, keeps the earlier actor, and refreshe
   assert.equal(values.title, "Founder");
   assert.deepEqual(values.education, ["IIT", "Stanford"]);
   assert.deepEqual(values.links, { x: "https://x.com/ada", github: "https://github.com/ada" });
-  assert.deepEqual(values.tags, ["ai", "founder"]);
   assert.equal(values.scope, "org");
   assert.equal(values.observed_at, "2026-02-01T00:00:00.000Z");
 });

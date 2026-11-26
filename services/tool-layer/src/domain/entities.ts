@@ -23,7 +23,6 @@ export interface EntityCandidate {
   company_type?: unknown;
   domain_expertise?: unknown;
   website?: unknown;
-  tags?: unknown;
   aliases?: unknown;
   person_type?: unknown;
   title?: unknown;
@@ -88,17 +87,23 @@ export function normalizeName(value: unknown): string | null {
   return name || null;
 }
 
-/** LinkedIn profile key: lower, no scheme/www, no query/fragment, no trailing
- *  slash. Anything that is not a LinkedIn URL is ignored. */
+/** LinkedIn profile key, mirroring app.linkedin_key(): lower, no scheme, no
+ *  regional or www subdomain, no query/fragment, and only an /in/ profile path.
+ *  The first path segment is the profile slug; deeper paths and trailing
+ *  slashes are ignored. Anything else is not a person profile. */
 export function normalizeLinkedIn(value: unknown): string | null {
   if (typeof value !== "string") return null;
   let text = value.trim().toLowerCase();
   if (!text) return null;
-  text = text.replace(/^https?:\/\//, "").replace(/^www\./, "");
+  text = text.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^www\./, "");
   text = text.split("?")[0] ?? "";
   text = text.split("#")[0] ?? "";
-  text = text.replace(/\/+$/, "");
-  return text.startsWith("linkedin.com/") ? text : null;
+  const slash = text.indexOf("/");
+  if (slash < 0) return null;
+  const host = text.slice(0, slash);
+  if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return null;
+  const slug = /^\/in\/([^/]+)/.exec(text.slice(slash))?.[1];
+  return slug ? `linkedin.com/in/${slug}` : null;
 }
 
 function confidenceOf(value: unknown): number {
@@ -225,6 +230,70 @@ export function resolveCompany(candidates: EntityCandidate[], incoming: Record<s
   return { action: "insert" };
 }
 
+export type CompanyReferenceResolution =
+  | { action: "none" }
+  | { action: "match"; candidate: EntityCandidate; matchedBy: "domain" | "name" }
+  | { action: "review"; candidates: EntityCandidate[]; reason: string };
+
+/** The report's employer text is a host only when it names one; a bare company
+ *  name like "Acme" is not a domain even though canonicalDomain accepts it. */
+export function companyReferenceDomain(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const text = value.trim();
+  if (!text) return null;
+  const scheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(text);
+  const candidate = scheme ? text : text.split(/\s+/)[0] ?? "";
+  if (!scheme && (!candidate.includes(".") || candidate.includes("@"))) return null;
+  const domain = canonicalDomain(candidate);
+  return domain && domain.includes(".") ? domain : null;
+}
+
+/** Resolve a person's reported employer against the directory. Domain first,
+ *  then an exact normalized name; several matches queue a human decision and
+ *  no match leaves the person unaffiliated. Never creates a company. */
+export function resolveCompanyReference(
+  candidates: EntityCandidate[],
+  reported: unknown,
+): CompanyReferenceResolution {
+  const text = typeof reported === "string" ? reported.trim() : "";
+  if (!text) return { action: "none" };
+
+  const label = `reported company "${text.slice(0, 120)}"`;
+  const domain = companyReferenceDomain(text);
+  if (domain) {
+    const hits = uniqueById(candidates.filter((candidate) => {
+      const domains = normalizeDomains(candidate.domains);
+      return domains.includes(domain) || candidate.domain_key === domain;
+    }));
+    if (hits.length > 1) {
+      return { action: "review", candidates: hits, reason: `${label} matches several directory companies by domain` };
+    }
+    if (hits.length === 1) {
+      const candidate = hits[0]!;
+      if (!isDirectoryRow(candidate)) {
+        return { action: "review", candidates: hits, reason: `${label} matched a row that is not an internal directory record` };
+      }
+      return { action: "match", candidate, matchedBy: "domain" };
+    }
+  }
+
+  const name = normalizeName(text);
+  if (!name) return { action: "none" };
+  const hits = uniqueById(candidates.filter((candidate) => normalizeName(candidate.name) === name));
+  if (hits.length > 1) {
+    return { action: "review", candidates: hits, reason: `${label} matches several directory companies by name` };
+  }
+  if (hits.length === 1) {
+    const candidate = hits[0]!;
+    if (!isDirectoryRow(candidate)) {
+      return { action: "review", candidates: hits, reason: `${label} matched a row that is not an internal directory record` };
+    }
+    return { action: "match", candidate, matchedBy: "name" };
+  }
+
+  return { action: "none" };
+}
+
 /** Decide an incoming person write. LinkedIn is the strongest key, then the
  *  exact normalized name at the same company. A bare name is never enough. */
 export function resolvePerson(candidates: EntityCandidate[], incoming: Record<string, unknown>): EntityResolution {
@@ -308,7 +377,6 @@ export function mergeCompany(
     domain_expertise: prefer(incoming.domain_expertise, existing.domain_expertise, incomingConfidence, existingConfidence),
     website: prefer(incoming.website, existing.website, incomingConfidence, existingConfidence),
     linkedin_url: hasValue(existing.linkedin_url) ? existing.linkedin_url : incoming.linkedin_url,
-    tags: union(existing.tags, incoming.tags),
     source_url: chooseSourceUrl(existing.source_url, incoming.source_url, [existingPrimary ?? "", incomingPrimary ?? "", incomingLinkedIn ?? ""]),
     observed_at: now,
     confidence: Math.max(existingConfidence, incomingConfidence),
@@ -347,7 +415,6 @@ export function mergePerson(
     linkedin_url: hasValue(existing.linkedin_url) ? existing.linkedin_url : incoming.linkedin_url,
     education: union(existing.education, incoming.education),
     links: mergedObject(existing.links, incoming.links),
-    tags: union(existing.tags, incoming.tags),
     source_url: chooseSourceUrl(existing.source_url, incoming.source_url, [existingLinkedIn ?? "", incomingLinkedIn ?? ""]),
     observed_at: now,
     confidence: Math.max(existingConfidence, incomingConfidence),

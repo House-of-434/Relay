@@ -387,7 +387,7 @@ test("company and person inserts go through the shared-directory resolver", asyn
       arguments: {
         table: "app.people",
         operation: "insert",
-        data: { full_name: "Ada Test", source_url: "https://example.com/ada", confidence: 0.8 },
+        data: { full_name: "Ada Test", company: "Acme", source_url: "https://example.com/ada", confidence: 0.8 },
       },
     });
     assert.equal(person.isError, undefined, JSON.stringify(person));
@@ -395,6 +395,8 @@ test("company and person inserts go through the shared-directory resolver", asyn
     assert.equal(calls[1]?.args[0], "app.people");
     const personValues = calls[1]!.args[1] as Record<string, unknown>;
     assert.equal(personValues.company_id, undefined);
+    assert.equal(personValues.company, undefined);
+    assert.equal(calls[1]?.args[2], "Acme");
   } finally {
     await client.close();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
