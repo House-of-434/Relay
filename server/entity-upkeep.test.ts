@@ -127,6 +127,7 @@ describe("research entity upkeep", () => {
     });
     expect(h.calls[1]!.data).toMatchObject({
       full_name: "Ada Test",
+      company: "Acme",
       company_id: "company-1",
       source: "research",
       source_url: "https://acme.example/ada",

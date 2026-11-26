@@ -25,7 +25,6 @@ export interface CapturedCompany {
   company_type?: CompanyType;
   domain_expertise?: boolean;
   linkedin_url?: string;
-  tags?: string[];
   website?: string;
   source_url: string;
   confidence: number;
@@ -43,7 +42,6 @@ export interface CapturedPerson {
   bio?: string;
   education?: string[];
   links?: Record<string, string>;
-  tags?: string[];
   source_url: string;
   confidence: number;
 }
@@ -53,19 +51,26 @@ export interface CapturedEntities {
   people: CapturedPerson[];
 }
 
+export interface CaptureAttachment {
+  kind?: string;
+  path?: string;
+  mime?: string;
+  name?: string;
+}
+
 export interface CaptureMessage {
   role: string;
   kind: string;
   text?: string;
   turnId?: string;
   tool?: { name: string; summary?: string; ok?: boolean };
+  attachments?: readonly CaptureAttachment[];
 }
 
 export const MAX_REPORT_CHARS = 24_000;
 const MAX_QUESTION_CHARS = 2_000;
 const MAX_COMPANIES = 20;
 const MAX_PEOPLE = 50;
-const MAX_TAGS = 12;
 
 /** Tool names that mean "this turn did research that can produce entities".
  *  Engines namespace MCP tools differently, so match the suffix family. */
@@ -97,8 +102,7 @@ export function companyEntityKey(company: CapturedCompany): string {
 }
 
 export function personEntityKey(person: CapturedPerson, companyKey: string | null): string {
-  const linkedin = person.linkedin_url?.toLowerCase().replace(/^https?:\/\/(www\.)?/, "").replace(/\/+$/, "");
-  return `person:${linkedin ?? `${normalizeName(person.full_name)}|${companyKey ?? ""}`}`;
+  return `person:${linkedinKey(person.linkedin_url) ?? `${normalizeName(person.full_name)}|${companyKey ?? ""}`}`;
 }
 
 /** Map a person's free-text company to the company job in the same batch.
@@ -118,21 +122,34 @@ export function matchCompanyKey(companyText: string | undefined, companies: read
   return null;
 }
 
-/** The bot's report, plus the activity trail, bounded for the extraction
- *  call. User text is only the research question, never their private turns. */
+/** The bot's report, plus any text reports it attached, plus the activity
+ *  trail, bounded for the extraction call. User text is only the research
+ *  question, never their private turns. */
 export function captureTranscript(
   messages: readonly CaptureMessage[],
   turnId?: string,
+  attachmentText: (attachment: CaptureAttachment) => string | null = () => null,
 ): { question: string; report: string; activity: string } {
   const inTurn = (message: CaptureMessage) => turnId === undefined || message.turnId === undefined || message.turnId === turnId;
   const question = [...messages].reverse()
     .find((message) => inTurn(message) && message.role === "user" && message.kind === "text" && message.text?.trim())
     ?.text?.trim().slice(0, MAX_QUESTION_CHARS) ?? "";
-  const report = messages
+  const conversation = messages
     .filter((message) => inTurn(message) && message.role === "bot" && message.kind === "text" && message.text?.trim())
     .map((message) => message.text!.trim())
-    .join("\n\n")
-    .slice(-MAX_REPORT_CHARS);
+    .join("\n\n");
+  // Deep research delivers its sourced report as an attachment and leaves only
+  // a summary in chat. Prefer the attachment text: it carries the per-entity
+  // source URLs the extraction prompt requires.
+  const attached = messages
+    .filter((message) => inTurn(message) && message.role === "bot" && message.kind === "text")
+    .flatMap((message) => message.attachments ?? [])
+    .map((attachment) => attachmentText(attachment)?.trim())
+    .filter((text): text is string => Boolean(text))
+    .join("\n\n");
+  const report = attached
+    ? `${attached}\n\n${conversation}`.slice(0, MAX_REPORT_CHARS)
+    : conversation.slice(-MAX_REPORT_CHARS);
   const activity = [...new Set(messages
     .filter((message) => inTurn(message) && message.kind === "activity" && message.tool?.name)
     .map((message) => `${message.tool!.name}${message.tool!.summary ? `: ${message.tool!.summary}` : ""}`)
@@ -160,7 +177,7 @@ export function capturePrompt(input: { today: string; question?: string; report:
     "- Return JSON only, no prose and no code fences.",
     "",
     "Schema:",
-    '{"companies":[{"name":"","domains":[""],"description":"","location":"","employee_count":0,"industry":"","vertical":"","technology":"","stage":"","company_type":"","domain_expertise":false,"linkedin_url":"","tags":[""],"website":"","source_url":"","confidence":0}],"people":[{"full_name":"","aliases":[""],"person_type":[""],"company":"","title":"","location":"","linkedin_url":"","bio":"","education":[""],"links":{},"tags":[""],"source_url":"","confidence":0}]}',
+    '{"companies":[{"name":"","domains":[""],"description":"","location":"","employee_count":0,"industry":"","vertical":"","technology":"","stage":"","company_type":"","domain_expertise":false,"linkedin_url":"","website":"","source_url":"","confidence":0}],"people":[{"full_name":"","aliases":[""],"person_type":[""],"company":"","title":"","location":"","linkedin_url":"","bio":"","education":[""],"links":{},"source_url":"","confidence":0}]}',
     "",
     input.question ? `The person asked: ${input.question}` : "",
     input.activity ? `Research activity:\n${input.activity}` : "",
@@ -194,17 +211,21 @@ function url(value: unknown): string | undefined {
   }
 }
 
-/** LinkedIn identity without the scheme/www/trailing slash, so the same
+/** LinkedIn identity, mirroring the Tool Layer: no scheme, regional or www
+ *  subdomain, query/fragment, trailing path, or non-profile URL, so the same
  *  profile written two ways dedupes within one extraction batch. */
 function linkedinKey(value: string | undefined): string | undefined {
   if (!value) return undefined;
-  return value
-    .toLowerCase()
-    .replace(/^https?:\/\//, "")
-    .replace(/^www\./, "")
-    .split("?")[0]!
-    .split("#")[0]!
-    .replace(/\/+$/, "");
+  let text = value.trim().toLowerCase();
+  text = text.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/^www\./, "");
+  text = text.split("?")[0]!;
+  text = text.split("#")[0]!;
+  const slash = text.indexOf("/");
+  if (slash < 0) return undefined;
+  const host = text.slice(0, slash);
+  if (host !== "linkedin.com" && !host.endsWith(".linkedin.com")) return undefined;
+  const slug = /^\/in\/([^/]+)/.exec(text.slice(slash))?.[1];
+  return slug ? `linkedin.com/in/${slug}` : undefined;
 }
 
 function strings(value: unknown, max: number, each = 120): string[] {
@@ -278,7 +299,6 @@ function companyOf(raw: unknown): CapturedCompany | null {
     ...(type ? { company_type: type } : {}),
     ...(typeof row.domain_expertise === "boolean" ? { domain_expertise: row.domain_expertise } : {}),
     ...(url(row.linkedin_url) ? { linkedin_url: url(row.linkedin_url)! } : {}),
-    ...(strings(row.tags, MAX_TAGS, 40).length ? { tags: strings(row.tags, MAX_TAGS, 40) } : {}),
     ...(url(row.website) ? { website: url(row.website)! } : {}),
   };
   return company;
@@ -312,7 +332,6 @@ function personOf(raw: unknown): CapturedPerson | null {
     ...(text(row.bio, 600) ? { bio: text(row.bio, 600)! } : {}),
     ...(strings(row.education, 6, 160).length ? { education: strings(row.education, 6, 160) } : {}),
     ...(Object.keys(links).length ? { links } : {}),
-    ...(strings(row.tags, MAX_TAGS, 40).length ? { tags: strings(row.tags, MAX_TAGS, 40) } : {}),
   };
 }
 

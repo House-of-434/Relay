@@ -37,6 +37,24 @@ describe("entity capture prompt", () => {
     expect(transcript.report.length).toBeLessThanOrEqual(24_000);
     expect(transcript.activity).toContain("web_search: acme");
   });
+
+  it("includes the attached sourced report before the chat summary", () => {
+    const messages = [
+      {
+        role: "bot" as const,
+        kind: "text",
+        text: "Summary in chat",
+        attachments: [
+          { kind: "file", path: "/tmp/report.md", mime: "text/markdown", name: "report.md" },
+          { kind: "image", path: "/tmp/chart.png", mime: "image/png" },
+        ],
+      },
+    ];
+    const transcript = captureTranscript(messages, undefined, (attachment) =>
+      attachment.name === "report.md" ? "Full sourced report" : null);
+    expect(transcript.report).toContain("Full sourced report");
+    expect(transcript.report).toContain("Summary in chat");
+  });
 });
 
 describe("research detection", () => {
@@ -76,6 +94,7 @@ describe("entity capture parser", () => {
       source_url: "https://acme.example/about",
     });
     expect(result.companies[0]!.description).toBe("A company");
+    expect(result.companies[0]).not.toHaveProperty("tags");
     expect(JSON.stringify(result)).not.toContain("should-not-survive");
     expect(result.people[0]).toMatchObject({
       full_name: "Ada Test",
@@ -84,6 +103,7 @@ describe("entity capture parser", () => {
       title: "Founder",
       source_url: "https://acme.example/ada",
     });
+    expect(result.people[0]).not.toHaveProperty("tags");
     expect(JSON.stringify(result.people)).not.toContain("ada@example.com");
   });
 
@@ -112,10 +132,11 @@ describe("entity capture parser", () => {
       ],
       people: [
         { full_name: "Ada", linkedin_url: "https://www.linkedin.com/in/ada", source_url: "https://example.com/a", confidence: 0.7 },
-        { full_name: "Ada again", linkedin_url: "https://linkedin.com/in/ada/", source_url: "https://example.com/b", confidence: 0.8 },
+        { full_name: "Ada again", linkedin_url: "https://uk.linkedin.com/in/ada/", source_url: "https://example.com/b", confidence: 0.8 },
+        { full_name: "Work page", linkedin_url: "https://www.linkedin.com/company/ada", source_url: "https://example.com/c", confidence: 0.8 },
       ],
     }));
     expect(result.companies).toHaveLength(1);
-    expect(result.people).toHaveLength(1);
+    expect(result.people).toHaveLength(2);
   });
 });

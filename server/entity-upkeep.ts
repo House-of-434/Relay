@@ -6,6 +6,8 @@
  * independently so a single failure never rolls back the rest. The Tool Layer
  * is still the only writer — this calls relay_write with a signed Scout actor.
  */
+import { readFileSync, statSync } from "node:fs";
+
 import {
   capturePrompt,
   captureTranscript,
@@ -14,6 +16,7 @@ import {
   matchCompanyKey,
   parseCapture,
   personEntityKey,
+  type CaptureAttachment,
   type CaptureMessage,
   type CapturedCompany,
   type CapturedPerson,
@@ -25,10 +28,35 @@ export const CAPTURE_JOB_MAX_ATTEMPTS = 5;
 export const CAPTURE_BACKOFF_BASE_MS = 60_000;
 export const CAPTURE_BACKOFF_MAX_MS = 60 * 60_000;
 export const CAPTURE_TICK_MS = 30_000;
-export const CAPTURE_MODEL_TIMEOUT_MS = 60_000;
+// A full deep-research report is a long prompt; Claude's one-shot review ran
+// ~100s on a 20k-character attachment, so 60s killed a valid extraction.
+export const CAPTURE_MODEL_TIMEOUT_MS = 180_000;
+const CAPTURE_REVIEW_TIMEOUT_MS = CAPTURE_MODEL_TIMEOUT_MS - 10_000;
 
 const TERMINAL_FAILURE =
   /(invalid|unknown column|must be|not allowed|forbidden|unauthorized|authenticated actor|classification|source_url|confidence|unknown tool|could not be signed|capture has no owner)/i;
+
+const TEXT_ATTACHMENT = /\.(md|markdown|txt|csv|tsv|json)$/i;
+const MAX_ATTACHMENT_BYTES = 256 * 1024;
+
+/** Deep research attaches its full sourced report as a markdown file and
+ *  leaves only a summary in chat. Read small text attachments so extraction
+ *  sees the per-entity source URLs; images, audio, and binary documents stay
+ *  out of the model prompt. */
+function readTextAttachment(attachment: CaptureAttachment): string | null {
+  if (attachment.kind !== "file" || !attachment.path) return null;
+  const mime = attachment.mime ?? "";
+  if (!mime.startsWith("text/") && mime !== "application/json" && !TEXT_ATTACHMENT.test(attachment.name ?? "")) {
+    return null;
+  }
+  try {
+    const info = statSync(attachment.path);
+    if (!info.isFile() || info.size > MAX_ATTACHMENT_BYTES) return null;
+    return readFileSync(attachment.path, "utf8");
+  } catch {
+    return null;
+  }
+}
 
 export interface EntityUpkeepBot {
   id: string;
@@ -38,7 +66,7 @@ export interface EntityUpkeepBot {
 }
 
 export interface EntityUpkeepEngine {
-  generateText?: (prompt: string, options?: { signal?: AbortSignal }) => Promise<string>;
+  generateText?: (prompt: string, options?: { signal?: AbortSignal; timeoutMs?: number }) => Promise<string>;
 }
 
 export interface EntityUpkeepStore {
@@ -148,7 +176,6 @@ function companyData(company: CapturedCompany, observedAt: string): Record<strin
     ...(company.company_type !== undefined ? { company_type: company.company_type } : {}),
     ...(company.domain_expertise !== undefined ? { domain_expertise: company.domain_expertise } : {}),
     ...(company.linkedin_url !== undefined ? { linkedin_url: company.linkedin_url } : {}),
-    ...(company.tags !== undefined ? { tags: company.tags } : {}),
     ...(company.website !== undefined ? { website: company.website } : {}),
     source: "research",
     source_url: company.source_url,
@@ -163,13 +190,15 @@ function personData(person: CapturedPerson, observedAt: string, companyId: strin
     ...(person.aliases !== undefined ? { aliases: person.aliases } : {}),
     ...(person.person_type !== undefined ? { person_type: person.person_type } : {}),
     ...(companyId ? { company_id: companyId } : {}),
+    // A resolver hint, not a column: the Tool Layer links an existing company
+    // when the employer was not part of this extraction batch.
+    ...(person.company !== undefined ? { company: person.company } : {}),
     ...(person.title !== undefined ? { title: person.title } : {}),
     ...(person.location !== undefined ? { location: person.location } : {}),
     ...(person.linkedin_url !== undefined ? { linkedin_url: person.linkedin_url } : {}),
     ...(person.bio !== undefined ? { bio: person.bio } : {}),
     ...(person.education !== undefined ? { education: person.education } : {}),
     ...(person.links !== undefined ? { links: person.links } : {}),
-    ...(person.tags !== undefined ? { tags: person.tags } : {}),
     source: "research",
     source_url: person.source_url,
     observed_at: observedAt,
@@ -227,7 +256,7 @@ export function createEntityUpkeep(deps: EntityUpkeepDeps): EntityUpkeep {
 
   async function extract(run: EntityCaptureRun, at: number): Promise<void> {
     const messages = deps.threadMessages(run.threadId);
-    const { report, activity } = captureTranscript(messages, run.turnId);
+    const { report, activity } = captureTranscript(messages, run.turnId, readTextAttachment);
     if (!report.trim() && !activity.trim()) {
       deps.store.updateRun(run.executionKey, { status: "done", lastError: null, updatedAt: at });
       return;
@@ -253,7 +282,11 @@ export function createEntityUpkeep(deps: EntityUpkeepDeps): EntityUpkeep {
       report,
       activity,
     });
-    const raw = await withTimeout(engine.generateText(prompt, { signal: controller.signal }), CAPTURE_MODEL_TIMEOUT_MS, controller);
+    const raw = await withTimeout(
+      engine.generateText(prompt, { signal: controller.signal, timeoutMs: CAPTURE_REVIEW_TIMEOUT_MS }),
+      CAPTURE_MODEL_TIMEOUT_MS,
+      controller,
+    );
     const entities = parseCapture(raw);
     const observedAt = new Date(at).toISOString();
     const jobs: EntityCaptureJob[] = [];
