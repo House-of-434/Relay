@@ -460,6 +460,9 @@ export interface TextGenerationUsage {
 
 export interface TextGenerationOptions {
   signal?: AbortSignal;
+  /** A caller-specific cap for long prompts. Drivers without their own timer
+   *  keep their default; the signal remains the outer bound. */
+  timeoutMs?: number;
   onUsage?: (usage: TextGenerationUsage) => void;
 }
 

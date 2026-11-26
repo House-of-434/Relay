@@ -21,7 +21,15 @@ import { closeMessageDb,
   recallMessages,
   searchMessages,
   setActiveLeaf,
-  updateMessage, describeMissingFts5 } from "./message-db.ts";
+  updateMessage, describeMissingFts5,
+  createEntityCaptureRun,
+  entityCaptureRun,
+  updateEntityCaptureRun,
+  dueEntityCaptureRuns,
+  createEntityCaptureJobs,
+  listEntityCaptureJobs,
+  updateEntityCaptureJob,
+  type EntityCaptureRun } from "./message-db.ts";
 import { withPeerProvenance } from "./peer-provenance.ts";
 import { Store, type Message } from "./store.ts";
 import type { ModelSelection } from "./contracts.ts";
@@ -399,5 +407,64 @@ describe("recall of digest rows", () => {
     const hits = recallMessages("retry limit", ["t1"]);
     expect(hits.map((h) => h.messageId)).toEqual(["m1", "d1"]);
     expect(hits[1]?.kind).toBe("digest");
+  });
+});
+
+describe("entity capture store", () => {
+  it("persists runs, payloads, statuses, and due retries across a reopen", () => {
+    closeMessageDb();
+    rmSync(DATA_DIR, { recursive: true, force: true });
+    mkdirSync(DATA_DIR, { recursive: true });
+    const run: EntityCaptureRun = {
+      executionKey: "t1:turn-1",
+      threadId: "t1",
+      turnId: "turn-1",
+      botId: "b1",
+      agent: "scout",
+      status: "pending",
+      attempts: 0,
+      lastError: null,
+      nextAttemptAt: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    };
+    expect(createEntityCaptureRun(run)).toBe(true);
+    expect(createEntityCaptureRun(run)).toBe(false);
+    createEntityCaptureJobs("t1:turn-1", [{
+      executionKey: "t1:turn-1",
+      entityKey: "company:acme.example",
+      kind: "company",
+      companyKey: null,
+      payload: { name: "Acme", domains: ["acme.example"] },
+      status: "pending",
+      resultId: null,
+      resultStatus: null,
+      attempts: 0,
+      lastError: null,
+      nextAttemptAt: 0,
+      createdAt: 1,
+      updatedAt: 1,
+    }]);
+
+    closeMessageDb();
+    expect(entityCaptureRun("t1:turn-1")?.status).toBe("pending");
+    expect(listEntityCaptureJobs("t1:turn-1")[0]?.payload).toEqual({ name: "Acme", domains: ["acme.example"] });
+
+    updateEntityCaptureRun("t1:turn-1", { status: "processing", updatedAt: 2 });
+    updateEntityCaptureJob("t1:turn-1", "company:acme.example", {
+      status: "done",
+      resultId: "company-1",
+      resultStatus: "merged",
+      updatedAt: 2,
+    });
+    closeMessageDb();
+
+    const reopened = dueEntityCaptureRuns(2);
+    expect(reopened).toHaveLength(1);
+    expect(reopened[0]?.status).toBe("processing");
+    const job = listEntityCaptureJobs("t1:turn-1")[0]!;
+    expect(job.status).toBe("done");
+    expect(job.resultId).toBe("company-1");
+    expect(job.resultStatus).toBe("merged");
   });
 });

@@ -3,6 +3,17 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { verifyActorAssertion, type RelayActorContext } from "./actor-assertion.js";
 import type { Project } from "../domain/permissions.js";
 import { getShape, type Filter } from "../domain/shapes.js";
+import {
+  companyReferenceDomain,
+  mergeCompany,
+  mergePerson,
+  normalizeDomains,
+  normalizeLinkedIn,
+  resolveCompany,
+  resolveCompanyReference,
+  resolvePerson,
+  type EntityCandidate,
+} from "../domain/entities.js";
 
 type Client = SupabaseClient<any>;
 type Env = Record<string, string | undefined>;
@@ -21,6 +32,26 @@ const INTERNAL_ONLY_TABLES = new Set([
   "app.companies",
   "app.people",
 ]);
+
+/** Columns the resolver needs to decide a merge. Kept in one place so a new
+ *  mergeable field is not silently dropped from the candidate row. */
+const COMPANY_CANDIDATE_COLUMNS =
+  "id, name, domains, domain_key, linkedin_url, description, location, employee_count, " +
+  "industry, vertical, technology, stage, company_type, domain_expertise, website, " +
+  "source, source_url, confidence, observed_at, classification, scope";
+const PERSON_CANDIDATE_COLUMNS =
+  "id, full_name, aliases, person_type, company_id, title, location, linkedin_url, bio, " +
+  "education, links, source, source_url, confidence, observed_at, classification, scope";
+
+const MIN_ENTITY_CONFIDENCE = 0.6;
+
+export interface EntityWriteResult {
+  status: "created" | "merged" | "queued";
+  id?: string;
+  review_id?: string;
+  matched_by?: string;
+  row?: unknown;
+}
 
 function entityTypeForTable(table: string): string | undefined {
   const entityType = table.startsWith("app.") ? table.slice("app.".length) : "";
@@ -267,6 +298,7 @@ export class RelayDatabase {
     operation: "insert" | "update",
     values: Record<string, unknown>,
     where?: { column: string; value: string },
+    actor?: { userId: string | null },
   ): Promise<unknown> {
     const [schema, relation] = table.split(".");
     const client = this.client(project);
@@ -283,6 +315,17 @@ export class RelayDatabase {
     }
 
     if (!where) throw new Error("where is required for update");
+    if (table === "app.companies" || table === "app.people") {
+      const { data: existing, error: existingError } = await client.schema("app").from(relation!)
+        .select("scope, owner_user_id, classification").eq(where.column, where.value).maybeSingle();
+      supabaseError(existingError);
+      if (!existing) throw new Error("update must match exactly one row");
+      const row = existing as { scope?: string; owner_user_id?: string | null; classification?: string };
+      if (row.classification !== "internal") throw new Error("not allowed to update this entity");
+      if (row.scope !== "org" && row.owner_user_id !== (actor?.userId ?? null)) {
+        throw new Error("not allowed to update this entity");
+      }
+    }
     const { data, error } = await client.schema(schema!).from(relation!)
       .update(values)
       .eq(where.column, where.value)
@@ -464,18 +507,205 @@ export class RelayDatabase {
   }
 
   /**
-   * Ranked full-text search over transcript segments, joined back to the
-   * meeting. Served by the transcripts.search_meetings SQL function.
+   * Unified Relay search: companies, people, and meeting snippets in one
+   * ranking. Served by app.search_relay.
    */
-  async searchMeetings(query: string, limit: number): Promise<unknown[]> {
+  async searchRelay(query: string, kinds: string[] | null, limit: number): Promise<unknown[]> {
     const trimmed = query.trim().slice(0, 512);
     if (!trimmed) throw new Error("query is required");
     const safeLimit = Math.min(Math.max(1, Math.floor(limit)), 50);
     const client = this.client("relay");
-    const { data, error } = await client.schema("transcripts")
-      .rpc("search_meetings", { q: trimmed, lim: safeLimit });
+    const { data, error } = await client.schema("app")
+      .rpc("search_relay", {
+        q: trimmed,
+        kinds: kinds && kinds.length > 0 ? kinds : null,
+        max_rows: safeLimit,
+      });
     supabaseError(error);
     return data ?? [];
+  }
+
+  /** Entity inserts land in the shared directory through this resolver: an
+   *  exact identity match merges, no match inserts, and an ambiguous match
+   *  goes to app.entity_review instead of guessing. A person insert may carry
+   *  the report's employer text as a resolver hint; it is never a column and
+   *  only links the person to an existing company. */
+  async upsertEntity(
+    table: "app.companies" | "app.people",
+    values: Record<string, unknown>,
+    reportedCompany?: string | null,
+  ): Promise<EntityWriteResult> {
+    return table === "app.companies" ? this.upsertCompany(values) : this.upsertPerson(values, reportedCompany);
+  }
+
+  private async upsertCompany(values: Record<string, unknown>): Promise<EntityWriteResult> {
+    const client = this.client("relay");
+    const confidence = typeof values.confidence === "number" ? values.confidence : null;
+    if (confidence !== null && confidence < MIN_ENTITY_CONFIDENCE) {
+      return this.queueEntityReview("company", values, [], "confidence below 0.6");
+    }
+    const domains = normalizeDomains(values.domains);
+    const primary = domains[0] ?? null;
+    const name = typeof values.name === "string" ? values.name : "";
+    const candidates = await this.companyCandidates(client, domains, primary, name);
+    const decision = resolveCompany(candidates, values);
+    if (decision.action === "review") {
+      return this.queueEntityReview("company", values, decision.candidates, decision.reason);
+    }
+    if (decision.action === "merge") {
+      return this.mergeCompanyInto(client, decision.candidate, values, decision.matchedBy);
+    }
+    const { data, error } = await client.schema("app").from("companies").insert(values).select("*").single();
+    if (error?.code === "23505") {
+      const existing = primary ? await this.companyByDomainKey(client, primary) : null;
+      if (existing) {
+        const decision = resolveCompany([existing], values);
+        if (decision.action === "merge") return this.mergeCompanyInto(client, existing, values, decision.matchedBy);
+        return this.queueEntityReview(
+          "company",
+          values,
+          [existing],
+          decision.action === "review" ? decision.reason : "concurrent primary-domain insert",
+        );
+      }
+    }
+    supabaseError(error);
+    return { status: "created", id: (data as { id: string }).id, row: data };
+  }
+
+  private async upsertPerson(values: Record<string, unknown>, reportedCompany?: string | null): Promise<EntityWriteResult> {
+    const client = this.client("relay");
+    const confidence = typeof values.confidence === "number" ? values.confidence : null;
+    if (confidence !== null && confidence < MIN_ENTITY_CONFIDENCE) {
+      return this.queueEntityReview("person", values, [], "confidence below 0.6");
+    }
+    let companyId = typeof values.company_id === "string" ? values.company_id : null;
+    if (!companyId && reportedCompany?.trim()) {
+      const resolution = await this.resolvePersonCompany(client, reportedCompany);
+      if (resolution.action === "review") {
+        return this.queueEntityReview("person", values, resolution.candidates, resolution.reason);
+      }
+      if (resolution.action === "match") companyId = resolution.candidate.id;
+    }
+    const data = companyId ? { ...values, company_id: companyId } : values;
+    const name = typeof data.full_name === "string" ? data.full_name : "";
+    const linkedin = normalizeLinkedIn(data.linkedin_url);
+    const candidates = await this.personCandidates(client, name, companyId, linkedin);
+    const decision = resolvePerson(candidates, data);
+    if (decision.action === "review") {
+      return this.queueEntityReview("person", data, decision.candidates, decision.reason);
+    }
+    if (decision.action === "merge") {
+      return this.mergePersonInto(client, decision.candidate, data, decision.matchedBy);
+    }
+    const { data: inserted, error } = await client.schema("app").from("people").insert(data).select("*").single();
+    supabaseError(error);
+    return { status: "created", id: (inserted as { id: string }).id, row: inserted };
+  }
+
+  /** Domain first, then an exact normalized name. Ambiguity goes to review and
+   *  a miss leaves the person unaffiliated; a company is never created here. */
+  private async resolvePersonCompany(
+    client: Client,
+    reported: string,
+  ): Promise<
+    | { action: "none" }
+    | { action: "match"; candidate: EntityCandidate }
+    | { action: "review"; candidates: EntityCandidate[]; reason: string }
+  > {
+    const text = reported.trim();
+    const domain = companyReferenceDomain(text);
+    const candidates = await this.companyCandidates(client, domain ? [domain] : [], domain, text);
+    return resolveCompanyReference(candidates, text);
+  }
+
+  private async companyCandidates(client: Client, domains: string[], primary: string | null, name: string): Promise<EntityCandidate[]> {
+    const rows: EntityCandidate[] = [];
+    const run = async (query: any) => {
+      const { data, error } = await query;
+      supabaseError(error);
+      if (Array.isArray(data)) rows.push(...(data as EntityCandidate[]));
+    };
+    if (domains.length > 0) {
+      await run(client.schema("app").from("companies").select(COMPANY_CANDIDATE_COLUMNS).overlaps("domains", domains).limit(10));
+    }
+    if (primary) {
+      await run(client.schema("app").from("companies").select(COMPANY_CANDIDATE_COLUMNS).eq("domain_key", primary).limit(10));
+    }
+    if (name.trim()) {
+      await run(client.schema("app").from("companies").select(COMPANY_CANDIDATE_COLUMNS).ilike("name", likeEscape(name.trim())).limit(10));
+    }
+    return uniqueCandidates(rows);
+  }
+
+  private async personCandidates(client: Client, name: string, companyId: string | null, linkedin: string | null): Promise<EntityCandidate[]> {
+    const rows: EntityCandidate[] = [];
+    const run = async (query: any) => {
+      const { data, error } = await query;
+      supabaseError(error);
+      if (Array.isArray(data)) rows.push(...(data as EntityCandidate[]));
+    };
+    if (name.trim()) {
+      await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).ilike("full_name", likeEscape(name.trim())).limit(10));
+    }
+    if (linkedin) {
+      await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).eq("linkedin_key", linkedin).limit(10));
+    }
+    if (name.trim() && companyId) {
+      await run(client.schema("app").from("people").select(PERSON_CANDIDATE_COLUMNS).eq("company_id", companyId).ilike("full_name", likeEscape(name.trim())).limit(10));
+    }
+    return uniqueCandidates(rows);
+  }
+
+  private async companyByDomainKey(client: Client, primary: string): Promise<EntityCandidate | null> {
+    const { data, error } = await client.schema("app").from("companies").select(COMPANY_CANDIDATE_COLUMNS).eq("domain_key", primary).limit(2);
+    supabaseError(error);
+    const rows = Array.isArray(data) ? data as unknown as EntityCandidate[] : [];
+    return rows.length === 1 ? rows[0]! : null;
+  }
+
+  private async mergeCompanyInto(client: Client, existing: EntityCandidate, incoming: Record<string, unknown>, matchedBy: string): Promise<EntityWriteResult> {
+    const now = new Date().toISOString();
+    const { values, conflicts } = mergeCompany(existing, incoming, now);
+    if (conflicts.length > 0) {
+      return this.queueEntityReview("company", incoming, [existing], conflicts.join("; "));
+    }
+    const { data, error } = await client.schema("app").from("companies")
+      .update({ ...values, updated_at: now }).eq("id", existing.id).select("*").single();
+    supabaseError(error);
+    return { status: "merged", id: existing.id, matched_by: matchedBy, row: data };
+  }
+
+  private async mergePersonInto(client: Client, existing: EntityCandidate, incoming: Record<string, unknown>, matchedBy: string): Promise<EntityWriteResult> {
+    const now = new Date().toISOString();
+    const { values, conflicts } = mergePerson(existing, incoming, now);
+    if (conflicts.length > 0) {
+      return this.queueEntityReview("person", incoming, [existing], conflicts.join("; "));
+    }
+    const { data, error } = await client.schema("app").from("people")
+      .update({ ...values, updated_at: now }).eq("id", existing.id).select("*").single();
+    supabaseError(error);
+    return { status: "merged", id: existing.id, matched_by: matchedBy, row: data };
+  }
+
+  private async queueEntityReview(kind: "company" | "person", incoming: Record<string, unknown>, candidates: EntityCandidate[], reason: string): Promise<EntityWriteResult> {
+    const { data, error } = await this.client("relay").schema("app").from("entity_review").insert({
+      kind,
+      incoming,
+      candidates: candidates.map((candidate) => ({
+        id: candidate.id,
+        name: candidate.name ?? candidate.full_name ?? null,
+        domains: candidate.domains ?? null,
+        linkedin_url: candidate.linkedin_url ?? null,
+        company_id: candidate.company_id ?? null,
+      })),
+      reason,
+      source_url: typeof incoming.source_url === "string" ? incoming.source_url : null,
+      actor_user: typeof incoming.actor_user === "string" ? incoming.actor_user : null,
+      actor_agent: typeof incoming.actor_agent === "string" ? incoming.actor_agent : null,
+    }).select("id").single();
+    supabaseError(error);
+    return { status: "queued", review_id: (data as { id: string }).id };
   }
 
   /**
@@ -519,4 +749,19 @@ export class RelayDatabase {
     supabaseError(error);
     return data;
   }
+}
+
+function uniqueCandidates(rows: EntityCandidate[]): EntityCandidate[] {
+  const out: EntityCandidate[] = [];
+  const seen = new Set<string>();
+  for (const row of rows) {
+    if (seen.has(row.id)) continue;
+    seen.add(row.id);
+    out.push(row);
+  }
+  return out;
+}
+
+function likeEscape(value: string): string {
+  return value.replace(/[\\%_]/g, "\\$&");
 }

@@ -141,7 +141,7 @@ export function createAgentMcpServer(
     "relay_write",
     {
       description: writeScope.length > 0
-        ? `Insert or update one row in a table explicitly permitted for this Relay agent: ${writeScope}. An app.events row needs only title. For the Event Content Tracker, pass event_date (YYYY-MM-DD), hosted, city_state, event_url, speakers, media_url, cover_image_url, and notes as the sheet provides them. Column shapes are enforced; updates must target one row.`
+        ? `Insert or update one row in a table explicitly permitted for this Relay agent: ${writeScope}. Company and person inserts are matched against the shared directory: the result says created, merged, or queued for review, so re-researching the same entity updates it instead of duplicating it. An app.events row needs only title. For the Event Content Tracker, pass event_date (YYYY-MM-DD), hosted, city_state, event_url, speakers, media_url, cover_image_url, and notes as the sheet provides them. Column shapes are enforced; updates must target one row.`
         : "Insert or update one row in a table explicitly permitted for this Relay agent. This agent has no writable tables. Column shapes are enforced; updates must target one row.",
       inputSchema: WRITE_INPUT,
       annotations: { readOnlyHint: false, destructiveHint: false },
@@ -150,13 +150,22 @@ export function createAgentMcpServer(
       try {
         if (!userId) throw new Error("authenticated actor required");
         const project = authorize(agent, "write", table);
-        const prepared = prepareWrite(table, operation, data, where, {
+        let columns = data;
+        let reportedCompany: string | null = null;
+        if (table === "app.people" && operation === "insert" && typeof data.company === "string") {
+          const { company, ...rest } = data;
+          columns = rest;
+          reportedCompany = company.trim().slice(0, 200) || null;
+        }
+        const prepared = prepareWrite(table, operation, columns, where, {
           agent,
           userId,
           botId: actor.botId ?? null,
           threadId: actor.threadId ?? null,
         });
-        const result = await database.write(project, table, operation, prepared.values, prepared.where);
+        const result = operation === "insert" && (table === "app.companies" || table === "app.people")
+          ? await database.upsertEntity(table, prepared.values, reportedCompany)
+          : await database.write(project, table, operation, prepared.values, prepared.where, { userId });
         return { content: [{ type: "text", text: JSON.stringify(result) }] };
       } catch (error) {
         return toolError(error);

@@ -124,7 +124,7 @@ test("authenticated scout sees browser tools; others do not", async () => {
     "get_meeting_transcript",
     "relay_read",
     "relay_write",
-    "search_meetings",
+    "search_relay",
     "web_fetch",
     "web_search",
   ]);

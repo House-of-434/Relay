@@ -124,7 +124,7 @@ test("scout gets the full research loop; others get no search or browser", async
       "get_meeting_transcript",
       "relay_read",
       "relay_write",
-      "search_meetings",
+      "search_relay",
       "web_fetch",
       "web_search",
     ]);

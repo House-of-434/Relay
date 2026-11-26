@@ -45,7 +45,7 @@ test("HTTP MCP exposes agent-scoped tools and keeps agent permissions server-bou
   try {
     await client.connect(transport);
     const { tools } = await client.listTools();
-    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["arxiv_get", "arxiv_search", "browser_act", "browser_extract", "browser_open", "browser_read", "browser_request_human", "browser_upgrade_headful", "find_teammate", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings", "web_fetch", "web_search"]);
+    assert.deepEqual(tools.map((tool) => tool.name).sort(), ["arxiv_get", "arxiv_search", "browser_act", "browser_extract", "browser_open", "browser_read", "browser_request_human", "browser_upgrade_headful", "find_teammate", "get_meeting_transcript", "relay_read", "relay_write", "search_relay", "web_fetch", "web_search"]);
 
     const read = await client.callTool({ name: "relay_read", arguments: { table: "app.companies", limit: 3 } });
     assert.equal(read.isError, undefined);
@@ -166,8 +166,8 @@ test("transcript tables are readable but never writable through agent tools", as
       calls.push({ method: "getMeetingTranscript", args });
       return { meeting: { id: "meeting-1" }, segments: [], total_length: 0, complete: true };
     },
-    async searchMeetings(...args: unknown[]) {
-      calls.push({ method: "search", args });
+    async searchRelay(...args: unknown[]) {
+      calls.push({ method: "searchRelay", args });
       return [];
     },
   } as unknown as RelayDatabase;
@@ -207,11 +207,11 @@ test("transcript tables are readable but never writable through agent tools", as
     assert.equal(calls.some((call) => call.method === "getMeetingTranscript"), true);
 
     const search = await client.callTool({
-      name: "search_meetings",
+      name: "search_relay",
       arguments: { query: "revenue" },
     });
     assert.equal(search.isError, undefined);
-    assert.equal(calls.some((call) => call.method === "search"), true);
+    assert.equal(calls.some((call) => call.method === "searchRelay"), true);
   } finally {
     await client.close();
     await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
@@ -266,11 +266,11 @@ test("only an agent with the capability is offered Gmail or calendar tools", asy
     "get_meeting_transcript",
     "relay_read",
     "relay_write",
-    "search_meetings",
+    "search_relay",
     "web_fetch",
     "web_search",
   ]);
-  assert.deepEqual(await names("curator"), ["find_teammate", "get_meeting_transcript", "relay_read", "relay_write", "search_meetings"], "curator");
+  assert.deepEqual(await names("curator"), ["find_teammate", "get_meeting_transcript", "relay_read", "relay_write", "search_relay"], "curator");
 });
 
 test("the Gmail send schema stays flat so engines cannot flatten it away", async () => {
@@ -334,5 +334,71 @@ test("unauthenticated MCP callers cannot reach relay data", async () => {
     }
   } finally {
     await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("company and person inserts go through the shared-directory resolver", async () => {
+  const userId = "1457cb2a-7543-4b48-8854-a63cd160241f";
+  const assertion = signActorAssertion({ userId, botId: BOT_ID, threadId: THREAD_ID, agent: "scout" }, SECRET);
+  const calls: Array<{ method: string; args: unknown[] }> = [];
+  const database = {
+    async verifyRelayProject() {},
+    authenticateActorAssertion(value: string) {
+      return JSON.parse(value) as { userId: string; botId: string; threadId: string; agent: string; issuedAt: number };
+    },
+    async upsertEntity(...args: unknown[]) {
+      calls.push({ method: "upsertEntity", args });
+      return { status: "merged", id: "company-1", matched_by: "domain" };
+    },
+    async write(...args: unknown[]) {
+      calls.push({ method: "write", args });
+      return { id: "company-1" };
+    },
+  } as unknown as RelayDatabase;
+
+  const server = await createRelayToolServer(database, 0);
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const client = new Client({ name: "relay-entity-test", version: "0.1.0" });
+  const transport = new StreamableHTTPClientTransport(new URL(`http://127.0.0.1:${address.port}/mcp/scout`), {
+    requestInit: { headers: { "x-relay-actor-user": assertion } },
+  });
+
+  try {
+    await client.connect(transport);
+    const company = await client.callTool({
+      name: "relay_write",
+      arguments: {
+        table: "app.companies",
+        operation: "insert",
+        data: { name: "Acme", domains: ["acme.com"], source_url: "https://acme.com", confidence: 0.8 },
+      },
+    });
+    assert.equal(company.isError, undefined);
+    assert.equal(calls[0]?.method, "upsertEntity");
+    assert.equal(calls[0]?.args[0], "app.companies");
+    const values = calls[0]!.args[1] as Record<string, unknown>;
+    assert.equal(values.scope, "org");
+    assert.equal(values.actor_agent, "scout");
+    assert.equal((JSON.parse((company.content as Array<{ text: string }>)[0]!.text) as { status: string }).status, "merged");
+
+    const person = await client.callTool({
+      name: "relay_write",
+      arguments: {
+        table: "app.people",
+        operation: "insert",
+        data: { full_name: "Ada Test", company: "Acme", source_url: "https://example.com/ada", confidence: 0.8 },
+      },
+    });
+    assert.equal(person.isError, undefined, JSON.stringify(person));
+    assert.equal(calls[1]?.method, "upsertEntity");
+    assert.equal(calls[1]?.args[0], "app.people");
+    const personValues = calls[1]!.args[1] as Record<string, unknown>;
+    assert.equal(personValues.company_id, undefined);
+    assert.equal(personValues.company, undefined);
+    assert.equal(calls[1]?.args[2], "Acme");
+  } finally {
+    await client.close();
+    await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
   }
 });

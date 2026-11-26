@@ -9,17 +9,20 @@ function toolError(error: unknown) {
   return { isError: true, content: [{ type: "text" as const, text: message }] };
 }
 
-function mmss(startSeconds: unknown): string {
-  const total = typeof startSeconds === "number" && Number.isFinite(startSeconds) ? Math.max(0, Math.floor(startSeconds)) : 0;
-  return `${String(Math.floor(total / 60)).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
-}
+const SEARCH_KIND_TABLE = {
+  company: "app.companies",
+  person: "app.people",
+  meeting: "transcripts.meetings",
+} as const;
+const SEARCH_KINDS = ["company", "person", "meeting"] as const;
 
 /**
- * Meeting-transcript tools. All three agents get the same pair: an ordered,
- * paged transcript read and a ranked full-text search. Listing meetings is
- * plain relay_read on the read-only transcripts.meetings shape — no bespoke
- * tool. Every handler re-checks the transcripts read grant, so removing the
- * grant revokes the tools even where they are still listed.
+ * Relay record tools. All three agents get the same pair: an ordered, paged
+ * meeting transcript read and one unified search across companies, people, and
+ * meetings. Listing meetings is plain relay_read on the read-only
+ * transcripts.meetings shape — no bespoke tool. Every handler re-checks the
+ * read grant for each kind, so removing a grant revokes the capability even
+ * where the tool is still listed.
  */
 export function registerTranscriptTools(
   server: McpServer,
@@ -30,7 +33,7 @@ export function registerTranscriptTools(
   server.registerTool(
     "get_meeting_transcript",
     {
-      description: "Read one captured meeting's transcript in time order, paged. `meeting_id` accepts the meeting link, the room code, or the meeting id and is resolved for you — use this, not search_meetings, to find a specific recent meeting. Name the meeting in your reply by its title, or by the room code when there is no title; never quote internal ids. Turn it into notes: who spoke and what was covered, led by the meeting's length and speakers rather than segment counts or capture internals. Page by calling again with a higher offset until complete is true; complete is false while the meeting is still live, so treat those rows as in-progress.",
+      description: "Read one captured meeting's transcript in time order, paged. `meeting_id` accepts the meeting link, the room code, or the meeting id and is resolved for you — use this, not search_relay, to find a specific recent meeting. Name the meeting in your reply by its title, or by the room code when there is no title; never quote internal ids. Turn it into notes: who spoke and what was covered, led by the meeting's length and speakers rather than segment counts or capture internals. Page by calling again with a higher offset until complete is true; complete is false while the meeting is still live, so treat those rows as in-progress.",
       inputSchema: {
         meeting_id: z.string().min(1).max(2048),
         offset: z.number().int().min(0).optional(),
@@ -51,25 +54,23 @@ export function registerTranscriptTools(
   );
 
   server.registerTool(
-    "search_meetings",
+    "search_relay",
     {
-      description: "Full-text search across all captured meeting transcripts. Returns ranked snippets with speaker and mm:ss timestamp, plus start_seconds and the meeting id. To read the minutes around a hit, call get_meeting_transcript with that meeting id and page to the segment near start_seconds.",
+      description: "Search Relay's shared records in one query: companies, people, and captured meeting transcripts. Results are ranked and tagged by kind (company, person, meeting); a meeting snippet starts with its mm:ss offset. Use this before researching so known companies and people are reused and refreshed rather than rediscovered. Pass kinds to narrow the search, and call get_meeting_transcript with a meeting id to read around a hit.",
       inputSchema: {
         query: z.string().min(1).max(512),
+        kinds: z.array(z.enum(SEARCH_KINDS)).min(1).max(3).optional(),
         limit: z.number().int().min(1).max(50).optional(),
       },
       annotations: { readOnlyHint: true },
     },
-    async ({ query, limit }) => {
+    async ({ query, kinds, limit }) => {
       try {
         if (!userId) throw new Error("authenticated actor required");
-        authorize(agent, "read", "transcripts.meetings");
-        const rows = await database.searchMeetings(query, limit ?? 20);
-        const shaped = (Array.isArray(rows) ? rows : []).map((row) => {
-          const entry = row as Record<string, unknown>;
-          return { ...entry, at: mmss(entry.start_seconds) };
-        });
-        return { content: [{ type: "text", text: JSON.stringify(shaped) }] };
+        const requested = kinds && kinds.length > 0 ? kinds : [...SEARCH_KINDS];
+        for (const kind of requested) authorize(agent, "read", SEARCH_KIND_TABLE[kind]);
+        const rows = await database.searchRelay(query, kinds && kinds.length > 0 ? [...kinds] : null, limit ?? 20);
+        return { content: [{ type: "text", text: JSON.stringify(rows) }] };
       } catch (error) {
         return toolError(error);
       }

@@ -351,15 +351,20 @@ export function confirmedMeetLink(result: unknown): string | undefined {
   }
 }
 
+export interface RelayToolResult {
+  ok: boolean;
+  /** The tool's refusal text, or "" on success. */
+  text: string;
+  result: unknown;
+}
+
 /**
- * Execute a user-confirmed action through the Tool Layer's own MCP route, so
- * the same registration, permission checks, and actor assertion the agent's
- * tools use apply here too. The model never makes this call; the harness does,
- * after the user confirmed the preview. Never construct this from
- * model-supplied headers — the actor assertion always comes from the signed
- * session the resolve endpoint authenticated.
+ * Call one Tool Layer MCP tool with a signed actor assertion, returning a
+ * refusal instead of throwing so a durable background caller can classify it
+ * (retryable infrastructure vs terminal validation). Transport/connection
+ * failures still throw: those are always retryable.
  */
-export async function callConfirmedRelayTool(input: ConfirmedToolCall): Promise<unknown> {
+export async function callRelayTool(input: ConfirmedToolCall): Promise<RelayToolResult> {
   let base: URL;
   try {
     // RELAY_TOOL_URL is server configuration, never client/model input. On a
@@ -375,18 +380,35 @@ export async function callConfirmedRelayTool(input: ConfirmedToolCall): Promise<
 
   const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
   const { StreamableHTTPClientTransport } = await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
-  const client = new Client({ name: "relay-confirmed-action", version: "1.0.0" });
+  const client = new Client({ name: "relay-tool-call", version: "1.0.0" });
   const transport = new StreamableHTTPClientTransport(new URL(`/mcp/${input.agent}`, base), {
     requestInit: { headers: { "x-relay-actor-user": input.actorAssertion } },
   });
   try {
     await client.connect(transport);
     const result = await client.callTool({ name: input.tool, arguments: input.args });
-    if (result.isError) {
-      throw new ConnectorActionError(toolText(result) ?? "the confirmed action failed", 502);
-    }
-    return result;
+    return {
+      ok: result.isError !== true,
+      text: toolText(result) ?? "",
+      result,
+    };
   } finally {
     await client.close().catch(() => undefined);
   }
+}
+
+/**
+ * Execute a user-confirmed action through the Tool Layer's own MCP route, so
+ * the same registration, permission checks, and actor assertion the agent's
+ * tools use apply here too. The model never makes this call; the harness does,
+ * after the user confirmed the preview. Never construct this from
+ * model-supplied headers — the actor assertion always comes from the signed
+ * session the resolve endpoint authenticated.
+ */
+export async function callConfirmedRelayTool(input: ConfirmedToolCall): Promise<unknown> {
+  const outcome = await callRelayTool(input);
+  if (!outcome.ok) {
+    throw new ConnectorActionError(outcome.text || "the confirmed action failed", 502);
+  }
+  return outcome.result;
 }
